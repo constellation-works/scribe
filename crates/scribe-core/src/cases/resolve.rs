@@ -103,3 +103,26 @@ pub fn relateds_preserving_input<E: PortError>(
     }
     Ok(preserved)
 }
+
+/// Display names for session ids, unique across the stored sessions, the
+/// `provider` transcripts on disk and `extra` (the group members and
+/// openers the output names). Cataloged sessions use their stable `s-<n>`
+/// aliases; others use prefixes. A failed read leaves full ids available.
+pub fn short_ids<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    provider: Provider,
+    extra: impl IntoIterator<Item = String>,
+) -> crate::ShortIds {
+    let mut ids = ctx.store.read().sessions().ids().unwrap_or_default();
+    ids.extend(transcript_session_ids(ctx, provider));
+    ids.extend(extra);
+    let mut shorts = crate::ShortIds::new(ids);
+    if let Ok(numbers) = ctx.store.read().sessions().numbers() {
+        shorts.set_aliases(
+            numbers
+                .into_iter()
+                .map(|(id, n)| (id.to_string(), format!("s-{n}"))),
+        );
+    }
+    shorts
+}

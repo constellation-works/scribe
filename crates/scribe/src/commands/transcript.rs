@@ -13,9 +13,10 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TranscriptPayload, WarningPayload};
 use clap::{Args, Subcommand};
+use scribe_core::cases::transcript::Surveyed;
 use scribe_core::{Config, DateRange, Project, SessionFilter, SessionId, transcript};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use time::Date;
 
 /// The default `--min-turns`: long sessions only.
@@ -212,35 +213,31 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let id = resolve_transcript(ctx, &args.id)?;
-    let dir =
-        ctx.transcripts()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| CliError::TranscriptNotFound {
-                id: id.clone(),
-                dir: PathBuf::from("(no transcripts directory)"),
-            })?;
-    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptNotFound {
-        id: id.clone(),
-        dir: dir.clone(),
-    })?;
-    let bytes = match payload::read_checked(ctx, &path, &id) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => return Err(CliError::TranscriptNotFound { id, dir }),
-        Err(payload::Unreadable::Refused(reason)) => {
-            return Err(CliError::TranscriptRefused { id, reason });
-        }
-        Err(payload::Unreadable::Io(source)) => {
-            return Err(CliError::Read {
-                what: path.display().to_string(),
-                source,
-            });
-        }
-    };
-    let config = ctx.config()?;
+    let surveyed = scribe_core::cases::transcript::show(&ctx.core(), ctx.provider(), &args.id)?;
     Ok(Output::Show {
-        record: Record::Transcript(Box::new(payload_from(&id, &bytes, &config, true))),
+        record: Record::Transcript(Box::new(payload(surveyed, true))),
     })
+}
+
+/// A survey as its row; `with_turns` adds the user's first turns.
+fn payload(surveyed: Surveyed, with_turns: bool) -> TranscriptPayload {
+    let survey = surveyed.survey;
+    TranscriptPayload {
+        session: surveyed.session.to_string(),
+        project: surveyed.project.to_string(),
+        project_mentions: surveyed
+            .mentions
+            .iter()
+            .map(|(project, count)| (project.to_string(), *count))
+            .collect(),
+        cwd: surveyed.cwd,
+        started: survey.started,
+        ended: survey.ended,
+        bytes: survey.bytes,
+        user_turns: survey.user_turns,
+        first_prompt: survey.first_prompt,
+        user_first_turns: with_turns.then_some(survey.first_turns),
+    }
 }
 
 fn payload_from(

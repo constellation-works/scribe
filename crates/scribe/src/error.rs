@@ -285,6 +285,24 @@ impl From<scribe_core::cases::write_error::WriteError<CliError>> for CliError {
     }
 }
 
+/// The reads' errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::read_error::ReadError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::read_error::ReadError<CliError>) -> Self {
+        use scribe_core::cases::read_error::ReadError;
+        match err {
+            ReadError::Core(e) => Self::Core(e),
+            ReadError::Port(e) => e,
+            ReadError::Usage(message) => Self::Usage(message),
+            ReadError::Read { what, source } => Self::Read { what, source },
+            ReadError::SegmentNotFound { session, n, count } => {
+                Self::SegmentNotFound { session, n, count }
+            }
+            ReadError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            ReadError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+        }
+    }
+}
+
 /// `mark retry`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
     fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {

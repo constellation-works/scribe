@@ -233,10 +233,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     if !prints_sessions {
         return scribe_core::ShortIds::default();
     }
-    let mut ids = ctx.store().read().sessions().ids().unwrap_or_default();
-    if let Ok(extra) = transcript_session_ids(ctx) {
-        ids.extend(extra);
-    }
+    let mut extra = Vec::new();
     if let Output::Show {
         record: Record::Group(group),
     }
@@ -245,40 +242,22 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         ..
     } = output
     {
-        ids.extend(group.members().iter().map(|id| id.to_string()));
-        ids.push(group.opener.clone());
+        extra.extend(group.members().iter().map(|id| id.to_string()));
+        extra.push(group.opener.clone());
     }
     if let Output::List {
         records: Records::Groups(groups),
         ..
     } = output
     {
-        ids.extend(
+        extra.extend(
             groups
                 .iter()
                 .flat_map(|g| g.members().into_iter().map(|id| id.to_string())),
         );
-        ids.extend(groups.iter().map(|g| g.opener.clone()));
+        extra.extend(groups.iter().map(|g| g.opener.clone()));
     }
-    let mut shorts = scribe_core::ShortIds::new(ids);
-    if let Ok(numbers) = ctx.store().read().sessions().numbers() {
-        shorts.set_aliases(
-            numbers
-                .into_iter()
-                .map(|(id, n)| (id.to_string(), format!("s-{n}"))),
-        );
-    }
-    shorts
-}
-
-/// The session ids of provider transcripts on disk, for resolving prefixes
-/// of uncataloged sessions alongside the store's own ids. If discovery is
-/// incomplete, callers keep resolving against the store alone.
-pub(in crate::commands) fn transcript_session_ids(ctx: &Context) -> Result<Vec<String>, CliError> {
-    Ok(scribe_core::cases::resolve::transcript_session_ids(
-        &ctx.core(),
-        ctx.provider(),
-    ))
+    scribe_core::cases::resolve::short_ids(&ctx.core(), ctx.provider(), extra)
 }
 
 /// Resolve a session id or unique prefix across the store and provider
@@ -291,19 +270,6 @@ pub(in crate::commands) fn resolve_session_or_typed(
         &ctx.core(),
         ctx.provider(),
         input,
-    )?)
-}
-
-/// Resolve `session:<id>` references in `related`
-/// ([`scribe_core::cases::resolve::relateds`]).
-pub(in crate::commands) fn resolve_relateds(
-    ctx: &Context,
-    related: &[scribe_core::Related],
-) -> Result<Vec<scribe_core::Related>, CliError> {
-    Ok(scribe_core::cases::resolve::relateds(
-        &ctx.core(),
-        ctx.provider(),
-        related,
     )?)
 }
 
@@ -392,19 +358,7 @@ pub(crate) struct DateArgs {
 impl DateArgs {
     /// The range, or a usage error when it ends before it starts.
     pub(crate) fn range(&self) -> Result<DateRange, CliError> {
-        if let (Some(since), Some(until)) = (self.since, self.until)
-            && until < since
-        {
-            return Err(CliError::Usage(format!(
-                "--until {} is before --since {}; give a range that ends on or after it starts",
-                scribe_core::DateRange::day(until),
-                scribe_core::DateRange::day(since)
-            )));
-        }
-        Ok(DateRange {
-            since: self.since,
-            until: self.until,
-        })
+        DateRange::checked(self.since, self.until).map_err(CliError::Usage)
     }
 
     /// The flags that set the range, for a list's "no match" line.

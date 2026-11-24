@@ -644,6 +644,24 @@ pub struct DateRange {
 }
 
 impl DateRange {
+    /// The range from `since` to `until`.
+    ///
+    /// # Errors
+    ///
+    /// The usage message when it ends before it starts.
+    pub fn checked(since: Option<Date>, until: Option<Date>) -> std::result::Result<Self, String> {
+        if let (Some(since), Some(until)) = (since, until)
+            && until < since
+        {
+            return Err(format!(
+                "--until {} is before --since {}; give a range that ends on or after it starts",
+                Self::day(until),
+                Self::day(since)
+            ));
+        }
+        Ok(Self { since, until })
+    }
+
     /// A day as `YYYY-MM-DD`.
     #[must_use]
     pub fn day(date: Date) -> String {

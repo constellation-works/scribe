@@ -6,9 +6,9 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
+use scribe_core::ProposalVerbs;
 use scribe_core::cases::proposal_cmd;
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
-use scribe_core::{EntryVerbs, ProposalVerbs};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
 Examples:
@@ -205,31 +205,28 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
 
 fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let store = ctx.store();
-    let entry = match &args.entry {
-        Some(id) => Some(store.resolve_entry(id)?.id),
-        None => None,
-    };
-    let filter = ProposalFilter {
-        state: args.state.map(|s| match s {
-            StateArg::Open => ProposalState::Open,
-            StateArg::Approved => ProposalState::Approved,
-            StateArg::Rejected => ProposalState::Rejected,
-        }),
-        dates: args.dates.range()?,
-        entry,
-        author_kind: args.author_kind.map(|k| match k {
-            AuthorKindArg::User => AuthorKind::User,
-            AuthorKindArg::Agent => AuthorKind::Agent,
-            AuthorKindArg::Scribe => AuthorKind::Scribe,
-        }),
-    };
-    let proposals: Vec<_> = store
-        .read()
-        .proposals()
-        .all()?
-        .into_iter()
-        .filter(|p| filter.matches(p))
-        .collect();
+    let (filter, proposals) = scribe_core::cases::proposal::list(
+        &ctx.core(),
+        scribe_core::cases::proposal::ListInput {
+            filter: ProposalFilter {
+                state: args.state.map(|s| match s {
+                    StateArg::Open => ProposalState::Open,
+                    StateArg::Approved => ProposalState::Approved,
+                    StateArg::Rejected => ProposalState::Rejected,
+                }),
+                dates: scribe_core::DateRange::default(),
+                entry: None,
+                author_kind: args.author_kind.map(|k| match k {
+                    AuthorKindArg::User => AuthorKind::User,
+                    AuthorKindArg::Agent => AuthorKind::Agent,
+                    AuthorKindArg::Scribe => AuthorKind::Scribe,
+                }),
+            },
+            entry: args.entry.as_deref(),
+            since: args.dates.since,
+            until: args.dates.until,
+        },
+    )?;
     let empty = format!(
         "no proposals in {}; the consistency routine opens them",
         store.root().display()

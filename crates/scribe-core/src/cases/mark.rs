@@ -208,3 +208,23 @@ fn written_before(entry: &Entry, cite: &Cite, quote: &str) -> bool {
         && entry.cite.as_ref().is_some_and(|c| c.same_line(cite))
         && entry.quote.as_deref() == Some(quote)
 }
+
+/// `mark list`: the markers with no entry and no answer, of `session` when
+/// given, resolved across the store and the `provider` transcripts on disk
+/// (an unknown id is kept as typed). The session as resolved, and the
+/// markers.
+///
+/// # Errors
+///
+/// An ambiguous or too-short prefix, or a store error.
+pub fn list<E: crate::cases::PortError>(
+    ctx: &crate::cases::Ctx<'_, E>,
+    provider: crate::Provider,
+    session: Option<&SessionId>,
+) -> Result<(Option<SessionId>, Vec<MarkRecord>)> {
+    let session = session
+        .map(|id| crate::cases::resolve::session_or_typed(ctx, provider, id))
+        .transpose()?;
+    let marks = ctx.store.read().marks().uncataloged(session.as_ref())?;
+    Ok((session, marks))
+}
