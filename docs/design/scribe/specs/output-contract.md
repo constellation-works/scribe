@@ -485,7 +485,13 @@ is, and the latest typed turn holding it gives `answer.at`. A later answer
 replaces an earlier one until the item closes; an older typed turn changes
 nothing, and so does a replay of the stored turn (same words, same session,
 same time). When the item's `answer_in` names another session,
-stderr says the user must also type it there. `entry close <id>` takes
+stderr says the user must also type it there. The comparison is the answer
+the item retains after the write, not the command's `--related` session:
+`--related` only scopes the search for the quote, and the retained answer's
+session is the one holding its latest typed turn. So an older answer from
+another session that the store ignores gives no notice when the retained
+answer is the one typed in the `answer_in` session; a retained answer from
+another session still gives the notice. `entry close <id>` takes
 `--decision <id>`, an active decision whose `settles` names the item, or
 `--note` (at most 300 characters), or both; without `--note` the note reads
 `settled by <decision>`. It retires the item with `retirement_reason`
