@@ -79,8 +79,8 @@ pub(crate) enum GroupCommand {
     Close {
         /// Group id, unique prefix, or project group slug
         id: String,
-        /// Words the user typed in this session that contain the group id; closes
-        /// the group for a session that holds no seat in it
+        /// Words the user typed in this session that contain the whole group id (g-1
+        /// does not match g-12); closes the group for a session that holds no seat in it
         #[arg(long)]
         quote: Option<String>,
     },
