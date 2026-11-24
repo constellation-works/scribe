@@ -71,7 +71,8 @@ pub fn capture_request(
 
 /// Whether `tag` is a catcher whose `from` reads turns by `speaker`.
 pub(crate) fn reads(tag: &TagDef, speaker: Speaker) -> bool {
-    tag.capture.from().is_some_and(|from| from.reads(speaker))
+    !crate::entry::is_decision_or_item(tag.name.as_str())
+        && tag.capture.from().is_some_and(|from| from.reads(speaker))
 }
 
 /// The first trigger of `tag` that fires in a turn's own words `own`

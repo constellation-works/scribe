@@ -2,11 +2,9 @@
 //! each stays fresh.
 //!
 //! Tags come from `config.toml` (`[tags.<name>]`), merged over the shipped
-//! defaults (`preferences` and `standard`) and agent-created `tags.json`;
-//! config claims take precedence. Without a config the shipped defaults
-//! apply: `preferences` (docs/design/scribe/4_decisions.md, "Decisions are
-//! recorded on their Orbit task, not in a shipped tag") and the shipped
-//! action tag `standard`. Declaring `[tags.<name>]`
+//! defaults and agent-created `tags.json`. The shipped set includes
+//! `decision`, `handoff`, `open-item`, `preferences` and the action tag
+//! `standard`. Declaring `[tags.<name>]`
 //! adds a new tag and overrides only the fields set on a shipped tag. A
 //! config word that collides with a shipped name or alias wins: that shipped
 //! tag loses the word, and `tag list` warns ("Config tags merge with the
@@ -420,14 +418,14 @@ impl TagTable {
         Ok((Self::new(tags)?, warnings))
     }
 
-    /// The tags scribe ships: `handoff` (`require_quote`), `preferences`
-    /// (aliases `preference`, `pref`; stale after 180 days) and the action
-    /// tag `standard`.
+    /// The tags scribe ships, sorted by name.
     #[must_use]
     pub fn defaults() -> Self {
         let mut tags: Vec<TagDef> = Self::shipped_preferences()
             .into_iter()
             .chain(Self::shipped_handoff())
+            .chain(Self::shipped(crate::entry::DECISION_TAG))
+            .chain(Self::shipped(crate::entry::OPEN_ITEM_TAG))
             .collect();
         for (name, _, _) in SHIPPED_ACTION_TAGS {
             if let Some(def) = Self::shipped_action(name) {
@@ -438,15 +436,42 @@ impl TagTable {
         Self { tags }
     }
 
-    /// The shipped tag named `name` (`handoff`, `preferences` or `standard`).
+    /// The shipped tag named `name`.
     /// A partial `[tags.<name>]` table inherits the fields it omits from this.
     #[must_use]
     pub fn shipped(name: &str) -> Option<TagDef> {
         match name {
             "preferences" => Self::shipped_preferences(),
             crate::handoff::HANDOFF_TAG => Self::shipped_handoff(),
+            crate::entry::DECISION_TAG => Self::shipped_agent_record(
+                name,
+                ["decisions", "dec"],
+                "A decision that outlives its task.",
+            ),
+            crate::entry::OPEN_ITEM_TAG => Self::shipped_agent_record(
+                name,
+                ["open-items", "item"],
+                "A question or action that waits for {user}.",
+            ),
             _ => Self::shipped_action(name),
         }
+    }
+
+    fn shipped_agent_record(name: &str, aliases: [&str; 2], description: &str) -> Option<TagDef> {
+        Some(TagDef {
+            name: name.parse().ok()?,
+            aliases: aliases
+                .into_iter()
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .ok()?,
+            description: Some(description.to_owned()),
+            stale_after_days: None,
+            action: None,
+            require_quote: false,
+            require_evidence: false,
+            capture: CaptureRules::default(),
+        })
     }
 
     /// The shipped `handoff` tag: a memory tag with `require_quote = true`

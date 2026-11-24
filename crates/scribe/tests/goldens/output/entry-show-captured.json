@@ -59,5 +59,7 @@
     "task": null
   },
   "handoff_mode": null,
+  "decision": null,
+  "item": null,
   "removal_instruction": null
 }

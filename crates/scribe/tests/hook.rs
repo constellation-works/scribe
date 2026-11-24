@@ -1507,36 +1507,36 @@ fn write_config(fx: &Fixture, body: &str) {
 }
 
 #[test]
-fn decisions_and_its_old_aliases_are_unknown_tags_without_config() {
+fn decision_and_open_item_markers_are_refused_before_a_model_call() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
-    let typed = "#scribe decisions: squash-merge agent PRs\n#scribe decision: rebase never\n#scribe dec: keep merge commits";
-    marked_turns(&claude, &[("u-1", typed)]);
-    let answer = |marker: u32, quote: &str| {
-        json!({"marker": marker, "kind": "entry", "tag": "decisions", "statement": "A choice.",
-               "subject": "merging", "quote": quote, "message": "u-1", "reason": ""})
-    };
-    let path = annotating_claude(
-        &fx,
-        &json!([
-            answer(1, "squash-merge agent PRs"),
-            answer(2, "rebase never"),
-            answer(3, "keep merge commits"),
-        ]),
+    marked_turns(
+        &claude,
+        &[
+            (
+                "u-1",
+                "#scribe decisions: squash-merge agent PRs\n#scribe decision: rebase never\n#scribe dec: keep merge commits",
+            ),
+            (
+                "u-2",
+                "#scribe open-item: Which check runs?\n#scribe item: Restart the server\n#scribe open-items: Which host?",
+            ),
+        ],
     );
+    let path = annotating_claude(&fx, &json!([]));
     let out = hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     let message = reply(&out)["systemMessage"].as_str().unwrap().to_owned();
     assert_eq!(
         message
-            .matches("nothing recorded for #scribe in your message — the model chose a tag that is not configured")
+            .matches("record decisions and open items through scribe entry add")
             .count(),
-        3,
+        6,
         "{message}"
     );
-    assert!(!claude_stdin(&fx, 0).contains("hint:"), "no hint names it");
+    assert!(!fx.home().join("claude-stdin-0").exists());
     let codes: Vec<Value> = audit(&fx).iter().map(|l| l["error_code"].clone()).collect();
-    assert_eq!(codes, vec![json!("unknown_tag"); 3]);
-    assert!(entries(&fx).is_empty(), "a refused marker writes no entry");
+    assert_eq!(codes, vec![json!("unknown_tag"); 6]);
+    assert!(entries(&fx).is_empty());
 }
 
 #[test]
@@ -1659,7 +1659,8 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
         text(&found.stdout)
     );
 
-    // New writes under the old name are refused; settling the old entry works.
+    // The alias requires typed fields for a new decision. The older entries
+    // still settle by their original ids.
     let refused = fx.run(&[
         "entry",
         "add",
@@ -1671,7 +1672,7 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
     ]);
     assert_ne!(refused.status.code(), Some(0));
     assert!(
-        text(&refused.stderr).contains("unknown tag"),
+        text(&refused.stderr).contains("a decision requires --decided-by"),
         "{}",
         text(&refused.stderr)
     );

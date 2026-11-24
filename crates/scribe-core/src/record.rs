@@ -40,7 +40,7 @@ pub enum RecordError {
     InvalidTopics(String),
     /// A related reference did not have a known `kind:` prefix and a target.
     #[error(
-        "invalid related reference '{0}': expected task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>"
+        "invalid related reference '{0}': expected task:<id>, pr:<owner>/<repo>#<n>, repo:<slug>, session:<id> or doc:<repo>/<path>#<anchor>"
     )]
     InvalidRelated(String),
     /// An author name was not 1-40 lowercase letters, digits, `.`, `_` or `-`.
@@ -523,6 +523,8 @@ pub enum RelatedKind {
     Repo,
     /// Another session record.
     Session,
+    /// A document section, `<repo>/<path>#<anchor>`.
+    Doc,
 }
 
 impl RelatedKind {
@@ -534,6 +536,7 @@ impl RelatedKind {
             Self::Pr => "pr",
             Self::Repo => "repo",
             Self::Session => "session",
+            Self::Doc => "doc",
         }
     }
 
@@ -543,6 +546,7 @@ impl RelatedKind {
             "pr" => Some(Self::Pr),
             "repo" => Some(Self::Repo),
             "session" => Some(Self::Session),
+            "doc" => Some(Self::Doc),
             _ => None,
         }
     }
@@ -586,7 +590,8 @@ impl TryFrom<String> for Related {
             let kind = RelatedKind::from_prefix(prefix)?;
             let ok = !target.is_empty()
                 && target.chars().count() <= Label::MAX_CHARS
-                && !target.chars().any(|c| c.is_whitespace() || c.is_control());
+                && !target.chars().any(|c| c.is_whitespace() || c.is_control())
+                && (kind != RelatedKind::Doc || doc_target(target));
             ok.then(|| Self {
                 kind,
                 target: target.to_owned(),
@@ -594,6 +599,16 @@ impl TryFrom<String> for Related {
         });
         parsed.ok_or(RecordError::InvalidRelated(value))
     }
+}
+
+fn doc_target(target: &str) -> bool {
+    target.split_once('#').is_some_and(|(location, anchor)| {
+        !anchor.is_empty()
+            && !anchor.contains('#')
+            && location
+                .split_once('/')
+                .is_some_and(|(repo, path)| !repo.is_empty() && !path.is_empty())
+    })
 }
 
 impl FromStr for Related {

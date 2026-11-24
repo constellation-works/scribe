@@ -15,6 +15,18 @@ Options:
       --content <CONTENT>
           Replacement content
 
+      --option <OPTIONS>
+          Replace a decision's options in full, repeatable
+
+      --clear-options
+          Clear a decision's options and recommendation
+
+      --recommended <RECOMMENDED>
+          Set the 1-based recommendation for a decision
+
+      --rationale <RATIONALE>
+          Replace an agent decision's rationale
+
       --add-topic <ADD_TOPIC>
           Topic to add, repeatable
 

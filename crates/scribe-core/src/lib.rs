@@ -74,9 +74,9 @@ pub mod voice;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
-    AgentEntry, Cite, ContentFrom, Entry, EntryError, EntryFilter, EntryId, EntryPatch,
-    EntryStatus, Instruction, NewEntry, Outcome, OutcomeState, Speaker, TagName, Window,
-    WindowTurn,
+    AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
+    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, ItemAnswer, ItemClosure, NewEntry,
+    OpenItem, Outcome, OutcomeState, Speaker, TagName, Window, WindowTurn,
 };
 pub use error::{Error, Result, WriteRefusal};
 pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};

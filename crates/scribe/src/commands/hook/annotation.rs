@@ -281,7 +281,20 @@ pub(in crate::commands) fn run<M: Models>(
             updates.push((key(mark), MarkChange::Refused(code)));
             says.push(Say::Silent);
         }
-        if item.open.is_empty() || calls >= turns {
+        let open: Vec<&Mark> = item
+            .open
+            .iter()
+            .filter(|mark| {
+                if let Some(refused) = annotation::record_tag_refusal(mark, &config.tags) {
+                    updates.push((key(mark), MarkChange::Refused(refused.code())));
+                    says.push(Say::Reason(refused.message().to_owned()));
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+        if open.is_empty() || calls >= turns {
             continue;
         }
         calls += 1;
@@ -294,7 +307,6 @@ pub(in crate::commands) fn run<M: Models>(
             .filter(|m| transcript::user_turn(m).is_some())
             .filter(|m| codex_cwd.is_some() || typed.contains(&m.uuid))
             .collect();
-        let open: Vec<&Mark> = item.open.iter().collect();
         let request = annotation::request(
             &open,
             window,
@@ -309,7 +321,7 @@ pub(in crate::commands) fn run<M: Models>(
             Some(adapter) => adapter.annotation(&request).map_err(|e| e.to_string()),
             None => Err(String::from("no model adapter")),
         };
-        for mark in &item.open {
+        for mark in open {
             let found = answer
                 .as_ref()
                 .map(|a| a.marks.iter().find(|m| m.marker == mark.number));

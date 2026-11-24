@@ -10,6 +10,11 @@
 //! refused, so a hand-edited file with a typo is reported, not half-read.
 //! Never rename or retype a field without a store format bump.
 
+mod records;
+
+pub use records::{AnswerIn, Decision, InvalidAnswerIn, ItemAnswer, ItemClosure, OpenItem};
+pub(crate) use records::{DECISION_TAG, OPEN_ITEM_TAG, is_decision_or_item};
+
 use crate::record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, Related, Topic, Topics,
     nullable, nullable_date,
@@ -398,6 +403,12 @@ pub struct Entry {
     /// Refresh mode for a handoff, or null for older and other entries.
     #[serde(default)]
     pub handoff_mode: Option<crate::handoff::Mode>,
+    /// A structured decision, absent from trial entries.
+    #[serde(default)]
+    pub decision: Option<Decision>,
+    /// A structured open item, absent from trial entries.
+    #[serde(default)]
+    pub item: Option<OpenItem>,
     /// The chat leading up to a typed `#scribe` line under an action tag
     /// (format 8); `null` for every other entry.
     #[serde(deserialize_with = "nullable")]
@@ -683,6 +694,8 @@ impl NewEntry {
             removal_instruction: None,
             stated_by: self.stated_by,
             handoff_mode: None,
+            decision: None,
+            item: None,
             outcome: None,
             content: self.content,
         }
@@ -740,6 +753,10 @@ pub struct AgentEntry {
     /// Daniel's correction that prompted it, verbatim; required under a
     /// tag configured with `require_quote`, refused under a memory tag.
     pub quote: Option<String>,
+    /// Decision fields, required for new decision entries.
+    pub decision: Option<Decision>,
+    /// Open-item fields, required for new open items.
+    pub item: Option<OpenItem>,
     /// A finding's evidence pointer; required under a `require_evidence`
     /// tag, refused under any other tag.
     pub evidence: Option<String>,
@@ -760,6 +777,12 @@ pub struct AgentEntry {
 pub struct EntryPatch {
     /// Replacement content, only for agent notes.
     pub content: Option<String>,
+    /// Replacement options for a structured decision. An empty list clears them.
+    pub decision_options: Option<Vec<String>>,
+    /// A new recommendation, using the 1-based index of a decision option.
+    pub decision_recommended: Option<usize>,
+    /// Replacement rationale for a structured agent decision.
+    pub decision_rationale: Option<String>,
     /// Topics to add.
     pub add_topics: Vec<Topic>,
     /// Topics to remove.

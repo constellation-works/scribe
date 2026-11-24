@@ -181,11 +181,17 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     } else {
         Vec::new()
     };
+    let mut historical = Vec::new();
     for tag in &mut question.scope.tags {
         if let Some(def) = config.tags.resolve(tag.as_str()) {
+            // The new alias also names a historical tag with its own entries.
+            if tag.as_str() == "decisions" && def.name.as_str() == "decision" {
+                historical.push(tag.clone());
+            }
             *tag = def.name.clone();
         }
     }
+    question.scope.tags.extend(historical);
     let corpus = Corpus {
         entries: &entries.listing.items,
         sessions: &sessions.listing.items,

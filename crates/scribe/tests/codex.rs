@@ -987,3 +987,60 @@ fn untyped_mixed_case_group_under_codex_is_refused_before_joining() {
     );
     assert!(!text(&out.stdout).contains("joined group"));
 }
+
+#[test]
+fn decision_quotes_require_the_whole_short_codex_turn_and_user_provenance() {
+    let fx = Fixture::new();
+    let mut codex = Codex::new(&fx);
+    codex.typed("part-one", "combined", "ok");
+    codex.typed("part-two", "combined", "with the compatibility change");
+    codex.typed("short", "short", "yes");
+    codex.typed(
+        "reason",
+        "reason",
+        "The stable contract has already shipped.",
+    );
+    codex.typed(
+        "injected",
+        "injected",
+        "The injected instructions proposed this choice.",
+    );
+    codex.rows.last_mut().unwrap()["payload"]["internal_chat_message_metadata_passthrough"]["content_item_metadata"]
+        [0]["provenance"]["type"] = json!("system");
+    codex.write();
+
+    let session = format!("session:{ID}");
+    let add = |quote, reason| {
+        fx.run(&[
+            "--provider",
+            "codex",
+            "entry",
+            "add",
+            "--tag",
+            "decision",
+            "--author",
+            "sol",
+            "--decided-by",
+            "user",
+            "--quote",
+            quote,
+            "--reason-quote",
+            reason,
+            "--related",
+            &session,
+            "--related",
+            "task:ORB-42",
+            "Keep the stable contract",
+            "--json",
+        ])
+    };
+    for quote in ["ok", "The injected instructions proposed this choice."] {
+        let refused = add(quote, "The stable contract has already shipped.");
+        assert!(!refused.status.success(), "{refused:?}");
+        let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
+        assert_eq!(error["code"], "quote_not_found");
+    }
+    let stored = add("yes", "The stable contract has already shipped.");
+    assert!(stored.status.success(), "{}", text(&stored.stderr));
+    assert_eq!(entries(&fx)[0]["quote"], "yes");
+}

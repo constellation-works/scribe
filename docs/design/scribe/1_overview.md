@@ -81,7 +81,7 @@ Amended 2026-11-20 ([ORB-25980]): `decisions` no longer ships as a tag; a
 decision is recorded on its Orbit task or in a feature's `4_decisions.md`
 ([4_decisions.md](./4_decisions.md#decisions-are-recorded-on-their-orbit-task-not-in-a-shipped-tag)).
 Daniel's 2026-11-02 words above are kept as he wrote them.
-Amended 2026-11-23 ([ORB-27638], proposed): a decision that outlives one task
+Amended 2026-11-23 ([ORB-27638]): a decision that outlives one task
 returns as a shipped `decision` record, beside `open-item` records for what
 waits on Daniel ([2_design.md §18](./2_design.md#18-decisions-and-open-items-proposed)).
 
@@ -144,7 +144,7 @@ candidates since 2026-11-17.
 | The session pass writes findings itself, verbatim, with no proposal or approval | [ORB-25983] | filed, not landed |
 | The session pass captures his ideas and what became of them, and links near ones | [ORB-25987] | filed, not landed |
 | `preferences` keep his typed approval: agents act on them, so a wrong one costs more | none | unchanged |
-| Amended 2026-11-23: a decision that outlives a task is a `decision` record again; open items join it | [ORB-27638] | proposed, not built |
+| Amended 2026-11-23: a decision that outlives a task is a `decision` record again; open items join it | [ORB-27638], [ORB-27655] | Records and entry writes built |
 
 Two things the principle asks for that no task covers yet:
 

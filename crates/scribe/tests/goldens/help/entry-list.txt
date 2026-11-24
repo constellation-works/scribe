@@ -8,7 +8,7 @@ Options:
       --project <PROJECT>   Only entries recorded in this project (a repository slug, or global) [default: any]
       --group <ID>          Only entries of member sessions in this group (id, unique prefix, or project group slug)
       --topic <TOPIC>       Only entries carrying this topic; repeat it to require every one [default: any]
-      --related <REF>       Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
+      --related <REF>       Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug>, doc:<repo>/<path>#<anchor>, or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
       --since <DATE>        Only records on or after this day, YYYY-MM-DD [default: no lower bound]
       --until <DATE>        Only records on or before this day, YYYY-MM-DD [default: no upper bound]
       --after <TIME>        Only entries created strictly after this instant (RFC 3339, such as 2026-11-15T09:00:00Z): an intake's cursor [default: any]

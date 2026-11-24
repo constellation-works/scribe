@@ -660,6 +660,8 @@ fn agent_write_shapes_match_goldens() {
                 evidence: None,
                 as_of: None,
                 handoff_mode: None,
+                decision: None,
+                item: None,
                 self_refresh_verified: false,
                 spoken: false,
             },
@@ -1578,4 +1580,94 @@ fn every_session_reads_the_same_after_the_move_into_scribe_db() {
         "a new session numbers after the moved ones"
     );
     report(&failures);
+}
+
+#[test]
+fn typed_records_match_goldens() {
+    use scribe_core::{
+        AgentEntry, AnswerIn, Decision, Label, OpenItem, Project, Redactor, Store, Topics,
+    };
+
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let now = time::macros::datetime!(2026-11-10 01:00 UTC);
+    let author = || "opus".parse().unwrap();
+    let draft = |tag: &str, content: &str| AgentEntry {
+        tag: tag.parse().unwrap(),
+        content: content.to_owned(),
+        project: Project::sanitized("scribe"),
+        topics: Topics::default(),
+        related: vec!["task:ORB-42".parse().unwrap()],
+        host: Label::sanitized("host", "host"),
+        quote: None,
+        decision: None,
+        item: None,
+        evidence: None,
+        as_of: None,
+        handoff_mode: None,
+        self_refresh_verified: false,
+        spoken: false,
+    };
+    store
+        .add_agent_entry(
+            AgentEntry {
+                item: Some(OpenItem {
+                    asked_by: "orbit-0-capt".parse().unwrap(),
+                    options: vec![
+                        "Use the stable API".to_owned(),
+                        "Use the experimental API".to_owned(),
+                    ],
+                    recommended: Some(1),
+                    why: Some("Compatibility tests cover the stable API.".to_owned()),
+                    blocked: "Publishing the release".to_owned(),
+                    answer_in: AnswerIn::Any,
+                    answer: None,
+                    closed: None,
+                }),
+                ..draft("open-item", "Which API should the release use?")
+            },
+            author(),
+            now,
+            &Redactor::default(),
+        )
+        .unwrap();
+    store
+        .add_agent_entry(
+            AgentEntry {
+                decision: Some(Decision {
+                    decided_by: "0-chief".parse().unwrap(),
+                    rationale: Some(
+                        "Keeping two interfaces would double the maintenance work.".to_owned(),
+                    ),
+                    reason_quote: None,
+                    options: vec![
+                        "Keep the stable API".to_owned(),
+                        "Maintain both interfaces".to_owned(),
+                    ],
+                    recommended: Some(1),
+                    supersedes: None,
+                    settles: Some("open-item-1".parse().unwrap()),
+                }),
+                ..draft("decision", "Keep the stable API for this release series.")
+            },
+            author(),
+            now,
+            &Redactor::default(),
+        )
+        .unwrap();
+
+    let mut failures = Vec::new();
+    for (name, id) in [
+        ("entry-show-decision", "decision-1"),
+        ("entry-show-open-item", "open-item-1"),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[&["entry", "show", id][..], *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

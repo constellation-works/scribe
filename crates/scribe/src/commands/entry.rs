@@ -1,5 +1,8 @@
 //! Entry listing, display and audited direct agent writes.
 
+mod records;
+
+use self::records::{RecordArgs, verify_decision_quotes};
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
@@ -40,7 +43,9 @@ Examples:
   scribe entry add --tag preferences --author opus 'Use the stable API'
   scribe entry add --tag preferences --author opus --related session:<id> --quote '<their words>' --spoken 'The user prefers short updates.'
   scribe entry add --tag idea --author opus --related session:<id> 'Cache the manifest between runs'
-  scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'";
+  scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'
+  scribe entry add --tag decision --author opus --decided-by user --quote '<their words>' --related session:<id> --related task:<id> 'Keep the stable API'
+  scribe entry add --tag open-item --author opus --asked-by 0-chief --blocked 'Local checks' --answer-in hand 'Restart the dashboard'";
 
 const RETIRE_EXAMPLES: &str = "\
 The user's entry retires only on their instruction: --session and --instruction.
@@ -67,9 +72,9 @@ Examples:
 /// Verbs on the `entry` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum EntryCommand {
-    /// Add an agent note (never attributed to the user)
+    /// Add an agent note, decision or open item
     #[command(after_help = ADD_EXAMPLES)]
-    Add(AddArgs),
+    Add(Box<AddArgs>),
     /// Update an entry's content or metadata
     ///
     /// Updates content or metadata; user entries and approved claims allow metadata only.
@@ -121,7 +126,7 @@ pub(crate) struct ListArgs {
     #[arg(long, value_name = "TOPIC")]
     pub(crate) topic: Vec<Topic>,
 
-    /// Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
+    /// Only entries mentioning this reference (task:<id>, pr:<owner>/<repo>#<n>, repo:<slug>, doc:<repo>/<path>#<anchor>, or session:<id>, whose id may be a unique prefix); repeat it to accept any of them [default: any]
     #[arg(long, value_name = "REF")]
     pub(crate) related: Vec<Related>,
 
@@ -282,14 +287,6 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 args.spoken,
             )?;
             scribe_core::check_handoff_related(&def.name, &related)?;
-            if let Some(quote) = &args.quote {
-                verify_quote(
-                    ctx,
-                    &related,
-                    quote,
-                    def.name.as_str() == scribe_core::HANDOFF_TAG,
-                )?;
-            }
             let self_refresh_verified =
                 if def.name.as_str() == scribe_core::HANDOFF_TAG && args.quote.is_none() {
                     verify_self_refresh(ctx, &related, args.mode)?;
@@ -297,26 +294,45 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 } else {
                     false
                 };
+            let (decision, item) = args.record.into_records(ctx, &def.name)?;
+            let draft = scribe_core::AgentEntry {
+                tag: args.tag,
+                content: args.content,
+                project: args.project,
+                topics,
+                related,
+                host: ctx.host(),
+                quote: args.quote,
+                evidence: args.evidence,
+                as_of: args.as_of,
+                spoken: args.spoken,
+                handoff_mode: args.mode,
+                self_refresh_verified,
+                decision,
+                item,
+            };
+            ctx.store().check_new_entry_records(&def.name, &draft)?;
+            if let Some(quote) = &draft.quote {
+                if let Some(decision) = &draft.decision {
+                    verify_decision_quotes(
+                        ctx,
+                        &draft.related,
+                        quote,
+                        decision.reason_quote.as_deref(),
+                    )?;
+                } else {
+                    verify_quote(
+                        ctx,
+                        &draft.related,
+                        quote,
+                        def.name.as_str() == scribe_core::HANDOFF_TAG,
+                    )?;
+                }
+            }
             let redactor = ctx.redactor(&ctx.store().config()?)?;
-            let entry = ctx.store().add_agent_entry(
-                scribe_core::AgentEntry {
-                    tag: args.tag,
-                    content: args.content,
-                    project: args.project,
-                    topics,
-                    related,
-                    host: ctx.host(),
-                    quote: args.quote,
-                    evidence: args.evidence,
-                    as_of: args.as_of,
-                    spoken: args.spoken,
-                    handoff_mode: args.mode,
-                    self_refresh_verified,
-                },
-                args.author,
-                ctx.now(),
-                &redactor,
-            )?;
+            let entry = ctx
+                .store()
+                .add_agent_entry(draft, args.author, ctx.now(), &redactor)?;
             written_with_action(ctx, entry, true)
         }
         EntryCommand::Pickup(args) => {
@@ -340,6 +356,10 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             scribe_core::check_agent_author(&args.author)?;
             let patch = scribe_core::EntryPatch {
                 content: args.content,
+                decision_options: (args.clear_options || !args.options.is_empty())
+                    .then_some(args.options),
+                decision_recommended: args.recommended,
+                decision_rationale: args.rationale,
                 add_topics: args.add_topic,
                 remove_topics: args.remove_topic,
                 add_related: super::resolve_relateds(ctx, &args.add_related)?,
@@ -810,10 +830,10 @@ pub(crate) struct AddArgs {
     /// Topic, repeatable (at most five)
     #[arg(long)]
     topic: Vec<Topic>,
-    /// Related reference, repeatable; under an action tag, name the session you write in (session:<id>, whose id may be a unique prefix, stored in full)
+    /// Related reference, repeatable (task:, pr:, repo:, doc:, session:); name the source session for checked quotes or the writing session for action tags
     #[arg(long)]
     related: Vec<scribe_core::Related>,
-    /// The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
+    /// The user's verbatim words from a related session; required for a user decision and by quote tags except a verified self-refresh handoff
     #[arg(long)]
     quote: Option<String>,
     /// Handoff refresh mode: continue or new
@@ -825,9 +845,11 @@ pub(crate) struct AddArgs {
     /// The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
     #[arg(long, value_name = "DATE", value_parser = scribe_core::parse_day)]
     as_of: Option<time::Date>,
-    /// Record on the user's spoken instruction: sets stated_by to --author; requires --quote, --related session:<id>, and a non-action memory tag (not handoff or require_evidence)
+    /// Record an ordinary memory note on the user's spoken instruction; sets stated_by to --author and requires --quote and --related session:<id>
     #[arg(long)]
     spoken: bool,
+    #[command(flatten)]
+    record: RecordArgs,
 }
 
 #[derive(Debug, Args)]
@@ -855,6 +877,18 @@ pub(crate) struct UpdateArgs {
     /// Replacement content
     #[arg(long)]
     content: Option<String>,
+    /// Replace a decision's options in full, repeatable
+    #[arg(long = "option")]
+    options: Vec<String>,
+    /// Clear a decision's options and recommendation
+    #[arg(long, conflicts_with_all = ["options", "recommended"])]
+    clear_options: bool,
+    /// Set the 1-based recommendation for a decision
+    #[arg(long)]
+    recommended: Option<usize>,
+    /// Replace an agent decision's rationale
+    #[arg(long)]
+    rationale: Option<String>,
     /// Topic to add, repeatable
     #[arg(long)]
     add_topic: Vec<Topic>,

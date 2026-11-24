@@ -1714,7 +1714,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 16);
+    assert_eq!(version(), 17);
 }
 
 #[test]
@@ -2958,7 +2958,8 @@ fn claude_member_capture_replays_after_rotation_and_waits_for_a_missing_cursor()
 
     support::sql(
         &f.root(),
-        "DROP TABLE group_claude_seen; DROP TABLE group_claude_progress; PRAGMA user_version = 14;",
+        "ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item;
+         DROP TABLE group_claude_seen; DROP TABLE group_claude_progress; PRAGMA user_version = 14;",
     );
     let mut append = std::fs::OpenOptions::new()
         .append(true)

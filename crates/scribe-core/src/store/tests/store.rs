@@ -78,11 +78,8 @@ fn a_missing_root_reads_as_an_empty_store() {
     assert!(store.proposals().unwrap().is_empty());
     assert!(store.control().unwrap().sessions.is_empty());
     let tags = store.list_tags().unwrap();
-    assert_eq!(
-        tags.tags.len(),
-        3,
-        "handoff, preferences and standard, with no entries"
-    );
+    assert_eq!(tags.tags.len(), 5, "five shipped tags");
+    assert!(tags.tags.iter().all(|tag| tag.entries == 0));
     let err = store.entry(&"preferences-1".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "entry_not_found");
     assert!(
@@ -1445,6 +1442,8 @@ None.
             as_of: None,
             spoken: false,
             handoff_mode: None,
+            decision: None,
+            item: None,
             self_refresh_verified: false,
         };
 

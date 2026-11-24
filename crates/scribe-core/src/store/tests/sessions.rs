@@ -558,6 +558,10 @@ fn stage_legacy_checkpoint(root: &Path, session: &str, record: &str, user_versio
     assert_eq!(inserted, 1, "the legacy writer found the session row");
     if let Some(version) = user_version {
         conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item;",
+        )
+        .unwrap();
         if version == 6 {
             // Remove the schema-9 group tables and schema-7 entry column
             // before replaying the upgrades from version 6.
@@ -652,7 +656,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 16);
+    assert_eq!(user_version(&root), 17);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -798,7 +802,7 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 16);
+    assert_eq!(user_version(&root), 17);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")

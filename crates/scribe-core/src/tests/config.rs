@@ -43,7 +43,14 @@ env = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"]
     let names: Vec<&str> = config.tags.tags().iter().map(|t| t.name.as_str()).collect();
     assert_eq!(
         names,
-        ["handoff", "preferences", "rituals", "standard"],
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "rituals",
+            "standard"
+        ],
         "a [tags] table merges with the shipped tags"
     );
     assert_eq!(
@@ -328,7 +335,17 @@ fn a_partial_preferences_table_keeps_shipped_aliases_description_and_stale_days(
 
     let remind = Config::parse("[tags.remind]\naction = true\n").unwrap();
     let names: Vec<&str> = remind.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
+    assert_eq!(
+        names,
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "remind",
+            "standard"
+        ]
+    );
     assert_eq!(remind.tags.resolve("preferences"), Some(&shipped));
     assert!(remind.tag_warnings.is_empty());
     assert!(
@@ -430,7 +447,17 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
     .unwrap();
     assert!(mac.tag_warnings.is_empty(), "{:?}", mac.tag_warnings);
     let names: Vec<&str> = mac.tags.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["handoff", "preferences", "remind", "standard"]);
+    assert_eq!(
+        names,
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "remind",
+            "standard"
+        ]
+    );
     let shipped = TagTable::shipped_preferences().unwrap();
     let prefs = mac.tags.resolve("preferences").unwrap();
     assert_eq!(prefs.aliases, shipped.aliases);

@@ -358,7 +358,8 @@ fn refuse(kind: WriteRefusal, message: String) -> Error {
 
 /// Whether `quote` is a verbatim span of `typed` (§6.4), or, for a short
 /// answer such as "yes", the whole of it.
-fn quoted_in(typed: &str, quote: &str) -> bool {
+#[must_use]
+pub fn quoted_in(typed: &str, quote: &str) -> bool {
     if verbatim::contains(typed, quote) {
         return true;
     }
@@ -469,6 +470,13 @@ fn string(value: Option<&serde_json::Value>) -> Option<String> {
 #[must_use]
 pub fn claude_session_conversation(bytes: &[u8], session: &SessionId) -> Vec<Spoken> {
     claude_conversation(&claude_session_lines(bytes, session))
+}
+
+/// Origin-verified typed Claude turns, excluding copied session histories
+/// and keeping the full typed text for whole-turn quote checks.
+#[must_use]
+pub fn claude_session_conversation_raw_typed(bytes: &[u8], session: &SessionId) -> Vec<Spoken> {
+    claude_conversation_raw_typed(&claude_session_lines(bytes, session))
 }
 
 /// Verified Claude turns with the same text selection as the session pass.

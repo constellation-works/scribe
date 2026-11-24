@@ -90,6 +90,39 @@ fn outcome() -> crate::Outcome {
     }
 }
 
+fn entry_records(entry: &mut crate::Entry) {
+    let agent: crate::AuthorName = "0-chief".parse().unwrap();
+    entry.decision = Some(crate::Decision {
+        decided_by: agent.clone(),
+        rationale: Some(String::new()),
+        reason_quote: Some(String::new()),
+        options: vec![String::new()],
+        recommended: None,
+        supersedes: None,
+        settles: None,
+    });
+    entry.item = Some(crate::OpenItem {
+        asked_by: agent.clone(),
+        options: vec![String::new()],
+        recommended: None,
+        why: Some(String::new()),
+        blocked: String::new(),
+        answer_in: crate::AnswerIn::Any,
+        answer: Some(crate::ItemAnswer {
+            words: String::new(),
+            session: "s-1".parse().unwrap(),
+            at: T0,
+            recorded_by: agent.clone(),
+        }),
+        closed: Some(crate::ItemClosure {
+            at: T0,
+            by: agent,
+            decision: None,
+            note: String::new(),
+        }),
+    });
+}
+
 #[test]
 fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
     // A new free-text field must join both REDACTED_FIELDS and its record's
@@ -105,6 +138,7 @@ fn the_redacted_field_inventory_is_exactly_the_fields_masked() {
         quote: Some(String::new()),
     });
     e.outcome = Some(outcome());
+    entry_records(&mut e);
     e.removal_instruction = e.instruction.clone();
     e.window = Some(crate::Window {
         turns: vec![crate::WindowTurn {
@@ -167,6 +201,7 @@ fn a_configured_secret_is_masked_in_every_covered_field() {
         quote: Some(String::new()),
     });
     e.outcome = Some(outcome());
+    entry_records(&mut e);
     for (_, text) in entry_fields(&mut e) {
         *text = leak.clone();
     }

@@ -93,6 +93,8 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
         removal_instruction: None,
         stated_by: None,
         handoff_mode: None,
+        decision: None,
+        item: None,
         outcome: None,
         content: String::from("something"),
     }

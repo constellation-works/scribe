@@ -134,6 +134,14 @@ impl Mark {
     }
 }
 
+/// Refuse a marker explicitly naming a typed record before asking a model.
+#[must_use]
+pub fn record_tag_refusal(mark: &Mark, tags: &TagTable) -> Option<CheckRefusal> {
+    mark.hint(tags)
+        .filter(|tag| crate::entry::is_decision_or_item(tag.as_str()))
+        .map(|_| CheckRefusal::RecordTag)
+}
+
 /// The tag word a folded form 2 or 3 line ends with: `… (to|in|under)
 /// [my|the] <tag>`, before any trailing hashtags.
 fn tail(rest: &str) -> Option<String> {
@@ -394,11 +402,11 @@ fn cut(text: &str, max: usize) -> String {
     out
 }
 
-/// Whether `def` may be written by `#scribe` marker capture. `handoff` is
-/// always an agent-written entry with six headings and a session reference
-/// (§16), never a user-authored annotation.
+/// Whether `def` may be written by `#scribe` marker capture. Handoffs,
+/// decisions and open items are written through `entry add`.
 fn is_annotatable(def: &crate::tag::TagDef) -> bool {
-    def.name.as_str() != crate::handoff::HANDOFF_TAG
+    let tag = def.name.as_str();
+    tag != crate::handoff::HANDOFF_TAG && !crate::entry::is_decision_or_item(tag)
 }
 
 /// The call for one marked turn: its markers the model reads (those with
@@ -480,6 +488,8 @@ pub enum CheckRefusal {
     NotVerbatim,
     /// The tag is not configured, or not the hint's.
     WrongTag,
+    /// The marker names a decision or open item, written through entry add.
+    RecordTag,
     /// A context (or one under two sentences), subject, quote or reason
     /// out of bounds, or a kind that
     /// is neither `entry` nor `none`.
@@ -492,7 +502,7 @@ impl CheckRefusal {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotVerbatim => "quote_not_verbatim",
-            Self::WrongTag => "unknown_tag",
+            Self::WrongTag | Self::RecordTag => "unknown_tag",
             Self::OutOfBounds => "annotation_out_of_bounds",
         }
     }
@@ -505,6 +515,7 @@ impl CheckRefusal {
             Self::WrongTag => {
                 "the model chose a tag that is not configured or not the one you named"
             }
+            Self::RecordTag => "record decisions and open items through scribe entry add",
             Self::OutOfBounds => "the model's answer is out of bounds",
         }
     }
@@ -533,6 +544,9 @@ pub fn check(
     typed: &[&Message],
     tags: &TagTable,
 ) -> Result<Checked, CheckRefusal> {
+    if let Some(refused) = record_tag_refusal(mark, tags) {
+        return Err(refused);
+    }
     match answer.kind.as_str() {
         "none" => {
             let reason = answer.reason.trim();

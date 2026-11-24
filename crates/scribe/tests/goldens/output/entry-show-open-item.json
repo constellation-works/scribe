@@ -1,0 +1,58 @@
+{
+  "id": "open-item-1",
+  "tag": "open-item",
+  "status": "active",
+  "project": "scribe",
+  "topics": [],
+  "related": [
+    "task:ORB-42"
+  ],
+  "provider": "cli",
+  "host": "host",
+  "created": "2026-11-10T01:00:00Z",
+  "updated": "2026-11-10T01:00:00Z",
+  "said": "",
+  "content": "Which API should the release use?",
+  "content_from": {
+    "kind": "agent",
+    "role": null,
+    "message": null,
+    "at": null
+  },
+  "cite": null,
+  "superseded_by": null,
+  "review_after": null,
+  "author": {
+    "kind": "agent",
+    "name": "opus"
+  },
+  "updated_by": null,
+  "retirement_reason": null,
+  "quote": null,
+  "evidence": null,
+  "as_of": null,
+  "window_turns": null,
+  "window": null,
+  "action": null,
+  "admitted": null,
+  "approved_by": null,
+  "instruction": null,
+  "stated_by": null,
+  "outcome": null,
+  "handoff_mode": null,
+  "decision": null,
+  "item": {
+    "asked_by": "orbit-0-capt",
+    "options": [
+      "Use the stable API",
+      "Use the experimental API"
+    ],
+    "recommended": 1,
+    "why": "Compatibility tests cover the stable API.",
+    "blocked": "Publishing the release",
+    "answer_in": "any",
+    "answer": null,
+    "closed": null
+  },
+  "removal_instruction": null
+}

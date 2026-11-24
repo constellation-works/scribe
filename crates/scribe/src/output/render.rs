@@ -508,6 +508,14 @@ pub(crate) fn show(
                     )
                 )?;
             }
+            if entry.decision.is_some()
+                && let Some(quote) = &entry.quote
+            {
+                writeln!(out, "quote\t{}", one_line(quote))?;
+            }
+            for (label, value) in entry_record_fields(entry) {
+                writeln!(out, "{label}\t{}", one_line(&value))?;
+            }
             if let Some(a) = &entry.admitted {
                 writeln!(
                     out,
@@ -951,6 +959,46 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
     writeln!(out)
 }
 
+fn entry_record_fields(entry: &EntryPayload) -> Vec<(&'static str, String)> {
+    let mut fields = Vec::new();
+    let (options, recommended) = if let Some(decision) = &entry.decision {
+        fields.push(("decided_by", decision.decided_by.to_string()));
+        if let Some(rationale) = &decision.rationale {
+            fields.push(("rationale", rationale.clone()));
+        }
+        if let Some(reason) = &decision.reason_quote {
+            fields.push(("reason_quote", reason.clone()));
+        }
+        if let Some(id) = &decision.supersedes {
+            fields.push(("supersedes", id.to_string()));
+        }
+        if let Some(id) = &decision.settles {
+            fields.push(("settles", id.to_string()));
+        }
+        (&decision.options, decision.recommended)
+    } else if let Some(item) = &entry.item {
+        fields.push(("asked_by", item.asked_by.to_string()));
+        fields.push(("blocked", item.blocked.clone()));
+        fields.push(("answer_in", item.answer_in.to_string()));
+        if let Some(why) = &item.why {
+            fields.push(("why", why.clone()));
+        }
+        (&item.options, item.recommended)
+    } else {
+        return fields;
+    };
+    fields.extend(
+        options
+            .iter()
+            .enumerate()
+            .map(|(i, option)| ("option", format!("{}. {option}", i + 1))),
+    );
+    if let Some(n) = recommended {
+        fields.push(("recommended", n.to_string()));
+    }
+    fields
+}
+
 fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Result<()> {
     entry_metadata(out, e, sink.color)?;
     field(out, "content", or_dash(&e.content))
@@ -1031,6 +1079,9 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
     }
     if let Some(quote) = &e.quote {
         field(out, "quote", quote)?;
+    }
+    for (label, value) in entry_record_fields(e) {
+        field(out, label, &value)?;
     }
     if let Some(outcome) = &e.outcome {
         field(

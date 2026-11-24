@@ -1,4 +1,4 @@
-Add an agent note (never attributed to the user)
+Add an agent note, decision or open item
 
 Usage: scribe entry add [OPTIONS] --tag <TAG> --author <AUTHOR> <CONTENT>
 
@@ -6,18 +6,29 @@ Arguments:
   <CONTENT>  Content to record
 
 Options:
-      --tag <TAG>           Tag name or alias
-      --author <AUTHOR>     Agent name (always recorded as the agent channel; reserved names are refused)
-      --project <PROJECT>   Project slug [default: global]
-      --topic <TOPIC>       Topic, repeatable (at most five)
-      --related <RELATED>   Related reference, repeatable; under an action tag, name the session you write in (session:<id>, whose id may be a unique prefix, stored in full)
-      --quote <QUOTE>       The user's words, verbatim from a typed turn in the related session; required by quote tags except a verified self-refresh handoff
-      --mode <MODE>         Handoff refresh mode: continue or new
-      --evidence <POINTER>  Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
-      --as-of <DATE>        The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
-      --spoken              Record on the user's spoken instruction: sets stated_by to --author; requires --quote, --related session:<id>, and a non-action memory tag (not handoff or require_evidence)
-  -h, --help                Print help
-  -V, --version             Print version
+      --tag <TAG>                    Tag name or alias
+      --author <AUTHOR>              Agent name (always recorded as the agent channel; reserved names are refused)
+      --project <PROJECT>            Project slug [default: global]
+      --topic <TOPIC>                Topic, repeatable (at most five)
+      --related <RELATED>            Related reference, repeatable (task:, pr:, repo:, doc:, session:); name the source session for checked quotes or the writing session for action tags
+      --quote <QUOTE>                The user's verbatim words from a related session; required for a user decision and by quote tags except a verified self-refresh handoff
+      --mode <MODE>                  Handoff refresh mode: continue or new
+      --evidence <POINTER>           Evidence pointer (a path, task, run, experiment or commit); required under a require_evidence tag, refused under any other tag
+      --as-of <DATE>                 The date a require_evidence entry's result was true, as YYYY-MM-DD [default: today]
+      --spoken                       Record an ordinary memory note on the user's spoken instruction; sets stated_by to --author and requires --quote and --related session:<id>
+      --decided-by <DECIDED_BY>      For a decision, user or the deciding agent's session name
+      --rationale <RATIONALE>        For an agent decision, why the agent chose it
+      --reason-quote <REASON_QUOTE>  For a user decision, their verbatim reason from a related session
+      --supersedes <SUPERSEDES>      The active decision this decision reverses
+      --settles <SETTLES>            The open item this decision answers
+      --asked-by <ASKED_BY>          For an open item, the asking agent's session name
+      --blocked <BLOCKED>            For an open item, what waits meanwhile (or 'nothing')
+      --answer-in <ANSWER_IN>        Where to answer an open item: any (default), session:<id>, or hand
+      --option <OPTIONS>             An option shown in full, repeatable; supply zero or two to six
+      --recommended <RECOMMENDED>    The 1-based index of the recommended option
+      --why <WHY>                    Why the recommended option is preferred for an open item
+  -h, --help                         Print help
+  -V, --version                      Print version
 
 Global options:
       --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
@@ -30,3 +41,5 @@ Examples:
   scribe entry add --tag preferences --author opus --related session:<id> --quote '<their words>' --spoken 'The user prefers short updates.'
   scribe entry add --tag idea --author opus --related session:<id> 'Cache the manifest between runs'
   scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'
+  scribe entry add --tag decision --author opus --decided-by user --quote '<their words>' --related session:<id> --related task:<id> 'Keep the stable API'
+  scribe entry add --tag open-item --author opus --asked-by 0-chief --blocked 'Local checks' --answer-in hand 'Restart the dashboard'

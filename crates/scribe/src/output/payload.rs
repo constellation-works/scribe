@@ -278,6 +278,8 @@ pub(crate) struct EntryPayload {
     /// parking it; `null` for every other entry.
     pub(crate) outcome: Option<scribe_core::Outcome>,
     pub(crate) handoff_mode: Option<scribe_core::handoff::Mode>,
+    pub(crate) decision: Option<scribe_core::Decision>,
+    pub(crate) item: Option<scribe_core::OpenItem>,
     /// The user's checked instruction that retired or forgot this entry;
     /// `null` otherwise.
     pub(crate) removal_instruction: Option<InstructionPayload>,
@@ -452,6 +454,8 @@ impl From<&Entry> for EntryPayload {
             stated_by: entry.stated_by.as_ref().map(AuthorPayload::from),
             outcome: entry.outcome.clone(),
             handoff_mode: entry.handoff_mode,
+            decision: entry.decision.clone(),
+            item: entry.item.clone(),
             removal_instruction: entry
                 .removal_instruction
                 .as_ref()

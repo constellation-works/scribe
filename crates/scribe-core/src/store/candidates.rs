@@ -633,6 +633,8 @@ fn pass_entry(
         removal_instruction: None,
         stated_by: Some(Author::session_pass()),
         handoff_mode: None,
+        decision: None,
+        item: None,
         outcome: Some(outcome),
         content: draft.context.clone().unwrap_or_default(),
     }

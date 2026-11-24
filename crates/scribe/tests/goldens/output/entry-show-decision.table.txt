@@ -1,0 +1,24 @@
+id          decision-1
+tag         decision
+status      active
+project     scribe
+topics      -
+related     task:ORB-42
+provider    cli
+host        host
+created     2026-11-10T01:00:00Z
+updated     2026-11-10T01:00:00Z
+review      -
+superseded  -
+from        agent note (opus)
+cite        agent note (opus)
+cwd         -
+said        -
+author      agent:opus
+decided_by  0-chief
+rationale   Keeping two interfaces would double the maintenance work.
+settles     open-item-1
+option      1. Keep the stable API
+option      2. Maintain both interfaces
+recommended 1
+content     Keep the stable API for this release series.
