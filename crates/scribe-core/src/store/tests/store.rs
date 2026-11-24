@@ -1308,6 +1308,32 @@ mod marks {
     }
 
     #[test]
+    fn deferring_preserves_existing_attempts_and_final_outcomes() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("root"));
+        record(
+            &store,
+            vec![(key(1), MarkChange::Failed), (key(2), MarkChange::Nothing)],
+        );
+        let before = store.marks(&"s-9".parse().unwrap()).unwrap();
+        let results = record(
+            &store,
+            vec![
+                (key(1), MarkChange::Deferred),
+                (key(2), MarkChange::Deferred),
+                (key(3), MarkChange::Deferred),
+            ],
+        );
+        assert!(matches!(results[0], MarkResult::Already(_)));
+        assert!(matches!(results[1], MarkResult::Already(_)));
+        assert_eq!(results[2], MarkResult::Deferred);
+        let after = store.marks(&"s-9".parse().unwrap()).unwrap();
+        assert_eq!(&after[..2], &before);
+        assert_eq!(after[2].outcome, MarkState::Pending);
+        assert_eq!(after[2].attempts, 0);
+    }
+
+    #[test]
     fn three_failed_calls_refuse_the_marker_as_model_failed() {
         let dir = private_tempdir();
         let store = Store::open(dir.path().join("root"));

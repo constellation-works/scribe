@@ -25,6 +25,8 @@ pub struct MarkKey {
 /// What to record for one marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkChange {
+    /// Record an unattempted marker deferred by the per-Stop turn limit.
+    Deferred,
     /// Write this checked annotation entry (`content` the statement,
     /// `quote` his words, `stated_by` [`Author::annotation`]).
     Write(Box<NewEntry>),
@@ -39,6 +41,8 @@ pub enum MarkChange {
 /// What recording one marker came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkResult {
+    /// The marker was deferred without spending an attempt.
+    Deferred,
     /// The entry was written.
     Added(Entry),
     /// An earlier run already wrote it, or already settled the marker
@@ -165,7 +169,7 @@ impl Store {
                     .iter()
                     .position(|m| m.session == key.session && m.is(&key.message, key.marker));
                 if let Some(found) = at.map(|i| &marks[i])
-                    && found.outcome.is_final()
+                    && (found.outcome.is_final() || matches!(change, MarkChange::Deferred))
                 {
                     out.push(MarkResult::Already(found.clone()));
                     continue;
@@ -183,6 +187,10 @@ impl Store {
                     at: now,
                 };
                 let (next, result) = match change {
+                    MarkChange::Deferred => (
+                        record(MarkState::Pending, None, None, 0),
+                        MarkResult::Deferred,
+                    ),
                     MarkChange::Nothing => (
                         record(MarkState::None, None, None, attempts),
                         MarkResult::Nothing,

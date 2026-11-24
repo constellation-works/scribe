@@ -5168,7 +5168,9 @@ again.
   third failure the outcome is `refused` (`model_failed`) and the marker is
   given up (below). At most 3 markers per turn: a fourth is refused
   `too_many_marks` before any call. At most 2 marked turns per Stop,
-  oldest first; the rest stay `pending` for the next Stop. The window is
+  oldest first; the rest are recorded as `pending` without spending an
+  attempt, so `mark list` can discover them before the next Stop. Existing
+  pending attempts are preserved. The window is
   at most 40,000 characters in, and the answer at most 3 × about 2,100
   value characters.
 - **When the model fails** (timeout, error, a shape the schema refuses):

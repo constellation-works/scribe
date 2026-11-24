@@ -2055,11 +2055,20 @@ fn one_stop_catalogs_at_most_two_marked_turns_oldest_first() {
     let path = annotating_claude(&fx, &none_for(1..=1));
     hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(claude_calls(&fx).len(), 2);
-    let settled: Vec<Value> = marks_json(&fx)
-        .iter()
-        .map(|m| m["message"].clone())
-        .collect();
-    assert_eq!(settled, vec![json!("u-1"), json!("u-2")]);
+    let before = marks_json(&fx);
+    assert_eq!(before.len(), 3);
+    assert_eq!(before[2]["message"], "u-3");
+    assert_eq!(before[2]["outcome"], "pending");
+    assert_eq!(before[2]["attempts"], 0);
+    let audit_before = audit(&fx);
+    let listed = mark_cmd(&fx, &["mark", "list", "--json"], &path);
+    assert!(listed.status.success(), "{listed:?}");
+    let doc: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(doc["total"], 1, "{doc}");
+    assert_eq!(doc["marks"][0]["message"], "u-3");
+    assert_eq!(marks_json(&fx), before, "list must not write marks");
+    assert_eq!(audit(&fx), audit_before, "list must not audit");
+    assert_eq!(claude_calls(&fx).len(), 2, "list must not call a model");
     hook_path(&fx, "stop", &claude.payload("stop.json"), &path);
     assert_eq!(claude_calls(&fx).len(), 3);
     assert_eq!(marks_json(&fx).len(), 3);

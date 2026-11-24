@@ -294,7 +294,14 @@ pub(in crate::commands) fn run<M: Models>(
                 }
             })
             .collect();
-        if open.is_empty() || calls >= turns {
+        if calls >= turns {
+            for mark in open {
+                updates.push((key(mark), MarkChange::Deferred));
+                says.push(Say::Silent);
+            }
+            continue;
+        }
+        if open.is_empty() {
             continue;
         }
         calls += 1;
@@ -395,6 +402,7 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
         )
     };
     match (result, say) {
+        (MarkResult::Deferred, _) => {}
         (MarkResult::Already(_), _) => {
             // A marker a concurrent Stop settled: audited by that Stop.
         }
