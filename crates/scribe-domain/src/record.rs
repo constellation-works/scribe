@@ -222,7 +222,7 @@ impl Author {
     /// approving a session-pass candidate: an agent-channel author, since
     /// the words are the assistant's and the transcript names no crew.
     #[must_use]
-    pub(crate) fn assistant() -> Self {
+    pub fn assistant() -> Self {
         Self {
             kind: AuthorKind::Agent,
             name: AuthorName(String::from("assistant")),

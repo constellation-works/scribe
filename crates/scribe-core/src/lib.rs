@@ -48,12 +48,21 @@ pub use scribe_domain::activity;
 pub use scribe_domain::annotation;
 pub mod apps;
 pub mod composition;
+pub use apps::brief::rules as brief;
 pub use provider::Provider;
-pub use scribe_domain::brief;
 pub use scribe_domain::capture;
 pub(crate) use scribe_domain::checks;
+pub(crate) use scribe_domain::claim;
 pub(crate) use scribe_domain::config;
-pub use scribe_domain::consistency;
+/// The consistency rules and the settling verbs, at the path they had in
+/// the domain: the stale step (`apps/consistency`), settling and approval
+/// (`apps/proposal`) and `forget` with the outcome every verb reports
+/// (`apps/entry`).
+pub mod consistency {
+    pub use crate::apps::consistency::rules::*;
+    pub use crate::apps::entry::rules::*;
+    pub use crate::apps::proposal::rules::*;
+}
 pub use scribe_domain::control;
 pub(crate) use scribe_domain::entry;
 pub(crate) use scribe_domain::error;
@@ -76,10 +85,10 @@ pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
 pub mod providers;
 pub(crate) mod runtime;
+pub use apps::search::rules as search;
 pub use runtime::RunLimits;
 pub use runtime::audit::{Audit, AuditMeta, AuditSubject};
 pub use runtime::errors::CommandError;
-pub use scribe_domain::search;
 pub(crate) use scribe_domain::session;
 #[cfg(not(test))]
 pub(crate) use scribe_store as store;

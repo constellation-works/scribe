@@ -16,7 +16,7 @@
 //! 4. `#scribe approve|reject <p-id>` · `#scribe retire|forget <entry-id>` ·
 //!    `#scribe forget <session-id>` (`s-<n>`, or the provider's UUID; §15.7)
 //!
-//! It parses to a [`Settling`] ([`crate::consistency::settle`] applies it).
+//! It parses to a [`Settling`] (scribe-core's `consistency::settle` applies it).
 //! A settling verb with the wrong kind of id is refused,
 //! never read as a marker, and so is [`GLOBAL_OPENER`] on a settling line.
 //!

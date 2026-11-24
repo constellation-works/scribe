@@ -232,7 +232,8 @@ impl Voice {
 
 // --- whose words an entry holds -------------------------------------------
 
-pub(crate) fn day(at: OffsetDateTime) -> String {
+/// The calendar day of `at`, as a record writes a date.
+pub fn day(at: OffsetDateTime) -> String {
     crate::record::nullable_date::format(at.date())
 }
 
@@ -279,7 +280,7 @@ pub fn captured_whose(user: &UserName, speaker: Speaker) -> String {
 /// or an agent's statement of their turn: one the user typed/marked,
 /// approved, or spoke on instruction, or one the pass captured; `None` for
 /// every other entry.
-pub(crate) fn stated_quote(entry: &Entry) -> Option<&str> {
+pub fn stated_quote(entry: &Entry) -> Option<&str> {
     entry
         .stated_by
         .as_ref()

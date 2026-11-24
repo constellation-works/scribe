@@ -324,13 +324,13 @@ impl Store {
     }
 
     /// The most recently opened group in the project.
-    pub(crate) fn last_group(&self, project: &Project) -> Result<Option<crate::brief::LastGroup>> {
+    pub(crate) fn last_group(&self, project: &Project) -> Result<Option<crate::LastGroup>> {
         self.read_groups(|conn, path| {
             let summary = if refuse_newer(conn, path)? >= 11 { "summary" } else { "NULL" };
             conn.query_row(
                 &format!("SELECT id, title, closed, {summary} FROM groups WHERE project = ?1 ORDER BY id DESC LIMIT 1"),
                 [project.as_str()],
-                |row| Ok(crate::brief::LastGroup {
+                |row| Ok(crate::LastGroup {
                     id: format!("g-{}", row.get::<_, i64>(0)?),
                     title: row.get(1)?,
                     closed: row.get(2)?,

@@ -22,6 +22,7 @@ use crate::handoff;
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState};
 use crate::record::Project;
 use crate::session::{SessionId, SessionRecord};
+pub use crate::store::LastGroup;
 use std::collections::{BTreeMap, BTreeSet};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -50,19 +51,6 @@ pub struct Brief {
     pub sessions: Vec<BriefSession>,
     /// The open claims, grouped by tag in tag order; claims by id within a tag.
     pub claims: Vec<ClaimGroup>,
-}
-
-/// The group metadata and summary carried by a project brief.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct LastGroup {
-    /// Stable group id.
-    pub id: String,
-    /// Group title.
-    pub title: String,
-    /// Closing time, if closed.
-    pub closed: Option<String>,
-    /// Summary produced at close, if still retained.
-    pub summary: Option<String>,
 }
 
 /// One session in the brief.

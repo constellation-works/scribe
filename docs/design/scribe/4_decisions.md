@@ -132,7 +132,7 @@ The existing 15 are not moved.
 ## ask ranks in memory with no persisted index
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/ask/` (from S5; now `crates/scribe-domain/src/search.rs`)
+**Code anchors:** `crates/scribe-core/src/ask/` (from S5; now `crates/scribe-core/src/apps/search/rules.rs`)
 
 > **Superseded in part, 2026-11-24 ([ORB-27911]):** `ask` is removed
 > ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). The in-memory BM25 ranking it describes stands as
@@ -5030,7 +5030,7 @@ removed. A store whose records never moved is refused, not read.
 ## ask, the Orbit task search and the tmux popup are removed
 
 **Recorded:** 2026-11-24 · [ORB-27911] · **Daniel's direction**
-**Code anchors:** `crates/scribe/src/commands/mod.rs` `Command`; `crates/scribe-domain/src/search.rs` (the ranking `ask` shared); `plugin/.orbit-plugin/plugin.yaml` `spec.tools`
+**Code anchors:** `crates/scribe/src/commands/mod.rs` `Command`; `crates/scribe-core/src/apps/search/rules.rs` (the ranking `ask` shared); `plugin/.orbit-plugin/plugin.yaml` `spec.tools`
 
 Supersedes [ask is the only tool advertised to agents](#ask-is-the-only-tool-advertised-to-agents),
 [The plugin backend serves `ask` alone until S6](#the-plugin-backend-serves-ask-alone-until-s6)
@@ -5093,7 +5093,7 @@ behave as before. Step 2 removes the remaining in-process model calls.
 ## The consistency scan and Stop call no model
 
 **Recorded:** 2026-11-24 · [ORB-27911] · **Daniel's direction**
-**Code anchors:** `crates/scribe-core/src/cases/annotation.rs` (`run`, `hints`); `crates/scribe-core/src/cases/consistency_scan.rs`; `crates/scribe-domain/src/consistency.rs` (`stale_candidates`)
+**Code anchors:** `crates/scribe-core/src/cases/annotation.rs` (`run`, `hints`); `crates/scribe-core/src/cases/consistency_scan.rs`; `crates/scribe-core/src/apps/consistency/rules.rs` (`stale_candidates`)
 
 Supersedes [Removal of the feature is the main deactivation route; age is a generous backstop](#removal-of-the-feature-is-the-main-deactivation-route-age-is-a-generous-backstop)
 and [Removal evidence is Daniel-authored entries only](#removal-evidence-is-daniel-authored-entries-only),

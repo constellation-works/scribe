@@ -1858,7 +1858,7 @@ characters around the best-matching terms, `author` an entry's author else
 best first. It reads only and writes no audit line. Discussions are
 searched once S7 builds them, together with the read-only sources.
 
-As built (S11): `scribe_domain::search` builds the units with
+As built (S11): `scribe_core::search` (`apps/search/rules.rs`) builds the units with
 `store_docs` and ranks them with `rank` (the named-tag boost and the §6.2
 step 0 narrowing included); until ORB-27911 `ask` shared both. `--kind` takes `entry` and `session`
 until S7 builds discussions. Terms with no word ranking can use (all

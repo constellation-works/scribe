@@ -4,4 +4,6 @@
 //! two contract types. Nothing here reads the database or a repository, and
 //! nothing decides between two records.
 //!
-//! Empty until step 5 moves the record shapes in.
+//! Step 5 moves the record shapes in, family by family.
+
+pub(crate) mod group;

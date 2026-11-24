@@ -6,10 +6,8 @@
 mod action;
 mod activity;
 mod annotation;
-mod brief;
 mod capture;
 mod config;
-mod consistency;
 mod control;
 mod entry;
 mod group;
@@ -21,7 +19,6 @@ mod pass;
 mod proposal;
 mod record;
 mod redact;
-mod search;
 mod session;
 mod tag;
 mod transcript;

@@ -7,8 +7,8 @@
 //! `proposal`; the shared metadata ([`Project`], [`Topic`], [`Related`],
 //! [`Author`]) in `record`; `config.toml` ([`Config`]) in `config`; the
 //! model request and answer shapes in [`models`]; the rules
-//! that select and judge records (capture, claims, consistency, the pass,
-//! search, instructions, the brief) in their modules; and the typed [`Error`].
+//! that select and judge records (capture, claims, the pass, instructions)
+//! in their modules; and the typed [`Error`].
 //!
 //! The modules sit in four rings, each importing only its own and the ones
 //! before it: base, records, transcript, rules (ARCHITECTURE.md;
@@ -22,12 +22,10 @@
 pub mod action;
 pub mod activity;
 pub mod annotation;
-pub mod brief;
 pub mod capture;
 pub mod checks;
 pub mod claim;
 pub mod config;
-pub mod consistency;
 pub mod control;
 pub mod entry;
 pub mod error;
@@ -43,7 +41,6 @@ pub mod proposal;
 pub mod provider;
 pub mod record;
 pub mod redact;
-pub mod search;
 pub mod session;
 pub mod tag;
 pub mod text;

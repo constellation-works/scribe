@@ -81,20 +81,6 @@ fn store() -> Vec<Entry> {
 }
 
 #[test]
-fn a_stale_draft_quotes_the_start_of_the_entry() {
-    let mut e = with("preferences-3", 6, "the release train leaves on Thursdays");
-    e.review_after = Some(date!(2026 - 11 - 01));
-    let draft = consistency::stale(&e);
-    assert_eq!(draft.kind, ProposalKind::Stale);
-    assert_eq!(draft.newer, None);
-    assert_eq!(
-        draft.quotes[0].text,
-        "the release train leaves on Thursdays"
-    );
-    assert!(draft.reason.contains("2026-11-01"), "{}", draft.reason);
-}
-
-#[test]
 fn approve_supersedes_the_older_entry_and_is_idempotent() {
     let mut entries = store();
     let mut proposals = vec![proposal(
