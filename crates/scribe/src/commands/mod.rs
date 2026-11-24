@@ -28,11 +28,11 @@ mod store;
 mod tag;
 mod transcript;
 
-use crate::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
+use scribe_core::composition::Context;
 pub(crate) use scribe_core::runtime::RunLimits;
 use scribe_core::{DateRange, Skipped};
 use time::Date;

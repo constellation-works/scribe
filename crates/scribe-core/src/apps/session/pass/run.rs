@@ -1128,3 +1128,17 @@ pub fn attributed_project(
         &cwd_project,
     )
 }
+
+/// `session pass`'s errors, each the variant it was before the flow moved to
+/// the session app (ORB-27707 step 3).
+impl From<PassRunError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: PassRunError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            PassRunError::Core(e) => Self::Core(e),
+            PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
+            PassRunError::Port(e) => e,
+        }
+    }
+}

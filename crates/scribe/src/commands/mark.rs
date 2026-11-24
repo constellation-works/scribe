@@ -5,13 +5,13 @@
 //! after every model call failed (`model_failed`). It reads only.
 
 use super::{ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
 use scribe_core::SessionId;
 use scribe_core::apps::mark::{Command, Outcome, exec};
+use scribe_core::composition::Context;
 
 pub(super) const EXAMPLES: &str = "\
 Examples:

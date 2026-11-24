@@ -294,13 +294,16 @@ ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the
 # The model callers are five flows: session pass, catalog and rebuild,
 # memory refresh and group close. Only those flows, and the mod.rs of their
 # apps (which carries the adapter in its Command and the model failure in its
-# Error), name providers, the Models port or ModelError. The request and
-# answer shapes under crate::models stay free to use.
+# Error), name providers, the Models port or ModelError; so does
+# runtime/errors.rs, whose CommandError carries the model failure as the
+# binary's error did (ORB-27921 step 3, PR 4). The request and answer shapes
+# under crate::models stay free to use.
 models_port='crate::providers(::|[^[:alnum:]_]|$)|(^|[^[:alnum:]_])(Models|ModelError|ModelsOnce|ModelsEach)([^[:alnum:]_]|$)'
 while IFS= read -r file; do
   case "${file#"$CORE"/}" in
     apps/session/mod.rs | apps/session/catalog.rs | apps/session/rebuild.rs | apps/session/pass/* | \
-      apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs) continue ;;
+      apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs | \
+      runtime/errors.rs) continue ;;
   esac
   ban "$file" "$models_port" \
     "${file#crates/} names the Models port: only session pass, catalog, rebuild, memory refresh and group close call a model"

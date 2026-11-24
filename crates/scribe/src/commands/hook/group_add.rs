@@ -20,14 +20,16 @@
 use super::group_turns;
 #[cfg(test)]
 use super::payload::PromptPayload;
-use crate::Context;
+#[cfg(test)]
 use crate::error::CliError;
 #[cfg(test)]
 use crate::output::Output;
 use scribe_core::SessionId;
 #[cfg(test)]
 use scribe_core::apps::hook::{self, GroupAddInput};
+use scribe_core::composition::Context;
 use scribe_core::message::NewMessage;
+use scribe_core::runtime::errors::CommandError;
 use std::path::Path;
 
 /// Apply a typed `group add` line.
@@ -47,7 +49,7 @@ pub(super) fn read_past(
     ctx: &Context,
     id: &SessionId,
     path: &Path,
-) -> Result<Option<Vec<NewMessage>>, CliError> {
+) -> Result<Option<Vec<NewMessage>>, CommandError> {
     #[cfg(test)]
     super::tests::group_add::before_past_read(path);
     group_turns::past(ctx, id, path)
@@ -61,7 +63,11 @@ pub(super) fn run_with_transcript_reader(
     payload: &PromptPayload,
     session: &SessionId,
     ctx: &Context,
-    mut read_past: impl FnMut(&Context, &SessionId, &Path) -> Result<Option<Vec<NewMessage>>, CliError>,
+    mut read_past: impl FnMut(
+        &Context,
+        &SessionId,
+        &Path,
+    ) -> Result<Option<Vec<NewMessage>>, CommandError>,
 ) -> Result<Output, CliError> {
     let mut read_past =
         |provider, id: &_, path: &_| read_past(&ctx.with_provider(provider), id, path);

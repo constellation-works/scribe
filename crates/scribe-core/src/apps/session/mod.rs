@@ -378,3 +378,17 @@ pub(crate) fn update_session_metadata(
 ) -> crate::Result<()> {
     verbs::SessionVerbs::update_session_metadata(store, id, field, value, redactor)
 }
+
+/// `scribe session` and `scribe transcript`'s errors, each the variant it was
+/// before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+            Error::Pass(e) => e.into(),
+            Error::Catalog(e) => e.into(),
+            Error::Rebuild(e) => e.into(),
+        }
+    }
+}

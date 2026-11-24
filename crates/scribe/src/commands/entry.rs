@@ -4,13 +4,13 @@ mod records;
 
 use self::records::RecordArgs;
 use super::{DateArgs, ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::apps::entry::{self, Command, Outcome, exec};
+use scribe_core::composition::Context;
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,

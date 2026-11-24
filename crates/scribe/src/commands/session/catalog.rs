@@ -20,13 +20,13 @@
 //! (4_decisions.md "The user writes only through their typed prompt").
 
 use super::{once, passed};
-use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
 #[cfg(test)]
 use scribe_core::Author;
 use scribe_core::apps::session::{self as app, CatalogInput, Command, exec};
+use scribe_core::composition::Context;
 use scribe_core::{AuthorName, Models, Project, SessionId};
 
 /// A catalog begun: its switch, whether this run wrote it, and the bytes.

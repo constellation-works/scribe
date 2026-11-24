@@ -11,8 +11,9 @@
 
 use super::payload::{self, StopPayload};
 use super::{group_add, session_end, session_start};
-use crate::{Context, error::CliError, output::Output};
+use crate::{error::CliError, output::Output};
 use scribe_core::apps::hook::{CodexInput, CodexStop, Command, exec, refused};
+use scribe_core::composition::Context;
 use serde_json::Value;
 
 pub(super) fn run(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, CliError> {

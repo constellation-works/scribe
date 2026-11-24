@@ -1,7 +1,6 @@
 //! The host's side of the apps' ports ([`Ctx`]): the clock, the provider
 //! transcripts on this host and the redactor, implemented on composition's
-//! [`Context`]. `E`, the ports' error, is built from the context's own
-//! [`HostError`]s.
+//! [`Context`]; every port reports a [`CommandError`].
 
 #[cfg(test)]
 mod tests;
@@ -10,20 +9,21 @@ pub(crate) mod transcripts;
 #[cfg(unix)]
 use super::ClaudeRead;
 use super::{
-    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, Runtime, TranscriptState,
-    Transcripts, Unreadable,
+    AuditNotes, Clock, Ctx, Discovered, Redaction, Runtime, TranscriptState, Transcripts,
+    Unreadable,
 };
 #[cfg(unix)]
 use crate::ClaudeCapturePosition;
-use crate::composition::{Context, HostError};
+use crate::composition::Context;
+use crate::runtime::errors::CommandError;
 use crate::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use transcripts as payload;
 
-impl<E: PortError + From<HostError>> Context<E> {
+impl Context {
     /// The store and this context's ports, for a use case's `run`.
-    pub fn core(&self) -> Ctx<'_, E> {
+    pub fn core(&self) -> Ctx<'_, CommandError> {
         Ctx {
             store: self.store(),
             clock: self,
@@ -33,12 +33,12 @@ impl<E: PortError + From<HostError>> Context<E> {
     }
 
     /// The store and this context's ports, for an app's `exec`.
-    pub fn runtime(&self) -> Runtime<'_, E> {
+    pub fn runtime(&self) -> Runtime<'_, CommandError> {
         Runtime::from_parts(self.store(), self, self, self)
     }
 }
 
-impl<E> AuditNotes for Context<E> {
+impl AuditNotes for Context {
     fn session(&self, session: &str) {
         self.note_instruction_session(session);
     }
@@ -52,9 +52,9 @@ impl<E> AuditNotes for Context<E> {
     }
 }
 
-impl<E> Clock for Context<E> {
+impl Clock for Context {
     fn now(&self) -> OffsetDateTime {
-        Context::<E>::now(self)
+        Context::now(self)
     }
 
     fn now_precise(&self) -> OffsetDateTime {
@@ -62,23 +62,23 @@ impl<E> Clock for Context<E> {
     }
 }
 
-impl<E: From<HostError>> Redaction for Context<E> {
-    type Error = E;
+impl Redaction for Context {
+    type Error = CommandError;
 
-    fn redactor(&self, config: &Config) -> Result<Redactor, E> {
-        Context::<E>::redactor(self, config).map_err(E::from)
+    fn redactor(&self, config: &Config) -> Result<Redactor, CommandError> {
+        Context::redactor(self, config)
     }
 }
 
-impl<E: PortError + From<HostError>> Transcripts for Context<E> {
-    type Error = E;
+impl Transcripts for Context {
+    type Error = CommandError;
 
     fn dir(&self) -> Option<PathBuf> {
         self.transcripts().map(PathBuf::from)
     }
 
-    fn files(&self, provider: Provider) -> Result<Vec<(SessionId, PathBuf)>, E> {
-        payload::files_for(&self.with_provider(provider)).map_err(E::from)
+    fn files(&self, provider: Provider) -> Result<Vec<(SessionId, PathBuf)>, CommandError> {
+        payload::files_for(&self.with_provider(provider))
     }
 
     fn check(
@@ -129,12 +129,16 @@ impl<E: PortError + From<HostError>> Transcripts for Context<E> {
         payload::claude_header(&self.with_provider(provider), path, session)
     }
 
-    fn locate_own(&self, provider: Provider, session: &SessionId) -> Result<Option<PathBuf>, E> {
-        payload::locate_own(&self.with_provider(provider), session).map_err(E::from)
+    fn locate_own(
+        &self,
+        provider: Provider,
+        session: &SessionId,
+    ) -> Result<Option<PathBuf>, CommandError> {
+        payload::locate_own(&self.with_provider(provider), session)
     }
 
-    fn discovered(&self, provider: Provider) -> Result<Discovered, E> {
-        payload::discovered_for(&self.with_provider(provider)).map_err(E::from)
+    fn discovered(&self, provider: Provider) -> Result<Discovered, CommandError> {
+        payload::discovered_for(&self.with_provider(provider))
     }
 
     #[cfg(unix)]

@@ -1,10 +1,10 @@
 //! `transcript list` and `transcript show` (2_design.md §5.8): uncataloged
 //! transcripts only, filters, a read-only root, and Daniel's first turns.
 
-use crate::Context;
 use crate::commands::transcript::{ListArgs, ShowArgs, TranscriptCommand};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
+use scribe_core::composition::Context;
 use scribe_core::composition::Env as AppEnv;
 use scribe_core::testing::StoreTestReads;
 use scribe_core::{Project, SessionId};

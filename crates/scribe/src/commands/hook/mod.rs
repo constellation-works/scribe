@@ -35,11 +35,11 @@ mod session_start;
 mod stop;
 mod user_prompt_submit;
 
-use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, Subcommand};
+use scribe_core::composition::Context;
 
 pub(super) const HOOK_EXAMPLES: &str = "\
 These run from provider packages or scribe init hooks, not by hand.

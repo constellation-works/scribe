@@ -6,11 +6,11 @@
 //! FTS5's `bm25()` (§15.7).
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
+use scribe_core::composition::Context;
 use scribe_core::search::{DEFAULT_LIMIT, RecordKind, SearchQuery};
 use scribe_core::{Project, TagName, Topic};
 use std::num::NonZeroUsize;

@@ -1,12 +1,12 @@
 //! Proposal listing and audited direct agent writes and settlement.
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
 use scribe_core::apps::proposal::{self, Command, Outcome, exec};
+use scribe_core::composition::Context;
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\

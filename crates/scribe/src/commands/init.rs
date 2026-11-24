@@ -1,9 +1,10 @@
 //! Install the binary-embedded generic skill and selected provider hooks.
 
 use super::admin;
-use crate::{Context, error::CliError, output::Output};
+use crate::{error::CliError, output::Output};
 use clap::Args;
 use scribe_core::apps::admin::{Command, exec};
+use scribe_core::composition::Context;
 use std::path::PathBuf;
 
 const SKILL: &str = include_str!("../../../../skills/scribe/SKILL.md");

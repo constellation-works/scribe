@@ -7,16 +7,13 @@
 //! `providers/`, nothing in the core reads an environment variable or
 //! touches a file (`scripts/check-dependency-direction.sh`).
 //!
-//! [`Context`] is generic over its ports' error `E`, which the binary sets to
-//! its own error until the core's error mapping lands (ORB-27921 step 3,
-//! PR 4); the context's own failures are [`HostError`]s, which `E` is built
-//! from.
+//! [`Context`]'s ports and its own failures report a
+//! [`CommandError`](crate::runtime::errors::CommandError).
 
 use crate::providers::{ClaudeCliModels, allowed_env};
-pub use crate::runtime::errors::HostError;
+use crate::runtime::errors::CommandError;
 use crate::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
-use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -69,9 +66,9 @@ impl Env {
     }
 }
 
-/// Everything a command needs, resolved. `E` is the error its ports report
-/// ([`crate::runtime::Transcripts`], [`crate::runtime::Redaction`]).
-pub struct Context<E = HostError> {
+/// Everything a command needs, resolved.
+#[derive(Clone, Debug)]
+pub struct Context {
     store: Store,
     transcripts: Option<PathBuf>,
     codex_transcripts: Option<PathBuf>,
@@ -88,38 +85,6 @@ pub struct Context<E = HostError> {
     /// its final store transaction, so the enclosing guard must not emit a
     /// duplicate or unwind line.
     audit_committed: Arc<AtomicBool>,
-    error: PhantomData<fn() -> E>,
-}
-
-impl<E> Clone for Context<E> {
-    fn clone(&self) -> Self {
-        Self {
-            store: self.store.clone(),
-            transcripts: self.transcripts.clone(),
-            codex_transcripts: self.codex_transcripts.clone(),
-            codex_archived: self.codex_archived.clone(),
-            provider: self.provider,
-            interactive: self.interactive,
-            instruction: Arc::clone(&self.instruction),
-            audit_committed: Arc::clone(&self.audit_committed),
-            error: PhantomData,
-        }
-    }
-}
-
-impl<E> std::fmt::Debug for Context<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Context")
-            .field("store", &self.store)
-            .field("transcripts", &self.transcripts)
-            .field("codex_transcripts", &self.codex_transcripts)
-            .field("codex_archived", &self.codex_archived)
-            .field("provider", &self.provider)
-            .field("interactive", &self.interactive)
-            .field("instruction", &self.instruction)
-            .field("audit_committed", &self.audit_committed)
-            .finish()
-    }
 }
 
 /// The ids of the user's instruction a write ran on (2_design.md §12.4): the
@@ -133,14 +98,14 @@ pub struct InstructionNote {
     pub message: Option<String>,
 }
 
-impl<E> Context<E> {
+impl Context {
     /// Resolve the context. Data directory precedence: `--root` >
     /// `SCRIBE_ROOT` > `$HOME/.scribe`.
     ///
     /// # Errors
     ///
-    /// [`HostError::NoDataDir`] when nothing names a data directory.
-    pub fn resolve(root_flag: Option<&Path>, env: &Env) -> Result<Self, HostError> {
+    /// [`CommandError::NoDataDir`] when nothing names a data directory.
+    pub fn resolve(root_flag: Option<&Path>, env: &Env) -> Result<Self, CommandError> {
         let root = resolve_root(root_flag, env)?;
         tracing::debug!(root = %root.display(), "resolved data directory");
         Ok(Self {
@@ -166,7 +131,6 @@ impl<E> Context<E> {
                 .is_some_and(|e| crate::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
             instruction: Arc::default(),
             audit_committed: Arc::default(),
-            error: PhantomData,
         })
     }
 
@@ -184,7 +148,6 @@ impl<E> Context<E> {
             interactive: false,
             instruction: Arc::default(),
             audit_committed: Arc::default(),
-            error: PhantomData,
         }
     }
 
@@ -268,7 +231,7 @@ impl<E> Context<E> {
     /// # Errors
     ///
     /// When the store or `config.toml` cannot be read.
-    pub fn config(&self) -> Result<Config, HostError> {
+    pub fn config(&self) -> Result<Config, CommandError> {
         Ok(self
             .store
             .read()
@@ -281,8 +244,8 @@ impl<E> Context<E> {
     ///
     /// # Errors
     ///
-    /// [`HostError::Usage`] when it is not.
-    pub fn require_runtime(&self) -> Result<(), HostError> {
+    /// [`CommandError::Usage`] when it is not.
+    pub fn require_runtime(&self) -> Result<(), CommandError> {
         let program = match self.provider {
             Provider::Codex => "codex",
             Provider::ClaudeCode => "claude",
@@ -304,7 +267,7 @@ impl<E> Context<E> {
             })
         });
         if !found {
-            return Err(HostError::Usage(format!(
+            return Err(CommandError::Usage(format!(
                 "{program} is not executable on PATH; install the selected runtime and rerun scribe init"
             )));
         }
@@ -342,15 +305,15 @@ impl<E> Context<E> {
     ///
     /// # Errors
     ///
-    /// [`HostError::RedactEnvUnset`] when a name has no value.
-    pub fn redactor(&self, config: &Config) -> Result<Redactor, HostError> {
+    /// [`CommandError::RedactEnvUnset`] when a name has no value.
+    pub fn redactor(&self, config: &Config) -> Result<Redactor, CommandError> {
         let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
         if !missing.is_empty() {
             tracing::warn!(
                 names = %missing.join(","),
                 "refusing to write: a configured [redact] env name has no value in this environment"
             );
-            return Err(HostError::RedactEnvUnset(missing));
+            return Err(CommandError::RedactEnvUnset(missing));
         }
         Ok(Redactor::from_config(config, |name| {
             std::env::var(name).ok()
@@ -417,8 +380,8 @@ fn host_name() -> Option<String> {
 ///
 /// # Errors
 ///
-/// [`HostError::NoDataDir`] when nothing names one.
-pub fn resolve_root(root_flag: Option<&Path>, env: &Env) -> Result<PathBuf, HostError> {
+/// [`CommandError::NoDataDir`] when nothing names one.
+pub fn resolve_root(root_flag: Option<&Path>, env: &Env) -> Result<PathBuf, CommandError> {
     let non_empty = |v: &Option<OsString>| v.clone().filter(|s| !s.is_empty());
     if let Some(flag) = root_flag {
         return Ok(flag.to_path_buf());
@@ -428,5 +391,5 @@ pub fn resolve_root(root_flag: Option<&Path>, env: &Env) -> Result<PathBuf, Host
     }
     non_empty(&env.home)
         .map(|home| PathBuf::from(home).join(DEFAULT_DIR))
-        .ok_or(HostError::NoDataDir)
+        .ok_or(CommandError::NoDataDir)
 }

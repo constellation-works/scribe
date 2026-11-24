@@ -13,7 +13,6 @@
 //! record, says `nothing changed` on stderr and writes no audit line.
 
 use super::{SessionRef, View, parse_session_ref};
-use crate::Context;
 use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
@@ -22,6 +21,7 @@ use scribe_core::AuthorName;
 use scribe_core::apps::session::{
     self as app, ActivateInput, ActivityWritten, Command, DeactivateInput, exec,
 };
+use scribe_core::composition::Context;
 
 /// The command paths in the audit log.
 pub(in crate::commands) const DEACTIVATE_COMMAND: &str = "session deactivate";

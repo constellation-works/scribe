@@ -6,6 +6,7 @@
 //! before a command runs, except [`CliError::Usage`]: arguments that each
 //! parse but contradict each other.
 
+use scribe_core::runtime::errors::CommandError;
 use std::io;
 
 /// Why a command failed. Every variant but [`CliError::Usage`] exits 1
@@ -173,194 +174,22 @@ impl CliError {
     }
 }
 
-/// `session pass`'s errors, each the variant it was before the flow moved to
-/// the session app (ORB-27707 step 3).
-/// The ports' error: the code the JSON error object carries.
-impl scribe_core::runtime::PortError for CliError {
-    fn code(&self) -> &'static str {
-        CliError::code(self)
-    }
-}
-
-/// Composition's failures, as the variants they have always been.
-impl From<scribe_core::composition::HostError> for CliError {
-    fn from(err: scribe_core::composition::HostError) -> Self {
-        use scribe_core::composition::HostError;
+/// The core's command errors, each the variant of the same name (ORB-27921
+/// step 3, PR 4).
+impl From<CommandError> for CliError {
+    fn from(err: CommandError) -> Self {
         match err {
-            HostError::Core(err) => Self::Core(err),
-            HostError::Usage(why) => Self::Usage(why),
-            HostError::NoDataDir => Self::NoDataDir,
-            HostError::RedactEnvUnset(names) => Self::RedactEnvUnset(names),
-            HostError::Read { what, source } => Self::Read { what, source },
-        }
-    }
-}
-
-impl From<scribe_core::apps::session::PassRunError<CliError>> for CliError {
-    fn from(err: scribe_core::apps::session::PassRunError<CliError>) -> Self {
-        use scribe_core::apps::session::PassRunError;
-        match err {
-            PassRunError::Core(e) => Self::Core(e),
-            PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
-            PassRunError::Port(e) => e,
-        }
-    }
-}
-
-/// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
-/// the prompt hook and `/scribe group add`), each the variant it was before the flow moved to
-/// `scribe_core::cases` (ORB-27707 step 3b).
-impl From<scribe_core::apps::group::HookError<CliError>> for CliError {
-    fn from(err: scribe_core::apps::group::HookError<CliError>) -> Self {
-        use scribe_core::apps::group::HookError;
-        match err {
-            HookError::Core(e) => Self::Core(e),
-            HookError::Port(e) => e,
-            HookError::Read { what, source } => Self::Read { what, source },
-            HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
-            HookError::Usage(message) => Self::Usage(message),
-        }
-    }
-}
-
-/// `scribe group`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::apps::group::Error<CliError>> for CliError {
-    fn from(err: scribe_core::apps::group::Error<CliError>) -> Self {
-        use scribe_core::apps::group::Error as GroupError;
-        match err {
-            GroupError::Core(e) => Self::Core(e),
-            GroupError::Port(e) => e,
-            GroupError::Read { what, source } => Self::Read { what, source },
-            GroupError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
-            GroupError::Usage(message) => Self::Usage(message),
-            GroupError::Model(e) => Self::Model(e),
-        }
-    }
-}
-
-/// `scribe memory`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::apps::memory::Error<CliError>> for CliError {
-    fn from(err: scribe_core::apps::memory::Error<CliError>) -> Self {
-        use scribe_core::apps::memory::Error as MemoryError;
-        match err {
-            MemoryError::Core(e) => Self::Core(e),
-            MemoryError::Port(e) => e,
-            MemoryError::Model(e) => Self::Model(e),
-            MemoryError::ConfirmRequired(shown) => {
-                Self::ForgetConfirmRequired(crate::output::MemoryPayload::from_shown(&shown).id)
-            }
-        }
-    }
-}
-
-/// `scribe entry`'s errors, each the variant it was before the app moved.
-impl From<scribe_core::apps::entry::Error<CliError>> for CliError {
-    fn from(err: scribe_core::apps::entry::Error<CliError>) -> Self {
-        use scribe_core::apps::entry::Error;
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-        }
-    }
-}
-
-/// `scribe session` and `scribe transcript`'s errors, each the variant it was
-/// before the app moved.
-impl From<scribe_core::apps::session::Error<CliError>> for CliError {
-    fn from(err: scribe_core::apps::session::Error<CliError>) -> Self {
-        use scribe_core::apps::session::Error;
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-            Error::Pass(e) => e.into(),
-            Error::Catalog(e) => e.into(),
-            Error::Rebuild(e) => e.into(),
-        }
-    }
-}
-
-/// `scribe proposal`'s errors, each the variant it was before the app moved.
-impl From<scribe_core::apps::proposal::Error<CliError>> for CliError {
-    fn from(err: scribe_core::apps::proposal::Error<CliError>) -> Self {
-        use scribe_core::apps::proposal::Error;
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-        }
-    }
-}
-
-/// `consistency scan`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::apps::consistency::ScanError<CliError>> for CliError {
-    fn from(err: scribe_core::apps::consistency::ScanError<CliError>) -> Self {
-        use scribe_core::apps::consistency::ScanError;
-        match err {
-            ScanError::Core(e) => Self::Core(e),
-            ScanError::Port(e) => e,
-        }
-    }
-}
-
-/// `ask`'s errors, each the variant it was before the flow moved.
-/// The record writes' errors, each the variant it was before the flow moved.
-impl From<scribe_core::runtime::errors::WriteError<CliError>> for CliError {
-    fn from(err: scribe_core::runtime::errors::WriteError<CliError>) -> Self {
-        use scribe_core::runtime::errors::WriteError;
-        match err {
-            WriteError::Core(e) => Self::Core(e),
-            WriteError::Port(e) => e,
-            WriteError::Usage(message) => Self::Usage(message),
-            WriteError::Read { what, source } => Self::Read { what, source },
-            WriteError::ConfirmRequired(id) => Self::ForgetConfirmRequired(id),
-        }
-    }
-}
-
-/// The reads' errors, each the variant it was before the flow moved.
-impl From<scribe_core::runtime::errors::ReadError<CliError>> for CliError {
-    fn from(err: scribe_core::runtime::errors::ReadError<CliError>) -> Self {
-        use scribe_core::runtime::errors::ReadError;
-        match err {
-            ReadError::Core(e) => Self::Core(e),
-            ReadError::Port(e) => e,
-            ReadError::Usage(message) => Self::Usage(message),
-            ReadError::Read { what, source } => Self::Read { what, source },
-            ReadError::SegmentNotFound { session, n, count } => {
+            CommandError::Core(e) => Self::Core(e),
+            CommandError::Usage(message) => Self::Usage(message),
+            CommandError::NoDataDir => Self::NoDataDir,
+            CommandError::RedactEnvUnset(names) => Self::RedactEnvUnset(names),
+            CommandError::HookPayload(why) => Self::HookPayload(why),
+            CommandError::Read { what, source } => Self::Read { what, source },
+            CommandError::SessionNotOn(id) => Self::SessionNotOn(id),
+            CommandError::SegmentNotFound { session, n, count } => {
                 Self::SegmentNotFound { session, n, count }
             }
-            ReadError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
-            ReadError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
-        }
-    }
-}
-
-/// `session catalog`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::apps::session::CatalogError<CliError>> for CliError {
-    fn from(err: scribe_core::apps::session::CatalogError<CliError>) -> Self {
-        use scribe_core::apps::session::CatalogError;
-        match err {
-            CatalogError::Core(e) => Self::Core(e),
-            CatalogError::Port(e) => e,
-            CatalogError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
-            CatalogError::TranscriptRefused { id, reason } => {
-                Self::TranscriptRefused { id, reason }
-            }
-            CatalogError::Read { what, source } => Self::Read { what, source },
-            CatalogError::SessionCataloged(id) => Self::SessionCataloged(id),
-            CatalogError::Usage(message) => Self::Usage(message),
-        }
-    }
-}
-
-/// `session rebuild`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::apps::session::RebuildError<CliError>> for CliError {
-    fn from(err: scribe_core::apps::session::RebuildError<CliError>) -> Self {
-        use scribe_core::apps::session::RebuildError;
-        match err {
-            RebuildError::Core(e) => Self::Core(e),
-            RebuildError::Port(e) => e,
-            RebuildError::Usage(message) => Self::Usage(message),
-            RebuildError::ConfirmRequired {
+            CommandError::ConfirmRequired {
                 id,
                 segments,
                 passes,
@@ -369,11 +198,40 @@ impl From<scribe_core::apps::session::RebuildError<CliError>> for CliError {
                 segments,
                 passes,
             },
-            RebuildError::TranscriptMissing(id) => Self::TranscriptMissing(id),
-            RebuildError::TranscriptRefused { id, reason } => {
+            CommandError::ForgetConfirmRequired(id) => Self::ForgetConfirmRequired(id),
+            CommandError::TranscriptMissing(id) => Self::TranscriptMissing(id),
+            CommandError::TranscriptRefused { id, reason } => {
                 Self::TranscriptRefused { id, reason }
             }
-            RebuildError::Read { what, source } => Self::Read { what, source },
+            CommandError::SessionCataloged(id) => Self::SessionCataloged(id),
+            CommandError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            CommandError::Model(e) => Self::Model(e),
         }
     }
 }
+
+/// An app's error, through the core's mapping to [`CommandError`].
+macro_rules! via_command_error {
+    ($($app:ty),+ $(,)?) => {$(
+        impl From<$app> for CliError {
+            fn from(err: $app) -> Self {
+                CommandError::from(err).into()
+            }
+        }
+    )+};
+}
+
+via_command_error!(
+    scribe_core::apps::session::PassRunError<CommandError>,
+    scribe_core::apps::group::HookError<CommandError>,
+    scribe_core::apps::group::Error<CommandError>,
+    scribe_core::apps::memory::Error<CommandError>,
+    scribe_core::apps::entry::Error<CommandError>,
+    scribe_core::apps::session::Error<CommandError>,
+    scribe_core::apps::proposal::Error<CommandError>,
+    scribe_core::apps::consistency::ScanError<CommandError>,
+    scribe_core::runtime::errors::WriteError<CommandError>,
+    scribe_core::runtime::errors::ReadError<CommandError>,
+    scribe_core::apps::session::CatalogError<CommandError>,
+    scribe_core::apps::session::RebuildError<CommandError>,
+);
