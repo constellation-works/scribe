@@ -2,7 +2,7 @@
 //! (docs/design/scribe/2_design.md §14.5).
 
 use super::Marks;
-use crate::annotation::MarkRecord;
+use crate::MarkRecord;
 use crate::db::{self, docs};
 use crate::error::Result;
 use crate::{SessionId, Store};

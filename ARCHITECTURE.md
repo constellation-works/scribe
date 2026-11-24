@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `capture`, `instruction`, `models`, `config`, `error`, `group`, `memory`, `message`, `annotation` |
+| 4. rules | `trigger`, `voice`, `claim`, `capture`, `instruction`, `models`, `config`, `error`, `memory`, `message` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -161,6 +161,22 @@ PR 5-6 moved `activity` and `pass` out and split `control`:
 The core's root re-exports them as `crate::activity`, `crate::control` and
 `crate::pass`.
 
+PR 5-8 moved `annotation` and `group`:
+
+- The shapes the store keeps go to the store's contracts:
+  - `MarkRecord`, `MarkState` and their codes and attempt limit go to
+    `contracts/mark.rs`;
+  - `Group`, `Seat`, `NewGroup` and `SeatHold` go to `contracts/group.rs`.
+- The marker refusal (`record_tag_refusal`, `CheckRefusal`) goes to
+  `apps/mark/rules.rs`.
+- The group app's requests and outcomes, the consent a quoted turn gives and
+  the automatic seat name go to `apps/group/rules.rs`.
+- `entry_belongs` goes to `apps/entry/rules.rs`, because only the entry app
+  uses it.
+
+The core's root re-exports them as `crate::annotation` and `crate::group`,
+with the marker scanning the domain's `capture` still holds.
+
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
 re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
 `unresolved_redact_env` as before. `Redactor::from_config` and
@@ -171,16 +187,11 @@ and build a `Redactor` from plain names.
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
-- **`group`, `memory`, `message`, `action`, `annotation` are in rules, not
-  records.** Each imports a rule or a model shape:
-  - `group` imports `instruction` (`claude_session_conversation`) and
-    `models::CloseEvidence`;
+- **`memory` and `message` are in rules, not records.** Each imports a rule
+  or a model shape:
   - `memory` imports `claim::own_span` and `models::{MemoryAnswer, PassMessage}`;
   - `message` imports `claim::PassClaim`, `models::PassMessage` and
     `memory::{finance_word, sensitive_word}`;
-  - `action` imports `voice::is_pass_captured`;
-  - `annotation` imports `capture::{scan, marks, …}` and the annotation shapes
-    in `models`.
 - **`transcript` comes before rules, not after.** The rules read
   transcripts: `capture` imports `transcript::Message`, and `instruction`,
   `memory` and `message` import from it too. In turn,
@@ -212,7 +223,7 @@ includes any file added later.
 
 - `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
 - `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
-- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `annotation`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
+- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `db/fsio.rs` imports nothing of the store but its error type, and `contracts/` imports nothing from `db/` or `repository/` and has no `check_*` function.

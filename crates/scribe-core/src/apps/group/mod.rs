@@ -12,6 +12,8 @@ mod join;
 mod leave;
 mod open;
 pub mod rules;
+#[cfg(test)]
+mod tests;
 mod turns;
 mod verbs;
 

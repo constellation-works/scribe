@@ -3,6 +3,7 @@
 //! for the hooks.
 
 mod list;
+pub mod rules;
 mod verbs;
 
 #[cfg(any(test, feature = "test-support"))]

@@ -21,8 +21,8 @@
 use super::codec;
 use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
 use super::{Fallible, db_error, stamp};
+use crate::MarkRecord;
 use crate::Pickup;
-use crate::annotation::MarkRecord;
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};

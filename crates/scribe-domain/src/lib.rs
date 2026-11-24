@@ -19,14 +19,12 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod annotation;
 pub mod capture;
 pub mod claim;
 pub mod config;
 pub mod control;
 pub mod entry;
 pub mod error;
-pub mod group;
 pub mod handoff;
 pub mod instruction;
 pub mod memory;

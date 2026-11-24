@@ -892,12 +892,12 @@ pub(crate) fn encode_pickups(path: &Path, pickups: &[crate::Pickup]) -> Result<V
 #[serde(deny_unknown_fields)]
 struct MarksDocument {
     format: u32,
-    marks: Vec<crate::annotation::MarkRecord>,
+    marks: Vec<crate::MarkRecord>,
 }
 
 /// Refuse a mark whose fields disagree with its outcome: a file's and a
 /// row's alike.
-pub(crate) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) -> Result<()> {
+pub(crate) fn check_marks(path: &Path, marks: &[crate::MarkRecord]) -> Result<()> {
     if let Some(bad) = marks.iter().find(|m| !m.is_consistent()) {
         return Err(shape(
             path,
@@ -913,10 +913,7 @@ pub(crate) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) 
 }
 
 /// `marks.json`'s bytes at the current format, oldest first.
-pub(crate) fn encode_marks(
-    path: &Path,
-    marks: &[crate::annotation::MarkRecord],
-) -> Result<Vec<u8>> {
+pub(crate) fn encode_marks(path: &Path, marks: &[crate::MarkRecord]) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(&MarksDocument {
         format: FORMAT,
         marks: marks.to_vec(),
