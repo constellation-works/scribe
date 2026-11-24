@@ -3,10 +3,9 @@
 
 use crate::activity::{ActiveOutcome, SetActive};
 use crate::checks::{check_active_author, check_session_field, forgotten_refusal, refusal};
-use crate::store::SessionForgetOutcome;
 use crate::{
-    Entry, EntryStatus, Error, LinkType, Provider, Redactor, Result, SessionForget, SessionId,
-    SessionLink, SessionRecord, Store, Tx, WriteRefusal, activity, control, handoff,
+    Entry, EntryStatus, Error, LinkType, Provider, Redactor, Result, SessionId, SessionLink,
+    SessionRecord, Store, Tx, WriteRefusal, activity, control, handoff,
 };
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
@@ -362,52 +361,6 @@ fn continuation_entry(store: &Store, selection: HandoffSelection<'_>) -> Result<
             Ok(Some(entry))
         }
     }
-}
-
-/// Erase session data and detach dependent records in the write under way
-/// ([`crate::ProposalVerbs::settle`]). The tombstone also drives replay of
-/// filesystem cleanup after commit.
-pub(crate) fn forget_session(
-    tx: &Tx<'_>,
-    input: &SessionId,
-    now: OffsetDateTime,
-) -> Result<SessionForgetOutcome> {
-    let id = match tx.sessions().resolve_or_handoff(input) {
-        Ok(id) => id,
-        Err(error @ Error::SessionNotFound { .. }) => {
-            let known = tx.sessions().has_group_membership(input)?
-                || tx
-                    .entries()
-                    .all()?
-                    .0
-                    .iter()
-                    .any(|entry| handoff::session_ids(entry).contains(input));
-            if !known {
-                return Err(error);
-            }
-            input.clone()
-        }
-        Err(error) => return Err(error),
-    };
-    let number = tx.sessions().numbers()?.get(&id).copied();
-    let erased = tx.sessions().erase(&id, number, now)?;
-    let number = tx.sessions().numbers()?.get(&id).copied();
-    Ok(if erased.already {
-        SessionForgetOutcome::Already {
-            id,
-            number,
-            cleaned: erased.changed || erased.files > 0,
-        }
-    } else {
-        SessionForgetOutcome::Forgotten(SessionForget {
-            id,
-            number,
-            messages: erased.messages,
-            segments: erased.segments,
-            files: erased.files,
-            was_on: erased.was_on,
-        })
-    })
 }
 
 /// What `session list` reads: the filter as typed, its `--related` and

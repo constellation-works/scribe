@@ -5,7 +5,7 @@
 //! model (ORB-27911 step 2a).
 
 use crate::activity::{self, ActiveRoute, SetActive};
-use crate::cases::proposal::ProposalVerbs;
+use crate::apps::proposal;
 use crate::cases::session::SessionVerbs;
 use crate::consistency::{self, ReapplyReport};
 use crate::runtime::audit::PersistedAudit;
@@ -96,10 +96,10 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: ScanInput) -> Result<ScanOutco
     // scan's failure line. Success disarms it so the middleware writes those
     // lines once with the command's real duration.
     let mut persisted = PersistedAudit::new(store, COMMAND, now);
-    let repaired = store.reapply_approved(now)?;
+    let repaired = proposal::reapply_approved(store, now)?;
     persisted.extend(repaired.applied.iter().map(|r| r.entry.to_string()));
     persisted.extend(repaired.covered.iter().map(|c| c.proposal.to_string()));
-    let closed = store.close_retired_candidates(now)?;
+    let closed = proposal::close_retired_candidates(store, now)?;
     persisted.extend(closed.iter().map(|proposal| proposal.id.to_string()));
     let entries = store
         .read()
@@ -120,7 +120,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: ScanInput) -> Result<ScanOutco
     };
     let drafts: Vec<_> = stale.iter().map(consistency::stale).collect();
     if !drafts.is_empty() {
-        report.opened = store.open_proposals(drafts, now, &redactor)?;
+        report.opened = proposal::open_proposals(store, drafts, now, &redactor)?;
         persisted.extend(report.opened.iter().map(|proposal| proposal.id.to_string()));
     }
     deactivate_aged(store, now, &config, &redactor, &mut report, &mut persisted)?;

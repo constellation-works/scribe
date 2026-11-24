@@ -2,7 +2,7 @@
 //! manual activity change, in one locked store call (§7, S10).
 
 use crate::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
-use crate::cases::entry::EntryVerbs;
+use crate::apps::entry;
 use crate::cases::session::SessionVerbs;
 use crate::runtime::Ctx;
 use crate::runtime::errors::{WriteError, redactor};
@@ -253,6 +253,6 @@ fn validated_cite<E>(ctx: &Ctx<'_, E>, text: &str) -> Result<String, WriteError<
             }
         };
     }
-    let entry = store.resolve_entry(text).map_err(not_a_record)?;
+    let entry = entry::resolve_entry(store, text).map_err(not_a_record)?;
     Ok(entry.id.to_string())
 }

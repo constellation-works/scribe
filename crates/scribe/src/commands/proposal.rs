@@ -6,8 +6,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
-use scribe_core::ProposalVerbs;
-use scribe_core::cases::proposal_cmd;
+use scribe_core::apps::proposal::{self, Command, Outcome, exec};
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
@@ -149,93 +148,104 @@ impl ProposalCommand {
 
 /// The id of the proposal `input` resolves to, or `None` when it does not.
 fn resolved_proposal(ctx: &Context, input: &str) -> Option<String> {
-    ctx.store()
-        .resolve_proposal(input)
-        .ok()
-        .map(|proposal| proposal.id.to_string())
+    proposal::resolved_id(&ctx.runtime(), input)
 }
 
 /// Run one `proposal` verb.
 pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        ProposalCommand::List(args) => list(&args, ctx),
-        ProposalCommand::Show(args) => {
-            let proposal = ctx.store().resolve_proposal(&args.id)?;
-            Ok(Output::Show {
-                record: Record::Proposal(Box::new(ProposalPayload::from(&proposal))),
-            })
+    let runtime = ctx.runtime();
+    let outcome = match command {
+        ProposalCommand::List(args) => {
+            let outcome = exec(&runtime, Command::List(list_input(&args)))?;
+            return Ok(output(outcome, Some(&args), ctx));
         }
+        ProposalCommand::Show(args) => exec(&runtime, Command::Show(args.id))?,
         ProposalCommand::Add(args) => {
             let kind = match args.kind {
                 Kind::Stale => scribe_core::ProposalKind::Stale,
                 Kind::Supersedes => scribe_core::ProposalKind::Supersedes,
             };
-            let (proposal, changed) = proposal_cmd::add(
-                &ctx.core(),
-                proposal_cmd::ProposalAddInput {
-                    kind,
-                    older: &args.older,
-                    newer: args.newer.as_deref(),
-                    reason: &args.reason,
-                    author: args.author,
-                },
-            )?;
-            Ok(written(proposal, changed))
+            let input = proposal::ProposalAddInput {
+                kind,
+                older: &args.older,
+                newer: args.newer.as_deref(),
+                reason: &args.reason,
+                author: args.author,
+            };
+            exec(&runtime, Command::Add(input))?
         }
-        ProposalCommand::Update(args) => {
-            let (proposal, changed) =
-                proposal_cmd::update(&ctx.core(), &args.id, &args.reason, args.author)?;
-            Ok(written(proposal, changed))
-        }
+        ProposalCommand::Update(args) => exec(
+            &runtime,
+            Command::Update {
+                id: args.id,
+                reason: args.reason,
+                author: args.author,
+            },
+        )?,
         ProposalCommand::Settle(args) => {
-            let (proposal, changed) = proposal_cmd::settle(
-                &ctx.core(),
-                proposal_cmd::ProposalSettleInput {
-                    id: &args.id,
-                    approve: args.approve,
-                    reason: args.reason.as_deref(),
-                    author: args.author,
-                    instruction: args.instruction.case(ctx),
-                },
-            )?;
-            Ok(written(proposal, changed))
+            let input = proposal::ProposalSettleInput {
+                id: &args.id,
+                approve: args.approve,
+                reason: args.reason.as_deref(),
+                author: args.author,
+                instruction: args.instruction.case(ctx),
+            };
+            exec(&runtime, Command::Settle(input))?
         }
+    };
+    Ok(output(outcome, None, ctx))
+}
+
+/// The output of `outcome`; a list echoes `args` as criteria.
+fn output(outcome: Outcome, args: Option<&ListArgs>, ctx: &Context) -> Output {
+    match outcome {
+        Outcome::Listed { filter, proposals } => list(&filter, &proposals, args, ctx),
+        Outcome::Shown(proposal) => Output::Show {
+            record: Record::Proposal(Box::new(ProposalPayload::from(&*proposal))),
+        },
+        Outcome::Written(proposal, changed) => written(&proposal, changed),
     }
 }
 
-fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let store = ctx.store();
-    let (filter, proposals) = scribe_core::cases::proposal::list(
-        &ctx.core(),
-        scribe_core::cases::proposal::ListInput {
-            filter: ProposalFilter {
-                state: args.state.map(|s| match s {
-                    StateArg::Open => ProposalState::Open,
-                    StateArg::Approved => ProposalState::Approved,
-                    StateArg::Rejected => ProposalState::Rejected,
-                }),
-                dates: scribe_core::DateRange::default(),
-                entry: None,
-                author_kind: args.author_kind.map(|k| match k {
-                    AuthorKindArg::User => AuthorKind::User,
-                    AuthorKindArg::Agent => AuthorKind::Agent,
-                    AuthorKindArg::Scribe => AuthorKind::Scribe,
-                }),
-            },
-            entry: args.entry.as_deref(),
-            since: args.dates.since,
-            until: args.dates.until,
+fn list_input(args: &ListArgs) -> proposal::ListInput<'_> {
+    proposal::ListInput {
+        filter: ProposalFilter {
+            state: args.state.map(|s| match s {
+                StateArg::Open => ProposalState::Open,
+                StateArg::Approved => ProposalState::Approved,
+                StateArg::Rejected => ProposalState::Rejected,
+            }),
+            dates: scribe_core::DateRange::default(),
+            entry: None,
+            author_kind: args.author_kind.map(|k| match k {
+                AuthorKindArg::User => AuthorKind::User,
+                AuthorKindArg::Agent => AuthorKind::Agent,
+                AuthorKindArg::Scribe => AuthorKind::Scribe,
+            }),
         },
-    )?;
+        entry: args.entry.as_deref(),
+        since: args.dates.since,
+        until: args.dates.until,
+    }
+}
+
+fn list(
+    filter: &ProposalFilter,
+    proposals: &[scribe_core::Proposal],
+    args: Option<&ListArgs>,
+    ctx: &Context,
+) -> Output {
     let empty = format!(
         "no proposals in {}; the consistency routine opens them",
-        store.root().display()
+        ctx.store().root().display()
     );
     let mut criteria = Vec::new();
     if let Some(state) = filter.state {
         criteria.push(format!("--state {}", state.as_str()));
     }
-    criteria.extend(args.dates.criteria());
+    if let Some(args) = args {
+        criteria.extend(args.dates.criteria());
+    }
     if let Some(entry) = &filter.entry {
         criteria.push(format!("--entry {entry}"));
     }
@@ -249,7 +259,7 @@ fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
     };
     let total = proposals.len();
     let records = Records::Proposals(proposals.iter().map(ProposalPayload::from).collect());
-    Ok(list_output(records, total, &[], &notice))
+    list_output(records, total, &[], &notice)
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -309,9 +319,9 @@ pub(crate) struct SettleArgs {
     instruction: super::instruction::InstructionArgs,
 }
 
-fn written(proposal: scribe_core::Proposal, changed: bool) -> Output {
+fn written(proposal: &scribe_core::Proposal, changed: bool) -> Output {
     Output::written(
-        Record::Proposal(Box::new(ProposalPayload::from(&proposal))),
+        Record::Proposal(Box::new(ProposalPayload::from(proposal))),
         changed,
     )
 }

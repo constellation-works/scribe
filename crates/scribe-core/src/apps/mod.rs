@@ -6,6 +6,8 @@
 //! An app imports only apps earlier in the order and only through what their
 //! `mod.rs` exports (scripts/check-dependency-direction.sh).
 
+pub mod entry;
 pub mod mark;
 pub mod memory;
+pub mod proposal;
 pub mod tag;
