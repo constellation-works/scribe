@@ -2928,6 +2928,59 @@ fn claude_member_capture_preserves_provenance_and_record_boundaries_across_appen
 }
 
 #[test]
+fn a_text_refused_typed_form_keeps_its_first_copy_verdict_across_captures() {
+    // The slash command's args are an agent wrapper, so its text refuses it while
+    // its line's claims read as Daniel's. An edited copy with the same uuid,
+    // captured later, must not become his turn: a full replay of both copies
+    // stores nothing, and the incremental captures must match it.
+    let refused = || {
+        json!({"sessionId": B, "uuid": "typed", "type": "user",
+            "entrypoint": "claude-desktop", "origin": {"kind": "human"},
+            "turnOrigin": "human", "timestamp": "2090-11-20T01:00:00Z",
+            "message": {"role": "user", "content": "<command-message>formation</command-message>\n<command-name>/formation</command-name>\n<command-args><scheduled-prompt>refusedorchid</scheduled-prompt></command-args>"}})
+    };
+    let edited = row(B, "typed", "user", "editedorchid");
+
+    let incremental = Fixture::new();
+    transcript(&incremental, A, &[row(A, "u", "user", QUOTE)]);
+    open(&incremental);
+    join(&incremental, B, "g-1", &[], 0);
+    let path = transcript(&incremental, B, &[refused()]);
+    let prompt = || {
+        hook(
+            &incremental,
+            &["hook", "user-prompt-submit"],
+            json!({"session_id": B, "transcript_path": path, "cwd": incremental.home(), "prompt": "Continue."}),
+            &[],
+        );
+    };
+    prompt();
+    let mut append = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(append, "{edited}").unwrap();
+    drop(append);
+    prompt();
+
+    let replay = Fixture::new();
+    transcript(&replay, A, &[row(A, "u", "user", QUOTE)]);
+    open(&replay);
+    join(&replay, B, "g-1", &[], 0);
+    let path = transcript(&replay, B, &[refused(), edited]);
+    hook(
+        &replay,
+        &["hook", "user-prompt-submit"],
+        json!({"session_id": B, "transcript_path": path, "cwd": replay.home(), "prompt": "Continue."}),
+        &[],
+    );
+
+    let replayed = stored_turns(&replay, B);
+    assert!(replayed.is_empty(), "{replayed:?}");
+    assert_eq!(stored_turns(&incremental, B), replayed);
+}
+
+#[test]
 fn claude_member_capture_replays_after_rotation_and_waits_for_a_missing_cursor() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
