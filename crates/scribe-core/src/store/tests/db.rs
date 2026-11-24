@@ -99,7 +99,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -345,7 +345,7 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 18);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 19);
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 18);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 19);
 }
 
 #[test]
@@ -2219,7 +2219,7 @@ fn schema_seventeen_replaces_trial_registrations_and_preserves_trial_rows() {
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(db::meta(root).unwrap().unwrap().0, 18);
+    assert_eq!(db::meta(root).unwrap().unwrap().0, 19);
     read_trial();
     let conn = rusqlite::Connection::open(root.join(DB_FILE)).unwrap();
     let names: String = conn

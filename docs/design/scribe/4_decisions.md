@@ -4580,6 +4580,13 @@ backfills its own transcript only.
   their cutoffs.
 - Explicit `group backfill` keeps a restored holder's restarted window: it stores
   no turn typed while a later member held the seat ([ORB-27668]).
+- A store upgraded from version 17 marks every seat holder with a vanished
+  later `position` as restarted (schema version 19). Version 17 wrote no mark
+  for a restored seat, so an old row cannot be told from one never displaced.
+  Marking a holder that was not restored only narrows its explicit backfill to
+  turns dated since its join; missing a restored one would store a turn typed
+  during its displacement without consent, so the upgrade accepts the false
+  positive ([ORB-27709]).
 
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 
