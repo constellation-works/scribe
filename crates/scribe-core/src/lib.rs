@@ -77,7 +77,10 @@ pub mod verbatim;
 pub mod voice;
 
 pub use cases::entry::EntryVerbs;
+pub use cases::pass::{ClaimsWritten, PassVerbs};
 pub use cases::proposal::ProposalVerbs;
+pub use cases::rebuild::RebuildVerbs;
+pub use cases::session::{HandoffSelection, SessionVerbs};
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
@@ -107,15 +110,14 @@ pub use store::repo;
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, ClaudeCapturePosition,
     ClaudeGroupCapture, CloseGroupOutcome, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList,
-    ExportFormat, Exported, HandoffSelection, InitFile, InitReport, IssueAudit, LOCKS_DIR,
-    MARKS_FILE, MEMORY_DIR, MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey,
-    MarkResult, MemoryShown, MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR,
-    PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs,
-    ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR,
-    SessionForget, SessionList, SessionView, Skipped, Snapshot, Store, TagList, Tx,
-    check_agent_author, check_content, check_description, check_handoff_related, check_reason,
-    check_unsettled_item, init_project, init_project_with_skill_files, integration_hooks,
-    resolve_prefix, unresolved_redact_env,
+    ExportFormat, Exported, InitFile, InitReport, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
+    MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey, MarkResult, MemoryShown,
+    MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR, PROFILE_FILE, PROPOSALS_FILE,
+    PassMemory, PassWrite, PassWritten, ProfileInputs, ProfileRevision, REDACTED_FIELDS,
+    RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR, SessionForget, SessionList, SessionView,
+    Skipped, Snapshot, Store, TagList, Tx, check_agent_author, check_content, check_description,
+    check_handoff_related, check_reason, check_unsettled_item, init_project,
+    init_project_with_skill_files, integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

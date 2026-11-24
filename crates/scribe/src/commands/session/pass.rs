@@ -48,6 +48,7 @@ use crate::commands::{PersistedAudit, RunLimits};
 use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
+use scribe_core::PassVerbs;
 use scribe_core::control::{self};
 use scribe_core::models::SessionRequest;
 use scribe_core::{

@@ -4,6 +4,7 @@
 mod support;
 
 use rusqlite::{Connection, OpenFlags};
+use scribe_core::RebuildVerbs;
 use scribe_core::message::NewMessage;
 use scribe_core::{Redactor, Speaker, Store};
 use serde_json::{Value, json};

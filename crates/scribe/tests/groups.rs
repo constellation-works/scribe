@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod support;
+use scribe_core::SessionVerbs;
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;

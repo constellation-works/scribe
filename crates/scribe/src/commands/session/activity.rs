@@ -7,7 +7,7 @@
 //! it. scribe never reads a repository to decide whether a feature exists:
 //! that judgement is the caller's, and the reason records it.
 //!
-//! Each verb makes one locked store call ([`scribe_core::Store::set_active`])
+//! Each verb makes one locked store call ([`scribe_core::SessionVerbs::set_active`])
 //! and prints the record in the `show` shape. A change is one audit line
 //! (`target` `session:<id>`); a repeat that changes nothing prints the
 //! record, says `nothing changed` on stderr and writes no audit line.
@@ -19,6 +19,7 @@ use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
 use clap::Args;
 use scribe_core::EntryVerbs;
+use scribe_core::SessionVerbs;
 use scribe_core::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
 use scribe_core::{Author, AuthorName, SessionId};
 

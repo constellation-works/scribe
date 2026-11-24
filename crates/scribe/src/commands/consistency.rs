@@ -53,6 +53,7 @@ use crate::output::{
 };
 use clap::{Args, Subcommand};
 use scribe_core::ProposalVerbs;
+use scribe_core::SessionVerbs;
 use scribe_core::activity::{self, ActiveRoute, SetActive};
 use scribe_core::{
     Config, EntryFilter, Models, Redactor, SessionFilter, SessionId, Store, consistency,

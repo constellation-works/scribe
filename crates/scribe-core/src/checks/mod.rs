@@ -92,3 +92,33 @@ pub(crate) fn required_message(instructed: &crate::instruction::Instructed) -> R
     }
     Ok(())
 }
+
+/// The refusal of a write to or on behalf of a forgotten session
+/// (`session_forgotten`); `what` says what is refused.
+pub(crate) fn forgotten_refusal(id: &crate::SessionId, what: &str) -> Error {
+    refusal(
+        WriteRefusal::SessionForgotten,
+        format!("session {id} was forgotten (#scribe forget); {what}"),
+    )
+}
+
+/// The routine's own routes carry a scribe author; an agent author here
+/// is a CLI write verb, which may not use a reserved name.
+pub(crate) fn check_active_author(request: &crate::activity::SetActive) -> Result<()> {
+    let by = match request {
+        crate::activity::SetActive::Deactivate { by, .. }
+        | crate::activity::SetActive::Activate { by, .. } => by,
+    };
+    if by.kind == crate::AuthorKind::Agent {
+        crate::checks::check_agent_author(&by.name)?;
+    }
+    Ok(())
+}
+
+/// Refuse a rebuild write while `id` is on and due: a pass owns it.
+pub(crate) fn refuse_busy(control: &crate::ControlState, id: &crate::SessionId) -> Result<()> {
+    if control.get(id).is_some_and(|c| c.on && c.due) {
+        return Err(Error::SessionBusy(id.clone()));
+    }
+    Ok(())
+}

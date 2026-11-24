@@ -27,9 +27,10 @@ use time::OffsetDateTime;
 /// The directory of advisory lock files under the root.
 pub const LOCKS_DIR: &str = "locks";
 
-/// Every session scribe knows, from wherever they live.
+/// Every session scribe knows, from wherever they live
+/// ([`super::repo::Sessions::loaded`]).
 #[derive(Debug, Default)]
-pub(super) struct Loaded {
+pub struct LoadedSessions {
     /// The records that read, in no particular order.
     pub records: Vec<SessionRecord>,
     /// The records that did not, with their id when known.
@@ -42,9 +43,9 @@ pub(super) struct Loaded {
     pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
 }
 
-impl Loaded {
+impl LoadedSessions {
     /// The record of `id`, or the error it failed to read with.
-    pub(super) fn take(&mut self, id: &SessionId) -> Option<Result<SessionRecord>> {
+    pub fn take(&mut self, id: &SessionId) -> Option<Result<SessionRecord>> {
         if let Some(i) = self.records.iter().position(|r| &r.id == id) {
             return Some(Ok(self.records.swap_remove(i)));
         }
@@ -72,6 +73,23 @@ pub struct SessionForget {
     pub files: usize,
     /// Whether it was switched on, and is now off.
     pub was_on: bool,
+}
+
+/// What [`super::repo::Sessions::erase`] erased of a session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SessionErasure {
+    /// Stored messages deleted.
+    pub messages: usize,
+    /// Segments deleted.
+    pub segments: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
+    /// Whether it was forgotten before.
+    pub already: bool,
+    /// Whether anything changed.
+    pub changed: bool,
+    /// Archived records erased.
+    pub files: usize,
 }
 
 /// Result of forgetting a session, including cleanup on a replay.
@@ -114,20 +132,20 @@ pub struct Exported {
 impl Store {
     /// Every session, read-only, from `scribe.db`; none before the first
     /// write. A file store is refused.
-    pub(super) fn load_sessions(&self) -> Result<Loaded> {
+    pub(super) fn load_sessions(&self) -> Result<LoadedSessions> {
         if !self.root_exists()? {
-            return Ok(Loaded::default());
+            return Ok(LoadedSessions::default());
         }
         let Some(found) = rows::read_sessions(&self.root)? else {
             self.refuse_file_store()?;
-            return Ok(Loaded::default());
+            return Ok(LoadedSessions::default());
         };
         self.check_stamp()?;
-        let mut loaded = Loaded {
+        let mut loaded = LoadedSessions {
             numbers: found.numbers,
             control: found.control,
             forgotten: found.forgotten,
-            ..Loaded::default()
+            ..LoadedSessions::default()
         };
         for row in found.records {
             match row {
@@ -359,72 +377,72 @@ impl Store {
         Ok(out)
     }
 
-    /// Erase session data and detach dependent records in the transaction
-    /// the typed hook uses for its audit. The tombstone also drives replay
-    /// of filesystem cleanup after commit. The caller holds the write
-    /// ([`crate::ProposalVerbs::settle`]); this session verb moves out of the
-    /// store with the other session verbs (ORB-27707 2c-2).
-    ///
-    /// # Errors
-    ///
-    /// The store's errors, and a session the store does not know.
-    pub fn forget_session_locked(
+    /// Erase `id`'s rows, archives, documents and memory in the write under
+    /// way, registering it first when it has no `s-<n>` (`number`).
+    pub(super) fn erase_session(
         &self,
-        input: &SessionId,
+        id: &SessionId,
+        number: Option<NonZeroU64>,
         now: OffsetDateTime,
-    ) -> Result<SessionForgetOutcome> {
-        let id = match self.resolve_session_or_handoff(input) {
-            Ok(id) => id,
-            Err(error @ Error::SessionNotFound { .. }) => {
-                let known = self
-                    .with_conn(|conn, path| rows::has_group_membership(conn, path, input))?
-                    || self
-                        .load_entries()?
-                        .0
-                        .iter()
-                        .any(|entry| crate::handoff::session_ids(entry).contains(input));
-                if !known {
-                    return Err(error);
-                }
-                input.clone()
-            }
-            Err(error) => return Err(error),
-        };
-        let number = self.session_numbers()?.get(&id).copied();
+    ) -> Result<SessionErasure> {
         let (erased, already, changed, files) = self.with_conn(|conn, path| {
             if number.is_none() {
-                rows::register(conn, path, &id)?;
+                rows::register(conn, path, id)?;
             }
-            let (files, archive_changed) = super::archive::scrub_session(conn, path, &id, number)?;
+            let (files, archive_changed) = super::archive::scrub_session(conn, path, id, number)?;
             let (erased, already, mut changed) =
-                rows::forget(conn, path, &id, now)?.ok_or_else(|| Error::SessionNotFound {
+                rows::forget(conn, path, id, now)?.ok_or_else(|| Error::SessionNotFound {
                     id: id.clone(),
                     path: path.to_path_buf(),
                 })?;
-            changed |= self.forget_session_documents(&id, now)?;
-            changed |= self.forget_session_memory(&id, now)?;
+            changed |= self.forget_session_documents(id, now)?;
+            changed |= self.forget_session_memory(id, now)?;
             changed |= archive_changed;
             if changed || files > 0 {
                 db::truncate_wal_of(&self.root, self.lock_wait)?;
             }
             Ok((erased, already, changed, files))
         })?;
-        let number = self.session_numbers()?.get(&id).copied();
-        Ok(if already {
-            SessionForgetOutcome::Already {
-                id,
-                number,
-                cleaned: changed || files > 0,
+        Ok(SessionErasure {
+            messages: erased.messages,
+            segments: erased.segments,
+            was_on: erased.was_on,
+            already,
+            changed,
+            files,
+        })
+    }
+
+    /// Whether a group seats `id`, in the write under way.
+    pub(super) fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
+        self.with_conn(|conn, path| rows::has_group_membership(conn, path, id))
+    }
+
+    /// Change the switches, and write a record, in one session transaction:
+    /// `f` changes the state and returns the record to write, if any.
+    pub(super) fn change_sessions<T>(
+        &self,
+        f: impl FnOnce(&mut ControlState) -> Result<(T, Option<SessionRecord>)>,
+    ) -> Result<T> {
+        self.sessions_tx(|tx| {
+            let mut state = tx.control()?;
+            let before = state.clone();
+            let (out, record) = f(&mut state)?;
+            if state != before {
+                tx.put_control(&before, &state)?;
             }
-        } else {
-            SessionForgetOutcome::Forgotten(SessionForget {
-                id,
-                number,
-                messages: erased.messages,
-                segments: erased.segments,
-                files,
-                was_on: erased.was_on,
-            })
+            if let Some(record) = record {
+                tx.put_record(&record)?;
+            }
+            Ok(out)
+        })
+    }
+
+    /// Write a rebuilt `record` and drop its checkpoint, together.
+    pub(super) fn put_rebuilt(&self, record: &SessionRecord) -> Result<()> {
+        self.sessions_tx(|tx| {
+            tx.put_record(record)?;
+            tx.drop_checkpoint(&record.id)
         })
     }
 

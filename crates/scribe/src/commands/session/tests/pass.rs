@@ -6,6 +6,7 @@
 use crate::app::{AppEnv, Context};
 use crate::commands::session::pass::{run_with, short_reason};
 use crate::output::{Output, PassPayload};
+use scribe_core::PassVerbs;
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
     ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,

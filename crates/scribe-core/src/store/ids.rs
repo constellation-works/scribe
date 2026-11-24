@@ -234,7 +234,7 @@ impl Store {
     }
 
     fn session_id_universe(
-        loaded: &super::sessions::Loaded,
+        loaded: &super::sessions::LoadedSessions,
         handoffs: &[SessionId],
     ) -> Vec<String> {
         let mut ids: Vec<String> = loaded
