@@ -46,6 +46,7 @@ use super::user_prompt_submit::{chain, quote};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::HookOutcome;
+use scribe_core::MarkVerbs;
 use scribe_core::annotation::{self, Checked, MAX_ATTEMPTS, Mark};
 use scribe_core::capture::{self, Turn};
 use scribe_core::transcript::{self, Message};

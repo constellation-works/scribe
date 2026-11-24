@@ -11,6 +11,7 @@ use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::EntryVerbs;
+use scribe_core::PickupVerbs;
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,

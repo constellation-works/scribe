@@ -1,4 +1,5 @@
 use super::{Seed, entry_text, private_tempdir, seed};
+use crate::TagVerbs;
 use crate::entry::{EntryFilter, EntryStatus};
 use crate::session::SessionFilter;
 use crate::store::db;
@@ -254,6 +255,7 @@ fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
 
 mod cites {
     use crate::EntryVerbs;
+    use crate::MarkVerbs;
     use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
     use crate::error::Error;
     use crate::store::tests::private_tempdir;
@@ -1224,6 +1226,7 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
 
 mod marks {
     use crate::EntryVerbs;
+    use crate::MarkVerbs;
     use crate::Speaker;
     use crate::annotation::MarkState;
     use crate::entry::{Cite, ContentFrom, NewEntry};

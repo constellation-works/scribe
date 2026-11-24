@@ -16,6 +16,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
+use scribe_core::MarkVerbs;
 use scribe_core::SessionId;
 use scribe_core::models::ModelError;
 

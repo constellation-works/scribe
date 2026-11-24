@@ -281,8 +281,9 @@ impl Sessions<'_> {
     }
 
     /// Commit one pass window in one transaction: `record`, its `messages`,
-    /// the memory planned from `memory`, and the switches as `change` leaves
-    /// them.
+    /// the memory planned from `memory` (drafts already checked, with the
+    /// `sensitive` refusals the check made, reported first), and the
+    /// switches as `change` leaves them.
     ///
     /// # Errors
     ///
@@ -292,11 +293,12 @@ impl Sessions<'_> {
         record: Option<&SessionRecord>,
         messages: &[NewMessage],
         memory: Option<&PassMemory>,
+        sensitive: &[crate::memory::Refusal],
         redactor: &Redactor,
         change: impl FnOnce(&mut ControlState),
     ) -> Result<MemoryWritten> {
         self.store
-            .commit_window(record, messages, memory, redactor, change)
+            .commit_window(record, messages, memory, sensitive, redactor, change)
     }
 
     /// Erase the session's rows, archives, documents and memory; `number`
@@ -504,6 +506,16 @@ impl Tags<'_> {
         self.store.config()
     }
 
+    /// The config as `config.toml` (or the shipped defaults) holds it,
+    /// without the store tags.
+    ///
+    /// # Errors
+    ///
+    /// The config's read errors.
+    pub fn configured(&self) -> Result<Config> {
+        self.store.config_only()
+    }
+
     /// The store tags (`scribe tag add`).
     ///
     /// # Errors
@@ -681,6 +693,15 @@ impl Marks<'_> {
     /// The store's read errors.
     pub fn of_session(&self, session: &SessionId) -> Result<Vec<MarkRecord>> {
         self.store.marks(session)
+    }
+
+    /// Every marker outcome, in file order.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn all(&self) -> Result<Vec<MarkRecord>> {
+        self.store.all_marks()
     }
 
     /// Replace the marks.

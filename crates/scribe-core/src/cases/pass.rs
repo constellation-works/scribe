@@ -4,6 +4,7 @@
 use crate::checks::candidates::{
     checked_outcome, has_context_and_subject, open_under, pass_entry, written_from,
 };
+use crate::checks::memory::check_sensitive_drafts;
 use crate::pass::{
     MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers,
     covering_claim, entry_says, own_span,
@@ -327,10 +328,23 @@ fn write_pass_candidates(
         // journal and the switch all commit in this one transaction, so a
         // later failure leaves none of them.
         let wrote_record = record.is_some();
+        // A draft holding text redaction would change is refused before the
+        // store plans the rest; its refusals come first in what it reports.
+        let checked = parts.memory.map(|memory| {
+            let (drafts, sensitive) = check_sensitive_drafts(&memory.drafts, redactor);
+            (
+                crate::PassMemory {
+                    drafts,
+                    ..memory.clone()
+                },
+                sensitive,
+            )
+        });
         let memory = tx.sessions().commit_window(
             record.as_ref(),
             parts.messages,
-            parts.memory,
+            checked.as_ref().map(|(memory, _)| memory),
+            checked.as_ref().map_or(&[][..], |(_, sensitive)| sensitive),
             redactor,
             |state| {
                 // An explicit pass can start when not due. Publish the
