@@ -15,6 +15,7 @@
 use super::Sessions;
 use super::ids::resolve;
 use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
+use crate::WriteRefusal;
 use crate::db::MemoryCommit;
 use crate::db::sessions::{self as rows, SessionTx};
 use crate::db::{self, codec};
@@ -25,7 +26,6 @@ use crate::{
     CONTROL_FILE, ControlState, DB_FILE, MemoryWritten, RECORD_EXT, Redactor, Related,
     SESSIONS_DIR, SessionId, SessionRecord, Skipped, Store, fsio,
 };
-use scribe_domain::WriteRefusal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};

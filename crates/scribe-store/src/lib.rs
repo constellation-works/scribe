@@ -64,7 +64,7 @@ mod contracts;
 // The group shapes at the path the store's code names them by.
 use contracts::group;
 mod db;
-mod error;
+pub mod error;
 mod redact;
 pub use db::documents::Imported;
 pub use db::fsio;
@@ -75,7 +75,7 @@ pub mod repository;
 pub use contracts::action::Pickup;
 pub use contracts::group::{ClaudeSeen, Group, LastGroup, NewGroup, Seat, SeatHold};
 pub use contracts::mark::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
-pub use error::{forgotten_refusal, refusal};
+pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
 pub use repository::ids::{number as group_number, resolve_prefix};
@@ -102,14 +102,13 @@ use repository::audit;
 use crate as store;
 use crate::config::Config;
 use crate::entry::{Entry, EntryFilter, EntryId};
-use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::session::{ControlState, SessionId, SessionRecord};
 use scribe_domain::tag::{self};
 use scribe_domain::{
     Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
     Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
-    StoreTag, TagDef, TagTable, WriteRefusal,
+    StoreTag, TagDef, TagTable,
 };
 use scribe_domain::{config, entry, handoff, message, models, proposal, record, session, text};
 // The domain names the redaction tests (`tests/redact.rs`) reach at the

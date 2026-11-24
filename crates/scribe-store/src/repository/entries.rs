@@ -4,6 +4,7 @@
 
 use super::Entries;
 use super::ids::resolve;
+use crate::WriteRefusal;
 use crate::db::{self, DB_FILE, docs};
 use crate::error::refusal;
 use crate::error::{Error, Result};
@@ -11,7 +12,6 @@ use crate::record::Listing;
 use crate::{
     ENTRIES_DIR, Entry, EntryFilter, EntryId, Proposal, RECORD_EXT, SessionId, Skipped, Store,
 };
-use scribe_domain::WriteRefusal;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 

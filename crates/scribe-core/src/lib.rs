@@ -96,7 +96,7 @@ pub mod control {
     pub use scribe_domain::control::*;
 }
 pub(crate) use scribe_domain::entry;
-pub(crate) use scribe_domain::error;
+pub(crate) use scribe_store::error;
 /// `group` at its old path: the group shapes (the store's contracts), the
 /// group app's requests, outcomes and consent (`apps/group`), and the
 /// membership of an entry (`apps/entry`).
