@@ -670,14 +670,15 @@ fn assert_close_refused(f: &Fixture, path: &std::ffi::OsStr, session: &str) {
 }
 
 /// The close with `extra` arguments is refused with `code`: no model call, the
-/// group unchanged and exactly one more failure audit naming `session`.
+/// group unchanged and exactly one more failure audit naming `session`. Returns
+/// the refusal so a caller can check its message.
 fn assert_close_refused_with(
     f: &Fixture,
     path: &std::ffi::OsStr,
     session: &str,
     extra: &[&str],
     code: &str,
-) {
+) -> Value {
     let calls = model_calls(f);
     let group = invoke(f, A, &["group", "show", "g-1"], 0);
     let audits = group_close_audits(f).len();
@@ -702,6 +703,7 @@ fn assert_close_refused_with(
     assert_eq!(last["status"], "failure");
     assert_eq!(last["error_code"], code);
     assert_eq!(last["instruction_session"], session);
+    error
 }
 
 #[test]
@@ -907,15 +909,33 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         ("close g-1 copied from the parent", "quote_not_found"),
         // Only in a harness line, which is not a typed turn.
         ("close g-1 from the harness", "quote_not_found"),
-        // Verbatim in a typed turn, but it does not name g-1.
-        ("the release ships", "group_membership"),
-        // Names g-12, which is not g-1.
-        ("finish g-12 after the audit", "group_membership"),
-        ("finish g-1", "group_membership"),
-        ("close g-1é", "group_membership"),
-        ("g-1 after review", "group_membership"),
     ] {
         assert_close_refused_with(&f, &path, D, &["--quote", quote], code);
+    }
+    // Verbatim in a typed turn, but the quote does not contain g-1 at all.
+    let absent = assert_close_refused_with(
+        &f,
+        &path,
+        D,
+        &["--quote", "the release ships"],
+        "group_membership",
+    );
+    assert_eq!(
+        absent["error"],
+        "the quote must contain g-1, the group it closes"
+    );
+    // The quote holds g-1, but the typed turn has it only inside a longer id
+    // (g-12, or a word such as xg-1 or g-1é), so the refusal says what names it.
+    let clipped_message = "the quote must name g-1 as a whole id, the group it closes; the typed turn has g-1 only inside a longer id, so quote a span where g-1 stands alone";
+    for quote in [
+        "finish g-12 after the audit",
+        "finish g-1",
+        "close g-1é",
+        "g-1 after review",
+    ] {
+        let clipped =
+            assert_close_refused_with(&f, &path, D, &["--quote", quote], "group_membership");
+        assert_eq!(clipped["error"], clipped_message, "{quote}");
     }
     assert_eq!(model_calls(&f), 0);
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
