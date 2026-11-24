@@ -15,6 +15,7 @@ cite        agent note (opus)
 cwd         -
 said        -
 author      agent:opus
+state       open
 asked_by    orbit-0-capt
 blocked     Publishing the release
 answer_in   any

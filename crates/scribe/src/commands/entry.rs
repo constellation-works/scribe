@@ -2,7 +2,7 @@
 
 mod records;
 
-use self::records::{RecordArgs, verify_decision_quotes};
+use self::records::{RecordArgs, find_answer, verify_decision_quotes};
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
@@ -11,7 +11,8 @@ use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::{
-    AuthorKind, AuthorName, EntryFilter, EntryStatus, Project, Related, TagName, Topic,
+    AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
+    TagName, Topic,
 };
 use std::num::NonZeroUsize;
 
@@ -29,6 +30,7 @@ Examples:
   scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind user
   scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
   scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
+  scribe entry list --tag open-item --state open --state answered
   scribe entry list --json | jq '.entries[].content'
   scribe entry list | cut -f1,6";
 
@@ -63,6 +65,22 @@ and with --confirm.
 
 Examples:
   scribe entry forget <id> --author opus --session <id> --instruction '<their words>' --confirm";
+
+const ANSWER_EXAMPLES: &str = "\
+The quote is checked as a decision's is: verbatim in a typed turn of the user's
+in a named session on this host; a quote under eight characters must be the
+whole turn. A later answer replaces an earlier one until the item closes.
+
+Examples:
+  scribe entry answer <id> --author opus --quote '<their words>' --related session:<id>";
+
+const CLOSE_EXAMPLES: &str = "\
+The asker closes an item once it has carried the answer out. A choice closes
+only once answered; an action item closes answered or not.
+
+Examples:
+  scribe entry close <id> --author opus --decision <id>
+  scribe entry close <id> --author opus --note 'Restarted; nothing lasting'";
 
 const PICKUP_EXAMPLES: &str = "\
 Examples:
@@ -101,6 +119,12 @@ pub(crate) enum EntryCommand {
     /// Records that a consumer picked up an action entry, or that its result was rejected.
     #[command(after_help = PICKUP_EXAMPLES)]
     Pickup(PickupArgs),
+    /// Record the user's checked answer to an open item
+    #[command(after_help = ANSWER_EXAMPLES)]
+    Answer(AnswerArgs),
+    /// Close an open item once carried out, with its decision or a note
+    #[command(after_help = CLOSE_EXAMPLES)]
+    Close(CloseArgs),
 }
 
 /// Arguments to `entry list`.
@@ -148,6 +172,10 @@ pub(crate) struct ListArgs {
     /// Only entries written through this channel: user (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) author_kind: Option<EntryAuthorKind>,
+
+    /// Only open items in this derived state; repeat it to accept any of them [default: any entry]
+    #[arg(long, value_name = "STATE", value_parser = state_parser())]
+    pub(crate) state: Vec<ItemState>,
 
     /// Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
     #[arg(long, value_name = "N")]
@@ -200,6 +228,11 @@ fn status_parser() -> impl TypedValueParser<Value = EntryStatus> {
     PossibleValuesParser::new(EntryStatus::NAMES).try_map(|s| s.parse::<EntryStatus>())
 }
 
+/// Allowed open-item states come from the domain type (STD-01 R25).
+fn state_parser() -> impl TypedValueParser<Value = ItemState> {
+    PossibleValuesParser::new(ItemState::NAMES).try_map(|s| s.parse::<ItemState>())
+}
+
 impl EntryCommand {
     /// The entry and agent a write verb names, resolved before it runs, so a
     /// refusal is attributable. `add` names its target only in its output.
@@ -223,6 +256,14 @@ impl EntryCommand {
                 author: Some(args.author.as_str().to_owned()),
             },
             Self::Pickup(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Answer(args) => AuditSubject {
+                target: resolved_entry(ctx, &args.id),
+                author: Some(args.author.as_str().to_owned()),
+            },
+            Self::Close(args) => AuditSubject {
                 target: resolved_entry(ctx, &args.id),
                 author: Some(args.author.as_str().to_owned()),
             },
@@ -252,6 +293,14 @@ impl EntryCommand {
             }),
             Self::Pickup(_) => Some(AuditMeta {
                 command: "entry pickup",
+                stepwise: false,
+            }),
+            Self::Answer(_) => Some(AuditMeta {
+                command: "entry answer",
+                stepwise: false,
+            }),
+            Self::Close(_) => Some(AuditMeta {
+                command: "entry close",
                 stepwise: false,
             }),
         }
@@ -401,7 +450,58 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             written_with_action(ctx, entry, changed)
         }
         EntryCommand::Forget(args) => forget(&args, ctx),
+        EntryCommand::Answer(args) => answer(&args, ctx),
+        EntryCommand::Close(args) => {
+            scribe_core::check_agent_author(&args.author)?;
+            if let Some(note) = &args.note {
+                scribe_core::check_reason(note)?;
+            }
+            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let (entry, changed) = ctx.store().close_open_item(
+                &args.id,
+                args.decision.as_ref(),
+                args.note.as_deref(),
+                args.author.clone(),
+                ctx.now(),
+                &redactor,
+            )?;
+            written_with_action(ctx, entry, changed)
+        }
     }
+}
+
+/// `entry answer`: the item is checked before any transcript is read, and
+/// again by the store under the lock (2_design.md §18.4).
+fn answer(args: &AnswerArgs, ctx: &Context) -> Result<Output, CliError> {
+    scribe_core::check_agent_author(&args.author)?;
+    let target = ctx.store().resolve_entry(&args.id)?;
+    scribe_core::check_unsettled_item(&target)?;
+    let related = super::resolve_relateds(ctx, &args.related)?;
+    let (session, at) = find_answer(ctx, &related, &args.quote)?;
+    let answer = scribe_core::ItemAnswer {
+        words: args.quote.clone(),
+        session,
+        at,
+        recorded_by: args.author.clone(),
+    };
+    // An answer recorded here is not an approval in the session that must
+    // act (§18.8): say so when the item names another session.
+    let notice = match target.item.as_ref().map(|item| &item.answer_in) {
+        Some(scribe_core::AnswerIn::Session(only)) if *only != answer.session => Some(format!(
+            "{} asks for its answer in session:{only}, whose auto mode accepts only what is typed there; the user must also type it in that session",
+            target.id
+        )),
+        _ => None,
+    };
+    let redactor = ctx.redactor(&ctx.store().config()?)?;
+    let (entry, changed) = ctx
+        .store()
+        .answer_open_item(&args.id, answer, ctx.now(), &redactor)?;
+    let mut output = written_with_action(ctx, entry, changed)?;
+    if let (Some(notice), Output::Written { notices, .. }) = (notice, &mut output) {
+        notices.push(notice);
+    }
+    Ok(output)
 }
 
 /// `entry forget`: exists only with an instruction and `--confirm`; both
@@ -448,6 +548,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         after: args.after,
         author: args.author.map(scribe_core::AuthorName::current),
         author_kind: args.author_kind.map(AuthorKind::from),
+        states: args.state,
         limit: args.limit,
     };
     let store = ctx.store();
@@ -523,6 +624,9 @@ fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related])
     }
     if let Some(kind) = filter.author_kind {
         criteria.push(format!("--author-kind {}", kind.as_str()));
+    }
+    for state in &filter.states {
+        criteria.push(format!("--state {state}"));
     }
     criteria
 }
@@ -865,6 +969,37 @@ pub(crate) struct PickupArgs {
     /// The user rejected the result
     #[arg(long)]
     rejected: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AnswerArgs {
+    /// The open item's id or a unique prefix (at least four characters)
+    id: String,
+    /// Agent name of the session recording the answer
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// The user's answer, verbatim from a typed turn of theirs in a related session
+    #[arg(long)]
+    quote: String,
+    /// The session the user typed the answer in, as session:<id> (a unique prefix is accepted); repeatable
+    #[arg(long, value_name = "REF", required = true)]
+    related: Vec<scribe_core::Related>,
+}
+
+#[derive(Debug, Args)]
+#[command(group = clap::ArgGroup::new("settled").required(true).multiple(true).args(["decision", "note"]))]
+pub(crate) struct CloseArgs {
+    /// The open item's id or a unique prefix (at least four characters)
+    id: String,
+    /// Agent name of the asker closing it
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// The active decision written for this item with --settles
+    #[arg(long, value_name = "ID")]
+    decision: Option<EntryId>,
+    /// What was done, when no lasting decision came of it (at most 300 characters)
+    #[arg(long)]
+    note: Option<String>,
 }
 
 #[derive(Debug, Args)]

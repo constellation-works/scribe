@@ -1516,3 +1516,119 @@ None.
         );
     }
 }
+
+/// A trial `open-item` entry (no `item` object) as the 2026-11-23 trial
+/// wrote it, by an agent.
+fn trial_item(id: &str, retired: bool) -> crate::Entry {
+    let mut trial = crate::tests::entry(id, crate::tests::T0);
+    trial.content = String::from("Restart the dashboard");
+    trial.author = crate::Author::agent("0-chief".parse().unwrap());
+    trial.content_from = crate::ContentFrom::Agent;
+    trial.cite = None;
+    trial.said.clear();
+    if retired {
+        trial.status = EntryStatus::Retired;
+        trial.inactive_since = Some(trial.created);
+        trial.retirement_reason = Some(String::from("closed: carried out in chat"));
+    }
+    trial
+}
+
+#[test]
+fn trial_open_items_derive_their_state_and_take_answers_and_closes() {
+    use crate::{ItemAnswer, ItemState, Redactor};
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    store.prepare_dir(&store.root).unwrap();
+    for (id, retired) in [
+        ("open-item-1", false),
+        ("open-item-2", true),
+        ("open-item-3", false),
+    ] {
+        store.write_entry(&trial_item(id, retired), true).unwrap();
+    }
+    let state = |id: &str| ItemState::of(&store.resolve_entry(id).unwrap());
+    assert_eq!(state("open-item-1"), Some(ItemState::Open));
+    assert_eq!(state("open-item-2"), Some(ItemState::Closed));
+    let by_state = |states: Vec<ItemState>| -> Vec<String> {
+        store
+            .list_entries(&EntryFilter {
+                states,
+                ..EntryFilter::default()
+            })
+            .unwrap()
+            .listing
+            .items
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect()
+    };
+    assert_eq!(by_state(vec![ItemState::Closed]), ["open-item-2"]);
+
+    let now = crate::tests::T0 + time::Duration::hours(1);
+    let redactor = Redactor::default();
+    let answer = ItemAnswer {
+        words: String::from("done"),
+        session: "8dc9df2b-5808-47cf-8be4-190c9c6e0711".parse().unwrap(),
+        at: now,
+        recorded_by: "0-aide".parse().unwrap(),
+    };
+    let (answered, changed) = store
+        .answer_open_item("open-item-1", answer.clone(), now, &redactor)
+        .unwrap();
+    assert!(changed);
+    assert_eq!(ItemState::of(&answered), Some(ItemState::Answered));
+    let item = answered.item.as_ref().unwrap();
+    assert_eq!(item.asked_by.as_str(), "0-chief");
+    assert!(item.options.is_empty(), "a trial item reads as an action");
+    assert_eq!(item.answer.as_ref(), Some(&answer));
+    assert_eq!(answered.content, "Restart the dashboard");
+
+    // A trial item has no options, so it closes with or without an answer.
+    for id in ["open-item-1", "open-item-3"] {
+        let (closed, _) = store
+            .close_open_item(
+                id,
+                None,
+                Some("Restarted"),
+                "0-chief".parse().unwrap(),
+                now,
+                &redactor,
+            )
+            .unwrap();
+        assert_eq!(ItemState::of(&closed), Some(ItemState::Closed));
+        assert_eq!(closed.item.unwrap().closed.unwrap().note, "Restarted");
+    }
+    let code = |err: crate::Error| {
+        let crate::Error::AgentWrite { kind, .. } = err else {
+            panic!("{err:?}");
+        };
+        kind.code()
+    };
+    let refused = store
+        .close_open_item(
+            "open-item-2",
+            None,
+            Some("Again"),
+            "0-chief".parse().unwrap(),
+            now,
+            &redactor,
+        )
+        .unwrap_err();
+    assert_eq!(code(refused), "item_settled");
+    // Words that redaction would alter are refused before anything is written.
+    let secret = Redactor::new([(String::from("KEY"), String::from("hunter2-secret-value"))]);
+    let refused = store
+        .answer_open_item(
+            "open-item-1",
+            ItemAnswer {
+                words: String::from("use hunter2-secret-value"),
+                ..answer
+            },
+            now,
+            &secret,
+        )
+        .unwrap_err();
+    assert_eq!(code(refused), "needs_redaction");
+}

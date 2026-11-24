@@ -89,6 +89,10 @@ scribe entry add --tag preferences --author opus --related session:<id> --quote 
 scribe entry add --tag standard --author opus --related session:<id> --quote '<quoted words>' 'Name the unit in every size'
 scribe entry add --tag decision --author opus --decided-by user --quote '<their words>' --related session:<id> --related task:<id> 'Keep the stable API'
 scribe entry add --tag open-item --author opus --asked-by 0-chief --blocked 'Local checks' --answer-in hand 'Restart the dashboard'
+scribe entry list --tag open-item --state open --state answered
+scribe entry answer <id> --author opus --quote '<their words>' --related session:<id>
+scribe entry close <id> --author opus --decision <id>
+scribe entry close <id> --author opus --note 'Restarted; nothing lasting'
 scribe entry pickup <id> --author standards-intake --result task:<id>
 scribe entry update <id> --author opus --add-topic api
 scribe entry retire <id> --author opus --reason 'No longer applies'

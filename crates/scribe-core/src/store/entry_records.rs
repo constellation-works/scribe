@@ -1,12 +1,18 @@
 //! Validation for decision and open-item writes.
 
-use super::agent::{check_agent_author, check_content, refusal};
+use super::agent::{check_agent_author, check_content, check_reason, refusal};
 use super::{Redactor, Store};
 use crate::entry::{DECISION_TAG, OPEN_ITEM_TAG};
 use crate::{
-    AgentEntry, Decision, Entry, EntryId, EntryPatch, EntryStatus, OpenItem, Related, RelatedKind,
-    Result, SessionId, TagName, WriteRefusal,
+    AgentEntry, AnswerIn, Author, AuthorName, Decision, Entry, EntryId, EntryPatch, EntryStatus,
+    ItemAnswer, ItemClosure, ItemState, OpenItem, Related, RelatedKind, Result, SessionId, TagName,
+    WriteRefusal,
 };
+use time::OffsetDateTime;
+
+/// What a trial entry's synthesized `item` says waited, since the trial
+/// recorded it only in prose (2_design.md §18.7).
+const TRIAL_BLOCKED: &str = "not recorded (trial entry)";
 
 const DECISION_MAX_CHARS: usize = 3_000;
 
@@ -285,4 +291,186 @@ pub(super) fn patch_decision(
         decision.recommended = Some(recommended);
     }
     Ok(())
+}
+
+/// The derived state of an item `entry answer` or `entry close` may still
+/// settle: refuse an entry not under `open-item`, and a closed or withdrawn
+/// one, so a caller can refuse before it reads any transcript.
+///
+/// # Errors
+///
+/// `not_open_item` and `item_settled`.
+pub fn check_unsettled_item(entry: &Entry) -> Result<ItemState> {
+    let state = ItemState::of(entry).ok_or_else(|| {
+        refusal(
+            WriteRefusal::NotOpenItem,
+            format!(
+                "{} is not an open item; entry answer and entry close take only entries under open-item",
+                entry.id
+            ),
+        )
+    })?;
+    if state.is_settled() {
+        return Err(refusal(
+            WriteRefusal::ItemSettled,
+            format!("{} is already {state}; nothing written", entry.id),
+        ));
+    }
+    Ok(state)
+}
+
+/// The `item` object of an open item, synthesized for a trial entry that
+/// has none: an action item asked by its author, with nothing typed about
+/// what waits.
+fn item_mut(entry: &mut Entry) -> &mut OpenItem {
+    let asked_by = entry.author.name.clone();
+    entry.item.get_or_insert_with(|| OpenItem {
+        asked_by,
+        options: Vec::new(),
+        recommended: None,
+        why: None,
+        blocked: TRIAL_BLOCKED.to_owned(),
+        answer_in: AnswerIn::Any,
+        answer: None,
+        closed: None,
+    })
+}
+
+impl Store {
+    /// Record the user's checked answer on an open item (2_design.md §18.4).
+    /// The caller has found `answer.words` in a typed turn of
+    /// `answer.session`. A newer answer replaces an earlier one until the
+    /// item closes; the same words from the same session change nothing.
+    ///
+    /// # Errors
+    ///
+    /// `not_open_item`, `item_settled`, `needs_redaction` for words
+    /// redaction would alter, `session_forgotten`, and the store's errors.
+    pub fn answer_open_item(
+        &self,
+        id: &str,
+        answer: ItemAnswer,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<(Entry, bool)> {
+        check_agent_author(&answer.recorded_by)?;
+        if redactor.mask(&answer.words) != answer.words {
+            return Err(refusal(
+                WriteRefusal::NeedsRedaction,
+                "the answer has quoted text that redaction would alter; nothing written",
+            ));
+        }
+        self.refuse_forgotten(&answer.session)?;
+        self.prepare_dir(&self.root)?;
+        self.write(|| {
+            let mut entry = self.resolve_entry(id)?;
+            check_unsettled_item(&entry)?;
+            let author = Author::agent(answer.recorded_by.clone());
+            let item = item_mut(&mut entry);
+            if item
+                .answer
+                .as_ref()
+                .is_some_and(|old| old.words == answer.words && old.session == answer.session)
+            {
+                return Ok((self.resolve_entry(id)?, false));
+            }
+            item.answer = Some(answer);
+            entry.updated = now;
+            entry.updated_by = Some(author);
+            self.write_entry(&entry, false)?;
+            Ok((entry, true))
+        })
+    }
+
+    /// Close an open item once its asker carried it out (2_design.md §18.4):
+    /// retire it with `item.closed`, naming the decision that settles it or
+    /// a note that none lasts.
+    ///
+    /// # Errors
+    ///
+    /// `not_open_item`, `item_settled`, `not_answered` for a choice with no
+    /// answer, `invalid_decision` when `decision` is not an active decision
+    /// whose `settles` names this item, `invalid_text` for a blank or long
+    /// note, and the store's errors.
+    pub fn close_open_item(
+        &self,
+        id: &str,
+        decision: Option<&EntryId>,
+        note: Option<&str>,
+        author: AuthorName,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+    ) -> Result<(Entry, bool)> {
+        check_agent_author(&author)?;
+        let note = match (note, decision) {
+            (Some(note), _) => {
+                check_reason(note)?;
+                redactor.mask(note)
+            }
+            (None, Some(decision)) => format!("settled by {decision}"),
+            (None, None) => {
+                return Err(refusal(
+                    WriteRefusal::InvalidText,
+                    "close names the decision written for the item (--decision) or says what was done (--note)",
+                ));
+            }
+        };
+        self.prepare_dir(&self.root)?;
+        self.write(|| {
+            let mut entry = self.resolve_entry(id)?;
+            let state = check_unsettled_item(&entry)?;
+            let choice = entry.item.as_ref().is_some_and(|i| !i.options.is_empty());
+            if choice && state != ItemState::Answered {
+                return Err(refusal(
+                    WriteRefusal::NotAnswered,
+                    format!(
+                        "{} is a choice and has no recorded answer; record the user's answer with entry answer first",
+                        entry.id
+                    ),
+                ));
+            }
+            if let Some(decision) = decision {
+                self.check_settling_decision(decision, &entry.id)?;
+            }
+            let by = Author::agent(author.clone());
+            item_mut(&mut entry).closed = Some(ItemClosure {
+                at: now,
+                by: author,
+                decision: decision.cloned(),
+                note: note.clone(),
+            });
+            entry.status = EntryStatus::Retired;
+            entry.retirement_reason = Some(format!("closed: {note}"));
+            entry.inactive_since = Some(now);
+            entry.updated = now;
+            entry.updated_by = Some(by);
+            self.write_entry(&entry, false)?;
+            Ok((entry, true))
+        })
+    }
+
+    /// Refuse `decision` unless it is an active decision whose `settles`
+    /// names `item`, so the link between them runs both ways.
+    fn check_settling_decision(&self, decision: &EntryId, item: &EntryId) -> Result<()> {
+        let invalid = || {
+            refusal(
+                WriteRefusal::InvalidDecision,
+                format!(
+                    "--decision must name an active decision written with --settles {item}; nothing written"
+                ),
+            )
+        };
+        if decision.tag().as_str() != DECISION_TAG {
+            return Err(invalid());
+        }
+        let entry = match self.entry(decision) {
+            Err(crate::Error::EntryNotFound { .. }) => return Err(invalid()),
+            result => result?,
+        };
+        let settles = entry.decision.as_ref().and_then(|d| d.settles.as_ref());
+        if entry.status != EntryStatus::Active || settles != Some(item) {
+            return Err(invalid());
+        }
+        Ok(())
+    }
 }

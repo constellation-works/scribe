@@ -280,6 +280,10 @@ pub(crate) struct EntryPayload {
     pub(crate) handoff_mode: Option<scribe_core::handoff::Mode>,
     pub(crate) decision: Option<scribe_core::Decision>,
     pub(crate) item: Option<scribe_core::OpenItem>,
+    /// For an entry under `open-item`, its derived state: `open`,
+    /// `answered`, `closed` or `withdrawn` (2_design.md §18.4); `null`
+    /// for every other entry.
+    pub(crate) state: Option<&'static str>,
     /// The user's checked instruction that retired or forgot this entry;
     /// `null` otherwise.
     pub(crate) removal_instruction: Option<InstructionPayload>,
@@ -456,6 +460,7 @@ impl From<&Entry> for EntryPayload {
             handoff_mode: entry.handoff_mode,
             decision: entry.decision.clone(),
             item: entry.item.clone(),
+            state: scribe_core::ItemState::of(entry).map(scribe_core::ItemState::as_str),
             removal_instruction: entry
                 .removal_instruction
                 .as_ref()

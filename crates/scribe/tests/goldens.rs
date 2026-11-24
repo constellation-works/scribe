@@ -27,6 +27,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("entry-list", &["entry", "list", "--help"]),
     ("entry-show", &["entry", "show", "--help"]),
     ("entry-pickup", &["entry", "pickup", "--help"]),
+    ("entry-answer", &["entry", "answer", "--help"]),
+    ("entry-close", &["entry", "close", "--help"]),
     ("session", &["session", "--help"]),
     ("session-list", &["session", "list", "--help"]),
     ("session-show", &["session", "show", "--help"]),
@@ -1585,7 +1587,8 @@ fn every_session_reads_the_same_after_the_move_into_scribe_db() {
 #[test]
 fn typed_records_match_goldens() {
     use scribe_core::{
-        AgentEntry, AnswerIn, Decision, Label, OpenItem, Project, Redactor, Store, Topics,
+        AgentEntry, AnswerIn, Decision, ItemAnswer, Label, OpenItem, Project, Redactor, Store,
+        Topics,
     };
 
     let fx = Fixture::new();
@@ -1656,6 +1659,27 @@ fn typed_records_match_goldens() {
         )
         .unwrap();
 
+    store
+        .add_agent_entry(
+            AgentEntry {
+                item: Some(OpenItem {
+                    asked_by: "0-chief".parse().unwrap(),
+                    options: Vec::new(),
+                    recommended: None,
+                    why: None,
+                    blocked: "nothing".to_owned(),
+                    answer_in: AnswerIn::Hand,
+                    answer: None,
+                    closed: None,
+                }),
+                ..draft("open-item", "Restart the dashboard")
+            },
+            author(),
+            now,
+            &Redactor::default(),
+        )
+        .unwrap();
+
     let mut failures = Vec::new();
     for (name, id) in [
         ("entry-show-decision", "decision-1"),
@@ -1668,6 +1692,49 @@ fn typed_records_match_goldens() {
                 &text(&out.stdout),
             ));
         }
+    }
+
+    // §18.4: the user's answer, then the close naming decision-1. The
+    // store's verbs are driven directly: the CLI's transcript check is
+    // covered in tests/agent_writes/records.rs.
+    let later = time::macros::datetime!(2026-11-10 02:00 UTC);
+    store
+        .answer_open_item(
+            "open-item-1",
+            ItemAnswer {
+                words: "1".to_owned(),
+                session: "8dc9df2b-5808-47cf-8be4-190c9c6e0711".parse().unwrap(),
+                at: later,
+                recorded_by: "0-aide".parse().unwrap(),
+            },
+            later,
+            &Redactor::default(),
+        )
+        .unwrap();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["entry", "list", "--tag", "open-item"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/entry-list-open-items.{suffix}"),
+            &text(&out.stdout),
+        ));
+    }
+    let decision = "decision-1".parse().unwrap();
+    store
+        .close_open_item(
+            "open-item-1",
+            Some(&decision),
+            None,
+            "orbit-0-capt".parse().unwrap(),
+            later,
+            &Redactor::default(),
+        )
+        .unwrap();
+    for (suffix, mode) in MODES {
+        let out = fx.ok(&[&["entry", "show", "open-item-1"][..], *mode].concat());
+        failures.extend(check(
+            &format!("output/entry-show-open-item-closed.{suffix}"),
+            &text(&out.stdout),
+        ));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

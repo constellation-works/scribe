@@ -223,12 +223,24 @@ item object has `asked_by`, `options`, `recommended`, `why`, `blocked`,
 `answer_in`, `answer` and `closed`. `answer` and `closed` are null on a new
 item. Options are an array of strings and `recommended` is a one-based
 integer or null. `answer_in` is `any`, `hand` or `session:<id>`.
+`answer` is `{words, session, at, recorded_by}`: the user's checked words,
+the session and time of the typed turn that holds them, and the agent that
+recorded them. `closed` is `{at, by, decision, note}`, `decision` the
+settling decision's id or null. Every entry also has `state`: for an entry
+under `open-item` its derived state, `open` (active, no answer),
+`answered` (active, with an answer), `closed` (retired with `closed`, or a
+retired trial entry) or `withdrawn` (retired without `closed`, superseded
+or forgotten); `null` for every other entry.
 
 For `entry show` and entry writes, table detail adds labelled fields for
 the supplied values. Plain output keeps the existing first row and
 appends labelled, tab-separated lines, including `quote` for a user
 decision. In both modes, each option has an `option` field with its
-one-based number. Plain and table list rows retain their existing columns.
+one-based number. An open item adds `state` before its fields and, once
+set, `answer` and `answered` (time, session and recorder), then `closed`
+(time and closer), `closed_decision` and `closed_note`. Plain and table
+list rows retain their existing columns; a list holding an open item adds
+a last `STATE` column (`-` for other entries).
 The `related` array can contain `doc:<repo>/<path>#<anchor>` references.
 When `decisions` resolves to the shipped `decision` tag, `ask --tag decisions`
 also includes entries filed under the historical `decisions` name.
@@ -418,7 +430,8 @@ as unknown commands, `scribe search --kind issue` exits 2, and the codes
 adds `user_first_turns` (up to five strings of at most 300 characters).
 
 **Write verbs** (S12 built; S10 separately): `entry add`, `entry update`, `entry
-retire`, `entry pickup` (format 8; prints the entry it noted), `tag add`, `tag update`, `proposal add`, `proposal update`,
+retire`, `entry pickup` (format 8; prints the entry it noted), `entry answer`,
+`entry close`, `tag add`, `tag update`, `proposal add`, `proposal update`,
 `proposal settle`, `session activate` and `session deactivate` print the
 record they wrote in its `show` shape (`--json`: the record object). A
 write that changed nothing prints the record unchanged and `nothing
@@ -456,6 +469,21 @@ recommendation. `--supersedes` names the earlier active decision and
 `--blocked` are required. A choice also requires `--recommended` and
 `--why`. An action item has zero options. `--answer-in` defaults to `any`.
 
+`entry answer <id> --quote '<words>' --related session:<id>` records the
+user's answer on an open item; the quote is checked as a user decision's
+is, and the latest typed turn holding it gives `answer.at`. A later answer
+replaces an earlier one until the item closes; the same words from the same
+session change nothing. When the item's `answer_in` names another session,
+stderr says the user must also type it there. `entry close <id>` takes
+`--decision <id>`, an active decision whose `settles` names the item, or
+`--note` (at most 300 characters), or both; without `--note` the note reads
+`settled by <decision>`. It retires the item with `retirement_reason`
+`closed: <note>`. A choice closes only once answered; an action item, or a
+trial entry, closes either way. Both verbs print the entry in its `show`
+shape and are audited as `entry answer` and `entry close`, by id. `entry
+list --state open|answered|closed|withdrawn` (repeatable) keeps open items
+in those states.
+
 To correct a decision, `entry update --option` replaces its options and
 sets a new recommendation when supplied. `--clear-options` clears both.
 `--recommended` alone updates the existing recommendation.
@@ -479,7 +507,7 @@ breaking change and shows up as a golden diff.
 | 2 | usage error, including an invalid or too-short id, tag, topic, project or status | clap's rendering, or `{"error": "...", "code": "usage_error"}`; with `--json` the message keeps clap's detail (the argument name) on one line |
 
 (S11) Every command that takes an entry, proposal or session id (`entry
-show|update|retire`, `proposal add --older|--newer`, `proposal
+show|update|retire|answer|close`, `proposal add --older|--newer`, `proposal
 update|settle`, `proposal list --entry`, `session show|deactivate|activate|rebuild`
 and `session pass --session`) also takes a unique prefix of it of at least
 four characters. An exact id wins over a prefix; several matches are
@@ -509,6 +537,13 @@ repository reference), `rationale_required`, `rationale_not_allowed`,
 `decision_session` (editing a user decision's source sessions),
 `decision_too_long`, `invalid_supersedes`, `supersede_user_decision`
 (including trial decisions with no typed decider), and `invalid_settles`.
+`entry answer` and `entry close` refuse an entry not under `open-item`
+(`not_open_item`) and a closed or withdrawn item (`item_settled`); `entry
+answer` refuses words not found (`quote_not_found`), no `session:`
+reference (`quote_required`) and words redaction would alter
+(`needs_redaction`); `entry close` refuses an unanswered choice
+(`not_answered`), a `--decision` that is not an active decision settling
+the item (`invalid_decision`), and a blank or long note (`invalid_text`).
 The marker hook records `unknown_tag` for a refused decision or open-item
 marker.
 

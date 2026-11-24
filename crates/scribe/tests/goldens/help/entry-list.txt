@@ -15,6 +15,7 @@ Options:
       --window              Include each entry's transcript window (an action entry's chat before its #scribe line) [default: left out]
       --author <NAME>       Only entries written under this author name, such as user or an agent's --author [default: any]
       --author-kind <KIND>  Only entries written through this channel: user (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any] [possible values: user, agent, scribe]
+      --state <STATE>       Only open items in this derived state; repeat it to accept any of them [default: any entry] [possible values: open, answered, closed, withdrawn]
       --limit <N>           Show at most this many of the matching entries, 1 or more; --json reports the total and whether the list was cut [default: all]
   -h, --help                Print help
   -V, --version             Print version
@@ -32,5 +33,6 @@ Examples:
   scribe entry list --since 2026-10-01 --until 2026-10-31 --author-kind user
   scribe entry list --related task:<id> --related pr:<owner>/<repo>#<n>
   scribe entry list --tag standard --after 2026-11-15T09:00:00Z --window --json
+  scribe entry list --tag open-item --state open --state answered
   scribe entry list --json | jq '.entries[].content'
   scribe entry list | cut -f1,6

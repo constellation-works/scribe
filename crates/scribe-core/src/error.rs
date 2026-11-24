@@ -398,6 +398,14 @@ pub enum WriteRefusal {
     InvalidSupersedes,
     /// `supersede_user_decision`: an agent decision would replace a user or untyped trial decision.
     SupersedeUserDecision,
+    /// `not_open_item`: `entry answer` or `entry close` named an entry not under `open-item`.
+    NotOpenItem,
+    /// `item_settled`: the open item is already closed or withdrawn.
+    ItemSettled,
+    /// `not_answered`: a choice item closes only once the user's answer is recorded.
+    NotAnswered,
+    /// `invalid_decision`: `entry close --decision` names no active decision that settles the item.
+    InvalidDecision,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -468,6 +476,10 @@ impl WriteRefusal {
             Self::InvalidSettles => "invalid_settles",
             Self::InvalidSupersedes => "invalid_supersedes",
             Self::SupersedeUserDecision => "supersede_user_decision",
+            Self::NotOpenItem => "not_open_item",
+            Self::ItemSettled => "item_settled",
+            Self::NotAnswered => "not_answered",
+            Self::InvalidDecision => "invalid_decision",
         }
     }
 }

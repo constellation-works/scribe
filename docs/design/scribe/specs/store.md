@@ -304,6 +304,15 @@ an existing database schema 17 removes just their registration rows.
 The shipped aliases take over, including removal of the trial alias `ask`.
 Other tag registrations stay as written.
 
+`entry answer` sets `item.answer` (`{words, session, at, recorded_by}`) and
+`entry close` sets `item.closed` (`{at, by, decision, note}`) and retires the
+entry, each in one `Store::write` transaction with its audit row. Answering
+or closing a trial entry writes its first `item` object: an action item
+(`options` empty) with `asked_by` its author, `blocked` `not recorded (trial
+entry)` and `answer_in` `any`; its prose and metadata stay as written. The
+`open-item` state (`open`, `answered`, `closed`, `withdrawn`) is derived
+from status and these fields, never stored.
+
 A decision's reversal and the old entry's `superseded_by` and status commit
 with one audit event. The old decision remains readable. A change to the
 decision's content, options or rationale rechecks the size limit. Its

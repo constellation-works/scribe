@@ -224,6 +224,23 @@ pub(crate) fn list(
                 .collect(),
             items.iter().map(|g| group_row(g, Some(shorts))).collect(),
         ),
+        // A STATE column, last so the other columns keep their places, only
+        // when the list holds an open item (2_design.md §18.5).
+        Records::Entries(items) if items.iter().any(|e| e.state.is_some()) => (
+            ENTRY_COLUMNS
+                .iter()
+                .copied()
+                .chain([col("STATE", Align::Left, false)])
+                .collect(),
+            items
+                .iter()
+                .map(|entry| {
+                    let mut row = entry_row(entry, sink.mode);
+                    row.push(Cell::plain(entry.state.unwrap_or("-").to_owned()));
+                    row
+                })
+                .collect(),
+        ),
         Records::Entries(items) => (
             ENTRY_COLUMNS.to_vec(),
             items
@@ -961,6 +978,9 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
 
 fn entry_record_fields(entry: &EntryPayload) -> Vec<(&'static str, String)> {
     let mut fields = Vec::new();
+    if let Some(state) = entry.state {
+        fields.push(("state", state.to_owned()));
+    }
     let (options, recommended) = if let Some(decision) = &entry.decision {
         fields.push(("decided_by", decision.decided_by.to_string()));
         if let Some(rationale) = &decision.rationale {
@@ -995,6 +1015,30 @@ fn entry_record_fields(entry: &EntryPayload) -> Vec<(&'static str, String)> {
     );
     if let Some(n) = recommended {
         fields.push(("recommended", n.to_string()));
+    }
+    if let Some(item) = &entry.item {
+        if let Some(answer) = &item.answer {
+            fields.push(("answer", answer.words.clone()));
+            fields.push((
+                "answered",
+                format!(
+                    "{} in session:{} (recorded by {})",
+                    timestamp(answer.at),
+                    answer.session,
+                    answer.recorded_by
+                ),
+            ));
+        }
+        if let Some(closed) = &item.closed {
+            fields.push((
+                "closed",
+                format!("{} by {}", timestamp(closed.at), closed.by),
+            ));
+            if let Some(decision) = &closed.decision {
+                fields.push(("closed_decision", decision.to_string()));
+            }
+            fields.push(("closed_note", closed.note.clone()));
+        }
     }
     fields
 }
