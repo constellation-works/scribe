@@ -1739,7 +1739,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 17);
+    assert_eq!(version(), 18);
 }
 
 #[test]
@@ -3036,7 +3036,7 @@ fn claude_member_capture_replays_after_rotation_and_waits_for_a_missing_cursor()
 
     support::sql(
         &f.root(),
-        "ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item;
+        "ALTER TABLE group_members DROP COLUMN restarted; ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item;
          DROP TABLE group_claude_seen; DROP TABLE group_claude_progress; PRAGMA user_version = 14;",
     );
     let mut append = std::fs::OpenOptions::new()
@@ -4128,6 +4128,58 @@ fn a_restored_seat_keeps_its_new_join_time_as_the_cutoff_after_a_backfilled_join
     ));
     transcript(&f, A, &a_rows);
     stop(&f, A, &a_path, &env);
+    assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
+}
+
+/// An explicit backfill keeps the restarted window of a restored holder: what
+/// it typed while a later member held its seat was never authorized, so it is
+/// not stored, while turns from before the displacement stay and turns typed
+/// after the restore are stored.
+#[test]
+fn backfill_keeps_a_restored_holders_displaced_turns_out() {
+    let f = Fixture::new();
+    let mut a_rows = vec![
+        row_at(A, "u", "user", QUOTE, OLD),
+        row_at(
+            A,
+            "before",
+            "user",
+            "beforeorchid typed before the join",
+            OLD,
+        ),
+    ];
+    transcript(&f, A, &a_rows);
+    transcript(&f, B, &[row_at(B, "b", "user", "joining now", OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, A), ["u", "before"]);
+
+    join(&f, B, "g-1", &["--replace"], 0);
+    a_rows.push(row_at(
+        A,
+        "during",
+        "user",
+        "duringorchid typed while displaced",
+        OLD,
+    ));
+    transcript(&f, A, &a_rows);
+    invoke(&f, B, &["group", "leave"], 0);
+    a_rows.push(row(
+        A,
+        "after",
+        "user",
+        "afterorchid typed after the restore",
+    ));
+    transcript(&f, A, &a_rows);
+
+    let result = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(result["stored"], 1, "{result}");
+    assert_eq!(result["skipped"], 3, "{result}");
+    assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
+    assert_eq!(search_group(&f, "duringorchid")["total"], 0);
+    assert_eq!(search_group(&f, "afterorchid")["total"], 1);
+    let repeat = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(repeat["stored"], 0);
     assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
 }
 

@@ -75,6 +75,12 @@ ALTER TABLE groups ADD COLUMN slug TEXT;
 CREATE UNIQUE INDEX group_open_slug ON groups(slug) WHERE slug IS NOT NULL AND closed IS NULL;
 ";
 
+/// Version 18 marks a holder whose seat was restored after a displacement, so
+/// an explicit backfill keeps its restarted consent window.
+pub(super) const V18: &str = "
+ALTER TABLE group_members ADD COLUMN restarted INTEGER NOT NULL DEFAULT 0 CHECK (restarted IN (0, 1));
+";
+
 /// Drop a forgotten session's seat membership, clear derived summaries, and
 /// restart any restored holder's capture window. A seat that still has members
 /// keeps its role and chain.
@@ -141,9 +147,10 @@ fn remove_seat_member(
         // it again. Turns that member typed in between were never authorized:
         // restart its consent window now. Its cursor goes too, since a cursor
         // would make every later turn count as new whatever its timestamp, and
-        // no hook may have moved it past the displacement interval.
+        // no hook may have moved it past the displacement interval. The mark
+        // keeps an explicit backfill inside the restarted window too.
         conn.execute(
-            "UPDATE group_members SET joined = ?3, turn_cursor = NULL
+            "UPDATE group_members SET joined = ?3, turn_cursor = NULL, restarted = 1
              WHERE group_id = ?1 AND seat = ?2 AND position = (
                  SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
              )",
@@ -990,14 +997,24 @@ impl Store {
             }
             let mut counts = Vec::with_capacity(members.len());
             for (session, turns) in members {
-                let holds: bool = conn.query_row(
-                    &format!("SELECT EXISTS(SELECT 1 FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT})"),
-                    params![n, session.as_str()], |r| r.get(0),
-                ).map_err(fail)?;
-                if !holds {
+                let window: Option<(String, bool)> = conn.query_row(
+                    &format!("SELECT m.joined, m.restarted FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT}"),
+                    params![n, session.as_str()], |r| Ok((r.get(0)?, r.get(1)?)),
+                ).optional().map_err(fail)?;
+                let Some((joined, restarted)) = window else {
                     return Err(refusal(WriteRefusal::GroupMembership, "group membership changed during backfill; retry"));
-                }
-                counts.push(write_captured_turns(&conn, &path, session, turns.iter().collect(), redactor)?);
+                };
+                // A restored displaced holder restarted its consent window at
+                // its new join time: turns typed before it, during the
+                // displacement, were never authorized, so backfill keeps the
+                // same cutoff as capture.
+                let since = if restarted {
+                    Some(OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(&path, e))?)
+                } else {
+                    None
+                };
+                let eligible = turns.iter().filter(|m| since.is_none_or(|s| m.at >= s)).collect();
+                counts.push(write_captured_turns(&conn, &path, session, eligible, redactor)?);
             }
             Ok(counts)
         })

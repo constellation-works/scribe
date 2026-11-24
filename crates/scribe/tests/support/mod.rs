@@ -252,6 +252,7 @@ pub fn remove_group_capture_schema(root: &Path) {
         DROP TRIGGER handoffs_clear_group_summary;
         DROP TRIGGER messages_clear_group_summary;
         ALTER TABLE messages DROP COLUMN group_only;
+        ALTER TABLE group_members DROP COLUMN restarted;
         ALTER TABLE group_members DROP COLUMN turn_cursor;
         ALTER TABLE group_members DROP COLUMN joined;
         ALTER TABLE groups DROP COLUMN summary;",

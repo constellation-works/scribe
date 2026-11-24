@@ -4578,6 +4578,8 @@ backfills its own transcript only.
   still stores the first typed turn appended before the membership committed
   ([ORB-27644]). Restored seats and the typed `/scribe group <slug>` join keep
   their cutoffs.
+- Explicit `group backfill` keeps a restored holder's restarted window: it stores
+  no turn typed while a later member held the seat ([ORB-27668]).
 
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 

@@ -6933,7 +6933,7 @@ joined and `additionalContext` tells the session to re-run
 `scribe group join`. If the seat lookup fails, the hook reports the failure
 and also recommends running `scribe group join`.
 
-**Stored turns.** `scribe group backfill <id>` stores each current seat holder’s eligible typed turns from the first line of its checked transcript, including for seats joined before join-time backfill. It skips and names unavailable or refused transcripts, reports stored and already-stored counts per seat and in total, refuses closed groups, and never changes capture cursors. Repeating it stores no turn twice and makes no model call. This explicit operation includes a current holder’s earlier turns even across a prior displacement.
+**Stored turns.** `scribe group backfill <id>` stores each current seat holder’s eligible typed turns from the first line of its checked transcript, including for seats joined before join-time backfill. It skips and names unavailable or refused transcripts, reports stored and already-stored counts per seat and in total, refuses closed groups, and never changes capture cursors. Repeating it stores no turn twice and makes no model call. It uses the selection and cutoffs of join-time backfill: a restored displaced holder keeps its restarted consent window, so backfill never stores a turn it typed while a later member held its seat, and a turn dated before the restore is stored only if it was stored earlier.
 
 Joining starts no catalog pass and creates no session record.
 An explicit `group open`, `group join` or `/scribe group add` stores a session's
@@ -6953,7 +6953,7 @@ hooks move its capture cursor past the turns it types meanwhile without storing
 them, and when the replacement leaves or is forgotten, the restored holder's
 consent window restarts at that moment and its capture cursor is cleared, so
 ordinary capture never stores turns typed during the displacement, even when no hook
-ran for the replaced session meanwhile; explicit backfill can store the current holder’s earlier turns. Capture uses the pass's exclusions for
+ran for the replaced session meanwhile, and explicit `group backfill` keeps the same cutoff. Capture uses the pass's exclusions for
 synthetic and control
 turns, pasted blocks, fenced code and sensitive text, plus its store redactor.
 Claude group capture records its byte position and first-seen message

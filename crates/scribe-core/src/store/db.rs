@@ -87,6 +87,7 @@ const MIGRATIONS: &[&str] = &[
     groups::V15,
     V16,
     V17,
+    groups::V18,
 ];
 
 /// Version 17 ships typed records and replaces the trial's tag registrations.
@@ -1171,6 +1172,7 @@ ALTER TABLE groups DROP COLUMN slug;
 DROP TRIGGER handoffs_clear_group_summary;
 DROP TRIGGER messages_clear_group_summary;
 ALTER TABLE messages DROP COLUMN group_only;
+ALTER TABLE group_members DROP COLUMN restarted;
 ALTER TABLE group_members DROP COLUMN turn_cursor;
 ALTER TABLE group_members DROP COLUMN joined;
 ALTER TABLE groups DROP COLUMN summary;
