@@ -619,15 +619,23 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
     // names the messages and the command that lists them.
     let found = s.fx.ok(&["search", "quartzlark"]);
     assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
-    let default_root = s.fx.root().display().to_string();
-    let hint = format!(
-        "1 stored message(s) match, and no entry or session does: scribe --root={default_root} search --kind message -- quartzlark lists them"
+    let stderr = text(&found.stderr);
+    let hint = stderr.lines().last().unwrap();
+    let command = hint
+        .strip_prefix("1 stored message(s) match, and no entry or session does: ")
+        .unwrap()
+        .strip_suffix(" lists them")
+        .unwrap();
+    assert!(command.starts_with("scribe --root="), "{hint}");
+    assert!(
+        command.ends_with("search --kind message -- quartzlark"),
+        "{hint}"
     );
-    assert_eq!(
-        text(&found.stderr).lines().last(),
-        Some(hint.as_str()),
-        "{}",
-        text(&found.stderr)
+    #[cfg(unix)]
+    assert_message_hint_replays(
+        &s.fx,
+        hint,
+        "1 stored message(s) match, and no entry or session does: ",
     );
     let listed = json(
         &s.fx
@@ -708,13 +716,25 @@ fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessi
     let found = s.fx.ok(&["search", "quartzlark"]);
     assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
     let stderr = text(&found.stderr);
-    let default_root = s.fx.root().display().to_string();
     let hidden = "1 hidden record(s) also match: superseded or retired entries, or inactive sessions; --include-hidden shows them";
-    let hint = format!(
-        "1 stored message(s) match, and no visible entry or session does: scribe --root={default_root} search --kind message -- quartzlark lists them"
-    );
     assert!(stderr.lines().any(|l| l == hidden), "{stderr}");
-    assert_eq!(stderr.lines().last(), Some(hint.as_str()), "{stderr}");
+    let hint = stderr.lines().last().unwrap();
+    let command = hint
+        .strip_prefix("1 stored message(s) match, and no visible entry or session does: ")
+        .unwrap()
+        .strip_suffix(" lists them")
+        .unwrap();
+    assert!(command.starts_with("scribe --root="), "{hint}");
+    assert!(
+        command.ends_with("search --kind message -- quartzlark"),
+        "{hint}"
+    );
+    #[cfg(unix)]
+    assert_message_hint_replays(
+        &s.fx,
+        hint,
+        "1 stored message(s) match, and no visible entry or session does: ",
+    );
     assert!(!stderr.contains("and no entry or session does"), "{stderr}");
 
     // The count is the same JSON key, and it names the visible message.
@@ -735,6 +755,33 @@ fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessi
         "{}",
         text(&shown.stderr)
     );
+}
+
+#[cfg(unix)]
+fn assert_message_hint_replays(fx: &Fixture, hint: &str, prefix: &str) {
+    let command = hint
+        .strip_prefix(prefix)
+        .unwrap()
+        .strip_suffix(" lists them")
+        .unwrap()
+        .replacen(" -- ", " --json -- ", 1);
+    let binary_dir = std::path::Path::new(support::BIN)
+        .parent()
+        .unwrap()
+        .display();
+    let path = format!("{binary_dir}:/usr/bin:/bin");
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env_clear()
+        .env("HOME", fx.home())
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let listed: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["hits"][0]["message"], "u-1", "{listed}");
 }
 
 #[test]
@@ -764,15 +811,19 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
         "--",
         "-quartzlark",
     ]);
-    let hint = format!(
-        "1 stored message(s) match, and no entry or session does: scribe --root='{}' search --kind message --project scribe --since 2026-11-03 --until 2026-11-03 -- -quartzlark lists them",
-        root.display()
-    );
-    assert_eq!(
-        text(&search.stderr).lines().last(),
-        Some(hint.as_str()),
-        "{}",
-        text(&search.stderr)
+    let stderr = text(&search.stderr);
+    let hint = stderr.lines().last().unwrap();
+    let command = hint
+        .strip_prefix("1 stored message(s) match, and no entry or session does: ")
+        .unwrap()
+        .strip_suffix(" lists them")
+        .unwrap();
+    assert!(command.starts_with("scribe --root="), "{hint}");
+    assert!(
+        command.ends_with(
+            "search --kind message --project scribe --since 2026-11-03 --until 2026-11-03 -- -quartzlark"
+        ),
+        "{hint}"
     );
 
     // Execute the hinted command with JSON inserted before its terminator.
