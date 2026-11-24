@@ -111,13 +111,16 @@ inactive sessions; --include-hidden shows them`.
 (ORB-27628) A default `scribe search` (no `--kind`) that finds no entry or
 session, while stored messages match the same filters, ends its stderr, in
 every mode, with the last line `<n> stored message(s) match, and no entry or
-session does: scribe --root <dir> search --kind message [filters] -- <terms>
+session does: scribe --root=<dir> search --kind message [filters] -- <terms>
 lists them`. When hidden records also matched (the line above), the words
 are `and no visible entry or session does`, since that line already names the
 hidden ones the search left out. The command repeats the effective store root
 and the filters (`--project`, `--group`, `--topic`, the dates and
 `--include-hidden`), so
-`<n>` counts what it lists. Each filter value and the terms are literal shell
+`<n>` counts what it lists. The root is attached with `=` so a dash-leading
+path remains a value. A root with control characters is reconstructed using
+POSIX `printf` octal escapes, without placing controls in the hint; `/.`
+preserves trailing newlines through shell command substitution. Each filter value and the terms are literal shell
 words: a value a shell would read otherwise is single-quoted, and a `--project`
 or `--group` value that starts with a dash is written `--<flag>=<value>`, so
 the command replays as the search ran. The `--` before the terms preserves a

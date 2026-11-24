@@ -260,8 +260,7 @@ pub(super) fn message_command(
     dates: &DateArgs,
 ) -> String {
     let mut words = vec![
-        String::from("scribe --root"),
-        shell_word(&root.display().to_string()),
+        format!("scribe --root={}", shell_root(root)),
         String::from("search --kind message"),
     ];
     if let Some(project) = &query.project {
@@ -278,6 +277,31 @@ pub(super) fn message_command(
     words.push(String::from("--"));
     words.push(shell_word(&query.terms));
     words.join(" ")
+}
+
+/// Encode a root containing controls as bytes reconstructed by POSIX printf.
+/// Appending `/.` keeps trailing newlines from being stripped by command
+/// substitution while still naming the same directory.
+fn shell_root(root: &std::path::Path) -> String {
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt;
+        root.as_os_str().as_bytes().to_vec()
+    };
+    #[cfg(not(unix))]
+    let bytes = root.to_string_lossy().as_bytes().to_vec();
+
+    if let Ok(text) = std::str::from_utf8(&bytes)
+        && !text.chars().any(char::is_control)
+    {
+        return shell_word(text);
+    }
+    let mut octal = String::new();
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(octal, "\\{byte:03o}");
+    }
+    format!("\"$(printf '{octal}/.')\"")
 }
 
 /// `--flag value` as shell words for a value that may hold any label
