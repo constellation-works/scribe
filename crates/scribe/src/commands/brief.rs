@@ -47,7 +47,7 @@ pub(super) fn run(args: &BriefArgs, ctx: &Context) -> Result<Output, CliError> {
     let project = args.project.clone().or_else(|| {
         std::env::current_dir()
             .ok()
-            .map(|cwd| super::hook::project::of(&cwd))
+            .map(|cwd| scribe_tools::project::of(&cwd))
     });
     let input = BriefInput {
         project: project.as_ref(),

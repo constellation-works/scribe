@@ -23,6 +23,7 @@ test-support = ["scribe-store/test-support"]
 [dependencies]
 scribe-domain = { workspace = true }
 scribe-store = { workspace = true }
+scribe-tools = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # The codex adapter hands the child its schema and instructions in a private

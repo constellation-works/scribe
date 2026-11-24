@@ -18,6 +18,9 @@ pub mod resolve;
 #[cfg(unix)]
 use crate::ClaudeCapturePosition;
 use crate::{Config, Project, Provider, Redactor, SessionId, Store};
+#[cfg(unix)]
+pub use scribe_tools::transcript::{ClaudeRead, ClaudeWindow};
+pub use scribe_tools::transcript::{Discovered, TranscriptState, Unreadable};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
@@ -233,28 +236,6 @@ pub trait Transcripts {
     ) -> Result<Option<ClaudeRead>, Unreadable>;
 }
 
-/// One read of a Claude transcript's new records
-/// ([`Transcripts::claude_window`]).
-#[cfg(unix)]
-pub enum ClaudeRead {
-    /// The file changed during the read (cut short, truncated or rewritten
-    /// in place): read it again.
-    Retry,
-    /// The new complete records, or `None` when there are none.
-    Window(Option<ClaudeWindow>),
-}
-
-/// A Claude transcript's new complete records and where they end.
-#[cfg(unix)]
-pub struct ClaudeWindow {
-    /// The records' bytes.
-    pub bytes: Vec<u8>,
-    /// Whether the read resumed from the saved position.
-    pub resumed: bool,
-    /// Where the records end, for the next read.
-    pub position: ClaudeCapturePosition,
-}
-
 /// What the CLI's audit middleware records about the instruction a command
 /// acts on, noted as the command runs.
 pub trait AuditNotes {
@@ -264,33 +245,6 @@ pub trait AuditNotes {
     fn message(&self, message: &str);
     /// The command's audit line was committed with its write.
     fn committed(&self);
-}
-
-/// The transcripts found on this host ([`Transcripts::discovered`]).
-#[derive(Debug, Default)]
-pub struct Discovered {
-    /// The regular transcripts, by session id.
-    pub files: Vec<(SessionId, PathBuf)>,
-    /// The entries named like a transcript whose file type is refused.
-    pub refused: Vec<(SessionId, PathBuf)>,
-}
-
-/// Whether a transcript that passed its checks is there yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TranscriptState {
-    /// The transcript exists and passed.
-    Present,
-    /// The path is right but there is no file yet.
-    Missing,
-}
-
-/// Why a transcript could not be read.
-#[derive(Debug)]
-pub enum Unreadable {
-    /// The provenance check refused it; the text is why.
-    Refused(String),
-    /// The file could not be opened or read.
-    Io(std::io::Error),
 }
 
 /// How much one run of a routine command may do: at most `max` units

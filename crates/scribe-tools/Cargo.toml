@@ -1,0 +1,34 @@
+[package]
+name = "scribe-tools"
+description = "scribe's tools: provider transcripts found and read under the provenance checks, and a working directory's project. No records decided, no environment read, no process spawned."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "scribe_tools"
+path = "src/lib.rs"
+
+# scripts/check-dependency-direction.sh holds the crate's policy: it depends
+# on the store (the capture position a Claude window resumes from) and, until
+# the domain is dissolved (ORB-27921 step 5), on scribe-domain for the
+# session id, provider, project and the Codex rollout parse.
+[dependencies]
+scribe-domain = { workspace = true }
+scribe-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Unix only: transcripts and git metadata are opened beneath their root
+# without following a link (`openat` with `O_NOFOLLOW`), and a transcript's
+# owner is checked against the effective uid (STD-05 R9).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

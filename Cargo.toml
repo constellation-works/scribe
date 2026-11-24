@@ -6,6 +6,7 @@ resolver = "3"
 members = [
     "crates/scribe-domain",
     "crates/scribe-store",
+    "crates/scribe-tools",
     "crates/scribe-core",
     "crates/scribe",
 ]
@@ -22,6 +23,7 @@ repository = "https://github.com/constellation-works/scribe"
 [workspace.dependencies]
 scribe-domain = { path = "crates/scribe-domain" }
 scribe-store = { path = "crates/scribe-store" }
+scribe-tools = { path = "crates/scribe-tools" }
 scribe-core = { path = "crates/scribe-core" }
 # No `color` or `wrap_help`: both make clap query the terminal itself, and the
 # output sink is the only place allowed to do that (STD-01 R17). Help is plain

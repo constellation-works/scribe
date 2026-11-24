@@ -40,8 +40,15 @@ policy() {
       ALLOWED="scribe-domain"
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored"
       ;;
-    scribe-core)
+    scribe-tools)
+      # Functions of host files, bytes and text. It depends on the store for
+      # the capture position a window resumes from and, until the domain is
+      # dissolved (ORB-27921 step 5), on scribe-domain.
       ALLOWED="scribe-domain scribe-store"
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile"
+      ;;
+    scribe-core)
+      ALLOWED="scribe-domain scribe-store scribe-tools"
       # The use cases reach files and scribe.db only through the store. Its
       # tests may stage database states with rusqlite: dev-dependencies are
       # exempt (declared_deps reads normal dependencies only). rustix and
@@ -52,8 +59,10 @@ policy() {
       ;;
     scribe)
       # The CLI reaches scribe.db through scribe_core::Store; its tests may
-      # stage database states with rusqlite as a dev-dependency.
-      ALLOWED="scribe-core"
+      # stage database states with rusqlite as a dev-dependency. scribe-tools
+      # is interim: from ORB-27921 step 3 PR 2 until PR 4 moves composition
+      # into the core.
+      ALLOWED="scribe-core scribe-tools"
       BANNED="rusqlite"
       ;;
     *) return 1 ;;
@@ -294,6 +303,18 @@ while IFS= read -r file; do
 done < <(find "$CORE/apps" "$CORE/runtime" -name '*.rs' -not -path '*/tests/*' | sort)
 # The providers know nothing of the apps or the runtime that call them.
 ban "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
+
+# scribe-tools: only fs.rs names std::fs; nothing reads the environment,
+# discovers a path, spawns a process, names the core or writes the store.
+TOOLS=crates/scribe-tools/src
+for path in "$TOOLS"/*; do
+  case "$(basename "$path")" in tests | fs.rs) continue ;; esac
+  ban_std "$path" 'fs|net|process' "${path#crates/}: only scribe-tools/src/fs.rs names std::fs, and the tools spawn nothing"
+done
+ban_std "$TOOLS/fs.rs" 'net|process' "scribe-tools/src/fs.rs: the tools spawn nothing and open no socket"
+ban "$TOOLS" 'std::env::|home_dir|current_dir\(\)' "scribe-tools must not read the environment or discover paths"
+ban "$TOOLS" 'scribe_core(::|[^[:alnum:]_]|$)' "scribe-tools must not name scribe_core: the core calls the tools"
+ban "$TOOLS" 'Store::write|\.write\([[:space:]]*\|' "scribe-tools must not write the store"
 
 # Pass is an orchestrator; its lower-level callers in the rules ring cannot
 # depend on it.
