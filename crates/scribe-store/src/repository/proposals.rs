@@ -3,9 +3,9 @@
 
 use super::Proposals;
 use super::ids::resolve;
-use crate::checks::refusal;
 use crate::db::{self, docs};
 use crate::error::Result;
+use crate::error::refusal;
 use crate::{EntryId, Proposal, ProposalId, ProposalKind, Store, WriteRefusal};
 
 impl Proposals<'_> {

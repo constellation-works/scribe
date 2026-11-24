@@ -17,6 +17,7 @@ mod verbs;
 
 pub use add::ProposalAddInput;
 pub use list::ListInput;
+pub use rules::{checked_outcome, has_context_and_subject, open_under, pass_entry, written_from};
 pub use settle::ProposalSettleInput;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::{ProposalVerbs, SessionForgetOutcome};

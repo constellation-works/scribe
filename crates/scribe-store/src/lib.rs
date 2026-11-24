@@ -62,6 +62,7 @@
 
 mod contracts;
 mod db;
+mod error;
 pub use db::documents::Imported;
 pub use db::fsio;
 pub use db::locks::SessionLock;
@@ -70,9 +71,10 @@ pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
 pub use contracts::action::Pickup;
 pub use contracts::group::LastGroup;
+pub use error::{forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
-pub use repository::ids::resolve_prefix;
+pub use repository::ids::{number as group_number, resolve_prefix};
 pub use repository::memory::{
     MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
     PROFILE_FILE, ProfileRevision,
@@ -106,8 +108,8 @@ use scribe_domain::{
     StoreTag, TagDef, TagTable, WriteRefusal,
 };
 use scribe_domain::{
-    annotation, capture, checks, config, entry, error, group, handoff, instruction, message,
-    models, proposal, record, redact, session,
+    annotation, capture, config, entry, group, handoff, instruction, message, models, proposal,
+    record, redact, session,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;

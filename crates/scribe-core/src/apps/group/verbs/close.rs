@@ -2,9 +2,9 @@
 //! write transaction, then compares the evidence before publishing its
 //! summary.
 
-use crate::checks::refusal;
 use crate::group::{CloseEvidence, GroupCloser};
 use crate::repository::GroupRows;
+use crate::store::refusal;
 use crate::{AuditEvent, Error, Redactor, Related, Result, Store, WriteRefusal};
 use time::OffsetDateTime;
 

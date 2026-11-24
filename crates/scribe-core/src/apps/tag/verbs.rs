@@ -2,10 +2,11 @@
 //! CLI runs before it builds a redactor (`scribe tag add`, `scribe tag
 //! update`).
 
-use crate::checks::tag::check_description;
-use crate::checks::{check_agent_author, refusal};
+use super::rules::check_agent_author;
+use super::rules::check_description;
 use crate::record::patch;
 use crate::repository::Tags;
+use crate::store::refusal;
 use crate::{
     Author, AuthorKind, AuthorName, Redactor, Result, Store, StoreTag, TagName, TagPatch, TagTable,
     WriteRefusal,

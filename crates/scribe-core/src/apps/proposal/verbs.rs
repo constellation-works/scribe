@@ -2,12 +2,14 @@
 //! turn, consistency proposals and the recovery of interrupted approvals
 //! (2_design.md §11, §12).
 
-use crate::checks::{check_agent_author, refusal, required_message, required_reason};
+use crate::apps::entry::{required_message, required_reason};
+use crate::apps::tag::check_agent_author;
 use crate::consistency::{
     self, CoveredCandidate, Draft, Reapplied, ReapplyReport, Settle, Settled,
 };
 use crate::entry::Cite;
 use crate::pass::covering_claim;
+use crate::store::refusal;
 use crate::{
     Author, AuthorKind, AuthorName, EntryId, EntryStatus, Error, Proposal, ProposalId,
     ProposalKind, ProposalState, Redactor, Result, Store, Tx, WriteRefusal,

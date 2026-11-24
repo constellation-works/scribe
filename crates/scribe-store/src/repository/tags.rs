@@ -3,8 +3,8 @@
 //! The config is read here too: the tags it defines route first.
 
 use super::Tags;
-use crate::checks::refusal;
 use crate::db::{self, docs};
+use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::{CONFIG_FILE, Config, Store, StoreTag, TagDef, fsio};
 use scribe_domain::{TagTable, WriteRefusal};

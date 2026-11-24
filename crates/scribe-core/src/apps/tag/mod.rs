@@ -14,6 +14,7 @@ mod verbs;
 
 pub use add::TagAddInput;
 pub use list::{TagList, list_tags};
+pub use rules::check_agent_author;
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::TagVerbs;

@@ -7,7 +7,7 @@
 //! which names the id and the place searched.
 //! Resolution reads only: no lock, no write.
 
-use crate::checks::refusal;
+use crate::error::refusal;
 use crate::{Error, Result, WriteRefusal};
 
 /// The shortest prefix accepted, in characters.
@@ -61,6 +61,12 @@ pub(crate) fn resolve(input: &str, ids: &[String]) -> Result<Option<usize>> {
 /// `id_ambiguous` when several ids match.
 pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<Option<String>> {
     Ok(resolve(input, ids)?.map(|i| ids[i].clone()))
+}
+
+/// The number of a group id `g-<n>`, when it is one exactly.
+pub fn number(id: &str) -> Option<i64> {
+    let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
+    (n > 0 && format!("g-{n}") == id).then_some(n)
 }
 
 fn ambiguous<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Error {

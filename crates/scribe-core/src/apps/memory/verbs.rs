@@ -7,11 +7,12 @@ use super::refresh::{
     Basis, ProfileInputs, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
     REFRESH_VERBATIM_SESSIONS, RefreshWritten,
 };
-use crate::checks::{check_agent_author, refusal};
+use crate::apps::tag::check_agent_author;
 use crate::entry::EntryStatus;
 use crate::memory::{self, Milestone, NowItem, Stem, profile};
 use crate::models::{ProfileAnswer, ProfileSession};
 use crate::repository::{HistoryRow, MemoryCommit};
+use crate::store::refusal;
 use crate::store::{bare, not_found};
 use crate::{AuthorName, MemoryShown, Redactor, Result, SessionId, Store, WriteRefusal};
 use std::collections::BTreeSet;

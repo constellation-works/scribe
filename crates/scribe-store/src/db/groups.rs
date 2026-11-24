@@ -11,10 +11,10 @@ pub use rows::CloseHeader;
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
-use crate::checks::group::number;
-use crate::checks::refusal;
+use crate::error::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
+use crate::repository::ids::number;
 use crate::{Error, Label, Project, Redactor, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;

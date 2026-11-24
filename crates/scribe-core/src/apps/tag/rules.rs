@@ -1,10 +1,17 @@
 //! The tag app's rules. Pure functions over loaded records: no I/O
 //! (STD-02 R5).
+//!
+//! - The count of retired and rejected agent entries per action tag.
+//! - The checks of an agent-channel write that every app's writes share
+//!   ([`check_agent_author`]; the tag app is its lowest user), and of a store
+//!   tag write (`scribe tag add`, `scribe tag update`).
 
 use crate::entry::{Entry, EntryStatus, TagName};
 use crate::record::AuthorKind;
 use crate::store::Pickup;
+use crate::store::refusal;
 use crate::tag::TagTable;
+use crate::{AuthorName, Result, WriteRefusal};
 use std::collections::BTreeMap;
 
 /// Per action tag: `(retired, rejected)`, the agent-written entries under it
@@ -29,4 +36,41 @@ pub fn tag_counts(
         }
     }
     counts
+}
+
+// --- write checks ---
+
+/// Refuse a reserved name on an agent-channel write: `user` (and `daniel`,
+/// its name before format 23), `scribe`, `consistency`, `session-pass` and
+/// `tag-retired` name the user's and scribe's own channels, so a record
+/// written with one could be mistaken for theirs.
+///
+/// # Errors
+///
+/// [`WriteRefusal::ReservedAuthor`] when `author` is reserved.
+pub fn check_agent_author(author: &AuthorName) -> Result<()> {
+    if author.is_reserved() {
+        return Err(refusal(
+            WriteRefusal::ReservedAuthor,
+            format!(
+                "'{author}' is reserved for the user's and scribe's own channels; pass your own crew or model name as --author"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a tag description that is blank or over 300 characters.
+///
+/// # Errors
+///
+/// [`WriteRefusal::InvalidText`] for either.
+pub fn check_description(description: &str) -> Result<()> {
+    if description.trim().is_empty() || description.chars().count() > 300 {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "description must contain 1-300 characters",
+        ));
+    }
+    Ok(())
 }

@@ -44,7 +44,10 @@ impl Decision {
         self.decided_by.as_str() == "user"
     }
 
-    pub(crate) fn chars(&self, content: &str, quote: Option<&str>) -> usize {
+    /// The characters a decision holds across its content, options,
+    /// rationale and quotes, the count its size cap bounds.
+    #[must_use]
+    pub fn chars(&self, content: &str, quote: Option<&str>) -> usize {
         std::iter::once(content)
             .chain(self.options.iter().map(String::as_str))
             .chain(self.rationale.as_deref())

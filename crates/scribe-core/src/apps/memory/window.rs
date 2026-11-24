@@ -137,8 +137,7 @@ impl WindowMemoryTestWrites for crate::Store {
         record: &SessionRecord,
     ) -> Result<MemoryWritten> {
         use crate::testing::StoreTestInternals;
-        let (drafts, sensitive) =
-            crate::checks::memory::check_sensitive_drafts(&pass.drafts, redactor);
+        let (drafts, sensitive) = super::rules::check_sensitive_drafts(&pass.drafts, redactor);
         let pass = WindowMemory {
             drafts,
             ..pass.clone()

@@ -22,7 +22,6 @@
 pub mod activity;
 pub mod annotation;
 pub mod capture;
-pub mod checks;
 pub mod claim;
 pub mod config;
 pub mod control;

@@ -1,4 +1,4 @@
-//! The check a pass window's memory drafts pass before they are planned
+//! The memory app's rules: the check a pass window's memory drafts pass before they are planned
 //! (§15.5).
 
 use crate::Redactor;

@@ -4,8 +4,8 @@
 
 use super::Entries;
 use super::ids::resolve;
-use crate::checks::refusal;
 use crate::db::{self, DB_FILE, docs};
+use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::record::Listing;
 use crate::{

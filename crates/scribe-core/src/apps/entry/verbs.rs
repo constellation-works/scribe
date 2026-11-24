@@ -1,23 +1,20 @@
 //! Entry verbs: notes written with agent provenance, and the decision and
 //! open-item records (2_design.md §12, §18).
 
-use crate::checks::entry::{
-    check_evidence, check_handoff, check_handoff_related, check_handoff_related_update,
-    check_quote, check_spoken_quote, check_spoken_tag, counts_toward_cap, draft_session,
-};
-use crate::checks::records::{
+use super::rules::{
     check_decision, check_decision_redaction, check_decision_size, check_decision_update,
-    check_open_item, check_unsettled_item, item_mut, patch_decision,
+    check_evidence, check_handoff, check_handoff_related, check_handoff_related_update,
+    check_open_item, check_quote, check_reason, check_spoken_quote, check_spoken_tag,
+    check_unsettled_item, counts_toward_cap, draft_session, item_mut, patch_decision, required,
+    required_message, required_reason, unknown_tag,
 };
-use crate::checks::{
-    check_agent_author, check_reason, refusal, required, required_message, required_reason,
-    unknown_tag,
-};
+use crate::apps::tag::check_agent_author;
 use crate::entry::{
     AgentEntry, Cite, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG, is_decision_or_item,
 };
 use crate::record::patch;
 use crate::runtime::resolve::refuse_forgotten;
+use crate::store::refusal;
 use crate::{
     Author, AuthorKind, AuthorName, ContentFrom, Decision, Entry, EntryId, EntryStatus, Error,
     ItemAnswer, ItemClosure, ItemState, Label, Redactor, RelatedKind, Result, SessionId, Store,

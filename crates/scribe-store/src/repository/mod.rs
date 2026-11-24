@@ -4,7 +4,7 @@
 //!
 //! A repository holds no rule: it reads and writes records as they are.
 //! Validation is the caller's, run inside the `write` closure so that a check
-//! and its write share one transaction (`crate::checks`). The use-case verbs
+//! and its write share one transaction. The use-case verbs
 //! still on [`Store`] move onto this surface in the steps that follow, and
 //! are then removed.
 //!

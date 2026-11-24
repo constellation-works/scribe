@@ -8,6 +8,7 @@
 
 mod init;
 mod migrate;
+pub mod rules;
 
 pub use init::{
     InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,

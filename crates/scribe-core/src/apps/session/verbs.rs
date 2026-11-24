@@ -1,8 +1,9 @@
 //! Session verbs: links between sessions, the activity switch, a
 //! continuation's handoff, and a session's forget (2_design.md §6, §12.4).
 
+use super::rules::{check_active_author, check_session_field};
 use crate::activity::{ActiveOutcome, SetActive};
-use crate::checks::{check_active_author, check_session_field, forgotten_refusal, refusal};
+use crate::store::{forgotten_refusal, refusal};
 use crate::{
     Entry, EntryStatus, Error, LinkType, Provider, Redactor, Result, SessionId, SessionLink,
     SessionRecord, Store, Tx, WriteRefusal, activity, control, handoff,
@@ -211,7 +212,7 @@ impl SessionVerbs for Store {
             let Some(entry) = continuation_entry(self, selection)? else {
                 return Ok(None);
             };
-            crate::checks::entry::check_handoff(&entry.tag, &entry.content)?;
+            crate::apps::entry::check_handoff(&entry.tag, &entry.content)?;
             let parent = handoff::check_related(&entry.related)
                 .map_err(|err| refusal(WriteRefusal::HandoffSession, err.to_string()))?;
             let link = SessionLink {
