@@ -1,9 +1,9 @@
 //! `scribe group backfill` (ORB-27707 step 3c): store earlier typed turns for
 //! each current seat holder.
 
-use crate::cases::group::GroupVerbs;
-use crate::cases::group_cmd::{GroupError, locate, redactor};
-use crate::cases::group_turns;
+use super::turns as group_turns;
+use super::verbs::GroupVerbs;
+use super::{Error as GroupError, locate, redactor};
 use crate::runtime::{Ctx, PortError};
 use crate::{Provider, WriteRefusal};
 

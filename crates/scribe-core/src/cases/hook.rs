@@ -3,9 +3,12 @@
 //! text helpers their echoes use. The JSON a hook prints from a
 //! [`HookReply`] (Claude Code's hook protocol) is rendered by the CLI.
 
+use crate::Error;
+pub use crate::apps::group::HookError;
+pub(crate) use crate::apps::group::refusal;
 use crate::apps::session::CatalogError;
 use crate::runtime::PortError;
-use crate::{Error, SessionId};
+pub use crate::runtime::audit::HookOutcome;
 
 /// The code of a payload whose transcript failed the provenance check.
 pub const PROVENANCE_FAILED: &str = "provenance_failed";
@@ -34,40 +37,6 @@ pub struct HookReply {
     pub outcomes: Vec<HookOutcome>,
 }
 
-/// One write or refusal a hook run made.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HookOutcome {
-    /// The record it acted on: an entry id, or `session:<id>` for a refusal.
-    pub target: Option<String>,
-    /// The stable code of a refusal; `None` for a write.
-    pub error_code: Option<&'static str>,
-}
-
-/// Why a hook use case failed.
-#[derive(Debug)]
-pub enum HookError<E> {
-    /// A store error.
-    Core(Error),
-    /// A port refused or failed.
-    Port(E),
-    /// The transcript could not be read.
-    Read {
-        /// The file.
-        what: String,
-        /// The read error.
-        source: std::io::Error,
-    },
-    /// The transcript failed its provenance check.
-    TranscriptRefused {
-        /// The session.
-        id: SessionId,
-        /// Why.
-        reason: String,
-    },
-    /// A usage error.
-    Usage(String),
-}
-
 /// The port error of the prompt-side hooks: a reply that reports an error
 /// in its text formats it as the port error it becomes, so the text, the
 /// code and the cause chain are the CLI's own.
@@ -89,12 +58,6 @@ impl<E> HookPortError for E where
         + From<CatalogError<E>>
         + Sized
 {
-}
-
-impl<E> From<Error> for HookError<E> {
-    fn from(err: Error) -> Self {
-        Self::Core(err)
-    }
 }
 
 /// `text` on one line, cut to [`ECHO_CHARS`].
@@ -121,12 +84,4 @@ pub fn chain(err: &Error) -> String {
         source = cause.source();
     }
     message
-}
-
-/// A refusal outcome against `session`.
-pub(crate) fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
-    HookOutcome {
-        target: Some(format!("session:{session}")),
-        error_code: Some(code),
-    }
 }

@@ -1,8 +1,8 @@
 //! `scribe group close` (ORB-27707 step 3c): summarize and close a group from
 //! its opener, a seat holder or a typed quote.
 
-use crate::cases::group::GroupVerbs;
-use crate::cases::group_cmd::{GroupError, checked_transcript};
+use super::verbs::GroupVerbs;
+use super::{Error as GroupError, checked_transcript};
 use crate::group::{GroupCloser, GroupConsent};
 use crate::runtime::{AuditNotes, Ctx, PortError};
 use crate::{CloseGroupOutcome, Config, Models, Provider, SessionId, WriteRefusal};

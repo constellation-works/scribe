@@ -1,8 +1,8 @@
 //! `scribe group open` (ORB-27707 step 3c): open a group on a verbatim quote
 //! the user typed in the calling session.
 
-use crate::cases::group::GroupVerbs;
-use crate::cases::group_cmd::{GroupError, locate, redactor, resolve_relateds, typed_turns};
+use super::verbs::GroupVerbs;
+use super::{Error as GroupError, locate, redactor, resolve_relateds, typed_turns};
 use crate::group::{GroupConsent, NewGroup};
 use crate::runtime::{AuditNotes, Ctx, PortError};
 use crate::{Project, Provider, Related, SessionId, WriteRefusal};

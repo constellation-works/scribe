@@ -447,7 +447,9 @@ fn passed(outcome: Outcome, ctx: &Context) -> Output {
 }
 
 /// `models` as the boxed one-shot factory a command carries.
-fn once<'i, M: Models + 'i>(models: impl FnOnce(&Config) -> M + 'i) -> ModelsOnce<'i> {
+pub(in crate::commands) fn once<'i, M: Models + 'i>(
+    models: impl FnOnce(&Config) -> M + 'i,
+) -> ModelsOnce<'i> {
     Box::new(move |config: &Config| Box::new(models(config)) as Box<dyn Models + 'i>)
 }
 

@@ -33,12 +33,11 @@
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 
+use crate::apps::group;
 use crate::apps::session;
 use crate::capture::{self, Parsed, Turn};
 use crate::cases::continuation;
-use crate::cases::group::GroupVerbs;
 use crate::cases::group_add::{self, GroupAddInput};
-use crate::cases::group_turns;
 use crate::cases::hook::{
     HookError, HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain, quote, refusal,
 };
@@ -115,7 +114,7 @@ fn apply_deferred_ancestry<E: HookPortError>(
     session: &SessionId,
     output: &mut HookReply,
 ) -> Result<(), crate::Error> {
-    if !ctx.store.has_deferred_ancestry(session)? {
+    if !group::has_deferred_ancestry(ctx.store, session)? {
         return Ok(());
     }
     let listed = ctx.store.read().sessions().list(&crate::SessionFilter {
@@ -131,11 +130,11 @@ fn apply_deferred_ancestry<E: HookPortError>(
             &r.id == session && r.links.iter().any(|l| l.kind == crate::LinkType::Continues)
         });
     let held = matches!(
-        ctx.store.inherit_seat(session, None)?,
+        group::inherit_seat(ctx.store, session, None)?,
         crate::group::SeatStart::AlreadySeated(_) | crate::group::SeatStart::Replaced
     );
     if linked || held {
-        if ctx.store.take_deferred_ancestry(session)? {
+        if group::take_deferred_ancestry(ctx.store, session)? {
             output.outcomes.push(HookOutcome {
                 target: Some(format!("session:{session}")),
                 error_code: None,
@@ -149,7 +148,7 @@ fn apply_deferred_ancestry<E: HookPortError>(
     else {
         return Ok(());
     };
-    if !ctx.store.take_deferred_ancestry(session)? {
+    if !group::take_deferred_ancestry(ctx.store, session)? {
         return Ok(());
     }
     let restored = continuation::at_start(ctx, session, &predecessor);
@@ -310,7 +309,8 @@ fn capture_prompt<E: HookPortError>(
                 let project = ctx.transcripts.project_of(Path::new(cwd));
                 let redactor = redactor(ctx, provider)?;
                 return Ok(
-                    match ctx.store.join_project_group(
+                    match group::join_project_group(
+                        ctx.store,
                         &slug,
                         &project,
                         &session,
@@ -351,9 +351,15 @@ fn capture_prompt<E: HookPortError>(
                     .resolve_or_typed_with(&named, &ids)
                     .and_then(|id| {
                         let project = ctx.transcripts.project_of(Path::new(cwd));
-                        ctx.store
-                            .move_project_group(&id, &slug, &project, ctx.clock.now(), &redactor)
-                            .map(|_| id)
+                        group::move_project_group(
+                            ctx.store,
+                            &id,
+                            &slug,
+                            &project,
+                            ctx.clock.now(),
+                            &redactor,
+                        )
+                        .map(|_| id)
                     });
                 return Ok(named_reply(result, "moved", &session));
             }
@@ -371,7 +377,7 @@ fn capture_prompt<E: HookPortError>(
                     .read()
                     .sessions()
                     .resolve_or_typed_with(&named, &ids)
-                    .and_then(|id| ctx.store.leave_group(&id).map(|_| id));
+                    .and_then(|id| group::leave_group(ctx.store, &id).map(|_| id));
                 return Ok(named_reply(result, "removed", &session));
             }
             GroupLine::Update {
@@ -418,7 +424,7 @@ fn capture_prompt<E: HookPortError>(
         ));
     }
     let mut outcomes: Vec<HookOutcome> = if provider == Provider::ClaudeCode {
-        group_turns::claude(ctx, provider, &session, transcript_path)?
+        group::claude_turns(ctx, provider, &session, transcript_path)?
             .into_iter()
             .collect()
     } else {

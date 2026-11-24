@@ -28,9 +28,9 @@
 //! refusal is audited with its code; a no-op or a status writes nothing, except
 //! that an explicit off during deferred ancestry records and audits the opt-out.
 
+use crate::apps::group;
 use crate::apps::session;
 use crate::cases::continuation;
-use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain};
 use crate::control::{self, Change, Switch};
 use crate::runtime::Ctx;
@@ -115,33 +115,35 @@ pub fn run<E: HookPortError>(ctx: &Ctx<'_, E>, input: &ScribeCommandInput<'_>) -
             .control()
             .map(|state| (Change::Status(state.get(session).cloned()), false)),
         Switch::Unknown(arg) => Ok((Change::Unknown(arg.clone()), false)),
-        Switch::On | Switch::Off => store.has_deferred_ancestry(session).and_then(|pending| {
-            store.write(|tx| {
-                tx.sessions().change_control(|state| {
-                    let change = control::switch_for_provider(
-                        state,
-                        session,
-                        switch,
-                        ctx.clock.now(),
-                        provider,
-                    );
-                    // An explicit opt-out must survive a later deferred inheritance.
-                    let recorded_off = pending
-                        && matches!(switch, Switch::Off)
-                        && !state.sessions.contains_key(session);
-                    if recorded_off {
-                        state.sessions.insert(
-                            session.clone(),
-                            SessionControl {
-                                provider,
-                                ..SessionControl::default()
-                            },
+        Switch::On | Switch::Off => {
+            group::has_deferred_ancestry(store, session).and_then(|pending| {
+                store.write(|tx| {
+                    tx.sessions().change_control(|state| {
+                        let change = control::switch_for_provider(
+                            state,
+                            session,
+                            switch,
+                            ctx.clock.now(),
+                            provider,
                         );
-                    }
-                    (change, recorded_off)
+                        // An explicit opt-out must survive a later deferred inheritance.
+                        let recorded_off = pending
+                            && matches!(switch, Switch::Off)
+                            && !state.sessions.contains_key(session);
+                        if recorded_off {
+                            state.sessions.insert(
+                                session.clone(),
+                                SessionControl {
+                                    provider,
+                                    ..SessionControl::default()
+                                },
+                            );
+                        }
+                        (change, recorded_off)
+                    })
                 })
             })
-        }),
+        }
     };
     let (change, recorded_off) = match change {
         Ok(change) => change,

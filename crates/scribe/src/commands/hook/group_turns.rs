@@ -1,10 +1,10 @@
 //! Capture a member's typed turns from host-checked transcript data:
-//! the arguments, then [`scribe_core::cases::group_turns`]. The Claude
+//! the arguments, then the group app's turn capture. The Claude
 //! transcript reader stays here, as the transcripts port's adapter.
 
 use super::payload;
 use crate::{app::Context, error::CliError};
-use scribe_core::cases::group_turns as case;
+use scribe_core::apps::group;
 use scribe_core::{SessionId, message};
 use std::path::Path;
 
@@ -56,11 +56,16 @@ pub(in crate::commands) fn claude_window(
 }
 
 /// The typed turns of a past session whose transcript is at `path`
-/// ([`case::past`]).
+/// ([`group::past_turns`]).
 pub(super) fn past(
     ctx: &Context,
     session: &SessionId,
     path: &Path,
 ) -> Result<Option<Vec<message::NewMessage>>, CliError> {
-    Ok(case::past(&ctx.core(), ctx.provider(), session, path)?)
+    Ok(group::past_turns(
+        &ctx.core(),
+        ctx.provider(),
+        session,
+        path,
+    )?)
 }

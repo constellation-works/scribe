@@ -1702,9 +1702,9 @@ pub(crate) struct TranscriptPayload {
     pub(crate) user_first_turns: Option<Vec<String>>,
 }
 
-#[cfg(test)]
-pub(crate) use scribe_core::cases::hook::HookOutcome;
 pub(crate) use scribe_core::cases::hook::HookReply;
+#[cfg(test)]
+pub(crate) use scribe_core::runtime::audit::HookOutcome;
 
 /// The JSON a hook prints (Claude Code's hook output).
 #[derive(Serialize)]
