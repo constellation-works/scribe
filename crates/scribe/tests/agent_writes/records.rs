@@ -1077,6 +1077,52 @@ fn open_items_are_answered_with_checked_words_then_closed_by_their_decision() {
 }
 
 #[test]
+fn delayed_older_answer_does_not_replace_a_newer_choice() {
+    let fx = Fixture::new();
+    let earlier = decision_transcript_in(
+        &fx,
+        DECISION_SESSION,
+        "2026-11-10T01:00:00Z",
+        &[("user", "Choose A")],
+    );
+    let later = decision_transcript_in(
+        &fx,
+        LATER_SESSION,
+        "2026-11-11T02:00:00Z",
+        &[("user", "Choose B")],
+    );
+    assert!(
+        add_record(
+            &fx,
+            "open-item",
+            &["--asked-by", "0-chief", "--blocked", "Build", "Choose"]
+        )
+        .status
+        .success()
+    );
+    let answer = |words, session| {
+        settle(
+            &fx,
+            "answer",
+            "open-item-1",
+            &["--quote", words, "--related", session],
+        )
+    };
+    assert!(answer("Choose A", &earlier).status.success());
+    let newer = answer("Choose B", &later);
+    assert!(newer.status.success(), "{newer:?}");
+    let expected = json(&newer.stdout)["item"]["answer"].clone();
+    assert_eq!(expected["words"], "Choose B");
+    assert_eq!(expected["at"], "2026-11-11T02:00:00Z");
+    for (words, session) in [("Choose A", &earlier), ("Choose B", &later)] {
+        let retry = answer(words, session);
+        assert!(retry.status.success(), "{retry:?}");
+        assert!(text(&retry.stderr).contains("nothing changed"), "{retry:?}");
+        assert_eq!(json(&retry.stdout)["item"]["answer"], expected);
+    }
+}
+
+#[test]
 fn an_answer_typed_outside_the_named_session_is_recorded_with_a_notice() {
     let fx = Fixture::new();
     let session = decision_transcript(&fx, &[("user", "yes, restart it")]);

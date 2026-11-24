@@ -340,7 +340,8 @@ impl Store {
     /// Record the user's checked answer on an open item (2_design.md §18.4).
     /// The caller has found `answer.words` in a typed turn of
     /// `answer.session`. A newer answer replaces an earlier one until the
-    /// item closes; the same words from the same session change nothing.
+    /// item closes; an older answer or the same words from the same session
+    /// change nothing. Equal timestamps retain submission order.
     ///
     /// # Errors
     ///
@@ -370,11 +371,9 @@ impl Store {
             check_unsettled_item(&entry)?;
             let author = Author::agent(answer.recorded_by.clone());
             let item = item_mut(&mut entry);
-            if item
-                .answer
-                .as_ref()
-                .is_some_and(|old| old.words == answer.words && old.session == answer.session)
-            {
+            if item.answer.as_ref().is_some_and(|old| {
+                answer.at < old.at || (old.words == answer.words && old.session == answer.session)
+            }) {
                 return Ok((self.resolve_entry(id)?, false));
             }
             item.answer = Some(answer);
