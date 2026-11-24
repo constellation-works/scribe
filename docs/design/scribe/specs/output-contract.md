@@ -476,8 +476,9 @@ recommendation. `--supersedes` names the earlier active decision and
 `entry answer <id> --quote '<words>' --related session:<id>` records the
 user's answer on an open item; the quote is checked as a user decision's
 is, and the latest typed turn holding it gives `answer.at`. A later answer
-replaces an earlier one until the item closes; the same words from the same
-session change nothing. When the item's `answer_in` names another session,
+replaces an earlier one until the item closes; an older typed turn changes
+nothing, and so does a replay of the stored turn (same words, same session,
+same time). When the item's `answer_in` names another session,
 stderr says the user must also type it there. `entry close <id>` takes
 `--decision <id>`, an active decision whose `settles` names the item, or
 `--note` (at most 300 characters), or both; without `--note` the note reads

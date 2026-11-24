@@ -12,13 +12,23 @@ fn decision_transcript(fx: &Fixture, turns: &[(&str, &str)]) -> String {
 
 /// Writes one session's transcript with every turn at `at`; returns its reference.
 fn decision_transcript_in(fx: &Fixture, session: &str, at: &str, turns: &[(&str, &str)]) -> String {
+    let timed: Vec<(&str, &str, &str)> = turns
+        .iter()
+        .map(|(role, words)| (at, *role, *words))
+        .collect();
+    decision_transcript_timed(fx, session, &timed)
+}
+
+/// Writes one session's transcript, each turn at its own `(at, role, words)`;
+/// returns its reference.
+fn decision_transcript_timed(fx: &Fixture, session: &str, turns: &[(&str, &str, &str)]) -> String {
     let dir = fx.home().join(".claude/projects/-work-scribe");
     fx.create_private_dir_all(&dir);
     let path = dir.join(format!("{session}.jsonl"));
     let rows: String = turns
         .iter()
         .enumerate()
-        .map(|(i, (role, words))| {
+        .map(|(i, (at, role, words))| {
             format!(
                 "{}\n",
                 serde_json::json!({
@@ -935,7 +945,7 @@ fn open_items_are_answered_with_checked_words_then_closed_by_their_decision() {
     assert_eq!(body["item"]["answer"]["session"], DECISION_SESSION);
     assert_eq!(body["item"]["answer"]["at"], "2026-11-10T01:00:00Z");
     assert_eq!(body["item"]["answer"]["recorded_by"], "0-chief");
-    // The same words again change nothing; newer words replace them.
+    // Replaying the same typed turn changes nothing; newer words replace them.
     let again = settle(
         &fx,
         "answer",
@@ -1158,6 +1168,60 @@ fn delayed_older_answer_does_not_replace_a_newer_choice() {
     assert_eq!(expected["words"], "Choose B");
     assert_eq!(expected["at"], "2026-11-11T02:00:00Z");
     for (words, session) in [("Choose A", &earlier), ("Choose B", &later)] {
+        let retry = answer(words, session);
+        assert!(retry.status.success(), "{retry:?}");
+        assert!(text(&retry.stderr).contains("nothing changed"), "{retry:?}");
+        assert_eq!(json(&retry.stdout)["item"]["answer"], expected);
+    }
+}
+
+#[test]
+fn delayed_answer_does_not_replace_a_later_repetition_of_the_choice() {
+    let fx = Fixture::new();
+    let first_a = "2026-11-10T01:00:00Z";
+    let delayed_b = "2026-11-10T02:00:00Z";
+    let later_a = "2026-11-10T03:00:00Z";
+    let original = decision_transcript_in(&fx, DECISION_SESSION, first_a, &[("user", "Choose A")]);
+    let later = decision_transcript_in(&fx, LATER_SESSION, delayed_b, &[("user", "Choose B")]);
+    assert!(
+        add_record(
+            &fx,
+            "open-item",
+            &["--asked-by", "0-chief", "--blocked", "Build", "Choose"]
+        )
+        .status
+        .success()
+    );
+    let answer = |words, session| {
+        settle(
+            &fx,
+            "answer",
+            "open-item-1",
+            &["--quote", words, "--related", session],
+        )
+    };
+    assert!(answer("Choose A", &original).status.success());
+    // Daniel types A again in the original session, after B was typed.
+    decision_transcript_timed(
+        &fx,
+        DECISION_SESSION,
+        &[(first_a, "user", "Choose A"), (later_a, "user", "Choose A")],
+    );
+    let repeated = answer("Choose A", &original);
+    assert!(repeated.status.success(), "{repeated:?}");
+    let expected = json(&repeated.stdout)["item"]["answer"].clone();
+    assert_eq!(expected["words"], "Choose A");
+    assert_eq!(expected["at"], later_a);
+    // B reaches the store late: it is older than the repeated A.
+    let delayed = answer("Choose B", &later);
+    assert!(delayed.status.success(), "{delayed:?}");
+    assert!(
+        text(&delayed.stderr).contains("nothing changed"),
+        "{delayed:?}"
+    );
+    assert_eq!(json(&delayed.stdout)["item"]["answer"], expected);
+    // Replaying each stored typed turn changes nothing.
+    for (words, session) in [("Choose A", &original), ("Choose B", &later)] {
         let retry = answer(words, session);
         assert!(retry.status.success(), "{retry:?}");
         assert!(text(&retry.stderr).contains("nothing changed"), "{retry:?}");

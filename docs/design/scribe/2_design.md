@@ -7207,9 +7207,11 @@ The quote is checked as in §18.3, short whole turns included, and the
 latest typed turn holding it gives the answer's time. It is his
 answer, so `ask` and `entry show` attribute it to him. Until the item
 closes, a later answer replaces an earlier one (he may change his mind
-before the asker acts); the same words again change nothing. An action item (no
-options) may be answered too ("done", "not now"), or closed without an
-answer once the asker sees it done. An item whose `answer_in` is
+before the asker acts). A typed turn older than the stored answer changes
+nothing, and so does a replay of the stored turn (same words, same session,
+same time); a later turn holding the same words moves the answer to its time.
+An action item (no options) may be answered too ("done", "not now"), or closed
+without an answer once the asker sees it done. An item whose `answer_in` is
 `session:<id>` can still be answered elsewhere; the answer is recorded, and
 the recording session tells him the answer must also be typed in that
 session for its auto mode to accept the action (§18.8).
