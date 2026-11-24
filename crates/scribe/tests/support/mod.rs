@@ -19,7 +19,7 @@ use std::process::{Child, Command, Output};
 /// paragraph of two sentences (2_design.md §15.3).
 pub const CONTEXT_TAIL: &str = "The user and the agent discussed it in this session.";
 
-/// The context paragraph a test claim or annotation stating `said`
+/// The context paragraph a test claim stating `said`
 /// carries: `said`, then [`CONTEXT_TAIL`].
 pub fn context_of(said: &str) -> String {
     let said = said.trim();
@@ -29,30 +29,6 @@ pub fn context_of(said: &str) -> String {
         "."
     };
     format!("{said}{end} {CONTEXT_TAIL}")
-}
-
-/// Annotation answers as the current schema returns them: a mark a test
-/// wrote with `statement` (its short form) carries `context` instead,
-/// [`context_of`] it, or `""` for a `none` mark.
-pub fn with_mark_contexts(marks: &serde_json::Value) -> serde_json::Value {
-    let mut marks = marks.clone();
-    for mark in marks
-        .as_array_mut()
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_object_mut)
-    {
-        if let Some(said) = mark.remove("statement") {
-            let said = said.as_str().unwrap_or_default();
-            let context = if said.is_empty() {
-                String::new()
-            } else {
-                context_of(said)
-            };
-            mark.entry("context").or_insert(serde_json::json!(context));
-        }
-    }
-    marks
 }
 
 /// The binary under test, exactly as cargo built it (STD-01 R24).

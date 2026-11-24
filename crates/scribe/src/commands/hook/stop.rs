@@ -30,7 +30,6 @@ use super::payload::{self, StopPayload};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
-use scribe_core::Config;
 use scribe_core::cases::stop::{self as case, StopInput};
 
 /// Run the hook on its stdin payload.
@@ -45,7 +44,6 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             cwd: payload.cwd,
             provider: ctx.provider(),
             host: ctx.host(),
-            models: |config: &Config| ctx.models(config),
         },
     )?;
     Ok(Output::Hook(reply))

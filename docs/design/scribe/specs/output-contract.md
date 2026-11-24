@@ -599,7 +599,7 @@ violates the six fixed headings in order or exceeds 3,000 characters),
 a handoff's `session:` reference),
 `not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, `decision`,
 `open-item` or a `require_evidence` tag), `needs_redaction` (a checked
-decision, spoken-instruction or annotation quote that redaction would alter), `not_agent_note`
+decision or spoken-instruction quote that redaction would alter), `not_agent_note`
 (`entry update --content` on an approved claim rather than a direct agent
 note), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
@@ -607,9 +607,9 @@ ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `too_many_marks`,
-`quote_not_verbatim`, `annotation_out_of_bounds`, `covered`,
-`needs_redaction`, `model_failed`, `provenance_failed`,
-and `unknown_scribe_command`. A session
+`provenance_failed` and `unknown_scribe_command`; `agent_handoff` records a
+marker handed to the agent, and `model_failed` remains on markers given up
+before ORB-27911 step 2a. A session
 pass's failures appear in its report and audit lines, and the run's
 `session_pass_failed` error names each with its code:
 `provenance_failed`, `io_error`, `session_answer_invalid` (budgets or
@@ -719,50 +719,56 @@ double quotes, fences, blockquotes, indented code and pasted content),
 writes nothing at submit and calls no model.
 The `UserPromptSubmit` reply echoes `scribe: marked — cataloged after the
 reply` (`marked <n> times` for several markers), with the agent note
-` (scribe tries to catalog this #scribe marker after your reply and tells
-you if it gives up; record it yourself only then)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
-relay note for a marker refused before any call (a settling verb after it
+` (after your reply scribe hands this #scribe marker to you with the command
+that records it; record nothing for it before then)`, and `scribe: refused #scribe in "<line>" — <reason>` with the
+relay note for a marker refused at submit (a settling verb after it
 or a `#scribe/<word>` other than `global`: `unparsed_instruction`; a fourth
-marker: `too_many_marks`). The same turn's `Stop` reply then prints, in
-its `systemMessage`, one line per marker:
-`scribe: added <id> to <tag> — "<statement>" · your words: "<quote>"`,
-`scribe: nothing recorded for #scribe in your message — <reason>` (the
-model found nothing, a check refused the answer, an active entry already
-covers it — `already covered by <id> in <tag>` — or redaction would change
-the quote), or `scribe: could not catalog #scribe in your message —
-<error>; will retry at the next reply (<n> of 3)` and, at the third
-failure, `…; gave up after 3 attempts — scribe mark retry <session> tries
-again`. A given-up marker reaches the agent as well: the `Stop` reply's
-`hookSpecificOutput` (`hookEventName` `Stop`) carries in
-`additionalContext` the echo, the marked line and the note `(not cataloged
-by scribe; if the user wants it kept, record it with their exact words:
-scribe entry add --tag <tag> --quote '<their words>' --spoken
-'<statement>' --author <name>, or ask them to run scribe mark retry
-<session> from a shell with model credentials)`. When `claude` fails and
-none of `[models] credentials` is set in scribe's environment, `<error>`
-names them: `claude ended with exit status: 1 (none of
-CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY is set in scribe's
-environment)`. A refusal the prompt hook echoed
-is not echoed again. Audit lines (`hook stop`): an entry's id as `target`;
-`session:<id>` with no code for nothing found; `session:<id>` with the
-refusal code (`unparsed_instruction`, `too_many_marks`,
-`quote_not_verbatim`, `unknown_tag`, `annotation_out_of_bounds`,
-`covered`, `needs_redaction`, `model_failed`) for a refusal; none for a
-pending retry or a marker already settled. A `hook stop` or
+marker: `too_many_marks`). The same turn's `Stop` reply calls no model
+either (ORB-27911): it hands each open marker to the agent. Its
+`systemMessage` prints one line per marker,
+`scribe: #scribe in your message is the agent's to record — "<line>"`, or
+`scribe: nothing recorded for #scribe in your message — record decisions
+and open items through scribe entry add` for a marker whose tag hint is
+`decision` or `open-item` (`unknown_tag`). Each handed-over marker reaches
+the agent in the `Stop` reply's `hookSpecificOutput` (`hookEventName`
+`Stop`), whose `additionalContext` carries `scribe: the user marked a line
+with #scribe for you to record — "<line>". If it marks something to keep,
+record it as theirs with their exact words: scribe entry add --tag <tag>
+--project <project> [--topic <topic>]... --author <name> --related
+session:<id> --quote '<their words>' --spoken '<statement>'. If it marks
+nothing, record nothing.` `--tag` is the marker's tag hint when it names a
+known tag, else `<tag>`; `--project` is `global` for `#scribe/global`, else
+the turn's project; each hashtag on the line is a `--topic`. When the hint
+is an action tag, a `require_evidence` tag or `handoff`, which refuse
+`--spoken` (`not_memory_tag`), the command ends `--quote '<their words>'
+'<statement>'` instead. The marker is
+recorded final as `refused` with code `agent_handoff`, so it is handed over
+once. When the store's config cannot be read or the marks cannot be
+written, `Stop` echoes `scribe: could not hand over #scribe in your message —
+<error>; will retry at the next reply` and the marker stays open. A
+marker left `pending` by an older scribe is handed over at its next `Stop`.
+A refusal the prompt hook echoed
+is not echoed again. Audit lines (`hook stop`): `session:<id>` with the
+code (`agent_handoff`, `unparsed_instruction`, `too_many_marks`,
+`unknown_tag`) for each marker; none for a
+marker already settled. A `hook stop` or
 `hook user-prompt-submit` run that stores a group member's new typed turns
 writes one content-free success line for the run (`target` `session:<id>`, no
 code), and a run that stores none writes none. A marker on a line an older
 store recorded verbatim (an entry cites that prompt and line) is not
-cataloged again. When the transcript fails the provenance check, `Stop`
+handed over. When the transcript fails the provenance check, `Stop`
 echoes `scribe: could not check for #scribe markers — <reason>`, audits
 `provenance_failed` and does nothing else. Under `--provider codex` the
 same echoes and audit lines hold, line-start forms included: the prompt
 hook echoes a marker once the typed turn is in the rollout (before that it
 refuses with `provenance_failed`, `typed input not yet verified …; Stop will
-retry`), and Stop catalogs from the rollout.
+retry`), and Stop hands markers over from the rollout.
 
-`scribe mark list [--session <id>]` lists the markers not cataloged yet,
-oldest first: `pending` ones and given-up ones (`refused`, `model_failed`).
+`scribe mark list [--session <id>]` lists the `#scribe` markers with no
+entry from scribe, oldest first: `pending` ones, those handed to the agent
+(`refused`, `agent_handoff`) and those given up before ORB-27911 step 2a
+(`refused`, `model_failed`). It does not show whether the agent recorded a
+handed-over marker.
 `--json` is the list envelope with `marks`, each record in `marks.json`'s
 shape (store.md): `session`, `message`, `prompt_sha256`, `marker`,
 `outcome`, `entry`, `code`, `attempts`, `at`. The table columns are
@@ -771,19 +777,9 @@ tab-separated with timestamps. `SESSION` in both forms is the session's `s-<n>`
 alias when it is cataloged, otherwise its shortest unique prefix (`ShortIds`,
 at least eight characters); either form is accepted back as a session id.
 `--json` keeps the provider id in `session`. An empty list prints nothing on
-stdout and `no uncataloged #scribe markers: every marker has an entry or an
-answer` on stderr. It is read-only and not audited.
-`scribe mark retry <session>` resolves the session (a cataloged id, its
-`s-<n>` alias, a transcript's id or a unique prefix), turns its given-up
-markers back to `pending` with no attempts, and catalogs every unsettled marker of the
-session's transcript as `Stop` does, with no per-run turn bound. It prints
-the markers it wrote, in `mark list`'s forms, and the `Stop` echoes on
-stderr. When a call fails again it exits 1 with `model_failed` (`<n> #scribe
-marker(s) of <session> still not cataloged — <error>`) and the marker stays
-`pending`. It writes one audit line (`mark retry`, `target`
-`session:<id>`, the code on failure); a missing transcript is
-`transcript_missing` and one failing the provenance check
-`provenance_failed`.
+stdout and `no #scribe markers without an entry from scribe` on stderr. It
+is read-only and not audited. `scribe mark retry` was removed in ORB-27911
+step 2a: no model catalogs a marker any more.
 
 The single-line commands `/scribe group move <session-id> <slug>`, `/scribe group remove <session-id>`, and `/scribe session update <session-id> project|title <value>` have provider-specific replies. Claude Code blocks with `scribe: session <id> moved|removed|updated` on success, or `scribe: <verb> refused — <reason>` on refusal. Codex returns a verified command's reply as `systemMessage` and `hookSpecificOutput.additionalContext`, without `decision: "block"`. Their audit targets contain session ids and error codes only.
 
@@ -1083,51 +1079,48 @@ proposal, `older` and `newer` `null` for a candidate.
 `scribe consistency scan --json` and the Orbit tool
 `scribe.consistency-scan` print `{"reapplied": [{"proposal", "entry",
 "status"}], "opened": [<proposal>, ...], "closed": [<proposal>, ...],
-"covered": [{"proposal", "by"}],
-"judged_pairs", "pairs_left", "unrelated_pairs", "dropped_labels",
-"stale_entries", "failed_batches": [{"batch", "error_code"}], "memory": {…}}`. `reapplied`
+"covered": [{"proposal", "by"}], "stale_entries", "deactivated": [{"session",
+"route", "reason", "cite", "quote"}], "failed_deactivations": [{"session",
+"route", "error_code"}], "memory": {…}}`. The scan calls no model
+(ORB-27911): `reapplied`
 lists approved proposals the scan finished: a supersession or retirement
 whose older entry was still `active` and is now `superseded` or `retired`
 (its `status`), and an approved candidate whose reserved entry was missing
-and is now written, with `status: active`; `opened` holds each proposal opened, in
+and is now written, with `status: active`; `opened` holds each stale
+proposal opened, in
 `proposal list --json`'s shape, by id; `closed` holds each open candidate
 proposal closed automatically (`tag_retired`), in the same shape; `covered`
 holds each approved candidate this scan closed because an active entry
 already covers its statement (`proposal` the candidate, `by` the entry) —
 the proposal is `rejected` with `closed_reason: covered` (format 15),
 keeping who approved it and any instruction, `newer` stays empty, and the
-covering id is not stored on it; `judged_pairs` counts pairs the model labelled, `pairs_left` those past
-the cap of 40 or not reached in this call's time, `unrelated_pairs` those
-labelled `unrelated`, `dropped_labels` labels refused (a quote not verbatim,
-an unknown or repeated pair, an unknown label); `stale_entries` counts
-active entries past `review_after` without a stale proposal;
-`failed_batches` names each batch of ten the model failed, from 1.
-*(S10)* Adds `deactivated` (`[{session, route, reason, cite, quote}]`,
-`route` `age` or `removed`; `cite` and `quote`, the later entry and its
-verbatim words, are `null` for `age`), `removal_pairs_judged`,
-`removal_pairs_left` (past the cap of 20 or not reached in this call's
-time), `dropped_removal_labels` and `failed_removal_batches` (`[{batch,
-error_code}]`, numbered from 1 apart from `failed_batches`), and
-`failed_deactivations` (`[{session, route, error_code}]`): a failed
-session write is reported and audited by session while the other
-deactivations continue. Each
-deactivation is also a plain row `deactivated <session> <route> <cite or
--> -`, and each failed removed-feature batch `failed removal-batch-<n>
-<code> - -`. Each deactivation writes one audit line (target
-`session:<id>`), each failed deactivation one (failure target
-`session:<id>` with its error code), each failed removed-feature batch one (target
-`removal-batch:<n>`, with its code); when removed-feature pairs are
-left, stderr says how many. Plain and
+covering id is not stored on it; `stale_entries` counts
+active entries past `review_after` without a stale proposal.
+`deactivated` lists the sessions deactivated past
+`[sessions] inactive_after_days`: `route` is always `age`, and `cite` and
+`quote` are always `null` (they held the later entry a `removed`
+deactivation rested on, a route the scan no longer takes);
+`failed_deactivations` reports and audits a failed session write by session
+while the other deactivations continue. Each
+deactivation is also a plain row `deactivated <session> age - -`. Each
+deactivation writes one audit line (target
+`session:<id>`), and each failed deactivation one (failure target
+`session:<id>` with its error code). Plain and
 table print one row per change: `reapplied p-<n> <status> <entry> -`,
 `opened p-<n> <kind> <older> <newer or ->`, `closed p-<n> <closed_reason>
-<older> <newer or ->`, `covered p-<n> <entry> - -` and `failed batch-<n> <code> - -` (columns `action
-id what older newer`). When nothing was reapplied, opened, closed, covered or
-failed, stdout is empty and stderr says `nothing to propose: …`; when pairs
-are left, stderr says how many. The exit is 0 whenever the store could be
-read, including failed batches. Each reapplied approval (target the entry
+<older> <newer or ->` and `covered p-<n> <entry> - -` (columns `action
+id what older newer`). When nothing was reapplied, opened, closed, covered,
+deactivated or failed, stdout is empty and stderr says `nothing to propose:
+no entry due for review`. The exit is 0 whenever the store could be
+read. Each reapplied approval (target the entry
 id), opened proposal (target the proposal id), closed proposal (target the
-proposal id), covered candidate (target the proposal id) and failed batch (target `batch:<n>`, with its code) writes
+proposal id) and covered candidate (target the proposal id) writes
 one audit line under `consistency scan`.
+Until ORB-27911 step 2a the report also carried the model's counts:
+`judged_pairs`, `pairs_left`, `unrelated_pairs`, `dropped_labels`,
+`failed_batches`, `removal_pairs_judged`, `removal_pairs_left`,
+`dropped_removal_labels` and `failed_removal_batches`; they are gone, not
+zeroed, since no pair is judged.
 
 (Format 20, [2_design.md §13.5](../2_design.md#135-consolidation-the-weekly-consistency-routine).)
 Since §15.9 phase 5 the scan judges no memory pairs: `memory` keeps its

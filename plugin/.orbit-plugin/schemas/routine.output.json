@@ -74,12 +74,7 @@
       "required": [
         "reapplied",
         "opened",
-        "judged_pairs",
-        "pairs_left",
-        "unrelated_pairs",
-        "dropped_labels",
-        "stale_entries",
-        "failed_batches"
+        "stale_entries"
       ],
       "properties": {
         "reapplied": {
@@ -170,44 +165,9 @@
             }
           }
         },
-        "judged_pairs": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "pairs_left": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "unrelated_pairs": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "dropped_labels": {
-          "type": "integer",
-          "minimum": 0
-        },
         "stale_entries": {
           "type": "integer",
           "minimum": 0
-        },
-        "failed_batches": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "batch",
-              "error_code"
-            ],
-            "properties": {
-              "batch": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "error_code": {
-                "type": "string"
-              }
-            }
-          }
         }
       }
     },

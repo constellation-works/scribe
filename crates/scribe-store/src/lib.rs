@@ -91,7 +91,7 @@ pub use sessions::{
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
-pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
+pub use marks::{AGENT_HANDOFF, MODEL_FAILED, MarkChange, MarkKey, MarkResult};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 
 // The domain at the paths this code had as scribe-core's `store` module.

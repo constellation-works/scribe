@@ -5,7 +5,6 @@ fn an_empty_config_is_the_defaults() {
     let config = Config::parse("").unwrap();
     assert_eq!(config, Config::default());
     assert_eq!(config.models.ask, "claude-sonnet-5-5");
-    assert_eq!(config.models.annotation, "claude-haiku-5-5");
     assert!(config.warnings.is_empty());
     assert_eq!(config.catalog.every_minutes.get(), 20);
     assert_eq!(

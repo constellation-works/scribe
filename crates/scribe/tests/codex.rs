@@ -122,28 +122,19 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
     c.rows.push(injected);
     c.write();
     // The typed `#scribe preferences:` line folds into the annotation marker
-    // (2_design.md §14.6) and Codex's Stop catalogs it, with its tag as the
-    // hint; the quoted, fenced, pasted and injected ones are not markers, so
-    // the model sees one marker and only one mark is written.
-    let annotate = annotating_codex(
-        &f,
-        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
-                 "statement": "Daniel prefers compact widgets.", "subject": "widgets",
-                 "quote": "We prefer compact widgets.", "message": "capture", "reason": ""}]),
-    );
-    let reply = c.hook_with(&f, "Stop", "current", "", &annotate);
+    // (2_design.md §14.6) and Codex's Stop hands it to the agent, with its
+    // tag as the hint; the quoted, fenced, pasted and injected ones are not
+    // markers, so the agent gets one marker and only one mark is written.
+    let reply = c.hook(&f, "Stop", "current", "");
+    let out = text(&reply.stdout);
+    assert!(out.contains("scribe: on"), "{out}");
     assert!(
-        text(&reply.stdout).contains("scribe: on"),
-        "{}",
-        text(&reply.stdout)
+        out.contains(
+            "scribe: #scribe in your message is the agent's to record — \\\"#scribe preferences: We prefer compact widgets.\\\""
+        ),
+        "{out}"
     );
-    assert!(
-        text(&reply.stdout).contains("added preferences-1 to preferences"),
-        "{}",
-        text(&reply.stdout)
-    );
-    let call = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
-    assert_eq!(model_calls(&f), 1);
+    assert!(out.contains("scribe entry add --tag preferences "), "{out}");
     for excluded in [
         "historical",
         "quoted text",
@@ -152,31 +143,23 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
         "injected skill",
     ] {
         assert!(
-            !call.contains(excluded),
-            "{excluded} reached the model: {call}"
+            !out.contains(excluded),
+            "{excluded} reached the agent: {out}"
         );
     }
-    let e = entries(&f);
-    assert_eq!(e.len(), 1);
-    assert_eq!(e[0]["quote"], "We prefer compact widgets.");
-    assert_eq!(e[0]["cite"]["message"], "capture");
+    assert!(entries(&f).is_empty());
     let marks = marks_json(&f);
     assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0]["outcome"], "entry");
-    // The luna pass below reads its own calls from a fresh log.
-    std::fs::remove_file(f.home().join("model-calls.jsonl")).unwrap();
+    assert_eq!(marks[0]["message"], "capture");
+    assert_eq!(marks[0]["code"], "agent_handoff");
     let control: Value = support::control(&f.root());
     assert_eq!(control["sessions"][ID]["provider"], "codex");
     let before = support::snapshot(&f.root());
-    c.hook_with(&f, "Stop", "current", "", &annotate);
+    c.hook(&f, "Stop", "current", "");
     assert_eq!(
         support::snapshot(&f.root()),
         before,
         "duplicate delivery is a no-op"
-    );
-    assert!(
-        !f.home().join("model-calls.jsonl").exists(),
-        "no second annotation call"
     );
     let path = fake_model(&f);
     let out = f
@@ -513,18 +496,21 @@ fn whitespace_preserves_original_prompt_hash_lines_and_message_citation() {
     let before = entries(&f);
     let mut c = Codex::new(&f);
     // A line-start capture form folds into the annotation marker
-    // (2_design.md §14.6): Codex's Stop catalogs it like any marker, and the
-    // model may answer none.
+    // (2_design.md §14.6): Codex's Stop hands it to the agent like any
+    // marker, and writes no entry.
     let capture = "\n#scribe preferences: Preserve my exact citation.\n";
     c.typed("capture", "t", capture);
     c.write();
-    let path = annotating_codex(&f, &none_for(1..=1));
-    let out = c.hook_with(&f, "Stop", "t", "", &path);
-    assert_eq!(model_calls(&f), 1, "{}", text(&out.stdout));
+    let out = c.hook(&f, "Stop", "t", "");
+    assert!(
+        text(&out.stdout).contains("is the agent's to record"),
+        "{}",
+        text(&out.stdout)
+    );
     assert_eq!(entries(&f), before);
     let marks = marks_json(&f);
     assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0]["outcome"], "none");
+    assert_eq!(marks[0]["code"], "agent_handoff");
     // A settling line keeps the citation: the hash of the prompt as typed,
     // leading newline included, and the line's number within it.
     let prompt = "\n#scribe reject p-1\n";
@@ -624,13 +610,13 @@ fn explicit_codex_catalog_stamps_provider_with_agent_authorship() {
     assert_eq!(state["sessions"][ID]["cataloged_by"]["by"]["kind"], "agent");
 }
 
-// --- annotations: `#scribe` inside a sentence, cataloged at Stop (§14) ---
+// --- annotations: `#scribe` inside a sentence, handed over at Stop (§14) ---
 
 const MARKED: &str = "I always want short status updates #scribe preferences";
 
 impl Codex {
     /// [`Codex::hook`] with `PATH` set to `path`, where a fake `codex`
-    /// answers the annotation call.
+    /// logs any model call.
     fn hook_with(
         &self,
         f: &Fixture,
@@ -669,26 +655,6 @@ impl Codex {
     }
 }
 
-/// A fake `codex` answering every annotation call with `marks`, logging
-/// each call to `model-calls.jsonl`.
-fn annotating_codex(f: &Fixture, marks: &Value) -> std::ffi::OsString {
-    let answer = json!({"marks": support::with_mark_contexts(marks)}).to_string();
-    f.fake_program(
-        "codex",
-        &format!(
-            r##"#!/usr/bin/python3
-import json,sys,pathlib,os
-h=pathlib.Path(os.environ['HOME'])
-with (h/'model-calls.jsonl').open('a') as out: out.write(json.dumps({{'args':sys.argv[1:]}})+'\n')
-sys.stdin.read()
-print(json.dumps({{'type':'thread.started','thread_id':'synthetic'}}))
-print(json.dumps({{'type':'item.completed','item':{{'type':'agent_message','text':{answer:?}}}}}))
-print(json.dumps({{'type':'turn.completed','usage':{{}}}}))
-"##
-        ),
-    )
-}
-
 /// A fake `codex` whose every call fails, logging each call.
 fn failing_codex(f: &Fixture) -> std::ffi::OsString {
     f.fake_program(
@@ -701,18 +667,6 @@ fn model_calls(f: &Fixture) -> usize {
     std::fs::read_to_string(f.home().join("model-calls.jsonl"))
         .map(|s| s.lines().count())
         .unwrap_or(0)
-}
-
-fn none_for(markers: std::ops::RangeInclusive<u32>) -> Value {
-    json!(
-        markers
-            .map(
-                |marker| json!({"marker": marker, "kind": "none", "tag": "", "statement": "",
-                                 "subject": "", "quote": "", "message": "",
-                                 "reason": "only a passing remark"})
-            )
-            .collect::<Vec<_>>()
-    )
 }
 
 fn marks_json(f: &Fixture) -> Vec<Value> {
@@ -730,16 +684,11 @@ fn hook_reply(out: &Output) -> Value {
 }
 
 #[test]
-fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry() {
+fn a_codex_marker_is_echoed_once_verified_and_handed_to_the_agent_at_stop() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
     c.write();
-    let path = annotating_codex(
-        &f,
-        &json!([{"marker": 1, "kind": "entry", "tag": "preferences",
-                 "statement": "Daniel wants short status updates.", "subject": "status updates",
-                 "quote": "I always want short status updates", "message": "m-1", "reason": ""}]),
-    );
+    let path = failing_codex(&f);
     // Before the rollout holds the turn: not verified, Stop retries.
     let early = c.hook_with(&f, "UserPromptSubmit", "t-1", MARKED, &path);
     assert!(
@@ -758,7 +707,9 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
         .as_str()
         .unwrap();
     assert!(
-        context.contains("tells you if it gives up; record it yourself only then"),
+        context.contains(
+            "hands this #scribe marker to you with the command that records it; record nothing for it before then"
+        ),
         "{context}"
     );
     assert_eq!(model_calls(&f), 0, "no model call at submit");
@@ -769,41 +720,29 @@ fn a_codex_marker_is_echoed_once_verified_and_cataloged_at_stop_as_daniels_entry
     let stopped = hook_reply(&c.hook_with(&f, "Stop", "t-1", "", &path));
     assert_eq!(
         stopped["systemMessage"],
-        "scribe: added preferences-1 to preferences — \"Daniel wants short status updates. The user and the agent discussed it in this session.\" · your words: \"I always want short status updates\"",
+        format!("scribe: #scribe in your message is the agent's to record — \"{MARKED}\""),
         "{stopped}"
     );
-    assert_eq!(model_calls(&f), 1);
-    let e = entries(&f);
-    assert_eq!(e.len(), 1);
-    assert_eq!(
-        e[0]["content"],
-        support::context_of("Daniel wants short status updates.")
-    );
-    assert_eq!(e[0]["quote"], "I always want short status updates");
-    assert_eq!(e[0]["author"]["kind"], "user");
-    assert_eq!(
-        e[0]["stated_by"],
-        json!({"kind": "scribe", "name": "annotation"})
-    );
-    assert_eq!(e[0]["provider"], "codex");
-    assert_eq!(e[0]["cite"]["message"], "m-1");
+    let context = stopped["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
     assert!(
-        support::exported(&f.root(), "proposals.json").is_none_or(|doc| {
-            serde_json::from_str::<Value>(&doc).unwrap()["proposals"]
-                .as_array()
-                .is_none_or(Vec::is_empty)
-        }),
-        "no proposal"
+        context.contains(&format!(
+            "scribe entry add --tag preferences --project home --author <name> --related session:{ID}"
+        )),
+        "{context}"
     );
+    assert_eq!(model_calls(&f), 0, "no model call at Stop");
+    assert!(entries(&f).is_empty());
     let marks = marks_json(&f);
     assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0]["outcome"], "entry");
-    assert_eq!(marks[0]["entry"], "preferences-1");
+    assert_eq!(marks[0]["outcome"], "refused");
+    assert_eq!(marks[0]["code"], "agent_handoff");
 
-    // The next Stop neither calls nor writes.
+    // The next Stop neither hands over nor writes.
     let before = support::snapshot(&f.root());
-    c.hook_with(&f, "Stop", "t-1", "", &path);
-    assert_eq!(model_calls(&f), 1);
+    let again = c.hook_with(&f, "Stop", "t-1", "", &path);
+    assert!(again.stdout.is_empty(), "{}", text(&again.stdout));
     assert_eq!(support::snapshot(&f.root()), before);
 }
 
@@ -814,7 +753,7 @@ fn a_codex_mention_in_quotes_or_code_is_neither_echoed_nor_cataloged() {
     let mention = "the `#scribe` marker and \"#scribe\" in quotes";
     c.typed("m-1", "t-1", mention);
     c.write();
-    let path = annotating_codex(&f, &none_for(1..=1));
+    let path = failing_codex(&f);
     let submitted = c.hook_with(&f, "UserPromptSubmit", "t-1", mention, &path);
     assert!(
         !text(&submitted.stdout).contains("marked"),
@@ -828,7 +767,7 @@ fn a_codex_mention_in_quotes_or_code_is_neither_echoed_nor_cataloged() {
 }
 
 #[test]
-fn codex_markers_keep_the_bounds_a_fourth_refused_and_a_failing_call_retried_three_times() {
+fn codex_markers_keep_the_bounds_and_a_fourth_is_refused() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
     let four = "a #scribe b #scribe c #scribe d #scribe";
@@ -845,17 +784,8 @@ fn codex_markers_keep_the_bounds_a_fourth_refused_and_a_failing_call_retried_thr
         "{submitted}"
     );
 
-    for attempt in 1..=2 {
-        let echo = text(&c.hook_with(&f, "Stop", "t-1", "", &path).stdout);
-        assert!(
-            echo.contains(&format!("will retry at the next reply ({attempt} of 3)")),
-            "{echo}"
-        );
-    }
-    let echo = text(&c.hook_with(&f, "Stop", "t-1", "", &path).stdout);
-    assert!(echo.contains("gave up after 3 attempts"), "{echo}");
     c.hook_with(&f, "Stop", "t-1", "", &path);
-    assert_eq!(model_calls(&f), 3, "one call per Stop, never a fourth");
+    assert_eq!(model_calls(&f), 0, "no model call");
     let marks = marks_json(&f);
     assert_eq!(marks.len(), 4);
     let fourth = marks.iter().find(|m| m["marker"] == 4).unwrap();
@@ -863,34 +793,9 @@ fn codex_markers_keep_the_bounds_a_fourth_refused_and_a_failing_call_retried_thr
     assert_eq!(fourth["code"], "too_many_marks");
     for open in marks.iter().filter(|m| m["marker"] != 4) {
         assert_eq!(open["outcome"], "refused");
-        assert_eq!(open["code"], "model_failed");
-        assert_eq!(open["attempts"], 3);
+        assert_eq!(open["code"], "agent_handoff");
     }
     assert!(entries(&f).is_empty());
-}
-
-#[test]
-fn one_codex_stop_catalogs_at_most_two_marked_turns_oldest_first() {
-    let f = Fixture::new();
-    let mut c = Codex::new(&f);
-    c.typed("m-1", "t-1", "first thought #scribe");
-    c.reply("a-1", "Noted.");
-    c.typed("m-2", "t-2", "second thought #scribe");
-    c.reply("a-2", "Noted.");
-    c.typed("m-3", "t-3", "third thought #scribe");
-    c.write();
-    let path = annotating_codex(&f, &none_for(1..=1));
-    c.hook_with(&f, "Stop", "t-3", "", &path);
-    assert_eq!(model_calls(&f), 2);
-    let settled: Vec<Value> = marks_json(&f)
-        .iter()
-        .map(|m| m["message"].clone())
-        .collect();
-    assert_eq!(settled, vec![json!("m-1"), json!("m-2")]);
-    assert!(marks_json(&f).iter().all(|m| m["outcome"] == "none"));
-    c.hook_with(&f, "Stop", "t-3", "", &path);
-    assert_eq!(model_calls(&f), 3);
-    assert_eq!(marks_json(&f).len(), 3);
 }
 
 #[test]

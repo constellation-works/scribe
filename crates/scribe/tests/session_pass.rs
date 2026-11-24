@@ -4001,11 +4001,10 @@ fn type_settlement(s: &Setup, prompt: &str) -> Output {
 }
 
 /// Daniel types `prompt`, holding one `#scribe` marker, as turn `uuid` of
-/// the `ON` session, and the Stop after the reply catalogs it
-/// (2_design.md §14.6): the fake `claude` answers the annotation call with
-/// an entry under `tag` whose context is [`context_of`] `said`, with
-/// `quote` as his words. The default pass answer is restored after.
-/// Returns Stop's echo.
+/// the `ON` session; the Stop after the reply hands it to the agent
+/// (2_design.md §14), and the agent records it as the command it was
+/// handed says: an entry under `tag` stating `said`, with `quote` as his
+/// words. Returns the new entry's id.
 fn mark(s: &Setup, uuid: &str, prompt: &str, tag: &str, said: &str, quote: &str) -> String {
     let submitted = type_settlement(s, prompt);
     let echo: Value = serde_json::from_slice(&submitted.stdout).unwrap();
@@ -4020,24 +4019,38 @@ fn mark(s: &Setup, uuid: &str, prompt: &str, tag: &str, said: &str, quote: &str)
             line("assistant", &format!("a-{uuid}"), "Noted."),
         ],
     );
-    s.answer(&json!({"marks": [{"marker": 1, "kind": "entry", "tag": tag,
-                                "context": context_of(said), "subject": "the work at hand",
-                                "quote": quote, "message": uuid, "reason": ""}]}));
     let stopped = s.hook("stop", &s.payload("Stop"));
-    s.answer(&answer());
     let reply: Value = serde_json::from_slice(&stopped.stdout).unwrap();
-    let said = reply["systemMessage"]
+    let context = reply["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .unwrap_or_default()
-        .to_owned();
+        .unwrap_or_default();
     assert!(
-        said.starts_with("scribe: added "),
-        "{reply}\n{:?}",
-        s.prompts().last()
+        context.contains(&format!("scribe entry add --tag {tag} ")),
+        "{reply}"
     );
-    said
+    let related = format!("session:{ON}");
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                tag,
+                "--author",
+                "opus",
+                "--related",
+                &related,
+                "--quote",
+                quote,
+                "--spoken",
+                said,
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    added["id"].as_str().unwrap().to_owned()
 }
-
 #[test]
 fn candidate_sources_and_existing_statements_are_checked_at_the_binary_boundary() {
     let quote = "I prefer concise messages during lengthy builds.";
@@ -4308,9 +4321,9 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
     )
     .unwrap();
     assert_eq!(direct["id"], "preferences-2");
-    // A line he marks is cataloged at Stop as his entry; it too skips the
-    // id the candidate reserved.
-    let said = mark(
+    // A line he marks is handed to the agent at Stop, and the entry the
+    // agent records for it too skips the id the candidate reserved.
+    let id = mark(
         &s,
         "u-2",
         "A separate decision Daniel explicitly marks. #scribe preferences",
@@ -4318,7 +4331,7 @@ fn candidate_ids_are_reserved_for_approval_and_agent_settlement_is_refused() {
         "Daniel marks a separate decision.",
         "A separate decision Daniel explicitly marks.",
     );
-    assert!(said.starts_with("scribe: added preferences-3 "), "{said}");
+    assert_eq!(id, "preferences-3");
     assert!(support::exported(&s.fx.root(), "entries/preferences/preferences-3.md").is_some());
     type_settlement(&s, "#scribe approve p-1");
     let entry: Value = serde_json::from_slice(
@@ -4786,16 +4799,17 @@ fn forget_clears_quote_window_retirement_reason_and_admitted_matched_through_cli
         assert!(!rendered.contains("secret-matched-word"), "{rendered}");
     }
 
-    // 2) Action entry with a transcript `window` from a turn marked
-    //    `#scribe standard`, cataloged at Stop.
-    mark(
-        &s,
-        "u-4",
-        "secret-window-rule for CI #scribe standard",
-        "standard",
-        "Daniel's CI rule: secret-window-rule for CI.",
-        "secret-window-rule for CI",
-    );
+    // 2) Action entry with a transcript `window`, as a `#scribe standard`
+    //    line kept one before markers took line-start forms over.
+    let standard = support::entry_text(1, "secret-window-rule for CI")
+        .replace("id: preferences-1\n", "id: standard-1\n")
+        .replace("tag: preferences\n", "tag: standard\n")
+        .replace("#scribe preferences:", "#scribe standard:")
+        .replace(
+            "\nwindow: null\n",
+            "\nwindow: {turns: [{role: user, message: u-2, at: 2026-01-02T03:04:05Z, text: \"secret-window-context from earlier turn\", cut: false}, {role: user, message: null, at: 2026-01-02T03:04:05Z, text: \"#scribe standard: secret-window-rule for CI\", cut: false}], truncated: false, omitted: 0}\n",
+        );
+    support::seed_records(&s.fx.root(), &[&standard]);
     let before_win: Value = serde_json::from_slice(
         &s.fx
             .ok(&["entry", "show", "standard-1", "--window", "--json"])
@@ -5196,33 +5210,6 @@ fn a_pass_claim_carries_a_context_and_subject_and_a_line_or_an_empty_subject_ope
             .any(|l| l == format!("stated_by\tscribe:session-pass\t{quote}")),
         "{plain}"
     );
-
-    // A turn he marks with `#scribe` is cataloged at Stop (§14): the
-    // annotation states it and keeps his words as the quote; the entry
-    // stays his.
-    let words = "always run the gate before a push";
-    let gate = "Daniel runs the gate before every push.";
-    mark(
-        &s,
-        "u-5",
-        &format!("{words} #scribe preferences"),
-        "preferences",
-        gate,
-        words,
-    );
-    let typed: Value = serde_json::from_slice(
-        &s.fx
-            .ok(&["entry", "show", "preferences-2", "--json"])
-            .stdout,
-    )
-    .unwrap();
-    assert_eq!(typed["content"], context_of(gate));
-    assert_eq!(
-        typed["stated_by"],
-        json!({"kind": "scribe", "name": "annotation"})
-    );
-    assert_eq!(typed["quote"], words);
-    assert_eq!(typed["author"]["kind"], "user");
 }
 
 #[test]

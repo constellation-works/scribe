@@ -259,8 +259,8 @@ mod cites {
     use crate::MarkVerbs;
     use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
     use crate::error::Error;
+    use crate::store::Store;
     use crate::store::tests::private_tempdir;
-    use crate::store::{Redactor, Store};
     use crate::testing::StoreTestInternals;
     use std::fs;
     use time::macros::datetime;
@@ -322,9 +322,8 @@ mod cites {
                             prompt_sha256: "a".repeat(64),
                             marker: 1,
                         },
-                        crate::store::MarkChange::Nothing,
+                        crate::store::MarkChange::Refused(crate::store::AGENT_HANDOFF),
                     )],
-                    &Redactor::default(),
                     datetime!(2026-11-02 19:06:00 UTC),
                 )
                 .unwrap_err();
@@ -1228,192 +1227,8 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
 
 mod marks {
     use crate::EntryVerbs;
-    use crate::MarkVerbs;
-    use crate::Speaker;
-    use crate::annotation::MarkState;
-    use crate::entry::{Cite, ContentFrom, NewEntry};
+    use crate::store::Store;
     use crate::store::tests::private_tempdir;
-    use crate::store::{
-        COVERED, MARKS_FILE, MODEL_FAILED, MarkChange, MarkKey, MarkResult, Redactor, Store,
-    };
-    use crate::testing::StoreTestInternals;
-    use time::macros::datetime;
-
-    const SHA: &str = "a";
-
-    fn key(marker: u32) -> MarkKey {
-        MarkKey {
-            session: "s-9".parse().unwrap(),
-            message: String::from("u-1"),
-            prompt_sha256: SHA.repeat(64),
-            marker,
-        }
-    }
-
-    fn annotation(line: u32, statement: &str) -> NewEntry {
-        let at = datetime!(2026-11-21 10:00 UTC);
-        NewEntry {
-            tag: "preferences".parse().unwrap(),
-            project: "scribe".parse().unwrap(),
-            topics: crate::record::Topics::default(),
-            related: Vec::new(),
-            provider: String::from("claude-code").try_into().unwrap(),
-            host: String::from("host").try_into().unwrap(),
-            created: at,
-            said: String::from("I want short updates #scribe"),
-            content: statement.to_owned(),
-            content_from: ContentFrom::Message {
-                role: Speaker::User,
-                message: String::from("u-1"),
-                at,
-            },
-            cite: Cite {
-                session: "s-9".parse().unwrap(),
-                message: Some(String::from("u-1")),
-                at,
-                prompt_sha256: SHA.repeat(64),
-                line,
-                cwd: String::from("/work"),
-            },
-            review_after: None,
-            window: None,
-            quote: Some(String::from("I want short updates")),
-            stated_by: Some(crate::Author::annotation()),
-        }
-    }
-
-    fn record(store: &Store, updates: Vec<(MarkKey, MarkChange)>) -> Vec<MarkResult> {
-        store
-            .record_marks(
-                updates,
-                &Redactor::default(),
-                datetime!(2026-11-21 10:01 UTC),
-            )
-            .unwrap()
-    }
-
-    #[test]
-    fn an_annotation_is_written_once_with_its_mark_and_reads_back() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("root"));
-        let change = || MarkChange::Write(Box::new(annotation(1, "Daniel wants short updates.")));
-        let added = record(&store, vec![(key(1), change())]);
-        let MarkResult::Added(entry) = &added[0] else {
-            panic!("{added:?}")
-        };
-        assert_eq!(entry.id.to_string(), "preferences-1");
-        assert_eq!(entry.author, crate::Author::user());
-        assert_eq!(entry.stated_by, Some(crate::Author::annotation()));
-        assert_eq!(store.entry(&entry.id).unwrap(), *entry);
-        let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
-        assert_eq!(marks.len(), 1);
-        assert_eq!(marks[0].outcome, MarkState::Entry);
-        assert_eq!(marks[0].entry.as_ref(), Some(&entry.id));
-        // ids and codes only: no words in marks.json.
-        let file = std::fs::read_to_string(dir.path().join("root").join(MARKS_FILE)).unwrap();
-        assert!(!file.contains("short updates"), "{file}");
-        // A settled marker is never recorded again.
-        let again = record(&store, vec![(key(1), change())]);
-        assert!(matches!(again[0], MarkResult::Already(_)), "{again:?}");
-        assert_eq!(store.marks(&"s-9".parse().unwrap()).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn three_failed_calls_refuse_the_marker_as_model_failed() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("root"));
-        for attempt in 1..=2 {
-            let failed = record(&store, vec![(key(1), MarkChange::Failed)]);
-            assert_eq!(
-                failed[0],
-                MarkResult::Failed {
-                    attempts: attempt,
-                    gave_up: false
-                }
-            );
-            let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
-            assert_eq!(marks[0].outcome, MarkState::Pending);
-        }
-        let last = record(&store, vec![(key(1), MarkChange::Failed)]);
-        assert_eq!(
-            last[0],
-            MarkResult::Failed {
-                attempts: 3,
-                gave_up: true
-            }
-        );
-        let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
-        assert_eq!(marks[0].outcome, MarkState::Refused);
-        assert_eq!(marks[0].code.as_deref(), Some(MODEL_FAILED));
-        assert!(
-            store
-                .list_entries(&Default::default())
-                .unwrap()
-                .listing
-                .items
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn none_and_refusals_are_final_and_a_covered_statement_writes_nothing() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("root"));
-        let results = record(
-            &store,
-            vec![
-                (key(1), MarkChange::Nothing),
-                (key(2), MarkChange::Refused("too_many_marks")),
-                (
-                    key(3),
-                    MarkChange::Write(Box::new(annotation(1, "Daniel wants short updates."))),
-                ),
-            ],
-        );
-        assert_eq!(results[0], MarkResult::Nothing);
-        assert_eq!(results[1], MarkResult::Refused("too_many_marks"));
-        assert!(matches!(results[2], MarkResult::Added(_)));
-        // The same statement from another line is covered by the first.
-        let mut other = key(1);
-        other.message = String::from("u-2");
-        let covered = record(
-            &store,
-            vec![(
-                other,
-                MarkChange::Write(Box::new(annotation(2, "Daniel wants short updates."))),
-            )],
-        );
-        assert!(matches!(covered[0], MarkResult::Covered(_)), "{covered:?}");
-        let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
-        assert_eq!(marks.len(), 4);
-        assert_eq!(marks[3].code.as_deref(), Some(COVERED));
-        assert!(marks.iter().all(|m| m.outcome.is_final()));
-        let again = record(&store, vec![(key(1), MarkChange::Failed)]);
-        assert!(matches!(again[0], MarkResult::Already(_)));
-    }
-
-    #[test]
-    fn record_marks_refuses_handoff_drafts_without_persisting_an_entry() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("root"));
-        let mut draft = annotation(1, "The user asked for a handoff.");
-        draft.tag = "handoff".parse().unwrap();
-        let results = record(&store, vec![(key(1), MarkChange::Write(Box::new(draft)))]);
-        assert_eq!(results[0], MarkResult::Refused("unknown_tag"));
-        assert!(
-            store
-                .list_entries(&Default::default())
-                .unwrap()
-                .listing
-                .items
-                .is_empty(),
-            "handoff draft must not persist an entry"
-        );
-        let marks = store.marks(&"s-9".parse().unwrap()).unwrap();
-        assert_eq!(marks.len(), 1);
-        assert_eq!(marks[0].outcome, MarkState::Refused);
-        assert_eq!(marks[0].code.as_deref(), Some("unknown_tag"));
-    }
 
     #[test]
     fn store_agent_writes_enforce_single_immutable_handoff_session_ref() {

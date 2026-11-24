@@ -31,22 +31,19 @@ turns; those are group-only (`session-groups.md`).
 
 In Claude Code and Codex, every `#scribe` in the human's typed turn, inside a
 sentence or opening a line (`#scribe idea: …`, `#scribe add this to preferences`),
-marks it. After your reply, scribe catalogs it as their entry in the working
-directory's project. A tag named after the marker or at the end of its line
-is the tag. `#scribe/global` records it with `project: global` for every
-repository.
+marks it. After your reply, scribe hands the marked line to you in your
+context, with the command that records it; it calls no model. Record nothing
+for the marker before then.
 
-Let scribe capture the turn. Its content is scribe's context paragraph
-(`stated_by: scribe:annotation`) and its `quote` is the human's exact words.
-Quote only the `quote` as theirs. A queued line and a slash command's
-arguments are marked the same way.
-
-If every model call fails, scribe gives up after three replies and tells you
-in your context, with the marked line. Only then, if the human wants it
-kept, record it with their exact words (`scribe entry add --tag <tag>
---quote '<their words>' --spoken '<statement>' --author <name>`), or ask
-them to run `scribe mark retry <session>` from a shell that has the model
-credentials. `scribe mark list` shows the markers still waiting.
+When the line marks something to keep, record it as theirs with their exact
+words, using the flags scribe gives: `scribe entry add --tag <tag> --project
+<project> --author <name> --related session:<id> --quote '<their words>'
+--spoken '<statement>'`; for an action tag such as `standard` the command
+scribe gives has no `--spoken`, since `entry add` refuses it there. A tag
+named after the marker or at the end of its line is the `--tag`; `#scribe/global` gives `--project global` for every
+repository. Quote only the `quote` as theirs. When the line marks nothing,
+record nothing. A queued line and a slash command's arguments are marked the
+same way. `scribe mark list` shows the markers with no entry from scribe.
 
 ## Settlement and deletion by the human
 
@@ -76,8 +73,8 @@ accidents. They do not authenticate a process running as the same OS user.
 
 Codex-origin model work defaults to **Luna (`gpt-6-luna`)** through the Codex
 CLI, with no fallback. Configure `[codex.models]` for explicit model or
-transport overrides. Claude defaults remain under `[models]`. Global asks and
-consistency jobs use `[models]` unless the caller selects `--provider codex`.
+transport overrides. Claude defaults remain under `[models]`. Global asks use
+`[models]` unless the caller selects `--provider codex`.
 
 Stop and SessionEnd mark opted-in sessions due; catalog passes run through
 `scribe session pass` from an authorized scheduler or shell. Init enables no

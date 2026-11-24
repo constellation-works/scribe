@@ -10,22 +10,16 @@ the [store spec](design/scribe/specs/store.md).
 
 In Claude Code or Codex, a `#scribe` you type in your own turn, inside a
 sentence or opening a line (`#scribe idea: …`, `#scribe add this to preferences`),
-marks that sentence. The prompt hook echoes it. After the reply, Stop catalogs
-it with one bounded model call: the entry's content is scribe's statement and
-its `quote` is your words. A tag named by the marker, or written at the end of
-the line (`… to preferences`), is a hint that call must follow. `#scribe/global`
-instead of `#scribe` stores `project: global`, for every repository; otherwise
-the entry keeps the working directory's project. A line you queue while the
-agent works and a slash command's arguments are marked the same way.
-
-If the model call fails three replies in a row, Stop gives the marker up,
-says so to you and to the agent, and keeps it listed: `scribe mark list` shows
-the markers still waiting and `scribe mark retry <session>` catalogs them again.
-Hooks get the environment of the app that started the agent. The Claude
-desktop app does not read your shell profile, so a `CLAUDE_CODE_OAUTH_TOKEN`
-exported there never reaches scribe's `claude -p` call, and the failure names
-the missing variables. Run `claude login` so `claude` finds its own
-credential, or run `mark retry` from a terminal that has the token.
+marks that sentence. The prompt hook echoes it. After the reply, Stop hands
+the marked line to the agent, with no model call: the agent records it with
+`scribe entry add --spoken`, its content the agent's statement and its `quote`
+your words, or records nothing when the line marks nothing. A tag named by the
+marker, or written at the end of the line (`… to preferences`), is the `--tag`
+Stop suggests. `#scribe/global` instead of `#scribe` suggests `--project
+global`, for every repository; otherwise the entry keeps the working
+directory's project. A line you queue while the agent works and a slash
+command's arguments are marked the same way. `scribe mark list` shows the
+markers with no entry from scribe.
 
 `/scribe on` in Claude Code, or an exact `$scribe on` in Codex, catalogs that
 session. `scribe session pass` then writes one record per session whose pass is
@@ -37,12 +31,11 @@ turn. `#scribe reject <id>` closes it for good.
 `scribe search` finds records by their words, with no model call. The Orbit
 plugin runs the routines ([install](../plugin/.orbit-plugin/README.md)).
 `scribe consistency scan`
-proposes superseding an entry a later one replaced, and retiring an entry due
-for review. You settle each with `#scribe approve <id>` or `#scribe reject <id>`.
+proposes retiring an entry due for review, with no model call. You settle each with `#scribe approve <id>` or `#scribe reject <id>`.
 `#scribe retire <id>` hides an entry and keeps its text. `#scribe forget <id>`
 blanks it. The scan also deactivates sessions with no messages for
 `[sessions] inactive_after_days` (the default named in `scribe consistency scan
---help`) and sessions a later record says were removed or replaced. By hand:
+--help`). By hand:
 
 ```sh
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
@@ -321,14 +314,13 @@ in the private store's `config.toml`. Missing keys keep the defaults in
 provider = "codex"                 # or explicit "claude-code" transport
 ask = "gpt-6-luna"
 session = "gpt-6-luna"
-consistency = "gpt-6-luna"
-annotation = "gpt-6-luna"
 credentials = ["OPENAI_API_KEY"]   # an existing Codex login also works
 ```
 
 `[models]` keeps the Claude defaults. It also accepts `provider = "codex"` for
-global routing, and then defaults its model ids to Luna. Global question and
-consistency jobs otherwise use `[models]`. `--provider codex` selects the Codex
+global routing, and then defaults its model ids to Luna. Global question jobs
+otherwise use `[models]`. The `annotation` and `consistency` keys still load
+but are unused. `--provider codex` selects the Codex
 model table for those CLI calls. An explicit id is honored. Model children run
 ephemeral, without your instructions, plugins, hooks, shell, apps, web search
 or tools, from a private temporary directory. The supervisor bounds time and
@@ -366,11 +358,10 @@ Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
   blocks and quoted mentions are skipped), applies each whole-line
   `#scribe approve|reject|retire|forget`, and replies with what it marked,
   settled or refused.
-- `Stop` runs `scribe hook stop`. It catalogs the session's unsettled markers
-  (one annotation call per marked turn, at most two turns per Stop), echoes what it recorded or why not
-  (and tells the agent about a marker it gave up),
+- `Stop` runs `scribe hook stop`. It hands the session's open markers to the
+  agent, with the `entry add` command that records each, echoes each to you,
   and fills the message id of an older entry's cite. A line an older store
-  already recorded verbatim is not cataloged again, and settling commands are
+  already recorded verbatim is not handed over again, and settling commands are
   not replayed. For a session that is on, Stop also marks a pass due on the
   `[catalog]` cadence in `config.toml`.
 - `SessionEnd` runs `scribe hook session-end`, which marks the last pass due
@@ -409,7 +400,7 @@ the previous session. When its newest active handoff has mode `continue`, the
 hook puts that body before the brief, carries the recording switch and writes
 a `continues` link. If the ancestry is missing, type
 `/scribe continue <handoff-id>`. A `new` handoff starts with the ordinary
-brief. No hook calls a model except Stop's annotation call. The pass does.
+brief. No hook calls a model. The pass does.
 Each write and refusal leaves one audit line in `scribe.db` with ids, the
 `--author` name and error codes only.
 

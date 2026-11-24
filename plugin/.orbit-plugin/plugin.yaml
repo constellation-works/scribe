@@ -25,8 +25,8 @@ spec:
     type: exec
     command: bin/scribe-plugin
     # The cap. session-pass starts no session after 50 s, and one session is
-    # at most two 121 s asks; consistency-scan starts no batch after 170 s,
-    # and one batch is at most 121 s; memory-refresh is one 120 s call.
+    # at most two 121 s asks; memory-refresh is one 120 s call;
+    # consistency-scan calls no model.
     timeout_ms: 300000
     sandbox: default
 
@@ -36,7 +36,7 @@ spec:
       # Claude Code's transcripts, which session-pass reads.
       read: ["{{config.root}}", "{{config.transcripts}}", "{{config.codex_home}}"]
       write: ["{{config.root}}", "{{plugin_state}}"]
-    # The session, consistency and profile models, through the claude CLI.
+    # The session and profile models, through the claude CLI.
     network: any
     # The model credential names config.toml lists by default (§8). A
     # `[redact] env` name in the store's config.toml must be added here
@@ -75,9 +75,9 @@ spec:
     - name: consistency-scan
       description: >-
         The scribe-consistency routine's job: re-apply interrupted approvals,
-        then open a proposal for each entry a later one replaced and each
-        entry due for review, as `scribe consistency scan --json` does. Changes
-        no entry otherwise; the user settles proposals with #scribe approve or
+        then open a proposal for each entry due for review and deactivate
+        sessions past the age limit, as `scribe consistency scan --json` does,
+        with no model call. Changes no entry otherwise; the user settles proposals with #scribe approve or
         #scribe reject. Needs [plugins.scribe] root.
       execution_kind: mutating
       agent_callable: false

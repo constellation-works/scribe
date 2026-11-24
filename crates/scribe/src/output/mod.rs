@@ -16,12 +16,12 @@ mod table;
 #[cfg(test)]
 pub(crate) use payload::PassPayload;
 pub(crate) use payload::{
-    BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload, DeactivationFailure,
-    EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin,
-    MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload,
-    Output, PassFailure, PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload,
-    Record, Records, RefreshPayload, RevisionPayload, ScanReport, SessionHandoffsPayload,
-    SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    BriefPayload, CoveredPayload, DeactivatedPayload, DeactivationFailure, EntryPayload,
+    ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin, MemoryBlockPayload,
+    MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload, Output, PassFailure,
+    PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
+    RefreshPayload, RevisionPayload, ScanReport, SessionHandoffsPayload, SessionPayload,
+    TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 #[cfg(test)]
 pub(crate) use payload::{HookOutcome, HookReply};

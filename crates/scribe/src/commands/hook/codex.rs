@@ -11,7 +11,6 @@
 use super::payload::{self, StopPayload};
 use super::{group_add, session_end, session_start, user_prompt_submit};
 use crate::{app::Context, error::CliError, output::Output};
-use scribe_core::Config;
 use scribe_core::cases::codex::{self as case, CodexInput, CodexStop, has_marks, refused};
 use serde_json::Value;
 
@@ -81,7 +80,6 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             host: ctx.host(),
             session_end,
             stop,
-            models: |config: &Config| ctx.models(config),
             read_past: |provider, id: &_, path: &_| {
                 group_add::read_past(&ctx.with_provider(provider), id, path)
             },

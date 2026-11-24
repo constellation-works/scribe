@@ -58,8 +58,8 @@ on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
 and nothing otherwise; never blocks such a prompt. Every #scribe the user
 typed, inside a sentence or opening a line (#scribe idea: ..., #scribe add
 this to preferences), not quoted or in code, is a marker: it is echoed as
-marked and cataloged at Stop, and nothing is written here; no model is
-called. #scribe approve <p-id>, #scribe reject <p-id>, #scribe retire
+marked and handed to the agent at Stop, and nothing is written here; no
+model is called. #scribe approve <p-id>, #scribe reject <p-id>, #scribe retire
 <entry-id> and #scribe forget <entry-id>, each on its own line, settle a
 proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's
@@ -78,19 +78,16 @@ Examples:
 
 const STOP_EXAMPLES: &str = "\
 Reads the Stop payload (session_id, transcript_path, optional cwd) on stdin.
-Each typed turn with a #scribe marker that marks.json has not settled gets
-one models.annotation call (30 s; at most 2 turns per Stop and 3 markers
-per turn; a failed call is retried at the next reply, 3 attempts in all),
-and its checked answer is recorded as the user's entry with scribe's statement
-and their quoted words. A tag named after the marker, or at the end of a line
-it opens, is a hint the model must follow. #scribe/global in place of
-#scribe records the entry with project global, for every repository; the
-working directory's project stays the default. Under an action tag
-(standard, idea, or any tag config marks action = true) the entry also keeps
-the turns since the previous #scribe turn, capped at 40 turns and 12000
-characters and cut from the oldest. A line an older entry already records is
-not cataloged again, and settling commands are never replayed. Prints hook
-JSON saying what was recorded or why not; otherwise nothing.
+Each typed turn's #scribe markers that marks.json has not settled (at most 3
+per turn) are handed to the agent, with no model call: the reply's
+additionalContext gives the scribe entry add command that records the marked
+line with the user's quoted words (--spoken unless the tag is an action
+tag). A tag named after the marker, or at the end of a line it opens, is the
+suggested --tag; #scribe/global suggests --project global, otherwise the
+working directory's project. Each marker is handed over once. A line an
+older entry already records is not handed over, and settling commands are
+never replayed. Prints hook JSON saying what was handed over or why not;
+otherwise nothing.
 
 Examples:
   scribe hook stop < <payload.json>";
@@ -135,7 +132,7 @@ pub(crate) enum HookCommand {
     UserPromptSubmit(HookArgs),
     /// Handle the Stop hook JSON from stdin
     ///
-    /// Catalogs #scribe markers, fills in message ids and marks a session pass due, from the Stop hook's JSON on stdin.
+    /// Hands #scribe markers to the agent, fills in message ids and marks a session pass due, from the Stop hook's JSON on stdin.
     #[command(after_help = STOP_EXAMPLES)]
     Stop(HookArgs),
     /// Handle the SessionEnd hook JSON from stdin

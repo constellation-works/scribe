@@ -905,8 +905,7 @@ fn a_claim_needs_a_subject_and_a_context_within_their_bounds() {
 fn the_session_schema_bounds_claims_to_six_of_680_characters_and_4080_per_answer() {
     // 2_design.md §15.3: at most 6 candidates, each a context of at most
     // 600 characters and a subject of at most 80, so the two add at most
-    // 4,080 value characters to one answer; the annotation schema asks
-    // for the same context.
+    // 4,080 value characters to one answer.
     let schema: serde_json::Value = serde_json::from_str(crate::models::SESSION_SCHEMA).unwrap();
     let candidates = &schema["properties"]["candidates"];
     let fields = &candidates["items"]["properties"];
@@ -925,12 +924,6 @@ fn the_session_schema_bounds_claims_to_six_of_680_characters_and_4080_per_answer
         required.contains(&serde_json::json!("context")),
         "{required:?}"
     );
-
-    let marks: serde_json::Value = serde_json::from_str(crate::models::ANNOTATION_SCHEMA).unwrap();
-    let mark = &marks["properties"]["marks"]["items"]["properties"];
-    assert_eq!(max(&mark["context"]["maxLength"]), crate::CONTEXT_CHARS);
-    assert_eq!(max(&mark["subject"]["maxLength"]), crate::SUBJECT_CHARS);
-    assert!(mark.get("statement").is_none(), "{mark}");
 }
 
 #[test]

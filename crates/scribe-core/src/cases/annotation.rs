@@ -1,60 +1,48 @@
-//! Catalog the `#scribe` markers the user typed inside their sentences, at the
-//! Stop of the turn (docs/design/scribe/2_design.md §14; ORB-27707 step 3b).
+//! Hand the `#scribe` markers the user typed inside their sentences to the
+//! agent, at the Stop of the turn (docs/design/scribe/2_design.md §14;
+//! ORB-27911 step 2a removed the model call that cataloged them).
 //!
 //! The prompt hook only echoed the marker. Here, after the reply, each
 //! typed turn of the transcript with a marker that `marks.json` has not
-//! settled gets one bounded `models.annotation` call ([`MAX_TURNS_PER_STOP`](crate::annotation::MAX_TURNS_PER_STOP)
-//! turns per Stop, oldest first; `scribe mark retry` runs the same catalog
-//! for one session with no per-run bound). A typed turn is one the shared
-//! typed-turn rule keeps (`instruction::claude_conversation_raw_typed`, §4.1):
-//! a plain prompt, a queued line Daniel typed while the agent was busy, or a
-//! slash command, whose markers are read from its args
-//! (`annotation::turn_marks`). Each answer is checked without a model
-//! (`annotation::check`) and recorded in one store call that writes the
-//! entries and `marks.json` (`Store::record_marks`):
+//! settled is read. A typed turn is one the shared typed-turn rule keeps
+//! (`instruction::claude_conversation_raw_typed`, §4.1): a plain prompt, a
+//! queued line the user typed while the agent was busy, or a slash command,
+//! whose markers are read from its args (`annotation::turn_marks`). Each
+//! unsettled marker is recorded in one store call (`Store::record_marks`):
 //!
-//! - an entry: the user's, content scribe's statement, `quote` their words,
-//!   `stated_by` scribe:annotation, no proposal;
-//! - none: nothing written, never asked again;
-//! - refused (a check, a cover, redaction, or a marker refused before any
-//!   call): never asked again;
-//! - a failed call: nothing written, the marker stays pending and the next
-//!   Stop retries it, up to [`MAX_ATTEMPTS`] calls, then refused
-//!   `model_failed`. A given-up marker stays listed (`scribe mark list`)
-//!   until `scribe mark retry` catalogs it, and its echo also reaches the
-//!   agent (`Cataloged::context`) with the line, so the agent can record
-//!   the user's words itself.
+//! - refused before any handoff (a marker problem, or a decision or open
+//!   item named): never handed over;
+//! - otherwise refused `agent_handoff`: its line goes to the agent
+//!   (`Cataloged::context`) with the `entry add` command that records it as
+//!   the user's, and the user is told the agent has it. Settled: it is not
+//!   handed over again.
 //!
-//! The user sees an echo for every outcome except a marker the prompt hook
-//! already refused, which is recorded and audited here silently. A turn
-//! with no marker, or whose markers are all settled, reads only the
-//! transcript and `marks.json`: no lock, no write, no call.
+//! A turn with no marker, or whose markers are all settled, reads only the
+//! transcript and `marks.json`: no lock, no write.
 //!
 //! A marker opening a line is a folded form 1–3 (§14.6): before store
 //! format 22 such a line was recorded verbatim by the prompt hook, or by
 //! Stop recovery, and its entry cites that prompt and line. A marker on a
 //! line that already has an entry is left alone, so an older transcript
-//! is not cataloged twice.
+//! is not handed over twice.
 //!
 //! Under Codex the Stop reads Codex's own rollout (`scribe_core::codex`):
 //! its user messages are the host-attributed typed inputs, its cwd the
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
-use crate::annotation::{self, Checked, MAX_ATTEMPTS, Mark};
+use crate::annotation::{self, AGENT_HANDOFF, Mark};
 use crate::capture::{self, Turn};
 use crate::cases::hook::{HookError, HookOutcome, chain, is_control, quote, refusal};
 use crate::cases::mark::MarkVerbs;
 use crate::cases::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};
-use crate::{
-    COVERED, Config, Label, MODEL_FAILED, MarkChange, MarkKey, MarkResult, Models, NEEDS_REDACTION,
-    Provider, SessionId, Speaker,
-};
+use crate::{Label, TagTable};
+use crate::{MODEL_FAILED, MarkChange, MarkKey, MarkResult, Provider, SessionId, Speaker};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// What `run` catalogs: one session's Stop, or `scribe mark retry`.
-pub struct AnnotationInput<'i, F> {
+/// What `run` hands over: one session's Stop.
+pub struct AnnotationInput<'i> {
     /// The session.
     pub session: &'i SessionId,
     /// Its transcript.
@@ -65,10 +53,6 @@ pub struct AnnotationInput<'i, F> {
     pub provider: Provider,
     /// This host, as records name it.
     pub host: Label,
-    /// The most marked turns to call a model for.
-    pub turns: usize,
-    /// Builds the `Models` adapter for the config, only when a call is due.
-    pub models: F,
 }
 
 /// What the hook tells the user and the agent, and audits.
@@ -76,21 +60,20 @@ pub struct AnnotationInput<'i, F> {
 pub struct Cataloged {
     /// For the user, one per marker outcome.
     pub echoes: Vec<String>,
-    /// For the agent: one per given-up marker, with the line and what the
-    /// agent may do instead.
+    /// For the agent: one per handed-over marker, with the line and the
+    /// command that records it.
     pub context: Vec<String>,
-    /// For the audit log: one per write or refusal.
+    /// For the audit log: one per handoff or refusal.
     pub outcomes: Vec<HookOutcome>,
 }
 
-/// One marked turn still to catalog.
+/// One marked turn still to hand over.
 struct Work<'a> {
     message: &'a Message,
-    index: usize,
     turn: Turn,
-    /// Markers refused before any call and not yet recorded.
+    /// Markers refused before any handoff and not yet recorded.
     refused: Vec<Mark>,
-    /// Markers the model reads.
+    /// Markers to hand to the agent.
     open: Vec<Mark>,
 }
 
@@ -100,33 +83,24 @@ enum Say {
     Silent,
     /// Its reason, for a refusal the checks made.
     Reason(String),
-    /// The call's error, for a failure, and the marker's line as typed.
-    Failed { error: String, said: String },
-    /// The model's answer.
-    Answer,
+    /// Handed to the agent: the line as typed, the `entry add` hints and
+    /// whether the hinted tag takes `--spoken`.
+    Handoff {
+        said: String,
+        hints: String,
+        spoken: bool,
+    },
 }
 
-impl Say {
-    /// Its words, when it has any.
-    fn text(self) -> Option<String> {
-        match self {
-            Self::Reason(text) | Self::Failed { error: text, .. } => Some(text),
-            Self::Silent | Self::Answer => None,
-        }
-    }
-}
-
-/// Catalog the session's unsettled markers, at most `turns` marked turns
-/// (oldest first), building the model adapter with `models` only when a
-/// call is due.
+/// Hand the session's unsettled markers to the agent, oldest first.
 ///
 /// # Errors
 ///
 /// [`HookError`]: a store read failed or the transcript could not be read.
-/// A config, redactor or write failure is echoed and audited instead.
-pub fn run<E: PortError, M: Models>(
+/// A config or write failure is echoed and audited instead.
+pub fn run<E: PortError>(
     ctx: &Ctx<'_, E>,
-    input: AnnotationInput<'_, impl FnOnce(&Config) -> M>,
+    input: AnnotationInput<'_>,
 ) -> Result<Cataloged, HookError<E>> {
     let AnnotationInput {
         session,
@@ -134,8 +108,6 @@ pub fn run<E: PortError, M: Models>(
         cwd: payload_cwd,
         provider,
         host,
-        turns,
-        models,
     } = input;
     let mut out = Cataloged::default();
     // Stop checked the transcript first and reported a failure.
@@ -262,7 +234,6 @@ pub fn run<E: PortError, M: Models>(
         if !refused.is_empty() || !open.is_empty() {
             work.push(Work {
                 message,
-                index,
                 turn,
                 refused,
                 open,
@@ -277,28 +248,15 @@ pub fn run<E: PortError, M: Models>(
         Ok(config) => config.for_provider(provider),
         Err(err) => {
             out.echoes.push(format!(
-                "scribe: could not catalog #scribe in your message — {err}; will retry at the next reply"
-            ));
-            out.outcomes.push(refusal(session, err.code()));
-            return Ok(out);
-        }
-    };
-    let redactor = match ctx.redaction.redactor(&config) {
-        Ok(redactor) => redactor,
-        Err(err) => {
-            out.echoes.push(format!(
-                "scribe: could not catalog #scribe in your message — {err}; will retry at the next reply"
+                "scribe: could not hand over #scribe in your message — {err}; will retry at the next reply"
             ));
             out.outcomes.push(refusal(session, err.code()));
             return Ok(out);
         }
     };
 
-    let mut models = Some(models);
-    let mut adapter: Option<M> = None;
     let mut updates: Vec<(MarkKey, MarkChange)> = Vec::new();
     let mut says: Vec<Say> = Vec::new();
-    let mut calls = 0usize;
     for item in &work {
         let key = |mark: &Mark| MarkKey {
             session: session.clone(),
@@ -311,99 +269,28 @@ pub fn run<E: PortError, M: Models>(
             updates.push((key(mark), MarkChange::Refused(code)));
             says.push(Say::Silent);
         }
-        let open: Vec<&Mark> = item
-            .open
-            .iter()
-            .filter(|mark| {
-                if let Some(refused) = annotation::record_tag_refusal(mark, &config.tags) {
-                    updates.push((key(mark), MarkChange::Refused(refused.code())));
-                    says.push(Say::Reason(refused.message().to_owned()));
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-        if open.is_empty() || calls >= turns {
-            continue;
-        }
-        calls += 1;
-        let window = annotation::window(&messages, &item.message.uuid);
-        let in_window: BTreeSet<&str> = window.iter().map(|m| m.uuid.as_str()).collect();
-        // The window's turns he typed: a quote must come from one of them.
-        let own: Vec<&Message> = messages[..=item.index]
-            .iter()
-            .filter(|m| in_window.contains(m.uuid.as_str()))
-            .filter(|m| transcript::user_turn(m).is_some())
-            .filter(|m| codex_cwd.is_some() || typed.contains(&m.uuid))
-            .collect();
-        let request = annotation::request(
-            &open,
-            window,
-            &config.tags,
-            &config.models.annotation,
-            config.voice(crate::voice::ModelUse::Annotation),
-        );
-        if adapter.is_none() {
-            adapter = models.take().map(|build| build(&config));
-        }
-        let answer = match &adapter {
-            Some(adapter) => adapter.annotation(&request).map_err(|e| e.to_string()),
-            None => Err(String::from("no model adapter")),
-        };
-        for mark in open {
-            let found = answer
-                .as_ref()
-                .map(|a| a.marks.iter().find(|m| m.marker == mark.number));
-            let failed = |error: String| Say::Failed {
-                error,
-                said: mark.said.clone(),
-            };
-            let (change, say) = match found {
-                Err(err) => (MarkChange::Failed, failed(err.clone())),
-                Ok(None) => (
-                    MarkChange::Failed,
-                    failed(format!("the answer had no marker {}", mark.number)),
-                ),
-                Ok(Some(answer)) => match annotation::check(mark, answer, &own, &config.tags) {
-                    Ok(Checked::Entry(annotated)) => {
-                        let mut draft = annotation::draft(
-                            mark,
-                            annotated,
-                            &item.turn,
-                            &item.message.uuid,
-                            &config.tags,
-                        );
-                        // Under an action tag, the §4.6 window, model-free.
-                        if config.tags.action(&draft.tag).is_some() {
-                            draft.window = Some(capture::action_window(
-                                &messages,
-                                &item.turn.prompt_sha256,
-                                &item.message.text(),
-                                item.turn.at,
-                            ));
-                        }
-                        (MarkChange::Write(Box::new(draft)), Say::Answer)
-                    }
-                    Ok(Checked::None(reason)) => (MarkChange::Nothing, Say::Reason(reason)),
-                    Err(refused) => (
-                        MarkChange::Refused(refused.code()),
-                        Say::Reason(refused.message().to_owned()),
-                    ),
-                },
-            };
-            updates.push((key(mark), change));
-            says.push(say);
+        for mark in &item.open {
+            if let Some(refused) = annotation::record_tag_refusal(mark, &config.tags) {
+                updates.push((key(mark), MarkChange::Refused(refused.code())));
+                says.push(Say::Reason(refused.message().to_owned()));
+            } else {
+                updates.push((key(mark), MarkChange::Refused(AGENT_HANDOFF)));
+                says.push(Say::Handoff {
+                    said: mark.said.clone(),
+                    hints: hints(mark, &item.turn, &config.tags),
+                    spoken: spoken(mark, &config.tags),
+                });
+            }
         }
     }
     if updates.is_empty() {
         return Ok(out);
     }
-    let results = match store.record_marks(updates, &redactor, ctx.clock.now()) {
+    let results = match store.record_marks(updates, ctx.clock.now()) {
         Ok(results) => results,
         Err(err) => {
             out.echoes.push(format!(
-                "scribe: could not catalog #scribe in your message — {}; will retry at the next reply",
+                "scribe: could not hand over #scribe in your message — {}; will retry at the next reply",
                 chain(&err)
             ));
             out.outcomes.push(refusal(session, err.code()));
@@ -416,14 +303,41 @@ pub fn run<E: PortError, M: Models>(
     Ok(out)
 }
 
+/// The `entry add` flags the marker settles: its tag when it names one, its
+/// project (`global` for `#scribe/global`) and its hashtags as topics.
+fn hints(mark: &Mark, turn: &Turn, tags: &TagTable) -> String {
+    let mut out = format!(
+        "--tag {}",
+        mark.hint(tags)
+            .map_or_else(|| String::from("<tag>"), ToString::to_string)
+    );
+    let project = if mark.global {
+        String::from("global")
+    } else {
+        turn.project.to_string()
+    };
+    out.push_str(&format!(" --project {project}"));
+    for topic in mark.topics.as_slice() {
+        out.push_str(&format!(" --topic {topic}"));
+    }
+    out
+}
+
+/// Whether `entry add --spoken` takes the marker's hinted tag: an ordinary
+/// memory tag, or no hint. It refuses an action, evidence or handoff tag
+/// (`not_memory_tag`), so their command records the quote without it.
+fn spoken(mark: &Mark, tags: &TagTable) -> bool {
+    mark.hint(tags)
+        .and_then(|name| tags.get(name))
+        .is_none_or(|def| {
+            def.action.is_none()
+                && !def.require_evidence
+                && def.name.as_str() != crate::handoff::HANDOFF_TAG
+        })
+}
+
 /// The echo and audit outcome of one recorded marker.
 fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) {
-    let nothing = |reason: &str| {
-        format!(
-            "scribe: nothing recorded for #scribe in your message — {}",
-            quote(reason)
-        )
-    };
     match (result, say) {
         (MarkResult::Already(_), _) => {
             // A marker a concurrent Stop settled: audited by that Stop.
@@ -432,87 +346,37 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             // The prompt hook echoed this refusal; it is audited here, once.
             out.outcomes.push(refusal(session, code));
         }
-        (_, Say::Silent) => {}
-        (MarkResult::Added(entry), _) => {
+        (
+            MarkResult::Refused(_),
+            Say::Handoff {
+                said,
+                hints,
+                spoken,
+            },
+        ) => {
+            let statement = if spoken {
+                "--spoken '<statement>'"
+            } else {
+                "'<statement>'"
+            };
             out.echoes.push(format!(
-                "scribe: added {} to {} — \"{}\" · your words: \"{}\"",
-                entry.id,
-                entry.tag,
-                quote(&entry.content),
-                quote(entry.quote.as_deref().unwrap_or_default())
+                "scribe: #scribe in your message is the agent's to record — \"{}\"",
+                quote(&said)
             ));
-            out.outcomes.push(HookOutcome {
-                target: Some(entry.id.to_string()),
-                error_code: None,
-            });
+            out.context.push(format!(
+                "scribe: the user marked a line with #scribe for you to record — \"{}\". If it marks something to keep, record it as theirs with their exact words: scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' {statement}. If it marks nothing, record nothing.",
+                quote(&said)
+            ));
+            out.outcomes.push(refusal(session, AGENT_HANDOFF));
         }
-        (MarkResult::Covered(entry), _) => {
-            out.echoes.push(nothing(&format!(
-                "already covered by {} in {}",
-                entry.id, entry.tag
-            )));
-            out.outcomes.push(refusal(session, COVERED));
-        }
-        (MarkResult::NeedsRedaction, _) => {
-            out.echoes
-                .push(nothing("your words hold text redaction would mask"));
-            out.outcomes.push(refusal(session, NEEDS_REDACTION));
-        }
-        (MarkResult::Nothing, say) => {
-            let reason = say
-                .text()
-                .unwrap_or_else(|| String::from("nothing to record"));
-            out.echoes.push(nothing(&reason));
-            out.outcomes.push(HookOutcome {
-                target: Some(format!("session:{session}")),
-                error_code: None,
-            });
-        }
-        (MarkResult::Refused(code), say) => {
-            let reason = say.text().unwrap_or_else(|| String::from(code));
-            out.echoes.push(nothing(&reason));
+        (MarkResult::Refused(code), Say::Reason(reason)) => {
+            out.echoes.push(format!(
+                "scribe: nothing recorded for #scribe in your message — {}",
+                quote(&reason)
+            ));
             out.outcomes.push(refusal(session, code));
         }
-        (MarkResult::Failed { attempts, gave_up }, say) => {
-            let said = match &say {
-                Say::Failed { said, .. } => said.clone(),
-                Say::Silent | Say::Reason(_) | Say::Answer => String::new(),
-            };
-            let err = say
-                .text()
-                .unwrap_or_else(|| String::from("the model call failed"));
-            if gave_up {
-                let echo = format!(
-                    "scribe: could not catalog #scribe in your message — {}; gave up after {MAX_ATTEMPTS} attempts",
-                    quote(&err)
-                );
-                out.echoes
-                    .push(format!("{echo} — scribe mark retry {session} tries again"));
-                // The agent gets the line too: nothing was recorded, so it
-                // may record the user's words itself.
-                out.context.push(format!(
-                    "{echo} — the line: \"{}\" {}",
-                    quote(&said),
-                    gave_up_note(session)
-                ));
-                out.outcomes.push(refusal(session, MODEL_FAILED));
-            } else {
-                // Pending: retried at the next reply, audited when settled.
-                out.echoes.push(format!(
-                    "scribe: could not catalog #scribe in your message — {}; will retry at the next reply ({attempts} of {MAX_ATTEMPTS})",
-                    quote(&err)
-                ));
-            }
-        }
     }
-}
-
-/// What the agent is told after a given-up marker: it was not recorded, and
-/// how the user's words can still be kept.
-fn gave_up_note(session: &SessionId) -> String {
-    format!(
-        "(not cataloged by scribe; if the user wants it kept, record it with their exact words: scribe entry add --tag <tag> --quote '<their words>' --spoken '<statement>' --author <name>, or ask them to run scribe mark retry {session} from a shell with model credentials)"
-    )
 }
 
 /// The lines of `message` that already hold an entry: lines recorded

@@ -4,42 +4,29 @@
 use crate::config::Config;
 use crate::entry::Speaker;
 use crate::models::{
-    ANNOTATION_INSTRUCTIONS, Budgets, CONSISTENCY_INSTRUCTIONS, ConsistencyRequest, FiringTurn,
-    PROFILE_INSTRUCTIONS, PassMessage, ProfileRequest, REMOVAL_INSTRUCTIONS, RemovalRequest,
+    Budgets, FiringTurn, PROFILE_INSTRUCTIONS, PassMessage, ProfileRequest,
     SESSION_HEADER_INSTRUCTIONS, SESSION_INSTRUCTIONS, SessionHeader, SessionHeaderRequest,
     TagCriteria,
 };
+use crate::pass;
 use crate::tag::TagTable;
 use crate::voice::{ModelUse, UserName, Voice};
-use crate::{annotation, pass};
 use std::time::Duration;
 
 /// The shipped instruction text of `model_use`.
 fn shipped(model_use: ModelUse) -> &'static str {
     match model_use {
-        ModelUse::Annotation => ANNOTATION_INSTRUCTIONS,
         ModelUse::Session => SESSION_INSTRUCTIONS,
         ModelUse::SessionHeader => SESSION_HEADER_INSTRUCTIONS,
-        ModelUse::Consistency => CONSISTENCY_INSTRUCTIONS,
         ModelUse::Profile => PROFILE_INSTRUCTIONS,
-        ModelUse::Removal => REMOVAL_INSTRUCTIONS,
     }
 }
 
 /// The prompt `model_use` sends, voiced with `voice`. The session request
-/// asks for claims and memory, so every optional part of it is rendered;
-/// the annotation request lists the shipped tags when `shipped_tags`.
-fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
+/// asks for claims and memory, so every optional part of it is rendered.
+fn prompt(model_use: ModelUse, voice: Voice, _shipped_tags: bool) -> String {
     let budget = Duration::from_secs(5);
     match model_use {
-        ModelUse::Annotation => {
-            let tags = if shipped_tags {
-                TagTable::defaults()
-            } else {
-                TagTable::new(Vec::new()).unwrap()
-            };
-            annotation::request(&[], Vec::new(), &tags, "m", voice).prompt()
-        }
         ModelUse::Session => {
             let mut request = pass::request(
                 "m",
@@ -112,13 +99,6 @@ fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
             voice,
         }
         .prompt(),
-        ModelUse::Consistency => ConsistencyRequest {
-            model: String::from("m"),
-            budget,
-            pairs: Vec::new(),
-            voice,
-        }
-        .prompt(),
         ModelUse::Profile => ProfileRequest {
             model: String::from("m"),
             budget,
@@ -130,13 +110,6 @@ fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
             passed: Vec::new(),
             milestones: Vec::new(),
             preferences: Vec::new(),
-            voice,
-        }
-        .prompt(),
-        ModelUse::Removal => RemovalRequest {
-            model: String::from("m"),
-            budget,
-            pairs: Vec::new(),
             voice,
         }
         .prompt(),
@@ -236,13 +209,6 @@ fn config_reads_the_user_name_and_per_use_instructions() {
         config.voice(ModelUse::Session).instructions.as_deref(),
         Some("Keep the record.\nBriefly.")
     );
-    // A use the file leaves out keeps its shipped text.
-    let removal = config.voice(ModelUse::Removal);
-    assert_eq!(removal.instructions, None);
-    assert_eq!(
-        removal.instructions(REMOVAL_INSTRUCTIONS),
-        REMOVAL_INSTRUCTIONS
-    );
     let defaults = Config::parse("").unwrap();
     assert_eq!(defaults.user, UserName::default());
 }
@@ -312,35 +278,19 @@ fn session_with_shipped_rules(voice: Voice) -> String {
 
 #[test]
 fn shipped_tag_descriptions_and_criteria_name_the_configured_user_in_prompts() {
-    let annotation = |voice| prompt(ModelUse::Annotation, voice, true);
     for (voice, noun) in [(Voice::default(), "the user"), (named("Sam"), "Sam")] {
-        for prompt in [
-            annotation(voice.clone()),
-            session_with_shipped_rules(voice.clone()),
-        ] {
-            assert!(
-                !prompt.contains("{user}") && !prompt.contains("{User}"),
-                "{prompt}"
-            );
-            assert!(
-                prompt.contains(&format!("A standing rule from {noun} that applies")),
-                "{prompt}"
-            );
-            assert!(
-                prompt.contains(&format!("written across {noun}'s projects")),
-                "{prompt}"
-            );
-        }
-        let annotation = annotation(voice);
+        let prompt = session_with_shipped_rules(voice.clone());
         assert!(
-            annotation.contains(&format!(
-                "preferences: A standing rule {noun} wants agents to follow."
-            )),
-            "{annotation}"
+            !prompt.contains("{user}") && !prompt.contains("{User}"),
+            "{prompt}"
         );
         assert!(
-            annotation.contains(&format!("in {noun}'s words")),
-            "{annotation}"
+            prompt.contains(&format!("A standing rule from {noun} that applies")),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains(&format!("written across {noun}'s projects")),
+            "{prompt}"
         );
     }
 }
@@ -348,20 +298,17 @@ fn shipped_tag_descriptions_and_criteria_name_the_configured_user_in_prompts() {
 #[test]
 fn an_instruction_override_cannot_drop_the_session_or_annotation_behaviour_rules() {
     let keep = "Keep what the record so far says unless the new messages change it.";
-    let none = "A marker that is talk about scribe itself or points at nothing to record is \
-                kind \"none\"";
-    for (model_use, rule) in [(ModelUse::Session, keep), (ModelUse::Annotation, none)] {
-        let overridden = prompt(
-            model_use,
-            Voice {
-                user: UserName::default(),
-                instructions: Some(String::from("Record only release dates.")),
-            },
-            false,
-        );
-        assert!(overridden.starts_with("Record only release dates."));
-        assert!(!overridden.contains(shipped(model_use)), "{overridden}");
-        assert!(overridden.contains(rule), "{model_use:?}: {overridden}");
-        assert!(!shipped(model_use).contains(rule), "{model_use:?}");
-    }
+    let (model_use, rule) = (ModelUse::Session, keep);
+    let overridden = prompt(
+        model_use,
+        Voice {
+            user: UserName::default(),
+            instructions: Some(String::from("Record only release dates.")),
+        },
+        false,
+    );
+    assert!(overridden.starts_with("Record only release dates."));
+    assert!(!overridden.contains(shipped(model_use)), "{overridden}");
+    assert!(overridden.contains(rule), "{model_use:?}: {overridden}");
+    assert!(!shipped(model_use).contains(rule), "{model_use:?}");
 }

@@ -75,7 +75,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("consistency-scan", &["consistency", "scan", "--help"]),
     ("mark", &["mark", "--help"]),
     ("mark-list", &["mark", "list", "--help"]),
-    ("mark-retry", &["mark", "retry", "--help"]),
     ("store", &["store", "--help"]),
     ("store-migrate", &["store", "migrate", "--help"]),
     ("export", &["export", "--help"]),

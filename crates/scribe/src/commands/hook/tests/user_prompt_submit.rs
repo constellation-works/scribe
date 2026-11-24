@@ -120,7 +120,7 @@ fn a_capture_line_is_echoed_as_marked_and_writes_nothing() {
             "{prompt}"
         );
         assert!(
-            context.contains("tells you if it gives up; record it yourself only then"),
+            context.contains("with the command that records it; record nothing for it before then"),
             "{prompt}: {context}"
         );
         assert!(setup.entries().is_empty(), "{prompt}");

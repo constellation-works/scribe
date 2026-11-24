@@ -151,14 +151,6 @@ impl Setup {
         );
     }
 
-    /// A fake `claude` that fails every call.
-    fn fail(&self) {
-        self.fx.fake_program(
-            "claude",
-            "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > /dev/null\necho 'boom' >&2\nexit 1\n",
-        );
-    }
-
     fn calls(&self) -> usize {
         std::fs::read_to_string(self.fx.home().join("claude-calls"))
             .map_or(0, |t| t.lines().count())
@@ -308,34 +300,19 @@ fn ids(list: &Value) -> Vec<String> {
 }
 
 #[test]
-fn a_scan_proposes_a_contradiction_and_a_stale_entry_once() {
+fn a_scan_proposes_a_stale_entry_once() {
     let s = Setup::new();
     let report = s.scan();
-    assert_eq!(ids(&report["opened"]), ["p-1", "p-2"], "{report}");
-    assert_eq!(report["judged_pairs"], 1);
+    assert_eq!(ids(&report["opened"]), ["p-1"], "{report}");
     assert_eq!(report["stale_entries"], 1);
-    assert_eq!(report["failed_batches"], json!([]));
-    assert_eq!(s.calls(), 1, "one batch, one model call");
+    assert_eq!(s.calls(), 0, "the scan calls no model");
 
     let p1 = s.proposal("p-1");
-    assert_eq!(p1["kind"], "supersedes");
     assert_eq!(
-        (&p1["older"], &p1["newer"]),
-        (&json!("preferences-1"), &json!("preferences-2"))
-    );
-    assert_eq!(p1["state"], "open");
-    let quotes: Vec<&str> = p1["quotes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|q| q["text"].as_str().unwrap())
-        .collect();
-    assert_eq!(quotes, ["squash-merge agent PRs", "rebase-merge agent PRs"]);
-    let p2 = s.proposal("p-2");
-    assert_eq!(
-        (&p2["kind"], &p2["older"], &p2["newer"]),
+        (&p1["kind"], &p1["older"], &p1["newer"]),
         (&json!("stale"), &json!("rituals-1"), &json!(null))
     );
+    assert_eq!(p1["state"], "open");
 
     // The scan changes no entry.
     assert_eq!(s.entry_json("preferences-1")["status"], "active");
@@ -347,14 +324,14 @@ fn a_scan_proposes_a_contradiction_and_a_stale_entry_once() {
         .iter()
         .map(|l| l["target"].as_str().unwrap())
         .collect();
-    assert_eq!(targets, ["p-1", "p-2"]);
+    assert_eq!(targets, ["p-1"]);
     assert!(
         audit
             .iter()
             .all(|l| l["command"] == "consistency scan" && l["status"] == "success")
     );
 
-    // Again: nothing to offer, no model call, no audit line.
+    // Again: nothing to offer, no audit line.
     let out = s.run(&["consistency", "scan"], b"");
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
@@ -363,13 +340,22 @@ fn a_scan_proposes_a_contradiction_and_a_stale_entry_once() {
         "{}",
         text(&out.stderr)
     );
-    assert_eq!(s.calls(), 1);
-    assert_eq!(s.audit().len(), 2);
+    assert_eq!(s.calls(), 0);
+    assert_eq!(s.audit().len(), 1);
 }
 
 #[test]
 fn settling_from_a_prompt_approves_rejects_retires_and_forgets() {
     let s = Setup::new();
+    // A supersession opened before the scan stopped judging pairs.
+    s.write_proposals(&json!([{
+        "id": "p-1", "kind": "supersedes", "older": "preferences-1", "newer": "preferences-2",
+        "reason": "The newer decision replaces squash merges with rebase merges.",
+        "quotes": [{"entry": "preferences-1", "text": "squash-merge agent PRs"},
+                   {"entry": "preferences-2", "text": "rebase-merge agent PRs"}],
+        "state": "open", "opened_at": "2026-10-12T06:00:00Z",
+        "settled_at": null, "settled_by": null
+    }]));
     s.scan();
     assert_eq!(
         s.session_start(),
@@ -481,33 +467,6 @@ fn a_scan_reapplies_an_approval_whose_entry_is_still_active() {
     assert!(s.scan()["reapplied"].as_array().unwrap().is_empty(), "once");
 }
 
-#[test]
-fn a_failed_batch_is_reported_audited_and_offered_again() {
-    let s = Setup::new();
-    s.fail();
-    let report = s.scan();
-    assert_eq!(report["failed_batches"][0]["batch"], 1, "{report}");
-    assert_eq!(
-        ids(&report["opened"]),
-        ["p-1"],
-        "the stale proposal still opens"
-    );
-    let failure = s
-        .audit()
-        .into_iter()
-        .find(|l| l["status"] == "failure")
-        .unwrap();
-    assert_eq!(failure["target"], "batch:1");
-    assert!(failure["error_code"].is_string());
-
-    s.answer(&contradicts());
-    assert_eq!(
-        ids(&s.scan()["opened"]),
-        ["p-2"],
-        "the pair is offered again"
-    );
-}
-
 /// Run `plugin call` for `tool` with `config`, without `SCRIBE_ROOT`.
 fn plugin(s: &Setup, tool: &str, config: &Value) -> Value {
     let envelope = json!({"schema_version": 1, "tool": tool, "input": {},
@@ -540,10 +499,10 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
 
     let reply = plugin(&s, "scribe.consistency-scan", &config);
     assert_eq!(reply["ok"], true, "{reply}");
-    assert_eq!(ids(&reply["output"]["opened"]), ["p-1", "p-2"]);
+    assert_eq!(ids(&reply["output"]["opened"]), ["p-1"]);
     assert_eq!(s.proposal("p-1")["state"], "open");
     let audit = s.audit();
-    assert_eq!(audit.len(), 2);
+    assert_eq!(audit.len(), 1);
     assert!(audit.iter().all(|l| l["command"] == "consistency scan"));
 
     let reply = plugin(&s, "scribe.session-pass", &config);
@@ -551,7 +510,7 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
         reply,
         json!({"ok": true, "output": {"passes": [], "remaining": 0}})
     );
-    assert_eq!(s.audit().len(), 2, "nothing due: no audit line");
+    assert_eq!(s.audit().len(), 1, "nothing due: no audit line");
 
     // Unset settings, including the manifest's defaults, are refused.
     for (tool, config) in [
@@ -574,7 +533,7 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
     }
 }
 
-// S10: the scan deactivates sessions by age and by removed feature.
+// S10: the scan deactivates sessions by age.
 
 const REMOVAL: &str = "The digest feature was ripped out and replaced by the weekly report.";
 
@@ -662,53 +621,6 @@ Ship it.
     fn session_json(&self, id: &str) -> Value {
         self.json(&["session", "show", id, "--json"])
     }
-
-    /// A fake `claude` that answers a removed-feature prompt with
-    /// `removal` and any other with the entry pair's contradiction.
-    fn answer_both(&self, removal: &Value) {
-        let envelope = |body: &Value| {
-            json!({"type": "result", "subtype": "success", "is_error": false,
-                   "result": "", "structured_output": body})
-        };
-        self.fx.fake_program(
-            "claude",
-            &format!(
-                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\n\
-                 if grep -q 'cataloged work sessions'; then echo '{}'; else echo '{}'; fi\n",
-                envelope(removal),
-                envelope(&contradicts()),
-            ),
-        );
-    }
-
-    /// A fake `claude` that corrupts one removal target after the scan has
-    /// loaded its sessions, so the next target must still be processed.
-    /// Answers both model calls; the removal call waits while the test
-    /// damages `session`'s row, so its deactivation fails on a record that
-    /// no longer reads. Join the returned hold after the scan.
-    fn answer_both_corrupting(&self, removal: &Value, session: &'static str) -> support::Hold {
-        let envelope = |body: &Value| {
-            json!({"type": "result", "subtype": "success", "is_error": false,
-                   "result": "", "structured_output": body})
-        };
-        let root = self.fx.root();
-        let hold = support::Hold::new(&self.fx.home(), move || {
-            support::sql(
-                &root,
-                &format!("UPDATE sessions SET project = '' WHERE provider_session = '{session}'"),
-            );
-        });
-        self.fx.fake_program(
-            "claude",
-            &format!(
-                "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then\n{hold}echo '{}'; else echo '{}'; fi\n",
-                envelope(removal),
-                envelope(&contradicts()),
-                hold = hold.script(),
-            ),
-        );
-        hold
-    }
 }
 
 fn session_files() -> [SessionFile<'static>; 5] {
@@ -733,7 +645,7 @@ fn session_files() -> [SessionFile<'static>; 5] {
             keep_active: true,
             segment: "Chose the layout.",
         },
-        // About the digest, which the later session says was removed.
+        // About the digest, recent: stays active.
         SessionFile {
             id: "s-a-digest",
             days_ago: 20,
@@ -743,7 +655,7 @@ fn session_files() -> [SessionFile<'static>; 5] {
             keep_active: false,
             segment: "Built the daily digest.",
         },
-        // Also about the digest; the model's quote for it is invented.
+        // Also about the digest, recent: stays active.
         SessionFile {
             id: "s-b-digest",
             days_ago: 21,
@@ -753,8 +665,8 @@ fn session_files() -> [SessionFile<'static>; 5] {
             keep_active: false,
             segment: "Tuned the digest settings.",
         },
-        // A later session whose model-written segment claims removal:
-        // never evidence on its own (see `removal_entry`).
+        // A later session whose segment says the digest was removed: no
+        // scan deactivates a session for that.
         SessionFile {
             id: "s-later",
             days_ago: 2,
@@ -767,41 +679,17 @@ fn session_files() -> [SessionFile<'static>; 5] {
     ]
 }
 
-/// Daniel's own entry saying the digest was removed, five days ago:
-/// after the digest sessions and within the scan's 8-day window, but
-/// before `s-later`'s last message so that session never pairs with it.
-/// Its words name both digest sessions so each pairs by token overlap.
-fn removal_entry(s: &Setup) {
-    s.entry(
-        "preferences-9",
-        &rfc3339(days_ago(5)),
-        "The digest feature was ripped out and replaced by the weekly \
-         report; built the digest settings.",
-        "active",
-        None,
-    );
-}
-
 #[test]
-fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one() {
+fn a_scan_deactivates_old_sessions_but_never_a_pinned_one() {
     let s = Setup::new();
     for file in &session_files() {
         s.session(file);
     }
-    removal_entry(&s);
-    // Pair 1 is s-a-digest (ties on the later entry break by session
-    // id), pair 2 s-b-digest, whose quote is not in the later entry.
-    s.answer_both(&json!({"judgements": [
-        {"pair": "1", "label": "removed", "feature": "the digest",
-         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
-        {"pair": "2", "label": "removed", "feature": "the digest",
-         "reason": "Gone.", "quote": "the settings were deleted"},
-    ]}));
 
     let report = s.scan();
 
     let deactivated = report["deactivated"].as_array().unwrap();
-    assert_eq!(deactivated.len(), 2, "{report}");
+    assert_eq!(deactivated.len(), 1, "{report}");
     assert_eq!(deactivated[0]["session"], "s-quiet");
     assert_eq!(deactivated[0]["route"], "age");
     assert_eq!(deactivated[0]["cite"], Value::Null);
@@ -812,29 +700,13 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
             .ends_with("(limit 120 days)"),
         "{report}"
     );
-    assert_eq!(deactivated[1]["session"], "s-a-digest");
-    assert_eq!(deactivated[1]["route"], "removed");
-    assert_eq!(deactivated[1]["cite"], "preferences-9");
-    assert_eq!(deactivated[1]["quote"], "ripped out and replaced");
-    assert_eq!(report["removal_pairs_judged"], 2);
-    assert_eq!(report["removal_pairs_left"], 0);
-    assert_eq!(report["dropped_removal_labels"], 1, "the invented quote");
-    assert_eq!(report["failed_removal_batches"], json!([]));
 
     let quiet = s.session_json("s-quiet");
     assert_eq!(quiet["active"], false);
     assert_eq!(quiet["active_change"]["route"], "age");
     assert_eq!(quiet["active_change"]["by"]["kind"], "scribe");
     assert_eq!(quiet["active_change"]["by"]["name"], "consistency");
-    let digest = s.session_json("s-a-digest");
-    assert_eq!(digest["active"], false);
-    assert_eq!(digest["active_change"]["route"], "removed");
-    assert_eq!(digest["active_change"]["cite"], "preferences-9");
-    assert_eq!(
-        digest["active_change"]["reason"],
-        "The weekly report replaced the digest."
-    );
-    for id in ["s-pinned", "s-b-digest", "s-later"] {
+    for id in ["s-pinned", "s-a-digest", "s-b-digest", "s-later"] {
         let record = s.session_json(id);
         assert_eq!(record["active"], true, "{id}");
         assert_eq!(record["active_change"], Value::Null, "{id}");
@@ -847,66 +719,17 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
         .filter(|t| t.starts_with("session:"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(targets, ["session:s-quiet", "session:s-a-digest"]);
+    assert_eq!(targets, ["session:s-quiet"]);
 
-    // A dropped label is not stored: the next scan offers s-b-digest
-    // again (now pair 1), and never the sessions already inactive.
-    let calls = s.calls();
+    // The next scan never deactivates a session already inactive.
     let out = s.run(&["consistency", "scan", "--format", "auto"], b"");
     assert_eq!(out.status.code(), Some(0));
-    assert!(s.calls() > calls);
-    let rows: Vec<String> = text(&out.stdout)
-        .lines()
-        .filter(|l| l.starts_with("deactivated"))
-        .map(str::to_owned)
-        .collect();
-    // `s-<n>` is the row number, so s-b-digest, seeded fourth, is `s-4`.
-    assert_eq!(rows, ["deactivated\ts-4\tremoved\tpreferences-9\t-"]);
-}
-
-#[test]
-fn a_failed_removal_deactivation_is_reported_and_other_sessions_continue() {
-    let s = Setup::new();
-    for file in &session_files() {
-        s.session(file);
-    }
-    removal_entry(&s);
-    let removal = json!({"judgements": [
-        {"pair": "1", "label": "removed", "feature": "the digest",
-         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
-        {"pair": "2", "label": "removed", "feature": "the digest",
-         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
-    ]});
-    let hold = s.answer_both_corrupting(&removal, "s-a-digest");
-
-    let report = s.scan();
-    hold.join();
-
-    assert_eq!(
-        report["failed_deactivations"],
-        json!([{
-            "session": "s-a-digest",
-            "route": "removed",
-            "error_code": "store_corrupt",
-        }])
-    );
     assert!(
-        report["deactivated"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| { item["session"] == "s-b-digest" && item["route"] == "removed" })
-    );
-    let audit = s.audit();
-    assert!(audit.iter().any(|event| {
-        event["target"] == "session:s-a-digest"
-            && event["status"] == "failure"
-            && event["error_code"] == "store_corrupt"
-    }));
-    assert!(
-        audit.iter().any(|event| {
-            event["target"] == "session:s-b-digest" && event["status"] == "success"
-        })
+        !text(&out.stdout)
+            .lines()
+            .any(|l| l.starts_with("deactivated")),
+        "{}",
+        text(&out.stdout)
     );
 }
 
@@ -1402,71 +1225,6 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
             "expected persisted write {expected} to be audited once: {scan_lines:?}"
         );
     }
-    assert_eq!(
-        scan_lines
-            .iter()
-            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
-            .count(),
-        1,
-        "{scan_lines:?}"
-    );
-}
-
-#[test]
-fn a_scan_that_fails_after_age_deactivation_still_audits_the_deactivated_session() {
-    let s = Setup::new();
-    for file in &session_files() {
-        s.session(file);
-    }
-    removal_entry(&s);
-    let removal = json!({"judgements": [
-        {"pair": "1", "label": "removed", "feature": "the digest",
-         "reason": "The weekly report replaced the digest.", "quote": "ripped out and replaced"},
-    ]});
-    let envelope = |body: &Value| {
-        json!({"type": "result", "subtype": "success", "is_error": false,
-               "result": "", "structured_output": body})
-    };
-    // On the removal call (after age deactivation has persisted `s-quiet`),
-    // the segments table is renamed away, so the removal `set_active_many`
-    // cannot read the sessions and the scan fails.
-    let root = s.fx.root();
-    let hold = support::Hold::new(&s.fx.home(), move || {
-        support::sql(&root, "ALTER TABLE segments RENAME TO segments_gone;");
-    });
-    s.fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\ncat > \"$HOME/claude-prompt\"\nif grep -q 'cataloged work sessions' \"$HOME/claude-prompt\"; then\n{hold}echo '{}'; else echo '{}'; fi\n",
-            envelope(&removal),
-            envelope(&contradicts()),
-            hold = hold.script(),
-        ),
-    );
-
-    let out = s.run(&["consistency", "scan", "--json"], b"");
-    hold.join();
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    let err: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(err["code"], "store_database", "{err}");
-    support::sql(
-        &s.fx.root(),
-        "ALTER TABLE segments_gone RENAME TO segments;",
-    );
-
-    let scan_lines: Vec<Value> = s
-        .audit()
-        .into_iter()
-        .filter(|line| line["command"] == "consistency scan")
-        .collect();
-    assert_eq!(
-        scan_lines
-            .iter()
-            .filter(|line| line["status"] == "success" && line["target"] == "session:s-quiet")
-            .count(),
-        1,
-        "aged session deactivation must be audited even when removal write fails: {scan_lines:?}"
-    );
     assert_eq!(
         scan_lines
             .iter()

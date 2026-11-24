@@ -1,6 +1,6 @@
-Propose entry updates and deactivate stale sessions
+Propose retiring entries due for review and deactivate stale sessions
 
-Uses the consistency model to propose superseding entries a later one replaced and retiring entries due for review, and deactivates stale or removed-feature sessions.
+Proposes retiring entries due for review and deactivates sessions past the age limit, with no model call.
 
 Usage: scribe consistency scan [OPTIONS]
 
@@ -26,19 +26,16 @@ Global options:
       --json
           Shorthand for --format json
 
-Runs from the scribe-consistency routine once a week. Labels at most 40
-candidate pairs per run, ten per call to the configured consistency model,
-and opens a proposal for each pair one entry replaced and each entry due
-for review. It changes an entry only to finish an approval that was cut
-short; settle a proposal with #scribe approve or #scribe reject in a
-prompt. It also deactivates sessions with no messages for [sessions]
-inactive_after_days (120) and, after asking the model about at most 20
-pairs, sessions a later entry the user wrote says were removed or replaced; pinned
-sessions are left alone, and scribe session activate reverses either.
---json reports what the scan did.
+Runs from the scribe-consistency routine once a week, with no model call.
+Opens a proposal for each entry due for review. It changes an entry only to
+finish an approval that was cut short; settle a proposal with #scribe
+approve or #scribe reject in a prompt. It also deactivates sessions with no
+messages for [sessions] inactive_after_days (120); pinned sessions are left
+alone, and scribe session activate reverses it. --json reports what the
+scan did.
 
 Examples:
   scribe consistency scan
   scribe consistency scan --json | jq '.opened[] | {id, kind, older, newer}'
-  scribe consistency scan --json | jq '.deactivated[] | {session, route, cite}'
+  scribe consistency scan --json | jq '.deactivated[] | {session, route, reason}'
   scribe proposal list
