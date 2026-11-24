@@ -1,0 +1,2 @@
+CITE                                          KIND     SCORE  UPDATED     TITLE                SNIPPET
+session:5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f  message  0.000  2026-11-03  Release note (user)  Keep the rollout note out of the release.
