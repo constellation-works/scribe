@@ -69,7 +69,7 @@ proposal's quote line).
 
 | Command | Columns |
 |---------|---------|
-| `entry list` | `id status project topics created content author age` (`author` is `user` or `agent:<name>`; `age` is an action entry's age, `45s`, `12m`, `3h` or `9d`, and `-` for any other entry) |
+| `entry list` | `id status project topics created content author age` (`author` is `user` or `agent:<name>`; `age` is an action entry's age, `45s`, `12m`, `3h` or `9d`, and `-` for any other entry). When any returned entry is open, a final `state` column follows `age`: open entries show `open`, and other entries in the mixed result show `-`. With no open entries, the ordinary eight-column shape above is unchanged. |
 | `session list` | `id status due project topics updated title` (`due` is `yes` or `no`) |
 | `session list --tree` | `id parent status due project topics updated title` (`parent` is the session the row nests under, its `spawned_from` link else its first `continues` link, or `-`) |
 | `session list --include-inactive` | `id status active due project topics updated title` (`active` is `yes` or `no`); without the flag the columns are unchanged, inactive sessions are left out, and when any matched the notice `<n> inactive session(s) also match and are hidden; --include-inactive lists them` goes to stderr. With `--tree` too, `active` follows `status` |
