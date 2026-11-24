@@ -332,7 +332,7 @@ request.
 | `capture` | — | marker scanning to `tools/markers`; settling rules to `apps/hook/rules` |
 | `annotation` | mark shapes | `apps/mark/rules` |
 | `pass`, `pass/repair`, `instruction` | — | `apps/session/rules/` (window building to `tools/window`) |
-| `voice` | — | `tools/voice` (it words prompts and labels; `providers/` and `config` use it) |
+| `voice` | — | `tools/markers` if it only classifies text, else `apps/hook/rules` |
 | `brief` | — | `apps/brief/rules` |
 | `consistency` | — | `apps/consistency/rules` |
 | `search` | — | `apps/search/rules`; the tokenizer to `tools/text` |

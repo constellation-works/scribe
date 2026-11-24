@@ -76,6 +76,8 @@ pub const SEGMENT_WINDOWS: std::num::NonZeroU32 = match std::num::NonZeroU32::ne
 /// Maximum open candidate proposals across the whole store.
 pub const MAX_OPEN_CANDIDATES: usize = 20;
 
+pub mod voice;
+
 use crate::entry::TagName;
 use crate::record::{Label, Project, is_kebab};
 use crate::session::Cadence;

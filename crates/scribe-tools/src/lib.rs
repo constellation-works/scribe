@@ -30,7 +30,6 @@ pub mod payload;
 pub mod project;
 pub mod text;
 pub mod transcript;
-pub mod voice;
 pub mod window;
 
 #[cfg(test)]
@@ -40,7 +39,5 @@ mod tests;
 // `codex`, `markers` and `control` name them by, and the control parser and
 // Codex rollout at the root paths they had in the domain.
 use markers::control;
-use scribe_domain::{
-    AuthorKind, Outcome, OutcomeState, SessionId, Speaker, entry, record, session,
-};
+use scribe_domain::{SessionId, Speaker, entry, record, session};
 use transcript::codex;

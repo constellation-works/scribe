@@ -280,10 +280,12 @@ PR 5-15 moved `proposal` and `voice`:
   approved candidate becomes (`CandidateEntry::candidate_entry`, a trait so
   the call keeps its text), `ProposalChange` and `ProposalFilter`. The core's
   `crate::proposal` re-exports both halves.
-- `voice` went to `scribe-tools/src/voice.rs`. It words prompts and labels
-  from an entry's fields and decides nothing about a record, and its users
-  include `providers/models.rs` and `config.rs`, which may not import an
-  app. The core re-exports it as `crate::voice`.
+- `voice` was split by its lowest users. The prompt half (`UserName`,
+  `ModelUse`, `Instructions`, `check_instruction`, `Voice` and the two
+  bounds), which `config.rs` and `providers/models.rs` consume, went to
+  `config/voice.rs`. The entry half (whose words an entry holds, and the
+  lines and labels that name them) went to `apps/entry/rules/voice.rs`.
+  The core's `crate::voice` re-exports both halves.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

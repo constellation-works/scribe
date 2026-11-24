@@ -192,7 +192,12 @@ pub mod text {
 pub use scribe_tools::text::trigger;
 pub use scribe_tools::text::verbatim;
 pub use scribe_tools::transcript;
-pub use scribe_tools::voice;
+pub mod voice {
+    //! Compat path: the prompt half is `config::voice`, the entry half
+    //! `apps::entry::rules::voice`.
+    pub use crate::apps::entry::rules::voice::*;
+    pub use crate::config::voice::*;
+}
 
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::entry::EntryVerbs;
