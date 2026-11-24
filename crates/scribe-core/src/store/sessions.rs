@@ -57,23 +57,7 @@ impl LoadedSessions {
     }
 }
 
-/// What `#scribe forget s-<n>` did ([`crate::ProposalVerbs::settle`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionForget {
-    /// The provider's session id.
-    pub id: SessionId,
-    /// Its `s-<n>`.
-    pub number: Option<NonZeroU64>,
-    /// Stored messages deleted.
-    pub messages: usize,
-    /// Segments deleted.
-    pub segments: usize,
-    /// Archived records of the session (its record and checkpoints in the
-    /// archive tables) erased.
-    pub files: usize,
-    /// Whether it was switched on, and is now off.
-    pub was_on: bool,
-}
+pub use crate::session::SessionForget;
 
 /// What [`super::repo::Sessions::erase`] erased of a session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
