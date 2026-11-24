@@ -1775,87 +1775,17 @@ pub(crate) struct HookSpecificJson<'a> {
     pub(crate) additional_context: &'a str,
 }
 
-/// What a session pass did for one session.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct PassPayload {
-    /// The session id.
-    pub(crate) session: String,
-    /// `written` (a record was written), `unchanged` (nothing new to
-    /// record), `waiting` (no transcript or messages yet; still due) or
-    /// `failed` (the previous record is kept).
-    pub(crate) result: &'static str,
-    /// The stable code of a failure; `null` otherwise.
-    pub(crate) error_code: Option<&'static str>,
-    /// The record's pass count after this pass; `null` when there is no
-    /// record.
-    pub(crate) passes: Option<u32>,
-    /// Terms the model offered that were not verbatim from the user's turns.
-    pub(crate) dropped_terms: usize,
-    /// Successfully persisted model windows for this session in this run.
-    pub(crate) windows: usize,
-    /// Segments newly sealed in this invocation.
-    pub(crate) segments_sealed: usize,
-    /// Segment count in the latest persisted record/checkpoint.
-    pub(crate) segments: Option<usize>,
-    /// The requesting agent for a rebuild; null for routine passes.
-    pub(crate) author: Option<scribe_core::Author>,
-    /// Always `false`: a failed pass stays due and is never given up. Kept
-    /// because the `--json` shape is a contract.
-    pub(crate) gave_up: bool,
-    /// A redacted, bounded explanation for a failure; absent otherwise.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) error: Option<String>,
-    /// Deterministic repairs in successfully persisted windows, in order.
-    pub(crate) warnings: Vec<String>,
-    /// `now` and milestone files written in persisted windows (2_design.md
-    /// §15.5).
-    pub(crate) memory_written: usize,
-    /// Always 0 since the fixed memory shape (2_design.md §15.5): the pass
-    /// promotes nothing, and the weekly refresh writes rule (a)'s
-    /// milestones. Kept because `--json` field names are a contract.
-    pub(crate) memory_promoted: usize,
-    /// Always 0: the `preferences` candidates once opened for recurring
-    /// `working` items (2_design.md §13.7) are no longer opened, since the
-    /// pass writes no `working` item (§15.9 phase 1). Kept because `--json`
-    /// field names are a contract.
-    pub(crate) memory_proposed: usize,
-    /// Undated `now` candidates kept pending in persisted windows.
-    pub(crate) memory_pending: usize,
-    /// Memory elements refused, by code (`memory_sensitive`, ...).
-    pub(crate) memory_refused: std::collections::BTreeMap<&'static str, usize>,
-}
+pub(crate) use scribe_core::cases::pass::{PassPayload, PassReport};
 
-/// What `session pass` did; `--json` and the `scribe.session-pass` tool
-/// print it as `{"passes", "remaining"}`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct PassReport {
-    /// One per session passed, in id order.
-    pub(crate) passes: Vec<PassPayload>,
-    /// Due sessions left for the next run.
-    pub(crate) remaining: usize,
-    /// Lines for stderr, printed in every mode.
-    #[serde(skip)]
-    pub(crate) notices: Vec<String>,
-    /// This report is `session catalog`. Not part of the JSON contract.
-    #[serde(skip)]
-    pub(crate) catalog: bool,
-    /// The catalog switch was written this run: one extra success audit line.
-    #[serde(skip)]
-    pub(crate) switch_written: bool,
-    /// Open candidate proposals closed during this pass because their tag is
-    /// retired, and ideas the pass wrote itself: one success audit line each.
-    #[serde(skip)]
-    pub(crate) persisted_targets: Vec<String>,
-    /// `memory:<id>` once per item created or occurrence added: one success
-    /// audit line each, ids only.
-    #[serde(skip)]
-    pub(crate) memory_targets: Vec<String>,
-}
-
-impl PassReport {
+/// The run's error of a [`PassReport`].
+pub(crate) trait PassFailure {
     /// The run's error when any pass failed, naming each failed session,
     /// code and short reason; `None` when none did.
-    pub(crate) fn failure(&self) -> Option<crate::error::CliError> {
+    fn failure(&self) -> Option<crate::error::CliError>;
+}
+
+impl PassFailure for PassReport {
+    fn failure(&self) -> Option<crate::error::CliError> {
         let failed: Vec<String> = self
             .passes
             .iter()

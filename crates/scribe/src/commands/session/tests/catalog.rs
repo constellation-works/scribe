@@ -5,6 +5,7 @@
 
 use super::super::catalog::{self, CatalogArgs};
 use crate::app::{AppEnv, Context};
+use crate::output::PassFailure;
 use crate::output::{Output, PassReport};
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{

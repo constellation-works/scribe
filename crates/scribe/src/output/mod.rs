@@ -14,11 +14,13 @@ mod render;
 mod sink;
 mod table;
 
+#[cfg(test)]
+pub(crate) use payload::PassPayload;
 pub(crate) use payload::{
     AskPayload, BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload,
     DeactivationFailure, EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember,
     HitPayload, HookOutcome, HookReply, Kin, MemoryBlockPayload, MemoryPayload, MemoryRulesPayload,
-    MemoryScanPayload, MigratePayload, Output, PassPayload, PassReport, PluginError, PluginReply,
+    MemoryScanPayload, MigratePayload, Output, PassFailure, PassReport, PluginError, PluginReply,
     PopupRows, ProposalPayload, ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload,
     ScanReport, SessionHandoffsPayload, SessionPayload, SessionsContext, TagPayload,
     TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,

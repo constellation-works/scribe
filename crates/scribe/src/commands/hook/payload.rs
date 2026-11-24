@@ -12,6 +12,9 @@
 
 use crate::error::CliError;
 use scribe_core::SessionId;
+/// What the provenance check found, and why [`read_checked`] gave no bytes
+/// for a transcript that exists: the core port's types.
+pub(in crate::commands) use scribe_core::cases::{TranscriptState as Transcript, Unreadable};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::io::Read;
@@ -145,16 +148,6 @@ pub(super) fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, CliError> {
 pub(super) fn session(id: &str) -> Result<SessionId, CliError> {
     id.parse()
         .map_err(|e: scribe_core::SessionError| CliError::HookPayload(e.to_string()))
-}
-
-/// What the provenance check found.
-#[derive(Debug, PartialEq, Eq)]
-pub(in crate::commands) enum Transcript {
-    /// The transcript exists and passed.
-    Present,
-    /// The path is right but there is no file yet (a session's first prompt
-    /// can arrive before Claude Code writes its transcript).
-    Missing,
 }
 
 /// The path-shape half of the provenance check: `path` is absolute, free of
@@ -391,15 +384,6 @@ pub(super) fn open_checked(
     }
     private_to_this_user(&meta).map_err(Unreadable::Refused)?;
     Ok(Some((file, meta)))
-}
-
-/// Why [`read_checked`] gave no bytes for a transcript that exists.
-#[derive(Debug)]
-pub(in crate::commands) enum Unreadable {
-    /// The provenance check refused it; the text is why, for the reply.
-    Refused(String),
-    /// The file could not be opened or read.
-    Io(std::io::Error),
 }
 
 /// Read a transcript [`check`] passed, through the same handle discipline as

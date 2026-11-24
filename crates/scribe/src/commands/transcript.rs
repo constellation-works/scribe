@@ -112,33 +112,11 @@ pub(in crate::commands) fn resolve_transcript(
     ctx: &Context,
     input: &SessionId,
 ) -> Result<SessionId, CliError> {
-    let Some(dir) = ctx.transcripts().map(Path::to_path_buf) else {
-        return Err(CliError::TranscriptNotFound {
-            id: input.clone(),
-            dir: PathBuf::from("(no transcripts directory)"),
-        });
-    };
-    let files = payload::files_for(ctx)?;
-    let ids: Vec<String> = files.into_iter().map(|(id, _)| id.to_string()).collect();
-    // An exact local filename already identifies the transcript. Keep this
-    // direct read independent of catalog metadata such as group rosters; only
-    // aliases need store resolution.
-    let resolved = if ids.iter().any(|id| id == input.as_str()) {
-        input.clone()
-    } else {
-        ctx.store()
-            .read()
-            .sessions()
-            .resolve_or_typed_with(input, &ids)?
-    };
-    if ids.iter().any(|id| id == resolved.as_str()) {
-        Ok(resolved)
-    } else {
-        Err(CliError::TranscriptNotFound {
-            id: input.clone(),
-            dir,
-        })
-    }
+    Ok(scribe_core::cases::catalog::resolve_transcript(
+        &ctx.core(),
+        ctx.provider(),
+        input,
+    )?)
 }
 
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
@@ -296,20 +274,6 @@ fn payload_from(
         first_prompt: survey.first_prompt,
         user_first_turns: with_turns.then_some(survey.first_turns),
     }
-}
-
-/// The project `session catalog` records when `--project` is absent.
-pub(in crate::commands) fn attributed_project(bytes: &[u8], config: &Config) -> Project {
-    let cwd = transcript::cwd(bytes).unwrap_or_default();
-    let cwd_project = if cwd.is_empty() {
-        Project::sanitized("")
-    } else {
-        project::of(Path::new(&cwd))
-    };
-    transcript::attribute(
-        &transcript::mention_counts(bytes, &config.projects),
-        &cwd_project,
-    )
 }
 
 /// The start of the `--since` day as a system time (midnight UTC).

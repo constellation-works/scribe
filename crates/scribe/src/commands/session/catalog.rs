@@ -19,19 +19,17 @@
 //! `session pass`, then runs its windows and keeps that attribution
 //! (4_decisions.md "The user writes only through their typed prompt").
 
-use super::pass;
 use crate::app::Context;
-use crate::commands::hook::payload;
 use crate::error::CliError;
-use crate::output::{Output, PassReport};
+use crate::output::Output;
 use clap::Args;
-use scribe_core::SessionVerbs;
-use scribe_core::control::{self, CatalogGate};
-use scribe_core::{Author, AuthorName, Models, Project, SessionFilter, SessionId, transcript};
-use std::path::PathBuf;
+use scribe_core::cases::catalog::{self as case, CatalogInput};
+use scribe_core::{Author, AuthorName, Models, Project, SessionId};
 
-/// The command path in the audit log.
-pub(in crate::commands) const COMMAND: &str = "session catalog";
+/// A catalog begun: its switch, whether this run wrote it, and the bytes.
+pub(in crate::commands) use scribe_core::cases::catalog::Begun;
+
+pub(in crate::commands) const COMMAND: &str = scribe_core::cases::pass::CATALOG_COMMAND;
 
 pub(super) const EXAMPLES: &str = "\
 Switches one past session on with cataloged_by and runs every window, with
@@ -71,144 +69,31 @@ pub(super) fn run(args: &CatalogArgs, ctx: &Context) -> Result<Output, CliError>
     run_with(args, ctx, |config| ctx.models(config))
 }
 
-/// [`run`] with the `Models` adapter `models` builds, so a test can answer
-/// with a fake.
+/// [`run`] with the `Models` adapter `models` builds for the config.
 pub(in crate::commands) fn run_with<M: Models>(
     args: &CatalogArgs,
     ctx: &Context,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
-    scribe_core::check_agent_author(&args.author)?;
-    let begun = begin(ctx, &args.id, Author::agent(args.author.clone()))?;
-    let config = ctx.config()?;
-    let project = args
-        .project
-        .clone()
-        .unwrap_or_else(|| super::super::transcript::attributed_project(&begun.bytes, &config));
-    let ended = transcript::survey(&begun.bytes)
-        .ended
-        .is_some_and(|last| transcript::is_day_old(last, ctx.now()));
-    let mut report: PassReport = pass::run_catalog(
-        ctx,
-        models,
-        &begun.id,
-        &begun.switch,
-        project,
-        ended,
-        args.author.as_str(),
+    let report = case::run(
+        &ctx.core(),
+        CatalogInput {
+            id: &args.id,
+            author: &args.author,
+            project: args.project.clone(),
+            provider: ctx.provider(),
+            host: ctx.host(),
+            models,
+        },
     )?;
-    report.switch_written = begun.wrote_switch;
     Ok(Output::Pass(report))
 }
 
-/// A catalog switch, started or resumed by [`begin`].
-pub(in crate::commands) struct Begun {
-    /// The resolved session id.
-    pub(in crate::commands) id: SessionId,
-    /// The switch as it now stands.
-    pub(in crate::commands) switch: scribe_core::SessionControl,
-    /// Whether this call wrote the switch (a start, not a resume).
-    pub(in crate::commands) wrote_switch: bool,
-    /// The transcript, read once for the caller's attribution and age.
-    pub(in crate::commands) bytes: Vec<u8>,
-}
-
-/// Resolve `input` to a transcript, check it, refuse a missing redaction
-/// value, and start a catalog switch recorded as cataloged by `by`, or
-/// resume one a catalog already wrote (keeping its `since` and
-/// `cataloged_by`). Shared by this command (`by` an agent) and the
-/// `/scribe catalog <id>` prompt command (`by` the user). Runs no window.
-///
-/// # Errors
-///
-/// The transcript's refusal, `session_cataloged` for a session that already
-/// has a record or a non-catalog switch, or a store or config error.
+/// Begin a catalog of `input` by `by` ([`scribe_core::cases::catalog::begin`]).
 pub(in crate::commands) fn begin(
     ctx: &Context,
     input: &SessionId,
     by: Author,
 ) -> Result<Begun, CliError> {
-    let id = super::super::transcript::resolve_transcript(ctx, input)?;
-    // A forgotten session is refused `session_forgotten` before its transcript
-    // is read, the switch is gated, or any model runs.
-    ctx.store().refuse_forgotten(&id)?;
-    let dir = ctx
-        .transcripts()
-        .map(PathBuf::from)
-        .ok_or_else(|| CliError::TranscriptNotFound {
-            id: id.clone(),
-            dir: PathBuf::from("(no transcripts directory)"),
-        })?;
-    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptNotFound {
-        id: id.clone(),
-        dir: dir.clone(),
-    })?;
-    // Checked and read through one handle, opened without following links.
-    let bytes = match payload::read_checked(ctx, &path, &id) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => return Err(CliError::TranscriptNotFound { id, dir }),
-        Err(payload::Unreadable::Refused(reason)) => {
-            return Err(CliError::TranscriptRefused { id, reason });
-        }
-        Err(payload::Unreadable::Io(source)) => {
-            return Err(CliError::Read {
-                what: path.display().to_string(),
-                source,
-            });
-        }
-    };
-    let store = ctx.store();
-    // Refuse a missing redaction value before the switch is written.
-    let config = ctx.config()?;
-    let _redactor = ctx.redactor(&config)?;
-    // The gate, including the record lookup, runs inside the store lock, so
-    // a `/scribe on` or a second catalog that lands first is seen and
-    // refused, never overwritten.
-    let (switch, wrote_switch) = store.write(|tx| {
-        tx.sessions()
-            .change_control(|state| -> Result<_, CliError> {
-                let has_record = recorded(ctx, &id)?;
-                match control::catalog_gate(state, &id, has_record) {
-                    CatalogGate::Refused => Err(CliError::SessionCataloged(id.clone())),
-                    CatalogGate::Resume(switch) => {
-                        if switch.provider != ctx.provider() {
-                            return Err(CliError::Usage(String::from(
-                                "catalog switch belongs to another provider",
-                            )));
-                        }
-                        Ok((switch, false))
-                    }
-                    CatalogGate::Start => {
-                        control::catalog_on(state, &id, by, ctx.now());
-                        let switch = state.sessions.get_mut(&id).ok_or_else(|| {
-                            CliError::Core(scribe_core::Error::SessionNotFound {
-                                id: id.clone(),
-                                path: store.root().join("control.json"),
-                            })
-                        })?;
-                        switch.provider = ctx.provider();
-                        Ok((switch.clone(), true))
-                    }
-                }
-            })
-    })??;
-    Ok(Begun {
-        id,
-        switch,
-        wrote_switch,
-        bytes,
-    })
-}
-
-/// Whether a session file for `id` exists, including one that did not parse.
-fn recorded(ctx: &Context, id: &SessionId) -> Result<bool, scribe_core::Error> {
-    let found = ctx.store().read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
-    let parsed = found.listing.items.iter().any(|record| &record.id == id);
-    let skipped = found.skipped.iter().any(|skipped| {
-        skipped.path.file_stem().and_then(|stem| stem.to_str()) == Some(id.as_str())
-    });
-    Ok(parsed || skipped)
+    Ok(case::begin(&ctx.core(), ctx.provider(), input, by)?)
 }
