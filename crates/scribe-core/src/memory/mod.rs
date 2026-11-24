@@ -32,6 +32,10 @@ use crate::entry::Speaker;
 use crate::models::{MemoryAnswer, PassMessage};
 use crate::record::nullable;
 use crate::session::SessionId;
+use crate::text::has_phrase;
+pub use crate::text::{
+    FINANCE_WORDS, SENSITIVE_WORDS, SensitiveKind, finance_word, sensitive_word,
+};
 use crate::transcript;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -70,87 +74,6 @@ pub const USER_SAYS: &[&str] = &[
     "life changing",
 ];
 
-/// What kind of sensitive event an item records (§13.8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SensitiveKind {
-    /// A death or a loss.
-    Loss,
-    /// A health event, never its detail.
-    Health,
-    /// A relationship event.
-    Relationship,
-    /// A family event.
-    Family,
-}
-
-impl SensitiveKind {
-    /// The kind's name.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Loss => "loss",
-            Self::Health => "health",
-            Self::Relationship => "relationship",
-            Self::Family => "family",
-        }
-    }
-}
-
-impl fmt::Display for SensitiveKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Words that mark financial detail; an element holding one is refused
-/// (§13.8). Matched on whole words, case aside.
-pub const FINANCE_WORDS: &[&str] = &[
-    "salary",
-    "salaries",
-    "paycheck",
-    "wage",
-    "wages",
-    "income",
-    "balance",
-    "debt",
-    "debts",
-    "owe",
-    "owes",
-    "owed",
-    "loan",
-    "loans",
-    "mortgage",
-    "iban",
-    "net worth",
-    "bank account",
-    "account number",
-    "card number",
-    "credit card",
-    "routing number",
-];
-
-/// Words that mark a sensitive event, with its kind: when one matches, the
-/// element is sensitive whatever the model said (§13.8).
-pub const SENSITIVE_WORDS: &[(&str, SensitiveKind)] = &[
-    ("died", SensitiveKind::Loss),
-    ("passed away", SensitiveKind::Loss),
-    ("funeral", SensitiveKind::Loss),
-    ("death", SensitiveKind::Loss),
-    ("miscarriage", SensitiveKind::Loss),
-    ("hospital", SensitiveKind::Health),
-    ("surgery", SensitiveKind::Health),
-    ("diagnosed", SensitiveKind::Health),
-    ("diagnosis", SensitiveKind::Health),
-    ("cancer", SensitiveKind::Health),
-    ("divorce", SensitiveKind::Relationship),
-    ("divorced", SensitiveKind::Relationship),
-    ("breakup", SensitiveKind::Relationship),
-    ("separated", SensitiveKind::Relationship),
-    ("pregnant", SensitiveKind::Family),
-    ("pregnancy", SensitiveKind::Family),
-];
-
 /// Mood words a `now` statement may hold only when its quote does (§13.4):
 /// scribe stores what was said, never an inferred state.
 pub const MOOD_WORDS: &[&str] = &[
@@ -171,36 +94,6 @@ pub const MOOD_WORDS: &[&str] = &[
     "nervous",
     "devastated",
 ];
-
-/// Whether `text` holds `phrase` as whole words, case aside.
-fn has_phrase(text: &str, phrase: &str) -> bool {
-    let words: Vec<String> = text
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_owned)
-        .collect();
-    let wanted: Vec<&str> = phrase.split(' ').collect();
-    !wanted.is_empty()
-        && words
-            .windows(wanted.len())
-            .any(|w| w.iter().zip(&wanted).all(|(a, b)| a == b))
-}
-
-/// The kind of the first sensitive word in `text`, if any.
-#[must_use]
-pub fn sensitive_word(text: &str) -> Option<SensitiveKind> {
-    SENSITIVE_WORDS
-        .iter()
-        .find(|(word, _)| has_phrase(text, word))
-        .map(|(_, kind)| *kind)
-}
-
-/// Whether `text` holds a listed finance word.
-#[must_use]
-pub fn finance_word(text: &str) -> bool {
-    FINANCE_WORDS.iter().any(|word| has_phrase(text, word))
-}
 
 /// Whether `statement` names a mood that `quote` does not.
 #[must_use]

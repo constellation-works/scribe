@@ -561,7 +561,7 @@ fn verified_words(message: &Message, permitted: bool) -> Option<String> {
 fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
     let mut claims: BTreeMap<String, Claims> = BTreeMap::new();
     for line in bytes.split(|&b| b == b'\n') {
-        let Ok(meta) = serde_json::from_slice::<capture::LineMeta>(line) else {
+        let Ok(meta) = serde_json::from_slice::<crate::origin::LineMeta>(line) else {
             continue;
         };
         let Some(uuid) = string(meta.uuid.as_ref()) else {

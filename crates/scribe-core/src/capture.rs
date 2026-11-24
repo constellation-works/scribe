@@ -27,16 +27,13 @@
 //!
 //! Pure functions over text: no I/O (STD-02 R5).
 
-use crate::consistency::Settle;
-use crate::entry::{Cite, EntryId, Speaker, Window, WindowTurn};
+use crate::entry::{Cite, EntryId, Speaker, TagName, Window, WindowTurn};
 use crate::proposal::ProposalId;
-use crate::record::{Label, Project};
+use crate::record::{Label, Project, Topic, Topics};
 use crate::session::SessionId;
+use crate::tag::TagTable;
 use crate::transcript::Message;
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fmt::Write as _;
 use time::OffsetDateTime;
 
 /// The marker that opens a `#scribe` line, or marks a turn anywhere in a
@@ -218,259 +215,6 @@ pub fn plain_lines(prompt: &str) -> Vec<(u32, &str)> {
     found
 }
 
-/// Origin values that mean Daniel typed the prompt himself.
-const PLAIN_SOURCES: &[&str] = &[
-    "typed",
-    "user",
-    "human",
-    "daniel",
-    "interactive",
-    "keyboard",
-    "manual",
-    "direct",
-    "user-typed",
-    "plain",
-];
-
-/// Opening tags of agent- or system-written user turns. A prompt carrying
-/// one of these anywhere is not Daniel's typing, however a `#scribe` line
-/// sits inside it.
-const AGENT_WRAPPERS: &[&str] = &[
-    "<agent-message",
-    "<task-notification",
-    "<side-sessions-event",
-    "<side-session-event",
-    "<side-session",
-    "<scheduled-prompt",
-    "<scheduled-loop",
-    "<scheduled",
-    "<loop-prompt",
-    "<loop-",
-    "<teammate-message",
-    "<cross-session",
-];
-
-fn normalize_origin(source: &str) -> String {
-    source.trim().to_lowercase().replace(['_', ' '], "-")
-}
-
-fn is_explicitly_plain(source: &str) -> bool {
-    let normalized = normalize_origin(source);
-    !normalized.is_empty() && PLAIN_SOURCES.contains(&normalized.as_str())
-}
-
-fn is_plain_or_empty(source: &str) -> bool {
-    let normalized = normalize_origin(source);
-    normalized.is_empty() || PLAIN_SOURCES.contains(&normalized.as_str())
-}
-
-/// Serde helper that distinguishes an explicit `null` from an omitted field,
-/// so fail-closed origin checks refuse `"origin": null` as an unexpected shape.
-///
-/// # Errors
-///
-/// Propagates deserialization errors from the underlying JSON value.
-pub fn present_value<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error> {
-    serde::Deserialize::deserialize(deserializer).map(Some)
-}
-
-/// Origin claims read from a Claude Code transcript line or hook payload
-/// (docs/design/scribe/2_design.md §4.1).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct OriginClaims {
-    invalid: bool,
-    prompt_sources: Vec<String>,
-    /// Every `origin.kind` the line carries. A queued message has one on the
-    /// line and one on its attachment, and each must be plain.
-    origin_kinds: Vec<String>,
-    turn_origins: Vec<String>,
-    other: Vec<String>,
-}
-
-impl OriginClaims {
-    /// Record an origin claim (`source`, `promptOrigin`/`prompt_origin`) that
-    /// must be a string when present.
-    pub fn push_claim(&mut self, value: Option<&serde_json::Value>) {
-        let Some(value) = value else { return };
-        match value.as_str() {
-            Some(s) => self.other.push(s.to_owned()),
-            None => self.invalid = true,
-        }
-    }
-
-    /// Record `promptSource`/`prompt_source`, which must be a string when
-    /// present; `"sdk"` is treated as plain only alongside a plain `turnOrigin`
-    /// or `origin.kind`.
-    pub fn push_prompt_source(&mut self, value: Option<&serde_json::Value>) {
-        let Some(value) = value else { return };
-        match value.as_str() {
-            Some(s) => self.prompt_sources.push(s.to_owned()),
-            None => self.invalid = true,
-        }
-    }
-
-    /// Record `origin`, which may be a string or an object with a non-empty
-    /// string `kind`.
-    pub fn push_origin(&mut self, value: Option<&serde_json::Value>) {
-        let Some(value) = value else { return };
-        match value {
-            serde_json::Value::String(s) => self.other.push(s.clone()),
-            serde_json::Value::Object(map) => {
-                match map.get("kind").and_then(serde_json::Value::as_str) {
-                    Some(kind) if !kind.trim().is_empty() => {
-                        self.origin_kinds.push(kind.to_owned());
-                    }
-                    _ => self.invalid = true,
-                }
-            }
-            serde_json::Value::Null
-            | serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_)
-            | serde_json::Value::Array(_) => self.invalid = true,
-        }
-    }
-
-    /// Record `turnOrigin`/`turn_origin`, which must be a string when present.
-    pub fn push_turn_origin(&mut self, value: Option<&serde_json::Value>) {
-        let Some(value) = value else { return };
-        match value.as_str() {
-            Some(s) => self.turn_origins.push(s.to_owned()),
-            None => self.invalid = true,
-        }
-    }
-
-    /// Whether the origin claims alone refuse the turn (unexpected shape,
-    /// non-plain origin value, or `promptSource: sdk` without a plain
-    /// `turnOrigin` or `origin.kind`).
-    #[must_use]
-    pub fn claims_agent_originated(&self) -> bool {
-        if self.invalid {
-            return true;
-        }
-        let desktop_plain = self.origin_kinds.iter().any(|k| is_explicitly_plain(k))
-            || self.turn_origins.iter().any(|s| is_explicitly_plain(s));
-        if self.other.iter().any(|s| !is_plain_or_empty(s))
-            || self.turn_origins.iter().any(|s| !is_plain_or_empty(s))
-            || self.origin_kinds.iter().any(|k| !is_explicitly_plain(k))
-        {
-            return true;
-        }
-        self.prompt_sources.iter().any(|s| {
-            let norm = normalize_origin(s);
-            if norm == "sdk" {
-                !desktop_plain
-            } else {
-                !norm.is_empty() && !PLAIN_SOURCES.contains(&norm.as_str())
-            }
-        })
-    }
-
-    /// Whether the claims or `prompt` text mark the turn as agent-originated.
-    #[must_use]
-    pub fn is_agent_originated(&self, prompt: &str) -> bool {
-        self.claims_agent_originated() || agent_originated(&[], prompt)
-    }
-}
-
-/// The fields of one Claude Code transcript line the origin guard reads beside
-/// its text (§4.1): the line's kind, uuid and entry point, and every origin
-/// claim it carries. A claim field keeps an explicit JSON `null` as present,
-/// so the guard refuses it as an unexpected shape rather than reading it as
-/// absent.
-#[derive(Deserialize)]
-pub(crate) struct LineMeta {
-    #[serde(rename = "type", default)]
-    pub(crate) kind: Option<String>,
-    #[serde(default)]
-    pub(crate) uuid: Option<serde_json::Value>,
-    #[serde(default)]
-    pub(crate) entrypoint: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
-    source: Option<serde_json::Value>,
-    #[serde(default, rename = "promptSource", deserialize_with = "present_value")]
-    prompt_source_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
-    prompt_source: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
-    origin: Option<serde_json::Value>,
-    #[serde(default, rename = "promptOrigin", deserialize_with = "present_value")]
-    prompt_origin_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
-    prompt_origin: Option<serde_json::Value>,
-    #[serde(default, rename = "turnOrigin", deserialize_with = "present_value")]
-    turn_origin_camel: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_value")]
-    turn_origin: Option<serde_json::Value>,
-    /// A queued message's attachment, whose origin is a claim as well.
-    #[serde(default)]
-    attachment: Option<LineAttachment>,
-}
-
-#[derive(Deserialize)]
-struct LineAttachment {
-    #[serde(default, deserialize_with = "present_value")]
-    origin: Option<serde_json::Value>,
-}
-
-impl LineMeta {
-    /// Every origin claim the line carries: its own fields and, on a queued
-    /// message's `attachment` line, the attachment's origin. Each is checked,
-    /// so a claim that contradicts the others refuses the line wherever it
-    /// sits. An ordinary row is corroborated by its own fields alone: an
-    /// attachment on it is no claim on it.
-    pub(crate) fn origin_claims(&self) -> OriginClaims {
-        let mut origin = OriginClaims::default();
-        origin.push_claim(self.source.as_ref());
-        origin.push_prompt_source(self.prompt_source_camel.as_ref());
-        origin.push_prompt_source(self.prompt_source.as_ref());
-        origin.push_origin(self.origin.as_ref());
-        if self.kind.as_deref() == Some("attachment") {
-            origin.push_origin(self.attachment.as_ref().and_then(|a| a.origin.as_ref()));
-        }
-        origin.push_claim(self.prompt_origin_camel.as_ref());
-        origin.push_claim(self.prompt_origin.as_ref());
-        origin.push_turn_origin(self.turn_origin_camel.as_ref());
-        origin.push_turn_origin(self.turn_origin.as_ref());
-        origin
-    }
-}
-
-/// Whether the origin claims on one Claude Code line refuse it. A line whose
-/// origin fields do not parse is refused too: its shape is one the guard does
-/// not know.
-pub(crate) fn line_refused(line: &[u8]) -> bool {
-    match serde_json::from_slice::<LineMeta>(line) {
-        Ok(meta) => meta.origin_claims().claims_agent_originated(),
-        Err(_) => true,
-    }
-}
-
-/// The origin guard (docs/design/scribe/2_design.md §4.1): whether a user
-/// turn was written by an agent or the harness, not plainly typed by
-/// Daniel. `origins` are the turn's origin claims where the harness gives
-/// them (`source`, `prompt_source`, `origin`, `prompt_origin`, `turn_origin`);
-/// `prompt` is its text. A non-plain origin value, an agent wrapper anywhere in
-/// the prompt, or a prompt opening with a markup tag (a plainly typed prompt
-/// does not open that way) is not his. An accident guard (STD-05 R5): a
-/// process running as Daniel can still forge a plain turn.
-#[must_use]
-pub fn agent_originated(origins: &[&str], prompt: &str) -> bool {
-    if origins.iter().any(|source| !is_plain_or_empty(source)) {
-        return true;
-    }
-    // Underscores and hyphens spell the same wrapper (`<agent_message>`).
-    let lower = prompt.to_lowercase().replace('_', "-");
-    if AGENT_WRAPPERS.iter().any(|tag| lower.contains(tag)) {
-        return true;
-    }
-    let trimmed = lower.trim_start_matches('\u{feff}').trim_start();
-    trimmed
-        .strip_prefix('<')
-        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
-}
-
 /// A fence opener or closer: three or more backticks or tildes.
 fn fence_marker(trimmed: &str) -> Option<(char, usize)> {
     let mark = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
@@ -620,23 +364,321 @@ pub fn prompt_hashes(message: &crate::transcript::Message) -> Vec<String> {
     hashes
 }
 
-/// SHA-256 of a prompt's text, lowercase hex: the cite's `prompt_sha256`,
-/// which the `Stop` hook matches against the transcript, and a trigger
-/// fire's key in the audit log (2_design.md §11.4).
-#[must_use]
-pub fn prompt_sha256(prompt: &str) -> String {
-    bytes_sha256(prompt.as_bytes())
+pub use crate::origin::{OriginClaims, agent_originated, present_value};
+pub use crate::text::{bytes_sha256, prompt_sha256};
+
+// --- markers (§14.1) ---------------------------------------------------------
+
+/// A settling instruction (form 4): `#scribe approve|reject <p-id>` or
+/// `#scribe retire|forget <entry-id>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Settle {
+    /// Apply a proposal: its older entry becomes `superseded` (or `retired`
+    /// for a stale proposal).
+    Approve(ProposalId),
+    /// Close a proposal for good; its pair is never proposed again.
+    Reject(ProposalId),
+    /// Hide an entry from answers; it stays on disk.
+    Retire(EntryId),
+    /// Blank an entry's text for good; its id, cite and status stay.
+    Forget(EntryId),
+    /// Erase a session's stored record and sources (`s-<n>`, its provider
+    /// id or a unique prefix of it, which the store resolves), leaving an id-only tombstone. Open claims sourced from it are
+    /// withdrawn, citing entries are detached, and handoffs naming it are
+    /// deleted (2_design.md §15.7). The store applies it
+    /// ([`crate::Store::settle`]).
+    ForgetSession(SessionId),
 }
 
-/// SHA-256 of raw bytes, lowercase hex, for checks on a transcript boundary.
-#[must_use]
-pub fn bytes_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        let _ = write!(hex, "{byte:02x}");
+impl Settle {
+    /// The id the instruction names, as typed.
+    #[must_use]
+    pub fn target(&self) -> String {
+        match self {
+            Self::Approve(id) | Self::Reject(id) => id.to_string(),
+            Self::Retire(id) | Self::Forget(id) => id.to_string(),
+            Self::ForgetSession(id) => id.to_string(),
+        }
     }
-    hex
+}
+
+/// The most markers one turn may hold; a fourth is refused
+/// [`MarkProblem::TooMany`] before any model call (§14.5).
+pub const MAX_MARKS: usize = 3;
+
+/// Why a marker is refused before any model call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MarkProblem {
+    /// A settling verb after a marker inside a sentence: settling needs
+    /// its own line (§14.1).
+    Settling,
+    /// `#scribe/<word>` with a word other than `global`.
+    BadOpener,
+    /// A marker past [`MAX_MARKS`] in one turn.
+    TooMany,
+}
+
+impl MarkProblem {
+    /// The refusal code it is recorded and audited with.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Settling | Self::BadOpener => "unparsed_instruction",
+            Self::TooMany => "too_many_marks",
+        }
+    }
+
+    /// Why, for Daniel's echo.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            Self::Settling => String::from(
+                "settling needs its own line: #scribe approve|reject <p-id> or #scribe retire|forget <entry-id>",
+            ),
+            Self::BadOpener => format!("only {MARKER} and {GLOBAL_OPENER} mark a message"),
+            Self::TooMany => format!("at most {MAX_MARKS} #scribe markers in one message"),
+        }
+    }
+}
+
+/// One `#scribe` marker of a typed turn (§14.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// Its number in the turn, from 1, in text order.
+    pub number: u32,
+    /// The line it is on, from 1, as `capture::lines` numbers lines.
+    pub line: u32,
+    /// That line as typed.
+    pub said: String,
+    /// It was `#scribe/global`: the entry's project is `global`.
+    pub global: bool,
+    /// The word right after it, lowercased and without a trailing `:`,
+    /// when there is one; a hint only when it names a tag ([`Mark::hint`]).
+    pub word: Option<String>,
+    /// For a marker that opens its line, the last word after `to`, `in` or
+    /// `under` (and an optional `my` or `the`) at the end of the line: the
+    /// tag of a folded form 2 or 3 (`#scribe add this to preferences`).
+    pub tail: Option<String>,
+    /// Hashtags after it on its line: the entry's topics.
+    pub topics: Topics,
+    /// Why it is refused before any call; `None` for a marker the model
+    /// reads.
+    pub problem: Option<MarkProblem>,
+}
+
+impl Mark {
+    /// The tag its next word names (a tag or an alias), else the tag its
+    /// line ends with ([`Mark::tail`]), which the model may not change;
+    /// `None` when neither names one.
+    #[must_use]
+    pub fn hint<'a>(&self, tags: &'a TagTable) -> Option<&'a TagName> {
+        [self.word.as_deref(), self.tail.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|word| tags.resolve(word))
+            .map(|def| &def.name)
+            .next()
+    }
+}
+
+/// The tag word a folded form 2 or 3 line ends with: `… (to|in|under)
+/// [my|the] <tag>`, before any trailing hashtags.
+fn tail(rest: &str) -> Option<String> {
+    let mut words: Vec<&str> = rest.split_whitespace().collect();
+    while words.last().is_some_and(|w| w.starts_with('#')) {
+        words.pop();
+    }
+    let tag = words.pop()?.trim_end_matches(PUNCTUATION).to_lowercase();
+    if words
+        .last()
+        .is_some_and(|w| DETERMINERS.contains(&w.to_lowercase().as_str()))
+    {
+        words.pop();
+    }
+    words
+        .last()
+        .is_some_and(|w| PREPOSITIONS.contains(&w.to_lowercase().as_str()))
+        .then_some(tag)
+        .filter(|tag| !tag.is_empty())
+}
+
+/// What a word after a marker sheds at its end.
+const PUNCTUATION: [char; 9] = [':', ',', '.', ';', '!', '?', ')', ']', '}'];
+
+/// The prepositions before the tag that ends a folded form 2 or 3 line.
+const PREPOSITIONS: [&str; 3] = ["to", "in", "under"];
+/// The optional determiners before that tag.
+const DETERMINERS: [&str; 2] = ["my", "the"];
+
+/// The markers of a typed turn, in text order, numbered from 1 (§14.1).
+///
+/// Lines inside code fences, blockquotes and `<pasted_content>` blocks hold
+/// none (as `capture::plain_lines` leaves them out), nor does an indented
+/// code line or a whole-line settling command (form 4). Within a line,
+/// a token in an inline code span or a double-quoted span (`"…"`, `“…”`) is
+/// a mention, not a marker; a backtick or quote with no partner on its line
+/// (`a 12" pipe`) opens no span. A marker is [`MARKER`] or `#scribe/<word>`
+/// that starts the line or follows whitespace or an opening bracket, and
+/// is followed by the end of the line, whitespace, `:`, a closing bracket
+/// or sentence punctuation.
+#[must_use]
+pub fn marks(text: &str) -> Vec<Mark> {
+    let mut found = Vec::new();
+    for (line, said) in plain_lines(text) {
+        // A settling line is a command (form 4); an indented line is code.
+        if settles(said) || said.starts_with("    ") || said.starts_with('\t') {
+            continue;
+        }
+        for start in mark_starts(said) {
+            let number = u32::try_from(found.len() + 1).unwrap_or(u32::MAX);
+            let mut mark = parse_mark(number, line, said, start);
+            if found.len() >= MAX_MARKS {
+                mark.problem = Some(MarkProblem::TooMany);
+            }
+            found.push(mark);
+        }
+    }
+    found
+}
+
+/// The markers of a typed turn as the transcript holds it (§14.1): [`marks`]
+/// of its text, or, for a slash command Daniel typed, of the command's args,
+/// which are his words (`transcript::slash_command_args`, §4.1). An args
+/// marker keeps the line number of the turn's whole text, so its cite and the
+/// lines an older store recorded verbatim agree with the prompt the line is
+/// in.
+#[must_use]
+pub fn turn_marks(text: &str) -> Vec<Mark> {
+    let Some(args) = crate::transcript::slash_command_args(text) else {
+        return marks(text);
+    };
+    // `args` is a slice of `text`; its first line is the line it starts on.
+    let start = (args.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+    let before = text
+        .get(..start)
+        .map_or(0, |head| head.matches('\n').count());
+    let shift = u32::try_from(before).unwrap_or(u32::MAX);
+    marks(args)
+        .into_iter()
+        .map(|mut mark| {
+            mark.line = mark.line.saturating_add(shift);
+            mark
+        })
+        .collect()
+}
+
+/// Byte offsets in `line` where a marker starts, outside code and quotes.
+fn mark_starts(line: &str) -> Vec<usize> {
+    let lone = unpaired(line);
+    let mut out = Vec::new();
+    let (mut code, mut quoted, mut curly) = (false, false, false);
+    let mut prev: Option<char> = None;
+    for (at, c) in line.char_indices() {
+        match c {
+            _ if lone.contains(&at) => {}
+            '`' => code = !code,
+            '"' if !code => quoted = !quoted,
+            '“' if !code => curly = true,
+            '”' if !code => curly = false,
+            '#' if !code && !quoted && !curly => {
+                let opens = prev.is_none_or(|p| p.is_whitespace() || matches!(p, '(' | '[' | '{'));
+                let rest = &line[at..];
+                let ends = rest.strip_prefix(MARKER).is_some_and(|after| {
+                    after.is_empty()
+                        || after.starts_with(char::is_whitespace)
+                        || after.starts_with([':', '/', ')', ']', '}', ',', '.', ';', '!', '?'])
+                });
+                if opens && ends {
+                    out.push(at);
+                }
+            }
+            _ => {}
+        }
+        prev = Some(c);
+    }
+    out
+}
+
+/// Byte offsets of the span openers in `line` that no partner closes: the
+/// last backtick of an odd count, the last straight quote of an odd count
+/// outside code, and a `“` with no `”` after it. Such an opener is a stray
+/// character (`a 12" pipe`), so it hides nothing that follows it.
+fn unpaired(line: &str) -> Vec<usize> {
+    let mut lone = Vec::new();
+    let ticks: Vec<usize> = line.match_indices('`').map(|(at, _)| at).collect();
+    if ticks.len() % 2 == 1 {
+        lone.extend(ticks.last());
+    }
+    let mut code = false;
+    let mut quotes = Vec::new();
+    let mut open_curly = None;
+    for (at, c) in line.char_indices() {
+        match c {
+            '`' if !lone.contains(&at) => code = !code,
+            '"' if !code => quotes.push(at),
+            '“' if !code && open_curly.is_none() => open_curly = Some(at),
+            '”' if !code => open_curly = None,
+            _ => {}
+        }
+    }
+    if quotes.len() % 2 == 1 {
+        lone.extend(quotes.last());
+    }
+    lone.extend(open_curly);
+    lone
+}
+
+/// The marker starting at byte `start` of `said`.
+fn parse_mark(number: u32, line: u32, said: &str, start: usize) -> Mark {
+    let rest = &said[start + MARKER.len()..];
+    let mut words = rest.split_whitespace();
+    let opener_tail = if rest.starts_with('/') {
+        // Sentence punctuation may follow the opener: `… #scribe/global.`
+        words.next().map(|w| w.trim_end_matches(PUNCTUATION))
+    } else {
+        None
+    };
+    let (global, bad) = match opener_tail {
+        None => (false, false),
+        Some(tail) => (tail == "/global", tail != "/global"),
+    };
+    // `#scribe: idea` and `#scribe idea:` both read `idea` as the word.
+    let mut next = words.next().map(|w| w.trim_start_matches(':'));
+    if next.is_some_and(str::is_empty) {
+        next = words.next();
+    }
+    let word = next
+        .map(|w| w.trim_end_matches(PUNCTUATION).to_lowercase())
+        .filter(|w| !w.is_empty() && !w.starts_with('#'));
+    let mut topics: Vec<Topic> = Vec::new();
+    for hashtag in rest.split_whitespace().filter_map(|w| w.strip_prefix('#')) {
+        let tag = hashtag.trim_end_matches(PUNCTUATION).to_lowercase();
+        if let Ok(topic) = Topic::try_from(tag)
+            && !topics.contains(&topic)
+            && topics.len() < Topics::MAX
+            && topic.as_str() != "scribe"
+        {
+            topics.push(topic);
+        }
+    }
+    let problem = if bad {
+        Some(MarkProblem::BadOpener)
+    } else if word.as_deref().is_some_and(|w| SETTLING.contains(&w)) {
+        Some(MarkProblem::Settling)
+    } else {
+        None
+    };
+    let opens_line = said[..start].trim().is_empty();
+    Mark {
+        number,
+        line,
+        said: said.to_owned(),
+        global,
+        word,
+        tail: if opens_line { tail(rest) } else { None },
+        topics: Topics::try_from(topics).unwrap_or_default(),
+        problem,
+    }
 }
 
 /// Where and when a prompt was typed: everything an entry records about its
@@ -698,7 +740,7 @@ pub fn action_window(
         .iter()
         .rposition(|m| {
             m.role == Speaker::User
-                && (!lines(&m.text()).is_empty() || !crate::annotation::marks(&m.text()).is_empty())
+                && (!lines(&m.text()).is_empty() || !marks(&m.text()).is_empty())
         })
         .map_or(0, |i| i + 1);
     let mut turns: Vec<WindowTurn> = before[start..]

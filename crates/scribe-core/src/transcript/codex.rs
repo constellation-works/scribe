@@ -3,7 +3,8 @@
 //! Host content metadata, rather than a role or hook payload claim, identifies
 //! typed user text. Same-user file forgery remains outside this accident guard.
 
-use crate::{SessionId, Speaker, capture, transcript::Message};
+use super::Message;
+use crate::{SessionId, Speaker};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -133,7 +134,7 @@ pub fn parse(bytes: &[u8]) -> Result<Rollout, String> {
             .as_str()
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("codex-{}", capture::prompt_sha256(&row.to_string())));
+            .unwrap_or_else(|| format!("codex-{}", crate::text::prompt_sha256(&row.to_string())));
         if !ids.insert(uuid.clone()) {
             return Err(String::from("duplicate Codex message identity"));
         }

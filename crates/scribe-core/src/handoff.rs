@@ -15,37 +15,7 @@ use std::collections::BTreeSet;
 /// The shipped tag name for agent-written session handoffs.
 pub const HANDOFF_TAG: &str = "handoff";
 
-/// How the next context should treat a refresh handoff.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Mode {
-    /// Resume from this handoff.
-    Continue,
-    /// Start a clean context.
-    New,
-}
-
-impl Mode {
-    /// Stable CLI and storage spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Continue => "continue",
-            Self::New => "new",
-        }
-    }
-}
-
-impl std::str::FromStr for Mode {
-    type Err = &'static str;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "continue" => Ok(Self::Continue),
-            "new" => Ok(Self::New),
-            _ => Err("expected continue or new"),
-        }
-    }
-}
+pub use crate::entry::HandoffMode as Mode;
 
 /// The six required level-2 Markdown headings, in exact order.
 pub const HEADINGS: [&str; 6] = [
