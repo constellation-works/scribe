@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and the MCP surface stays ask), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, ask and search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
@@ -21,14 +21,19 @@ The design of the scribe plugin: its boundary, the four parts named in
 and the slices that build it. Slices S1 (the domain, the store and the
 read-only CLI), S2 (`#scribe` capture without a model, and the Claude Code
 package), S3 (referents and the models port), S4 (`/scribe on` and
-session records), S5 (the Orbit plugin tree and `ask`) and S6 (the
+session records), S5 (the Orbit plugin tree, and `ask`, removed by
+ORB-27911) and S6 (the
 consistency routine and the settling verbs) are implemented; S7
 (discussions) is not yet. S8–S14 ([ORB-23892], designed 2026-11-10; see the slice-specific
 As built notes) turn a session record into a header over an append-only log, add the
 `active` flag, give agents a CLI read and write surface taught by one skill,
 add a tmux popup for Daniel, and catalog chosen past sessions by name. The reasons behind each choice
 are in [4_decisions.md](./4_decisions.md); open directions are in
-[3_vision.md](./3_vision.md). Where this doc and the template's engineering
+[3_vision.md](./3_vision.md). ORB-27911 removed `ask`, the Orbit task
+search and the tmux popup
+([4_decisions.md](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)):
+the sections that define them say so, and a mention of `ask` elsewhere
+describes the design as it was, kept as history. Where this doc and the template's engineering
 rules meet (atomic writes, the store lock, the audit guard, output modes,
 gates), the template's mechanisms carry over unchanged and are not restated:
 see [ARCHITECTURE.md](../../../ARCHITECTURE.md) and the
@@ -42,34 +47,31 @@ STD-01 grammar:
 | Entry point | Called by | Does |
 |---|---|---|
 | `scribe hook <event>` | Claude Code hooks (the `plugin/claude-code/` package) | Reads the hook's JSON on stdin; captures `#scribe` instructions, switches cataloging on and off, marks session passes due. The only path that writes Daniel's entries (`author.kind: daniel`) and settles proposals about them. |
-| `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves `scribe.ask` and the routines' tools. |
-| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, `question ask`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `scribe search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `tmux` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
+| `scribe plugin call` | Orbit's exec backend (`plugin/.orbit-plugin/`) | Reads the Orbit tool request on stdin, writes the `{"ok", …}` envelope on stdout. Serves the routines' tools. |
+| `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `scribe search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `tmux` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
 (`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
 (a launcher that execs the installed binary as `scribe plugin call`), `schemas/`
 and `definitions/` (the two routines and their jobs). The backend is
 `type: exec`, `timeout_ms: 720000`: the routine tools may need 600 s (five
-sessions at 120 s) and 480 s (four consistency batches at 120 s), and `ask`
-is bounded by its own 90 s budget. Tools:
+sessions at 120 s) and 480 s (four consistency batches at 120 s). Tools:
 
 | Tool | `execution_kind` | `agent_callable` | `mcp_scope` |
 |---|---|---|---|
-| `scribe.ask` | `read_only` | — | `global` |
 | `scribe.session-pass` | `mutating` | `false` | `none` |
 | `scribe.consistency-scan` | `mutating` | `false` | `none` |
 
-Orbit defaults `mcp_scope` to `workspace`, so every tool except `ask` sets
-`none` explicitly, and a conformance test in `plugin/.orbit-plugin/tests/`
-asserts that `ask` is the only advertised tool. Main agents therefore see
-exactly `mcp__orbit__scribe_ask` once orbit-office's scribe is retired (see
-*Outside this repository* in [§10](#10-slice-plan)); until then its
-`office.scribe-*` tools are on the list too. `ask` is `global` because the
-store is Daniel's, not a workspace's. The two mutating tools run only from the
+Orbit defaults `mcp_scope` to `workspace`, so every tool sets `none`
+explicitly, and a conformance test in `plugin/.orbit-plugin/tests/` asserts
+that no tool is advertised. `scribe.ask`, the one advertised tool until
+ORB-27911, is removed
+([4_decisions.md](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
+The mutating tools run only from the
 plugin's routines (Runner capability). Permissions: `fs.read` and `fs.write`
 on the store root, `network: any` for the model, `env_pass` for the model
-credential names ([§8](#8-models)), and `orbit_tools: [orbit.search,
-orbit.task.show]` (read-only) for `ask`'s task evidence.
+credential names ([§8](#8-models)). The `orbit_tools` grant `ask` used for
+task evidence went with it.
 
 **The Claude Code package** is `plugin/claude-code/`
 (`.claude-plugin/plugin.json`, `hooks/hooks.json`), installed with
@@ -110,9 +112,10 @@ otherwise. Restoring a continue handoff (§16.7) and inheriting a group seat acr
 Entry writes never go through Orbit's tool surface: the hooks call the
 binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The two routine tools write session records and proposals, but they
 are `mutating` and not agent-callable, so no tool needs `agent_callable` or an
-operator override, and the MCP list stays at one tool.
+operator override, and the MCP list is empty.
 
-As built (S5): the plugin tree is `plugin.yaml`, `bin/scribe-plugin` (a POSIX
+As built (S5; `ask`, its schemas and `task_workspaces` removed by
+ORB-27911): the plugin tree is `plugin.yaml`, `bin/scribe-plugin` (a POSIX
 sh launcher that execs the `scribe` on `PATH` as `scribe plugin call`, and
 answers a `not_installed` envelope when there is none), `schemas/` (the
 config, `ask`'s input and output, and placeholders for the routine tools),
@@ -165,10 +168,9 @@ hand to agents; and I am not sure about adding another set of MCP tools. so
 I think a single scribe skill that teaches terminal commands will suffice."
 Agents "should able to filter sessions by topics, tags, bm25 search, date
 range, add/update proposals, tags and entries directly", and `scribe.ask`
-stays for intensive and vague searches.
+stayed for intensive and vague searches until ORB-27911 removed it.
 
-The MCP surface does not change: `scribe.ask` is still the one advertised
-tool. Agents with a shell use the CLI, and one skill teaches it
+No tool is advertised over MCP. Agents with a shell use the CLI, and one skill teaches it
 ([4_decisions.md](./4_decisions.md#agents-read-and-write-through-the-cli-taught-by-one-skill)).
 
 | Want | Command | Model |
@@ -176,7 +178,6 @@ tool. Agents with a shell use the CLI, and one skill teaches it
 | Words to look for | `scribe search "<terms>" [--kind entry\|session\|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
 | Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
 | One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
-| An answer in prose | `scribe question ask "<question>"`, or the `scribe.ask` MCP tool | decision model |
 | Record a note | `scribe entry add --tag <tag> --author <name> [--topic <t>]… [--related <r>]… [--project <p>] <content>` | none |
 | Change a note | `scribe entry update <id> --author <name> [--content <text>] [--add-topic <t>]… [--remove-topic <t>]… [--add-related <r>]… [--remove-related <r>]…`; `scribe entry retire <id> --author <name> --reason <text>` | none |
 | A tag | `scribe tag add <name> --author <name> --description <text> [--alias <a>]… [--stale-after-days <n>]`; `scribe tag update <name> --author <name> [--description <text>] [--add-alias <a>]… [--remove-alias <a>]… [--stale-after-days <n>]` | none |
@@ -401,15 +402,16 @@ The note domain is deleted in S1 and replaced by:
 | `config` | parsing `config.toml` text into tags, models, cadence and redaction settings | none (takes text) |
 | `transcript` | parsing a Claude Code transcript (JSONL) into typed messages, dropping tool payloads and synthetic turns | none (takes bytes) |
 | `verbatim` | the one quote check ([§6.4](#64-the-verbatim-check)) | none |
-| `ask` | tokenizing, ranking, evidence packing, answer validation | none |
+| `search` | tokenizing and BM25 ranking over entries and session units ([§6.2](#62-retrieval-model-free)) | none |
 | `consistency` | candidate pairing, staleness, proposal validation | none |
 | `models` | the `Models` port (a trait) and the typed requests/responses for each use | none |
 | `store` | the `Store` facade over `format`, `audit`, `fsio`, `redact`; the only disk access | disk |
 
-The CLI crate adds `commands/{entry,session,proposal,tag,question,consistency,plugin}.rs`
+The CLI crate adds `commands/{entry,session,proposal,tag,consistency,plugin}.rs`
 and `commands/hook/` (one file per event), plus two
 adapters composed in `app.rs`: `ClaudeCliModels` (the `Models` port,
-[§8](#8-models)) and `OrbitTasks` (task evidence for `ask`). Adapters that
+[§8](#8-models)); `OrbitTasks`, the task evidence for `ask`, is removed
+(ORB-27911). Adapters that
 spawn processes live in the CLI crate so the core stays free of
 `std::process`, as the dependency-direction script already requires. The
 adapters are a new module family; the slice that adds the first one adds
@@ -1820,68 +1822,38 @@ if it was cataloged ([§5.7](#57-active-and-inactive-sessions)). The few that
 matter most are also distilled into discussions ([§4.5](#45-distilling-a-discussion),
 S7). It runs by hand from the CLI, a few sessions at a time.
 
-## 6. `ask`
+## 6. Retrieval and `scribe search`
+
+`ask`, which answered a question with a model call over these ranked
+records and Orbit tasks, is removed (ORB-27911, [the removal decision](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). Its model-free
+ranking stays as `scribe search`'s ([§6.8](#68-scribe-search)), and the
+verbatim check as the one quotes everywhere else use. The removed
+subsections keep their numbers so references to them still resolve.
 
 ### 6.1 Contract
 
-Input: `{"question": string, "scope"?: {"tags"?: [..], "topics"?: [..],
-"project"?: string, "kind"?: "entry" | "session", "since"?: date},
-"include_hidden"?: bool}`. Output:
-
-```json
-{
-  "status": "answered | no_record | conflict",
-  "answer": "…",
-  "claims": [{"text": "…", "quote": "…", "cite": "preferences-12"}],
-  "conflicts": [{"cites": ["preferences-3", "preferences-9"], "note": "…"}],
-  "evidence_considered": 14,
-  "dropped_quotes": 0
-}
-```
-
-`cite` is an entry id, `session:<id>`, `session:<id>#<n>` (a segment,
-from S8) or `task:<id>`. A lookup
-([§6.5](#65-lookups-records-by-recency-or-id)) also sets `"status":
-"record"` and returns `records`, the stored records themselves. `scribe question ask
-"<question>"` is the same operation for Daniel at a terminal (`--json`
-prints this payload).
+Removed with `ask`.
 
 ### 6.2 Retrieval (model-free)
 
-0. Filter by frontmatter first. `scope` fields (`project`, `topics`,
-   `tags`, `since`, `kind`) and any project name, topic or date the
-   question names ("preferences on ci this month") restrict the candidate
-   records before ranking.
-1. Load every `active` entry (plus `superseded`/`retired` when
-   `include_hidden`), every session record, every discussion (the store's
-   and the read-only sources'), and up to 20 Orbit tasks from
-   `orbit.search` with the question's terms (title, status, and the first
-   1,000 characters of the description).
+0. Filter by frontmatter first: the search's filters (`--kind`, `--tag`,
+   `--project`, `--topic`, `--since`, `--until`) restrict the candidate
+   units before ranking. A project or topic the terms name narrows the
+   store's records only when one of them still matches a query word.
+1. Load every entry (never a forgotten one) and every session record.
 2. Tokenize: lowercase, split on non-alphanumerics, drop stopwords and
-   tokens under three characters, light suffix stripping (`-s`, `-es`,
-   `-ing`, `-ed`). Tag names and aliases in the question boost their tag.
-3. Rank with BM25 over `content` + `said` + tag for entries, the four text
-   fields for sessions (from format 4, the header and each segment as
-   separate units, [§6.7](#67-segments-authors-and-inactive-sessions)),
-   title + description for tasks; Daniel's entries get a 1.5×
-   weight because they are his explicit words (agent entries do not).
-4. Keep the top 20 (entries first on ties), packed newest-first within a
-   48k-character evidence budget.
-
-If nothing scores above zero, `ask` returns `no_record` without calling a
-model.
+   tokens under three characters, light suffix stripping: `-ing`, `-ed`,
+   `-es`, `-s` (not after `s`) and then a final `-e`, so `merge` and
+   `merging` meet. Tag names and aliases in the terms boost their tag.
+3. Rank with BM25 over `content` + `said` + tag for entries and the four
+   text fields for sessions (from format 4, the header and each segment as
+   separate units, [§6.7](#67-segments-authors-and-inactive-sessions));
+   Daniel's entries get a 1.5× weight because they are his explicit words
+   (agent entries do not). Ties go to entries first, then the newest.
 
 ### 6.3 Answering
 
-The `ask` model (the decision model, Sonnet by default) receives the
-question and the numbered evidence, each item labelled with its kind, date,
-whose words it is (`Daniel`, `assistant (recorded by Daniel)`, `session
-summary`, `Orbit task`) and its status. The system prompt requires: answer
-only from the evidence; every claim carries a verbatim quote and a cite; say
-`no_record` when the evidence does not answer; when two items disagree,
-return `conflict` with both cites rather than choose; never present a
-summary or an assistant's words as Daniel's. The response is a JSON schema
-(`claims`, `conflicts`, `status`, `answer`).
+Removed with `ask`.
 
 ### 6.4 The verbatim check
 
@@ -1891,91 +1863,17 @@ leading and trailing space is dropped, so a span cut at a line break still
 matches. The quote must then be at least 8 characters and a substring of
 the source. No case
 folding, no punctuation stripping. The same function checks referent spans
-([§4.3](#43-resolving-this-and-it)), proposal quotes ([§7](#7-consistency-routine))
-and answers. In `ask`, a claim whose quote fails is dropped and counted in
-`dropped_quotes`; if every claim drops, the status becomes `no_record`. A
-claim whose cite is not in the evidence is dropped the same way. When the
-evidence contains a hidden entry that matched (and `include_hidden` is
-false), the answer notes that a superseded record exists, without quoting it.
+([§4.3](#43-resolving-this-and-it)) and proposal quotes
+([§7](#7-consistency-routine)).
 
 ### 6.5 Lookups: records by recency or id
 
-`ask` takes any question, and orchestrators use it for handoffs: "can you
-fetch me last session summary?" must return the latest session record, not
-a ranked guess. Word-overlap ranking cannot answer that ("last" matches
-nothing), so before §6.2 a model-free classifier recognises lookups:
-
-| Asks for | Returns |
-|---|---|
-| the latest/last/previous session (optionally for a project or topic) | the newest session record matching that frontmatter, by `updated` |
-| a named session (`session:<id>`, or a title match) | that session record |
-| open next steps / what is pending | the `next` items of the newest records in scope, newest first |
-| the entries of a tag in a period ("preferences this week") | those entries, newest first |
-| what was concluded about a subject ("what did we conclude about level 4?") | the discussions whose title, topics or terms match, newest `updated` first, with thesis and takeaway verbatim; the store's before the read-only sources' |
-| a term Daniel uses ("graduate to level 4", "what did I mean by resident orchestrator") | the session records whose `terms` contain it (case and whitespace normalised), newest first, each with the defining `said` span, plus entries whose body contains it |
-| the last orchestrator or on-call session for a workspace | the newest `orchestration`-tagged assignment task in `ws_constellation` whose title names that workspace, with its execution summary verbatim, cited `task:<id>` |
-
-Terms exist because Daniel's main conversational agent is a manager he
-discusses designs and ideas with, and his vocabulary carries meaning across
-those sessions: when he says "graduate to level 4", any agent can `ask` for
-the session where he defined it instead of guessing. A summary written by
-Haiku may paraphrase a term away, so terms are kept in Daniel's exact words.
-
-A lookup returns `"status": "record"` and `records` with each record's
-stored fields verbatim (summary, goals, outcome, next, timestamps, cite),
-without a model call and without paraphrase. A question that is not a
-lookup, or a lookup that matches nothing, falls through to §6.2. When the
-classifier is unsure it falls through too, so a lookup never hides an
-answer.
+Removed with `ask`. `session list`, `session show`, `entry list --tag` and
+`brief` return the records it looked up.
 
 ### 6.6 As built (S5)
 
-`scribe_core::ask::answer` runs the whole operation over records the caller
-loaded and two ports: `Models` (`ask` request, `models.ask`, 90 s) and
-`Tasks`, which the CLI implements as `OrbitTasks` over `orbit tool run
-orbit.search` (`kind: task`, `all: true`) and `orbit.task.show` for each hit,
-15 s a call and 30 s a search, from a cleared environment of `PATH`, `HOME`,
-`LANG` and the `ORBIT_*` variables (inside the plugin, Orbit's callback
-channel). A task source that fails is logged and costs only its evidence.
-`question ask` and `plugin call` both call `commands::question::answer_with`,
-so they return the same payload; it adds `hidden_matches`, `lookup` (`null`
-or `last_session`, `named_session`, `next_steps`, `tag_period`, `term`,
-`orchestrator_session`), `records` and `warnings` to §6.1's fields
-([specs/output-contract.md](./specs/output-contract.md#ask)).
-
-- **Lookups**, tried in this order, each falling through when it finds
-  nothing: a session named by `session:<id>` or by its whole title (at
-  least 8 characters) in the question; the last orchestrator session (a
-  recency word, `session`, `on-call`/`orchestrator`/`orchestration`, and the
-  workspace as the word after the last `for`/`in`/`of`): the newest
-  `orchestration`-tagged task whose title has that word, preferring one with
-  an execution summary; the last session (a recency word and `session`),
-  narrowed to a project (slug or its last segment) or topic the question
-  names; open next steps (`next steps`, `pending`, `open items`): the newest
-  records with `next_open > 0`; a tag (name or alias) with `today`, `this
-  week` (from Monday), `this month` or `this year`: its entries created
-  since, newest first; and a term: the question, less a leading "what did I
-  mean by", "what is", "define" and the like, equal (case and whitespace
-  folded) to a stored term, returns those sessions with the matching terms,
-  then entries whose body has the phrase. At most 10 records. Discussions
-  are S7's. `evidence_considered` counts the records returned.
-- **Retrieval** follows §6.2 with these rules: `tags` keeps entries only;
-  `tags`, `topics` or `kind` leave tasks out; `since` applies to `updated`
-  (a task without one is dropped). A project or topic the question names
-  narrows the store's records only when one of them still matches a query
-  word; dates the question names narrow nothing yet (the tag-period lookup
-  covers "preferences this week"). Stemming strips `-ing`, `-ed`, `-es`, `-s`
-  (not after `s`) and then a final `-e`, so `merge` and `merging` meet.
-  Superseded and retired entries are scored either way: without
-  `include_hidden` they are left out and counted in `hidden_matches`, and
-  the answer ends with a note saying so. Forgotten entries are never
-  evidence.
-- **The check** drops a claim whose cite is not in the evidence or whose
-  quote is not verbatim in that item, and a conflict naming fewer than two
-  evidence items. A surviving conflict makes the status `conflict`; no
-  surviving claim (or the model's own `no_record`) makes it `no_record` with
-  the fixed answer "Nothing recorded answers this.". A model failure is an
-  error (`question ask` exits 1 with its code).
+Removed with `ask`, with the `Tasks` port and its Orbit adapter.
 
 ### 6.7 Segments, authors and inactive sessions
 
@@ -1986,44 +1884,32 @@ are built in S12.
   (title, summary, goals, next), cited `session:<id>`, and each segment
   (heading and text), cited `session:<id>#<n>`. Each unit carries the
   record's frontmatter for §6.2 step 0, and a segment its own topics and
-  `from`/`to` dates as well, so "what did we decide about X in October"
-  narrows to segments of that month. A claim citing a segment is checked
-  against that segment's text; one citing the header against the header.
-  Lookups ([§6.5](#65-lookups-records-by-recency-or-id)) still return the
-  record; a `last_session` or `named_session` record carries the header and
-  the log's table of contents, and `records[].session.log` holds every
-  segment (output contract).
-- **Inactive sessions** are left out of evidence and lookups unless
-  `include_hidden`, and counted in `hidden_matches` like hidden entries.
+  `from`/`to` dates as well.
+- **Inactive sessions** are left out unless asked for, and counted like
+  hidden entries.
 - **Authors.** Daniel's entries keep the 1.5× weight; agent entries get
-  1.0×, like session units. Evidence labels an agent entry `agent note
-  (<name>)`, never `Daniel`, and the system prompt forbids presenting it
-  as Daniel's words. A `conflict` between a Daniel entry and an agent entry
-  is reported as such, with both labels.
+  1.0×, like session units. A hit labels an agent entry `agent note
+  (<name>)`, never `Daniel`.
 
 ### 6.8 `scribe search`
 
 Designed for S11. `scribe search "<terms>" [--kind
 entry|session|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>]
 [--until <date>] [--include-hidden] [--limit <n>]` runs §6.2's filtering,
-tokenizing and BM25 ranking with the §6.7 units and weights, and stops
-there: no lookup classifier, no Orbit tasks, no model. It is the fast,
-offline path for a known word; `ask` stays for vague questions and
-synthesized answers. Hidden entries and inactive sessions are left out
+tokenizing and BM25 ranking with the §6.7 units and weights: no model and
+no Orbit call. Hidden entries and inactive sessions are left out
 unless `--include-hidden`; forgotten entries never match. The default limit
 is 20. Each hit is `{kind, cite, id, segment, score, title, snippet,
-project, topics, author, active, updated}`: `cite` is what `ask` would
-cite, `segment` the segment number or `null`, `snippet` up to 240
+project, topics, author, active, updated}`: `cite` is the unit's cite,
+`segment` the segment number or `null`, `snippet` up to 240
 characters around the best-matching terms, `author` an entry's author else
 `null`. The `--json` envelope is the list envelope with the key `hits`,
 best first. It reads only and writes no audit line. Discussions are
 searched once S7 builds them, together with the read-only sources.
 
-As built (S11): `scribe_core::search` builds the units with `ask`'s own
-`store_docs` and ranks them with its `rank` (the named-tag boost and the
-§6.2 step 0 narrowing included), so the two cannot drift; only the Orbit
-tasks are missing from the corpus, so a score can differ slightly from the
-one inside `ask`, never the method. `--kind` takes `entry` and `session`
+As built (S11): `scribe_domain::search` builds the units with
+`store_docs` and ranks them with `rank` (the named-tag boost and the §6.2
+step 0 narrowing included); until ORB-27911 `ask` shared both. `--kind` takes `entry` and `session`
 until S7 builds discussions. Terms with no word ranking can use (all
 stopwords or shorter than three letters) are a usage error. `--topic`
 repeats and every one must match, as in the lists; a segment carries its
@@ -2203,7 +2089,7 @@ proposals'.
 | Referent of "this"/"it" | `models.referent` | `claude-haiku-5-5` | `UserPromptSubmit` hook | 20 s |
 | Session pass (also `session rebuild` and `session catalog`, from S9/S14) | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job, the CLI | 120 s |
 | Consistency judgement (entry pairs; from S10 also removed-feature session pairs) | `models.consistency` | `claude-haiku-5-5` | `scribe.consistency-scan` job | 120 s per batch of 10 pairs |
-| `ask` | `models.ask` | `claude-sonnet-5-5` | `scribe.ask`, `scribe question ask` | 90 s |
+| Group close summary (named `ask` for the removed `ask`, ORB-27911) | `models.ask` | `claude-sonnet-5-5` | `scribe group close` | 90 s |
 | Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
 
 All five go through one `Models` port with one adapter, `ClaudeCliModels`:
@@ -4355,7 +4241,7 @@ Profile: runs agents from a Mac and two Linux boxes [m-1]; …
 Project scribe (as of 2026-11-21): being widened to a whole memory [m-11]
 Working: files the design as a task before any build [m-6]; …
 Recent sessions: <id> "scribe memory design" (2026-11-21); <id> "…" (2026-11-20); … (5)
-More: scribe memory show · scribe session show <id> · scribe question ask
+More: scribe memory show · scribe session show <id> · scribe search
 ```
 
 | Part | Budget | Selection |
@@ -6264,7 +6150,7 @@ so no kind is ever unreadable outside the binary.
 | `[user] name` | how prompts name the user | none: "the user" |
 | `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
 | `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
-| `[instructions] session`, `annotation`, `ask` | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
+| `[instructions] session`, `annotation` (`ask` is accepted, checked and ignored since ORB-27911) | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
 | `[models] provider`, `session`, `annotation`, `ask`, `consistency`, `profile` | which model each call uses (timeouts are fixed in code, as today) | today's (Claude Code: `claude-sonnet-5-5` for `ask`, `claude-haiku-5-5` for the rest; Codex: `gpt-6-luna` for every call); `profile`: `claude-sonnet-5-5` under Claude Code, `gpt-6-luna` under Codex (the approved Luna default) |
 | `[sessions] inactive_after_days`, cadence keys | as today | as today |
 
@@ -6290,7 +6176,6 @@ so no kind is ever unreadable outside the binary.
 | session pass | `SessionRequest::prompt` | the header and segment; claims under firing catchers with context and quote; `now` writes and stated milestones; the window's signal |
 | annotation | `AnnotationRequest::prompt` | per marker, an entry (tag, subject, context, quote) or `none` with a reason |
 | session header | `SessionHeaderRequest::prompt` | as today |
-| ask | `AskRequest::prompt` | an answer from cited evidence, as today |
 | consistency | `ConsistencyRequest::prompt`, `RemovalRequest::prompt` | entry supersession and removal, as today; the memory pairs prompt goes |
 | profile | `ProfileRequest::prompt` (new) | the profile rebuild of §15.6 |
 
@@ -6828,7 +6713,6 @@ scribe group open --title 'Release review' --kind review --project scribe \
   --related repo:scribe --quote 'open a release review'
 scribe group join <id> --as editor --role reviewer --author aide
 scribe search 'release checklist' --group <id> --kind message
-scribe ask 'what remains for the release?' --group <id>
 scribe group close <id>
 scribe group show <id> --json
 scribe group leave
@@ -7047,11 +6931,10 @@ references, seat names and roles, transcript ids in join order, the newest
 active handoff id across each chain, and any retained closing summary. The
 `group list` table is short on purpose: id, title, kind, project, opened,
 closed and a count of seats, with only the title cut to a terminal's width;
-the rest is in `group show`. Read a handoff with `entry show <id>`. `search`, `ask` (also `question ask`), `entry list` and
+the rest is in `group show`. Read a handoff with `entry show <id>`. `search`, `entry list` and
 `session list` accept `--group <id>`, which limits candidates to recordings
 associated through the group's member sessions. Use `search --kind message`
-to find their stored turns. Scoped `ask` uses matching stored turns and does
-not query Orbit tasks. The project brief shows its most recently opened group
+to find their stored turns. The project brief shows its most recently opened group
 and its closing summary when available.
 
 ## 18. Decisions and open items (proposed)

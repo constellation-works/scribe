@@ -27,8 +27,8 @@ You:     Keep the public API stable. #scribe
 scribe:  After the reply, stores your sentence and a short statement of it.
 You:     /scribe on
 scribe:  Catalogs this session.
-Agent:   scribe question ask "what should stay stable?"
-scribe:  Answers, and quotes your sentence.
+Agent:   scribe search "stable"
+scribe:  Finds the entry, and quotes your sentence.
 ```
 
 `/scribe on` is the Claude Code command. Codex accepts the same marker, and an exact `$scribe on`. Both installs are in the [guide](docs/guide.md).
@@ -47,7 +47,7 @@ scribe entry list --tag preferences --status active
 2. Read the page from `scribe brief`. An empty data directory still prints it.
 3. Read `scribe entry list`. It prints a table on a terminal and tab-separated lines in a pipe.
 4. To mark a sentence or catalog a session, install the Claude Code or Codex package. The steps are in the [guide](docs/guide.md).
-5. Ask with `scribe question ask "preferences this week"`. That lookup does not call a model. Other questions use the configured model and quote each record they cite.
+5. Look something up with `scribe search "<words>"`. It ranks entries and sessions with BM25 and calls no model.
 
 ## Session groups
 
@@ -78,7 +78,7 @@ scribe group show <slug> --json
 - [Architecture](ARCHITECTURE.md) — crate layers and what may call what.
 - [Changelog](CHANGELOG.md) — notable changes.
 - [Agent skill](skills/scribe/SKILL.md) — how an agent reads and writes the records.
-- [Orbit plugin](plugin/.orbit-plugin/README.md) — the `scribe.ask` tool and its install.
+- [Orbit plugin](plugin/.orbit-plugin/README.md) — the routine tools and their install.
 - [Codex Orbit package](plugin/orbit-codex/README.md) — the Codex-backed plugin variant.
 
 ## Contributing

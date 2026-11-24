@@ -1,2 +1,0 @@
-record	The newest session record in scope, as stored.
-record	session	session:s-3

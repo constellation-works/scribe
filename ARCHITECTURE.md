@@ -16,10 +16,10 @@ scribe-domain  <-  scribe-store  <-  scribe-core  <-  scribe
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` and `Tasks` ports. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
+| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives and the audit record. The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
 | `scribe-core` | The use cases (`cases/`): each loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
-| `scribe` (binary) | Arguments, dispatch, the audit guard, rendering, and the adapters for models, Orbit tasks and the tmux popup. | `scribe-core` | `rusqlite` |
+| `scribe` (binary) | Arguments, dispatch, the audit guard, rendering, and the adapters for models and the tmux popup. | `scribe-core` | `rusqlite` |
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
@@ -50,7 +50,7 @@ no dev-dependency on `scribe-core`. Its other tests are in `scribe-store`.
 
 | Tier | Unit | Owns | May depend on |
 |------|------|------|---------------|
-| Composition | `scribe::app`, `::models`, `::tasks`, `::popup` | Resolves roots and configuration, builds the `Store` and the adapters for models, Orbit tasks and the tmux popup. | `scribe-core` |
+| Composition | `scribe::app`, `::models`, `::popup` | Resolves roots and configuration, builds the `Store` and the adapters for models and the tmux popup. | `scribe-core` |
 | Surface | `scribe::cli`, `::commands`, `::output`, `::audit_middleware` | Argument declarations, dispatch, the audit guard around mutating commands, rendering, and the only stdout, stderr and terminal access. | composition, `scribe-core` |
 
 ## Rings inside `scribe-domain`
@@ -65,7 +65,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `activity`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `brief`, `capture`, `ask`, `consistency`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `search`, `group`, `memory`, `message`, `action`, `annotation`, `redact` |
+| 4. rules | `trigger`, `voice`, `claim`, `brief`, `capture`, `consistency`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `search`, `group`, `memory`, `message`, `action`, `annotation`, `redact` |
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
@@ -77,7 +77,7 @@ ORB-27707 where an import forces it:
   - `memory` imports `claim::own_span` and `models::{MemoryAnswer, PassMessage}`;
   - `message` imports `claim::PassClaim`, `models::PassMessage` and
     `memory::{finance_word, sensitive_word}`;
-  - `action` imports `ask::is_pass_captured`;
+  - `action` imports `voice::is_pass_captured`;
   - `annotation` imports `capture::{scan, marks, …}` and the annotation shapes
     in `models`.
 - **`transcript` comes before rules, not after.** The rules read
@@ -93,15 +93,14 @@ ORB-27707 where an import forces it:
   - `control` is in records, since it imports `activity::CatalogedBy` and
     `session`;
   - `error` (imports `config::ConfigError`), `checks` (imports `pass`,
-    `instruction`, `group`), `search` (imports `ask`), `models` (imports
+    `instruction`, `group`), `search` (imports `voice`), `models` (imports
     `voice`) and `redact` (imports `config`, `group::NewGroup`) are in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.
 
-`models` stays in `scribe-domain` with the `Models` and `Tasks` ports for now:
-moving the ports into `scribe-core` needs `ask::answer` to move into the use
-cases first. That target and the others still open are listed in the
-four-crate decision.
+`models` stays in `scribe-domain` with the `Models` port until ORB-27911
+step 2 removes scribe's in-process model calls. The other open targets are
+listed in the four-crate decision.
 
 ## Module rules
 
@@ -112,11 +111,11 @@ includes any file added later.
 - `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store`.
 - `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir`); the caller passes resolved roots.
 - The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `annotation`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
-- A port imports none of the modules that call it; the `Models` port does not import `ask`, `memory` or `group`.
+- A port imports none of the modules that call it; the `Models` port does not import `memory` or `group`.
 - In `scribe-store`, `fsio.rs` imports no business module and nothing else from the store. `codec.rs` and `audit.rs` do no file I/O. `archive.rs` reads the file store's archives through `fsio.rs` and reaches their tables through `db/archive.rs`.
 - In `scribe-store`, only `db.rs` and `db/` use `rusqlite` (and `testing.rs`, test support).
-- `app.rs`, `models.rs` with `models/`, `tasks.rs` and `popup.rs` import no `cli`, `commands`, `output` or `audit_middleware`.
-- Only `models.rs` with `models/` (the model transports), `tasks.rs` and `popup.rs` spawn processes; `tasks.rs` only through `models::supervise`.
+- `app.rs`, `models.rs` with `models/` and `popup.rs` import no `cli`, `commands`, `output` or `audit_middleware`.
+- Only `models.rs` with `models/` (the model transports) and `popup.rs` spawn processes.
 - `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.
 - `commands/` writes no file (`std::fs::write`, `create`, `rename`, `remove`, `copy`, `set_permissions`, `OpenOptions`); every write goes through the store.
 - Only `output/` touches stdout or stderr, asks whether a stream is a terminal, or reads the color and format variables.

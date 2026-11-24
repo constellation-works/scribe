@@ -1,6 +1,6 @@
 Search every stored record by words, with no model call
 
-Ranks entries, session headers and segments for words, best first, as question ask ranks them, with no model call.
+Ranks entries, session headers and segments for words, best first, with no model call.
 
 Usage: scribe search [OPTIONS] <TERMS>
 
@@ -60,8 +60,8 @@ Global options:
           Shorthand for --format json
 
 Ranks each entry, each session header and each segment of a session's log
-with BM25, as question ask does, and prints the best first; the user's own
-entries weigh 1.5 times. The CITE column is what question ask would cite:
+with BM25 and prints the best first; the user's own
+entries weigh 1.5 times. The CITE column is the record's cite:
 pass it to entry show or session show. Superseded and retired entries and
 inactive sessions are left out unless --include-hidden.
 

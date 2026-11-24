@@ -86,7 +86,7 @@ printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-domain/src/models.rs"
 expect pass check-dependency-direction.sh "$port" "a port using a lower-level module"
 printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-domain/src/models.rs"
 expect pass check-dependency-direction.sh "$port" "a nested name that is not a caller module"
-for module in ask memory group; do
+for module in memory group; do
   printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-domain/src/models.rs"
   expect fail check-dependency-direction.sh "$port" "a port importing $module"
   printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-domain/src/models.rs"

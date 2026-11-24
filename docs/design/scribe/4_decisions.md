@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, and why scribe is four crates (domain, store, use cases, CLI).
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe is four crates (domain, store, use cases, CLI), and why ask, the Orbit task search and the tmux popup are removed.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911]
 ---
 
 # scribe — Decisions
@@ -132,7 +132,11 @@ The existing 15 are not moved.
 ## ask ranks in memory with no persisted index
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/ask/` (from S5)
+**Code anchors:** `crates/scribe-core/src/ask/` (from S5; now `crates/scribe-domain/src/search.rs`)
+
+> **Superseded in part, 2026-11-24 ([ORB-27911]):** `ask` is removed
+> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). The in-memory BM25 ranking it describes stands as
+> `scribe search`'s.
 
 ### Context
 
@@ -260,6 +264,9 @@ write for an agent to be granted.
 **Recorded:** 2026-11 · [ORB-21747]
 **Code anchors:** `plugin/.orbit-plugin/plugin.yaml` `spec.tools`; `plugin/.orbit-plugin/tests/conformance/` (from S5)
 
+> **Superseded, 2026-11-24 ([ORB-27911]):** `scribe.ask` is removed
+> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); the plugin advertises no tool to agents.
+
 ### Context
 
 Daniel: "I would rather keep mcp surface small for my main agents - they
@@ -325,6 +332,10 @@ ids and credential names come from `config.toml`.
 ## Haiku for capture-side work, a decision model for ask
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+
+> **Superseded in part, 2026-11-24 ([ORB-27911]):** `ask` is removed
+> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). `models.ask` stays only as the group close
+> summary's model until step 2 removes the in-process model calls.
 
 ### Context
 
@@ -1504,6 +1515,9 @@ own.
 
 ## The plugin backend serves `ask` alone until S6
 
+> **Superseded, 2026-11-24 ([ORB-27911]):** `scribe.ask` is removed
+> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); the backend serves the three routine tools.
+
 ### Context
 
 [2_design.md §1](./2_design.md#1-boundary-and-surfaces) asks for
@@ -1535,6 +1549,10 @@ the tree never holds a file named like the binary it runs.
   [the routine tools' deadline](#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call).
 
 ## `ask` reads Orbit tasks through `orbit tool run`
+
+> **Superseded, 2026-11-24 ([ORB-27911]):** scribe no longer reads Orbit
+> tasks ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)): `tasks.rs`, the `Tasks` port and the plugin's
+> `orbit_tools` grant are gone.
 
 ### Context
 
@@ -4860,3 +4878,65 @@ removed. A store whose records never moved is refused, not read.
 - Cost: `scribe export` does not write the archived records, so an export
   of a migrated store stays as it was; reading one takes SQL against
   `scribe.db`.
+
+## ask, the Orbit task search and the tmux popup are removed
+
+**Recorded:** 2026-11-24 · [ORB-27911] · **Daniel's direction**
+**Code anchors:** `crates/scribe/src/commands/mod.rs` `Command`; `crates/scribe-domain/src/search.rs` (the ranking `ask` shared); `plugin/.orbit-plugin/plugin.yaml` `spec.tools`
+
+Supersedes [ask is the only tool advertised to agents](#ask-is-the-only-tool-advertised-to-agents),
+[The plugin backend serves `ask` alone until S6](#the-plugin-backend-serves-ask-alone-until-s6)
+and [`ask` reads Orbit tasks through `orbit tool run`](#ask-reads-orbit-tasks-through-orbit-tool-run),
+and in part [ask ranks in memory with no persisted index](#ask-ranks-in-memory-with-no-persisted-index)
+and [Haiku for capture-side work, a decision model for ask](#haiku-for-capture-side-work-a-decision-model-for-ask).
+
+### Context
+
+Daniel, 2026-11-24, in the chief's chat, as ORB-27911 records his words
+(quoted on ORB-27563):
+
+> "scribe should just be a cli tool, exposing tools for agents to
+> query/update. Any operations that require agent invocations (e.g. session
+> pass; delete \"ask\" entirely, not needed) should be executed as orbit
+> jobs with agent_invoke activities, passing the transcript data or
+> whatever."
+
+> "delete tmux: codebases/scribe/crates/scribe/src/popup.sh,
+> codebases/scribe/crates/scribe/src/popup.rs. this is just bad way to do
+> things"
+
+> "orbit operations codebases/scribe/crates/scribe/src/tasks.rs - why are
+> we searching over orbit tasks?"
+
+> "no, after seeing this mess of raw agent invocations I realized it must
+> be go."
+
+> "can you have capt start deleting agent stuff."
+
+`ask` answered a question with a model call over ranked records and Orbit
+tasks it fetched through `orbit tool run`; the tmux popup browsed the
+store through fzf.
+
+### Decision
+
+Step 1 of ORB-27911 deletes `scribe ask`, `scribe question ask`, the
+answering half of the domain's `ask` module, the `Tasks` port and its
+Orbit adapter (`tasks.rs`), the plugin's `scribe.ask` tool with its
+schemas, `orbit_tools` grant and `task_workspaces` setting, and the tmux
+popup (in its own PR). The ranking `ask` shared with `scribe search`
+moves to `search`, and the code that says whose words an entry holds to
+`voice`, unchanged, so `scribe search` and every other surviving command
+behave as before. Step 2 removes the remaining in-process model calls.
+
+### Consequences
+
+- scribe no longer calls Orbit, and the plugin advertises no tool to
+  agents: agents query the store with the CLI (`search`, `entry`,
+  `session`, `brief`).
+- `[models] ask` stays as the group close summary's model, and
+  `[instructions] ask` is accepted, checked and ignored, so existing
+  `config.toml` files still load; both go with the model config in step 2.
+- Cost: no command answers a question in prose with checked quotes; an
+  agent reads the ranked records `search` returns and writes its own
+  answer. The tests that exercised the ranking's project and topic
+  narrowing through `ask` went with it.

@@ -110,7 +110,7 @@ pub fn stuck(
     for entry in entries {
         if entry.status == EntryStatus::Active
             && tags.action(&entry.tag).is_some()
-            && !crate::ask::is_pass_captured(entry)
+            && !crate::voice::is_pass_captured(entry)
             && now - entry.created >= STUCK_AFTER
             && !pickups.iter().any(|p| p.entry == entry.id)
         {

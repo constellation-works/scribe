@@ -1,10 +1,9 @@
 //! `scribe search`: the store's records ranked for a few words, with no
 //! model and no Orbit call (docs/design/scribe/2_design.md §6.8).
 //!
-//! [`search`] runs `ask`'s retrieval over the records the caller loaded and
-//! stops there: the same units (each entry, each session header and each
-//! segment, §6.7), the same tokenizer, weights and BM25 ranking
-//! ([`crate::ask`]), with no lookup classifier, no tasks and no answer. The
+//! [`search`] ranks the records the caller loaded: the units (each entry,
+//! each session header and each segment, §6.7), the tokenizer
+//! ([`crate::text::tokens`]), the weights and the BM25 ranking below. The
 //! filters narrow the units before ranking; hidden entries and inactive
 //! sessions are ranked either way and kept only when asked for, so the
 //! caller can say how many it left out. Forgotten entries never match.
@@ -17,12 +16,17 @@
 //!
 //! No I/O (STD-02 R5).
 
-use crate::ask::{self, Corpus, Doc, Origin, RecordKind};
-use crate::entry::{Entry, TagName};
+use crate::entry::{ContentFrom, Entry, EntryStatus, Speaker, TagName};
 use crate::message::MessageSearch;
 use crate::record::{Author, DateRange, Project, Topic};
 use crate::session::{Segment, SessionRecord};
-use std::collections::BTreeSet;
+use crate::tag::TagTable;
+use crate::text::tokens;
+use crate::voice::{
+    INSTRUCTION_YOURS, UserName, approved_line, captured_whose, day, instruction_theirs,
+    outcome_text, speaker_of, stated_quote, stated_whose_of, words_label,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use time::OffsetDateTime;
 
@@ -73,7 +77,7 @@ pub struct SearchQuery {
 pub struct Hit {
     /// An entry or a session (its header or one segment).
     pub kind: RecordKind,
-    /// What `ask` would cite: an entry id, `session:<id>` or
+    /// Its cite: an entry id, `session:<id>` or
     /// `session:<id>#<n>`.
     pub cite: String,
     /// The entry's or the session's id.
@@ -126,22 +130,22 @@ pub struct Found {
 ///
 /// [`SearchError::NoTerms`] when the terms hold no word ranking can use.
 pub fn search(query: &SearchQuery, corpus: Corpus<'_>) -> Result<Found, SearchError> {
-    let wanted: BTreeSet<String> = ask::tokens(&query.terms).into_iter().collect();
+    let wanted: BTreeSet<String> = tokens(&query.terms).into_iter().collect();
     if wanted.is_empty() {
         return Err(SearchError::NoTerms(query.terms.clone()));
     }
-    let words = ask::words(&query.terms);
-    let docs = ask::store_docs(
+    let words = words(&query.terms);
+    let docs = store_docs(
         &words,
         corpus,
         |e| keeps_entry(query, e),
         |r, s| keeps_unit(query, r, s),
     );
-    let mut ranked = ask::rank(&words, corpus, docs, &wanted);
+    let mut ranked = rank(&words, corpus, docs, &wanted);
     let hidden_matches = if query.include_hidden {
         0
     } else {
-        ask::hidden_records(&ranked)
+        hidden_records(&ranked)
     };
     ranked.retain(|(_, d)| query.include_hidden || !d.hidden);
     let total = ranked.len();
@@ -171,7 +175,7 @@ pub fn messages(
     found: &MessageSearch,
     sessions: &[SessionRecord],
 ) -> Result<Found, SearchError> {
-    let wanted: BTreeSet<String> = ask::tokens(&query.terms).into_iter().collect();
+    let wanted: BTreeSet<String> = tokens(&query.terms).into_iter().collect();
     if wanted.is_empty() {
         return Err(SearchError::NoTerms(query.terms.clone()));
     }
@@ -285,27 +289,27 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                     ),
                     e.evidence.as_deref().unwrap_or_default()
                 )
-            } else if let (Some(quote), Some(outcome)) = (ask::stated_quote(e), &e.outcome) {
+            } else if let (Some(quote), Some(outcome)) = (stated_quote(e), &e.outcome) {
                 // An entry the pass captured: scribe's statement, the
                 // turn's own words and where it stands (2_design.md §11.6).
                 format!(
                     "{}: {} | {} \"{}\" | outcome: {}",
-                    ask::captured_whose(corpus.user, ask::speaker_of(e)),
+                    captured_whose(corpus.user, speaker_of(e)),
                     snippet(text, wanted),
-                    ask::words_label(corpus.user, ask::speaker_of(e)),
+                    words_label(corpus.user, speaker_of(e)),
                     snippet(quote, wanted),
-                    ask::outcome_text(outcome, corpus.user)
+                    outcome_text(outcome, corpus.user)
                 )
-            } else if let Some(quote) = ask::stated_quote(e) {
+            } else if let Some(quote) = stated_quote(e) {
                 // Scribe's or an agent's statement of the turn, then the
                 // speaker's own words, labelled as theirs
                 // (2_design.md §11.1, §15.3, §16.6).
-                let speaker = ask::speaker_of(e);
+                let speaker = speaker_of(e);
                 format!(
                     "{}: {} | {} \"{}\"",
-                    ask::stated_whose_of(corpus.user, e),
+                    stated_whose_of(corpus.user, e),
                     snippet(text, wanted),
-                    ask::words_label(corpus.user, speaker),
+                    words_label(corpus.user, speaker),
                     snippet(quote, wanted)
                 )
             } else {
@@ -316,7 +320,7 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
             });
             // An approval an agent made on his instruction says so after
             // the snippet, in every output mode (2_design.md §12.3).
-            let snippet = match ask::approved_line(e, ask::INSTRUCTION_YOURS) {
+            let snippet = match approved_line(e, INSTRUCTION_YOURS) {
                 Some(line) => format!("{snippet} | {line}"),
                 None => snippet,
             };
@@ -389,7 +393,6 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 as_of: None,
             })
         }
-        Origin::Task | Origin::Message => None,
     }
 }
 
@@ -407,7 +410,7 @@ pub fn snippet(text: &str, wanted: &BTreeSet<String>) -> String {
     let mut offset = 0usize;
     let mut first = None;
     for word in &words {
-        if ask::tokens(word).iter().any(|t| wanted.contains(t)) {
+        if tokens(word).iter().any(|t| wanted.contains(t)) {
             first = Some(offset);
             break;
         }
@@ -441,4 +444,513 @@ pub fn snippet(text: &str, wanted: &BTreeSet<String>) -> String {
         out.push('…');
     }
     out
+}
+
+// --- ranking (2_design.md §6.2, §6.7) ----------------------------------------
+
+/// Entries are the user's explicit words, so they outrank summaries (§6.2).
+const ENTRY_WEIGHT: f64 = 1.5;
+
+/// An entry in a tag the question names ranks higher again.
+const TAG_BOOST: f64 = 1.5;
+
+/// BM25's term-frequency saturation.
+const BM25_K1: f64 = 1.2;
+
+/// BM25's length normalization.
+const BM25_B: f64 = 0.75;
+
+/// Which record kind a scope keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordKind {
+    /// Entries only.
+    Entry,
+    /// Session records only.
+    Session,
+    /// Stored messages only (`scribe.db`, 2_design.md §15.7).
+    Message,
+}
+
+impl RecordKind {
+    /// The canonical token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "entry",
+            Self::Session => "session",
+            Self::Message => "message",
+        }
+    }
+}
+
+/// The records a search ranks, loaded by the caller.
+#[derive(Clone, Copy, Debug)]
+pub struct Corpus<'a> {
+    /// Every entry, any status.
+    pub entries: &'a [Entry],
+    /// Every session record.
+    pub sessions: &'a [SessionRecord],
+    /// Stored message matches supplied for a group-scoped question.
+    pub messages: &'a [crate::message::MessageMatch],
+    /// The configured tags, for tag words in the question.
+    pub tags: &'a TagTable,
+    /// How evidence labels and answers name the user (`[user] name`).
+    pub user: &'a UserName,
+}
+
+/// The question's words for the lookup classifier: lowercase, split on
+/// anything but letters, digits and `-`.
+pub(crate) fn words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `word` names `project`: the whole slug or its last path segment
+/// (`scribe` names `constellation-works/scribe`). `global` names nothing.
+fn project_named(project: &Project, word: &str) -> bool {
+    let slug = project.as_str().to_lowercase();
+    slug != Project::GLOBAL
+        && word.chars().count() >= 3
+        && (slug == word || slug.rsplit('/').next() == Some(word))
+}
+
+/// Where a ranked unit came from, by index into the [`Corpus`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// `corpus.entries[i]`.
+    Entry(usize),
+    /// The header of `corpus.sessions[i]`.
+    Header(usize),
+    /// Segment `log[j]` of `corpus.sessions[i]`.
+    Segment(usize, usize),
+}
+
+/// A candidate unit, ready to rank: an entry, a session header or segment.
+pub(crate) struct Doc {
+    /// The record it belongs to (a session's units share one), for counting
+    /// hidden matches once per record.
+    pub(crate) record: String,
+    pub(crate) item: EvidenceItem,
+    pub(crate) tokens: Vec<String>,
+    pub(crate) weight: f64,
+    pub(crate) order: u8,
+    pub(crate) at: OffsetDateTime,
+    pub(crate) hidden: bool,
+    pub(crate) origin: Origin,
+}
+
+/// The store's units (§6.2 step 1, §6.7): every entry `keep_entry` accepts
+/// (never a forgotten one), and each session header and segment
+/// `keep_unit` accepts (`None` for the header, the segment otherwise),
+/// weighted by kind; an entry in a tag the `words` name is
+/// boosted.
+pub(crate) fn store_docs(
+    words: &[String],
+    corpus: Corpus<'_>,
+    keep_entry: impl Fn(&Entry) -> bool,
+    keep_unit: impl Fn(&SessionRecord, Option<&Segment>) -> bool,
+) -> Vec<Doc> {
+    let named_tags: Vec<&TagName> = words
+        .iter()
+        .filter_map(|w| corpus.tags.resolve(w).map(|t| &t.name))
+        .collect();
+    let mut docs: Vec<Doc> = Vec::new();
+    for (i, entry) in corpus.entries.iter().enumerate() {
+        if entry.status == EntryStatus::Forgotten || !keep_entry(entry) {
+            continue;
+        }
+        let boost = if named_tags.contains(&&entry.tag) {
+            TAG_BOOST
+        } else {
+            1.0
+        };
+        docs.push(Doc {
+            record: entry.id.to_string(),
+            tokens: tokens(&format!(
+                "{} {} {} {}",
+                entry.content,
+                stated_quote(entry).unwrap_or_default(),
+                entry.said,
+                entry.tag
+            )),
+            weight: if entry.author.kind == crate::AuthorKind::User {
+                ENTRY_WEIGHT * boost
+            } else {
+                boost
+            },
+            order: 0,
+            at: entry.updated,
+            hidden: entry.status.is_hidden(),
+            item: entry_item(entry, corpus.user),
+            origin: Origin::Entry(i),
+        });
+    }
+    for (i, record) in corpus.sessions.iter().enumerate() {
+        let key = format!("session:{}", record.id);
+        if keep_unit(record, None) {
+            docs.push(Doc {
+                record: key.clone(),
+                tokens: tokens(&format!(
+                    "{} {} {} {}",
+                    record.title, record.summary, record.goals, record.next
+                )),
+                weight: 1.0,
+                order: 1,
+                at: record.updated,
+                hidden: !record.active,
+                item: session_item(record, corpus.user),
+                origin: Origin::Header(i),
+            });
+        }
+        for (j, segment) in record.log.iter().enumerate() {
+            if !keep_unit(record, Some(segment)) {
+                continue;
+            }
+            docs.push(Doc {
+                record: key.clone(),
+                tokens: tokens(&format!("{} {}", segment.heading, segment.text)),
+                weight: 1.0,
+                order: 1,
+                at: segment.to,
+                hidden: !record.active,
+                item: segment_item(record, segment),
+                origin: Origin::Segment(i, j),
+            });
+        }
+    }
+    docs
+}
+
+/// Rank `docs` for `query` (§6.2 steps 0 and 3): narrow to a project or
+/// topic the `words` name, score with BM25 times each unit's weight, keep
+/// what scores above zero, best first (entries before sessions before
+/// tasks on a tie, then newest).
+pub(crate) fn rank(
+    words: &[String],
+    corpus: Corpus<'_>,
+    mut docs: Vec<Doc>,
+    query: &BTreeSet<String>,
+) -> Vec<(f64, Doc)> {
+    narrow_docs(words, corpus, &mut docs, query);
+    let scores = bm25(&docs, query);
+    let mut ranked: Vec<(f64, Doc)> = scores
+        .into_iter()
+        .zip(docs)
+        .filter(|(score, _)| *score > 0.0)
+        .collect();
+    ranked.sort_by(|(sa, a), (sb, b)| {
+        sb.total_cmp(sa)
+            .then_with(|| a.order.cmp(&b.order))
+            .then_with(|| b.at.cmp(&a.at))
+    });
+    ranked
+}
+
+/// How many records have a hidden unit among `ranked`, each counted once.
+pub(crate) fn hidden_records(ranked: &[(f64, Doc)]) -> usize {
+    ranked
+        .iter()
+        .filter(|(_, d)| d.hidden)
+        .map(|(_, d)| d.record.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+/// Narrow store records to a project or topic the question names (§6.2
+/// step 0), unless that leaves nothing that matches; tasks are kept.
+fn narrow_docs(
+    words: &[String],
+    corpus: Corpus<'_>,
+    docs: &mut Vec<Doc>,
+    query: &BTreeSet<String>,
+) {
+    let mut named_projects: BTreeSet<String> = BTreeSet::new();
+    let mut named_topics: BTreeSet<String> = BTreeSet::new();
+    let no_topics: &[Topic] = &[];
+    let known = corpus
+        .entries
+        .iter()
+        .map(|e| (&e.project, e.topics.as_slice()))
+        .chain(
+            corpus
+                .sessions
+                .iter()
+                .map(|r| (&r.project, r.topics.as_slice())),
+        )
+        .chain(
+            corpus
+                .sessions
+                .iter()
+                .flat_map(|r| r.log.iter().map(move |s| (&r.project, s.topics.as_slice()))),
+        )
+        // A group-only message has no session record, so `record_meta`
+        // resolves it to its group's project; a message with a record is
+        // already covered by that record.
+        .chain(
+            corpus
+                .messages
+                .iter()
+                .filter(|m| corpus.sessions.iter().all(|r| r.id != m.session))
+                .filter_map(|m| m.group_project.as_ref())
+                .map(|project| (project, no_topics)),
+        );
+    for (project, topics) in known {
+        for w in words {
+            if project_named(project, w) {
+                named_projects.insert(project.as_str().to_owned());
+            }
+            if topics.iter().any(|t| t.as_str() == w) {
+                named_topics.insert(w.clone());
+            }
+        }
+    }
+    if named_projects.is_empty() && named_topics.is_empty() {
+        return;
+    }
+    let keep = |doc: &Doc| -> bool {
+        if doc.order == 2 {
+            return true;
+        }
+        let (project, topics) = record_meta(corpus, &doc.item.cite);
+        project.is_some_and(|p| named_projects.contains(p))
+            || topics.iter().any(|t| named_topics.contains(t.as_str()))
+    };
+    let narrowed: Vec<bool> = docs.iter().map(keep).collect();
+    let any_match = docs
+        .iter()
+        .zip(&narrowed)
+        .any(|(d, k)| *k && d.order != 2 && d.tokens.iter().any(|t| query.contains(t)));
+    if any_match {
+        let mut keep_iter = narrowed.into_iter();
+        docs.retain(|_| keep_iter.next().unwrap_or(true));
+    }
+}
+
+/// The project and topics of the record a cite names. A segment carries the
+/// record's topics and its own.
+fn record_meta<'a>(corpus: Corpus<'a>, cite: &str) -> (Option<&'a str>, Vec<&'a Topic>) {
+    if let Some(rest) = cite.strip_prefix("session:") {
+        let (id, segment) = match rest.split_once('#') {
+            Some((id, n)) => (id, n.parse::<u32>().ok()),
+            None => (rest, None),
+        };
+        if let Some(r) = corpus.sessions.iter().find(|r| r.id.as_str() == id) {
+            let mut topics: Vec<&Topic> = r.topics.as_slice().iter().collect();
+            if let Some(s) = segment.and_then(|n| r.segment(n)) {
+                topics.extend(s.topics.as_slice());
+            }
+            return (Some(r.project.as_str()), topics);
+        }
+        // A group-only message has no catalog record: its group's project
+        // is all it carries (the same one `retrieve` scopes it by).
+        if let Some(project) = corpus
+            .messages
+            .iter()
+            .find(|m| m.session.as_str() == id)
+            .and_then(|m| m.group_project.as_ref())
+        {
+            return (Some(project.as_str()), Vec::new());
+        }
+    } else if let Some(e) = corpus.entries.iter().find(|e| e.id.to_string() == cite) {
+        return (
+            Some(e.project.as_str()),
+            e.topics.as_slice().iter().collect(),
+        );
+    }
+    (None, Vec::new())
+}
+
+/// BM25 scores of `docs` for the `query` tokens, each times its weight.
+fn bm25(docs: &[Doc], query: &BTreeSet<String>) -> Vec<f64> {
+    let n = docs.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let lengths: Vec<f64> = docs.iter().map(|d| count_f64(d.tokens.len())).collect();
+    let average = lengths.iter().sum::<f64>() / count_f64(n);
+    let mut containing: BTreeMap<&str, usize> = BTreeMap::new();
+    for doc in docs {
+        let unique: BTreeSet<&str> = doc.tokens.iter().map(String::as_str).collect();
+        for token in unique {
+            if query.contains(token) {
+                *containing.entry(token).or_default() += 1;
+            }
+        }
+    }
+    docs.iter()
+        .zip(&lengths)
+        .map(|(doc, &len)| {
+            let mut score = 0.0;
+            for token in query {
+                let tf = count_f64(doc.tokens.iter().filter(|t| *t == token).count());
+                if tf == 0.0 {
+                    continue;
+                }
+                let df = count_f64(containing.get(token.as_str()).copied().unwrap_or(0));
+                let idf = ((count_f64(n) - df + 0.5) / (df + 0.5)).ln_1p();
+                let norm = if average > 0.0 { len / average } else { 1.0 };
+                score +=
+                    idf * tf * (BM25_K1 + 1.0) / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * norm));
+            }
+            score * doc.weight
+        })
+        .collect()
+}
+
+/// A count as a float; counts here are far below 2^52.
+#[allow(clippy::cast_precision_loss)]
+fn count_f64(n: usize) -> f64 {
+    n as f64
+}
+
+fn entry_item(entry: &Entry, user: &UserName) -> EvidenceItem {
+    let whose = match &entry.content_from {
+        ContentFrom::Agent => String::from("agent"),
+        ContentFrom::Instruction
+        | ContentFrom::Message {
+            role: Speaker::User,
+            ..
+        } => user.title().to_owned(),
+        ContentFrom::Message {
+            role: Speaker::Assistant,
+            ..
+        } => format!("assistant (recorded by {})", user.noun()),
+    };
+    // A finding is that agent's claim as of its date, with the evidence
+    // pointer it can be checked against — never the user's words. The
+    // pointer rides in `whose` (which the deterministic check copies
+    // into each claim) and in the text a claim may quote.
+    let (whose, text) = if entry.author.kind == crate::AuthorKind::Agent && entry.is_finding() {
+        let evidence = entry.evidence.as_deref().unwrap_or_default();
+        (
+            format!(
+                "agent claim ({}) as of {}; evidence: {}",
+                entry.author.name,
+                entry
+                    .as_of
+                    .map_or_else(|| day(entry.created), crate::record::DateRange::day),
+                evidence
+            ),
+            format!("{}\nEvidence: {}", entry.content, evidence),
+        )
+    } else if let (Some(quote), Some(outcome)) = (stated_quote(entry), &entry.outcome) {
+        // An entry the pass captured: scribe's statement, the turn's own
+        // words, and where it stands (2_design.md §11.6).
+        (
+            captured_whose(user, speaker_of(entry)),
+            format!(
+                "{}\n{} \"{quote}\"\nOutcome: {}",
+                entry.content,
+                words_label(user, speaker_of(entry)),
+                outcome_text(outcome, user)
+            ),
+        )
+    } else if let Some(quote) = stated_quote(entry) {
+        // Scribe's or an agent's statement of the turn, then the speaker's
+        // own words, labelled as theirs (2_design.md §11.1, §15.3, §16.6).
+        let speaker = speaker_of(entry);
+        (
+            stated_whose_of(user, entry),
+            format!(
+                "{}\n{} \"{quote}\"",
+                entry.content,
+                words_label(user, speaker)
+            ),
+        )
+    } else if entry.author.kind == crate::AuthorKind::Agent {
+        (
+            format!(
+                "agent note ({}){}",
+                entry.author.name,
+                entry.handoff_mode.map_or(String::new(), |m| format!(
+                    " [handoff mode: {}]",
+                    m.as_str()
+                ))
+            ),
+            entry.content.clone(),
+        )
+    } else {
+        (whose, entry.content.clone())
+    };
+    EvidenceItem {
+        cite: entry.id.to_string(),
+        kind: "entry",
+        whose,
+        status: entry.status.as_str().to_owned(),
+        date: day(entry.created),
+        text,
+        quote: stated_quote(entry).map(str::to_owned),
+        approval: approved_line(entry, &instruction_theirs(user)),
+    }
+}
+
+/// A session's header as evidence, cited `session:<id>`.
+fn session_item(record: &SessionRecord, user: &UserName) -> EvidenceItem {
+    let mut text = format!(
+        "{}\n## Summary\n{}\n## Goals\n{}\n## Next\n{}",
+        record.title, record.summary, record.goals, record.next
+    );
+    for term in &record.terms {
+        text.push_str(&format!(
+            "\nterm \"{}\", defined by {}: \"{}\"",
+            term.term,
+            user.noun(),
+            term.said
+        ));
+    }
+    EvidenceItem {
+        cite: format!("session:{}", record.id),
+        kind: "session",
+        whose: "session summary".to_owned(),
+        status: record.status.as_str().to_owned(),
+        date: day(record.updated),
+        text,
+        quote: None,
+        approval: None,
+    }
+}
+
+/// One segment of a session's log as evidence, cited `session:<id>#<n>`:
+/// a claim citing it is checked against its heading and text alone.
+fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
+    EvidenceItem {
+        cite: format!("session:{}#{}", record.id, segment.n),
+        kind: "session",
+        whose: "session summary".to_owned(),
+        status: record.status.as_str().to_owned(),
+        date: day(segment.to),
+        text: format!("{}\n{}", segment.heading, segment.text),
+        quote: None,
+        approval: None,
+    }
+}
+
+/// One ranked unit's text and labels: what a hit's cite, snippet and
+/// attribution are read from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceItem {
+    /// Its cite: an entry id, `session:<id>` or `session:<id>#<n>`.
+    pub cite: String,
+    /// `entry` or `session`.
+    pub kind: &'static str,
+    /// Whose words the text is: the user, `assistant (recorded by the user)`,
+    /// `session summary` or `Orbit task`.
+    pub whose: String,
+    /// The record's status (`active`, `superseded`, `open`, `done`, ...).
+    pub status: String,
+    /// When it was recorded or last changed, `YYYY-MM-DD`.
+    pub date: String,
+    /// The text a claim may quote.
+    pub text: String,
+    /// The user's verbatim words within `text`, for an entry whose content is
+    /// scribe's statement of their turn (2_design.md §11.1): a claim is his
+    /// only when its quote lies within these. `None` for every other item.
+    pub quote: Option<String>,
+    /// For an entry an agent approved on the user's checked instruction, the
+    /// approved-by line (2_design.md §12.3); `None` otherwise. It sits
+    /// outside `text`, so no claim can quote it as the entry's words.
+    pub approval: Option<String>,
 }

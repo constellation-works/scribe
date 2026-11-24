@@ -30,7 +30,7 @@ fn message(session: &str, id: &str, text: &str) -> NewMessage {
 }
 
 fn tokens(text: &str) -> Vec<String> {
-    crate::ask::tokens(text)
+    crate::text::tokens(text)
 }
 
 fn rows(conn: &rusqlite::Connection, query: &str) -> Vec<Vec<rusqlite::types::Value>> {

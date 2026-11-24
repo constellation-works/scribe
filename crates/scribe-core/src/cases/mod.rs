@@ -14,7 +14,6 @@
 //! (scripts/check-dependency-direction.sh).
 
 pub mod annotation;
-pub mod ask;
 pub mod audit;
 pub mod brief;
 pub mod catalog;

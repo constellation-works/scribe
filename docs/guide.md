@@ -34,9 +34,9 @@ due, and proposes unmarked preferences and standards from your own turns.
 turns. `#scribe approve <id>` creates the entry as yours, citing the original
 turn. `#scribe reject <id>` closes it for good.
 
-`scribe question ask` answers from the records and quotes each one it cites.
-The Orbit plugin serves the same answer to agents as `scribe.ask`
-([install](../plugin/.orbit-plugin/README.md)). `scribe consistency scan`
+`scribe search` finds records by their words, with no model call. The Orbit
+plugin runs the routines ([install](../plugin/.orbit-plugin/README.md)).
+`scribe consistency scan`
 proposes superseding an entry a later one replaced, and retiring an entry due
 for review. You settle each with `#scribe approve <id>` or `#scribe reject <id>`.
 `#scribe retire <id>` hides an entry and keeps its text. `#scribe forget <id>`
@@ -58,8 +58,7 @@ written at once, and how many claims may wait open. `preferences` and
 Action tags hold work for a consumer outside scribe. `standard` ships, and
 config may mark another tag the same way. Agents write them with `entry add`,
 and consumers read them with `entry list --tag <tag> --after <time> --window`
-and note what they did with `entry pickup`. `question ask` leaves them out
-unless the question names their tag. The rules are
+and note what they did with `entry pickup`. The rules are
 [2_design.md §4.6](design/scribe/2_design.md#46-action-tags) and the
 [skill](../skills/scribe/SKILL.md).
 
@@ -122,8 +121,6 @@ scribe memory refresh
 scribe search "merge policy" --kind session --since 2026-11-01
 scribe search "merge queue" --kind message
 scribe consistency scan --json
-scribe question ask "how do we merge agent PRs?"
-scribe question ask "preferences this week" --json
 scribe --provider codex transcript list --since 2026-10-01 --min-turns 1 --json
 scribe --provider codex transcript show <id> --json
 ```
@@ -201,12 +198,7 @@ The manual-link row reports the hook process exit and its audited refusal code.
   `entry add --tag preferences --related session:abcd` succeeds on a store with
   no session `abcd`, because the session may never have been cataloged.
 
-`scribe question ask "can you fetch me last session summary?"` is a lookup: it
-returns the stored record and does not call a model. Anything that is not a
-lookup is answered by the configured ask model, and every quote is checked
-against the record it cites.
-
-An agent's own notes have no typed-turn citation. `ask` labels them
+An agent's own notes have no typed-turn citation. `scribe search` labels them
 `agent note (<name>)`. Repeating an unchanged write prints the record with
 `nothing changed` on stderr and writes no audit event. Only on your checked
 instruction (`--session` and `--instruction`, a turn you typed in the last 30

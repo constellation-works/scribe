@@ -67,10 +67,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("tag-list", &["tag", "list", "--help"]),
     ("tag-show", &["tag", "show", "--help"]),
     ("brief", &["brief", "--help"]),
-    // The two ask paths share long help. Pin this path's short form.
-    ("ask", &["ask", "-h"]),
-    ("question", &["question", "--help"]),
-    ("question-ask", &["question", "ask", "--help"]),
     ("search", &["search", "--help"]),
     ("transcript", &["transcript", "--help"]),
     ("transcript-list", &["transcript", "list", "--help"]),
@@ -157,11 +153,6 @@ const OUTPUT: &[(&str, &[&str])] = &[
     ("tag-list", &["tag", "list"]),
     // Capture rules, each field with its origin: all shipped here.
     ("tag-show", &["tag", "show", "preferences"]),
-    // A lookup: answered from the store, with no model call.
-    (
-        "question-ask",
-        &["question", "ask", "can you fetch me last session summary?"],
-    ),
 ];
 
 const MODES: &[(&str, &[&str])] = &[
@@ -1143,44 +1134,15 @@ fn brief_matches_goldens() {
 #[test]
 fn stated_claims_match_goldens() {
     let fx = stated_fixture();
-    // `ask` with a fake `claude`: one claim quotes Daniel's words, one
-    // quotes scribe's statement; the check labels each by whose words the
-    // quote is (2_design.md §6.4, §11.1).
-    let answer = json!({
-        "status": "answered",
-        "answer": "The user said session records keep an append-only log.",
-        "claims": [
-            {"text": "his words", "quote": "keep the whole history in an append-only log", "cite": "preferences-2"},
-            {"text": "the statement", "quote": "session records keep the whole session's history", "cite": "preferences-2"}
-        ],
-        "conflicts": []
-    });
-    let reply = fx.elsewhere("claude-reply.json");
-    std::fs::write(
-        &reply,
-        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
-            .to_string(),
-    )
-    .unwrap();
-    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
-    let path = fx.fake_program("claude", &script);
     let commands: &[(&str, &[&str])] = &[
         ("entry-show-stated", &["entry", "show", "preferences-2"]),
         ("proposal-list-stated", &["proposal", "list"]),
         ("search-stated", &["search", "append-only log history"]),
-        (
-            "question-ask-stated",
-            &[
-                "question",
-                "ask",
-                "how should session records keep their history?",
-            ],
-        ),
     ];
     let mut failures = Vec::new();
     for (name, args) in commands {
         for (suffix, mode) in MODES {
-            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", Some(&path));
+            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", None);
             assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
             failures.extend(check(
                 &format!("output/{name}.{suffix}"),
@@ -1255,52 +1217,6 @@ fn only_an_instructed_approval_carries_the_approved_by_line() {
             "{rejected}"
         );
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn ask_evidence_names_an_instructed_approval_outside_the_quotable_text() {
-    let fx = instructed_fixture();
-    let answer = json!({"status":"no_record", "answer":"", "claims":[], "conflicts":[]});
-    let reply = fx.elsewhere("claude-reply.json");
-    std::fs::write(
-        &reply,
-        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
-            .to_string(),
-    )
-    .unwrap();
-    let prompt = fx.elsewhere("prompt.txt");
-    let script = format!(
-        "#!/bin/sh\ncat > '{}'\ncat '{}'\n",
-        prompt.display(),
-        reply.display()
-    );
-    let path = fx.fake_program("claude", &script);
-    let out = run_with_input(
-        &fx,
-        &[
-            "question",
-            "ask",
-            "how should session records keep their history?",
-        ],
-        b"",
-        Some(&path),
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let prompt = std::fs::read_to_string(&prompt).unwrap();
-    let item = prompt
-        .split("<evidence ")
-        .find(|item| item.contains("cite=\"preferences-2\""))
-        .unwrap_or_else(|| panic!("{prompt}"));
-    let line = format!(
-        "<approval>approved by opus on the user's instruction \"{INSTRUCTED_WORDS}\" ({INSTRUCTED_SESSION}, 2026-11-15)</approval>\n</evidence>"
-    );
-    assert!(item.contains(&line), "{item}");
-    // It is still his entry, weighted as his words.
-    assert!(
-        item.contains("words=\"scribe's statement of the user's turn\""),
-        "{item}"
-    );
 }
 
 /// Daniel's turn the captured-idea goldens quote, verbatim.
@@ -1401,47 +1317,15 @@ fn captured_fixture() -> Fixture {
 #[test]
 fn captured_ideas_match_goldens() {
     let fx = captured_fixture();
-    // `ask --tag idea` with a fake `claude`: one claim quotes Daniel's words
-    // in the captured idea, one its statement, one the idea he typed; the
-    // check labels each (2_design.md §6.4, §11.6).
-    let answer = json!({
-        "status": "answered",
-        "answer": "The user floated a per-host routing cache and a dry-run flag.",
-        "claims": [
-            {"text": "his words", "quote": "what if we cached the routing table per host?", "cite": "idea-1"},
-            {"text": "the statement", "quote": "caching the routing table per host", "cite": "idea-1"},
-            {"text": "typed", "quote": "a dry-run flag for the session pass", "cite": "idea-2"}
-        ],
-        "conflicts": []
-    });
-    let reply = fx.elsewhere("claude-reply.json");
-    std::fs::write(
-        &reply,
-        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
-            .to_string(),
-    )
-    .unwrap();
-    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
-    let path = fx.fake_program("claude", &script);
     let commands: &[(&str, &[&str])] = &[
         ("entry-show-captured", &["entry", "show", "idea-1"]),
         ("entry-show-typed-idea", &["entry", "show", "idea-2"]),
         ("search-captured", &["search", "routing table per host"]),
-        (
-            "question-ask-captured",
-            &[
-                "question",
-                "ask",
-                "what ideas did I have for routing?",
-                "--tag",
-                "idea",
-            ],
-        ),
     ];
     let mut failures = Vec::new();
     for (name, args) in commands {
         for (suffix, mode) in MODES {
-            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", Some(&path));
+            let out = run_with_input(&fx, &[*args, *mode].concat(), b"", None);
             assert_eq!(out.status.code(), Some(0), "{name}: {}", text(&out.stderr));
             failures.extend(check(
                 &format!("output/{name}.{suffix}"),
@@ -1450,37 +1334,6 @@ fn captured_ideas_match_goldens() {
         }
     }
     report(&failures);
-
-    // Whatever the goldens say, the labels hold: Daniel's words captured by
-    // the pass, scribe's statement, and Daniel's own typed idea.
-    let out = run_with_input(
-        &fx,
-        &[
-            "question",
-            "ask",
-            "what ideas did I have for routing?",
-            "--tag",
-            "idea",
-            "--json",
-        ],
-        b"",
-        Some(&path),
-    );
-    let asked: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let labels: Vec<&str> = asked["claims"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["text"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        labels,
-        [
-            "The user (captured by the session pass)",
-            "scribe's statement of the user's turn, captured by the session pass (not typed by the user)",
-            "The user"
-        ]
-    );
 }
 
 /// `out` with an action entry's age, which moves with the clock, masked as

@@ -1,8 +1,8 @@
 # scribe's Orbit plugin (docs/design/scribe/2_design.md §1). The backend is
 # the installed `scribe` binary, run as `scribe plugin call`; this tree holds
-# no code of its own. `scribe.ask` is the one tool agents see: the three
-# routine tools are `mutating`, not agent-callable and `mcp_scope: none`, the
-# three routines ship `enabled: false`, and tests/conformance.rs (run by
+# no code of its own. No tool is advertised to agents: the three routine
+# tools are `mutating`, not agent-callable and `mcp_scope: none`, the three
+# routines ship `enabled: false`, and tests/conformance.rs (run by
 # `cargo test`) keeps it that way.
 schemaVersion: 2
 kind: Plugin
@@ -10,22 +10,21 @@ metadata:
   name: scribe
   version: 0.3.0
   description: >-
-    The user's explicitly recorded preferences and the records of
-    the sessions they cataloged, answered with verbatim citations.
+    The routine jobs that keep the user's scribe store current: session
+    passes, the consistency scan and the memory refresh.
   homepage: https://github.com/constellation-works/scribe
 spec:
   requires:
     orbit: ">=0.40.0 <1.0.0"
     host_api: 1
     platforms: [linux, macos]
-    # `scribe` is installed with `make install`; `claude` answers questions.
+    # `scribe` is installed with `make install`; `claude` runs the models.
     programs: [scribe, claude]
 
   backend:
     type: exec
     command: bin/scribe-plugin
-    # The cap. ask: up to 30 s of Orbit task reads, then a 90 s model
-    # budget. session-pass starts no session after 50 s, and one session is
+    # The cap. session-pass starts no session after 50 s, and one session is
     # at most two 121 s asks; consistency-scan starts no batch after 170 s,
     # and one batch is at most 121 s; memory-refresh is one 120 s call.
     timeout_ms: 300000
@@ -33,19 +32,17 @@ spec:
 
   permissions:
     fs:
-      # The store, which ask only reads and the routine tools write; and
+      # The store, which the routine tools write; and
       # Claude Code's transcripts, which session-pass reads.
       read: ["{{config.root}}", "{{config.transcripts}}", "{{config.codex_home}}"]
       write: ["{{config.root}}", "{{plugin_state}}"]
-    # The ask, session, consistency and profile models, through the claude CLI.
+    # The session, consistency and profile models, through the claude CLI.
     network: any
     # The model credential names config.toml lists by default (§8). A
     # `[redact] env` name in the store's config.toml must be added here
     # too: without a value in the routine's environment, the mutating
     # routine tools refuse (redact_env_unset) rather than write unmasked.
     env_pass: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY]
-    # Read-only task evidence for ask.
-    orbit_tools: [orbit.search, orbit.task.show]
 
   config:
     schema: schemas/config.json
@@ -62,25 +59,8 @@ spec:
       transcripts: ""
       # Optional Codex provider state: active/archive rollouts and existing auth.
       codex_home: ""
-      task_workspaces: []
 
   tools:
-    - name: ask
-      description: >-
-        Answer a question about what the user decided, prefers or did, from their
-        #scribe entries, the session records they turned on with /scribe on, and
-        Orbit tasks. Every claim carries a quote checked verbatim against the
-        record it cites; claims that fail are dropped and counted, two
-        disagreeing records come back as a conflict with both cites, and
-        nothing recorded is `no_record`. Lookups (the last session, a named
-        session, open next steps, a tag's entries this week, a term the user
-        defined, the last on-call session for a workspace) return the stored
-        records verbatim with status `record`. Writes nothing.
-      execution_kind: read_only
-      mcp_scope: global
-      input_schema: { $ref: schemas/ask.input.json }
-      output_schema: { $ref: schemas/ask.output.json }
-
     - name: session-pass
       description: >-
         The scribe-session-pass routine's job: write the record of each

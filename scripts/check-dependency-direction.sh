@@ -154,7 +154,7 @@ DOMAIN_RINGS='
 base:       record text verbatim provider origin
 records:    session activity control entry handoff tag proposal
 transcript: transcript
-rules:      trigger voice claim brief capture ask consistency pass instruction models config error checks search group memory message action annotation redact
+rules:      trigger voice claim brief capture consistency pass instruction models config error checks search group memory message action annotation redact
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -220,13 +220,13 @@ for path in config.rs annotation.rs consistency.rs instruction.rs memory message
   ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "domain/$path must not depend on pass"
 done
 # The Models port must not import its callers.
-ban "$DOMAIN/models.rs" 'crate::(ask|memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
+ban "$DOMAIN/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
 # A grouped crate import can name a caller without spelling crate::caller.
 port_grouped=$(perl -0777 -ne '
   while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?crate::\{([^;]*)\};/mg) {
     my ($stmt, $group, $at) = ($&, $1, $-[0]);
     1 while $group =~ s/\{[^{}]*\}//g;
-    next unless $group =~ /(?<![A-Za-z0-9_:])(?:ask|memory|group)(?![A-Za-z0-9_])/;
+    next unless $group =~ /(?<![A-Za-z0-9_:])(?:memory|group)(?![A-Za-z0-9_])/;
     my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
     $stmt =~ s/\s+/ /g;
     print "$ARGV:$line:$stmt\n";
@@ -262,20 +262,17 @@ ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (co
 # The model adapter is composed by app.rs and knows nothing of the surface (R2).
 ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
 ban "$CLI/models" 'crate::(cli|commands|output|audit_middleware)' "model transport modules must not import surface modules"
-# So is the Orbit task adapter, which reuses the model adapter's supervisor.
-ban "$CLI/tasks.rs"  'crate::(cli|commands|output|audit_middleware)' "tasks.rs (the Orbit task adapter) must not import surface modules"
 # The popup adapter is composed by commands/tmux.rs and knows nothing of the surface.
 ban "$CLI/popup.rs"  'crate::(cli|commands|output|audit_middleware)' "popup.rs (the tmux popup adapter) must not import surface modules"
-# Two adapters spawn supervised processes, and both go through models.rs's
+# The model adapter spawns supervised processes through models.rs's
 # supervisor, so process-group supervision, the cleared environment and the
-# budget live in one place (STD-03 R11-R15, STD-05 R10). The third, popup.rs,
-# runs the interactive popup, which owns the terminal and so cannot be
-# supervised that way (decision: the tmux popup).
+# budget live in one place (STD-03 R11-R15, STD-05 R10). popup.rs runs the
+# interactive popup, which owns the terminal and so cannot be supervised
+# that way (decision: the tmux popup).
 for path in "$CLI"/*; do
-  case "$(basename "$path")" in models.rs | models | tasks.rs | popup.rs | tests) continue ;; esac
-  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs, tasks.rs and popup.rs spawn processes: reach a model through the Models port, Orbit through the Tasks port, the popup through popup.rs"
+  case "$(basename "$path")" in models.rs | models | popup.rs | tests) continue ;; esac
+  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs and popup.rs spawn processes: reach a model through the Models port, the popup through popup.rs"
 done
-ban "$CLI/tasks.rs" 'process::Child|\.spawn\(' "tasks.rs runs children only through models::supervise"
 
 # Rendering is derived from payloads only; it never reaches back up (R1).
 ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output must not import app, cli, commands or audit_middleware"

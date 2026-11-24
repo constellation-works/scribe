@@ -164,9 +164,9 @@ fn ordered<'a>(a: &'a Entry, b: &'a Entry) -> (&'a Entry, &'a Entry) {
     if key(a) <= key(b) { (a, b) } else { (b, a) }
 }
 
-/// The distinct content tokens of an entry, as `ask` ranks them.
+/// The distinct content tokens of an entry, as search ranks them.
 fn token_set(entry: &Entry) -> BTreeSet<String> {
-    crate::ask::tokens(&entry.content).into_iter().collect()
+    crate::text::tokens(&entry.content).into_iter().collect()
 }
 
 /// Whether two token sets overlap by at least [`JACCARD`].
@@ -935,7 +935,7 @@ pub fn removal_candidates(
         .into_iter()
         .filter(|l| has_removal_cue(&l.text))
         .map(|l| {
-            let tokens = crate::ask::tokens(&l.text).into_iter().collect();
+            let tokens = crate::text::tokens(&l.text).into_iter().collect();
             (l, tokens)
         })
         .collect();
@@ -943,7 +943,7 @@ pub fn removal_candidates(
     for s in sessions.iter().filter(|s| s.active && !s.keep_active) {
         let last = activity::last_message(s);
         let header = header_text(s);
-        let s_tokens: BTreeSet<String> = crate::ask::tokens(&header).into_iter().collect();
+        let s_tokens: BTreeSet<String> = crate::text::tokens(&header).into_iter().collect();
         let s_topics: Vec<String> = s
             .topics
             .as_slice()

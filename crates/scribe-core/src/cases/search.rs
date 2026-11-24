@@ -2,10 +2,10 @@
 //! sessions and, for `--kind message` or a default search that finds
 //! nothing else, the stored messages (2_design.md §15.2).
 
-use crate::ask::{Corpus, RecordKind};
 use crate::cases::Ctx;
 use crate::cases::read_error::ReadError;
 use crate::search::{self, Found, SearchError, SearchQuery};
+use crate::search::{Corpus, RecordKind};
 use crate::{EntryFilter, SessionFilter, Skipped};
 
 /// What `search` found.
@@ -61,7 +61,7 @@ pub fn run<E>(
     // The stored messages `query` keeps, and whether the store was opened as
     // a read-only copy.
     let stored_messages = |query: &SearchQuery| -> Result<(Found, bool), ReadError<E>> {
-        let tokens = crate::ask::tokens(&query.terms);
+        let tokens = crate::text::tokens(&query.terms);
         let stored = match &group {
             Some(group) => store.read().groups().search_messages(&group.id, &tokens)?,
             None => store.read().messages().search(&tokens)?,

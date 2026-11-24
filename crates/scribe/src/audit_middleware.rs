@@ -416,12 +416,8 @@ fn target_of(output: &Output) -> Option<String> {
         // Hook replies, passes and scans are audited per outcome in
         // `mark_result`.
         Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
-        // Read-only: never audited (`question ask`, `plugin call`).
-        Output::Ask(_)
-        | Output::Plugin(_)
-        | Output::Popup
-        | Output::PopupRows(_)
-        | Output::PopupPreview(_) => None,
+        // Read-only: never audited (`plugin call`).
+        Output::Plugin(_) | Output::Popup | Output::PopupRows(_) | Output::PopupPreview(_) => None,
     }
 }
 

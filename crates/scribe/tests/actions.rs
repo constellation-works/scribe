@@ -1270,63 +1270,6 @@ fn spoken_instruction_entry_labels_statement_as_agents_and_ask_cites_like_marked
         snippet.contains(&format!("The user's words: \"{quote}\"")),
         "{snippet}"
     );
-
-    // `question ask` sends the evidence labelled like marked entries and attributes
-    // quotes from `quote` to the user and quotes from `content` to the agent's statement.
-    let reply = json!({
-        "status": "answered",
-        "answer": "The user wants short progress updates.",
-        "claims": [
-            {
-                "text": "agent statement",
-                "quote": "concise progress updates during long runs",
-                "cite": "preferences-1"
-            },
-            {
-                "text": "user words",
-                "quote": "always keep progress updates short during long runs",
-                "cite": "preferences-1"
-            }
-        ],
-        "conflicts": []
-    });
-    let fake_claude = fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\ncat > \"$HOME/ask-stdin\"\nprintf '{{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}}\\n' '{}'\n",
-            reply
-        ),
-    );
-    let mut cmd = fx.cmd(&[
-        "question",
-        "ask",
-        "how should progress updates look during long runs?",
-        "--json",
-    ]);
-    cmd.env("PATH", &fake_claude);
-    let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let asked = json_of(&out);
-    assert_eq!(asked["status"], "answered", "{asked}");
-    assert_eq!(
-        asked["claims"][0]["text"],
-        "agent (opus)'s statement of the user's turn"
-    );
-    assert_eq!(asked["claims"][1]["text"], "The user");
-    assert_eq!(
-        asked["answer"],
-        "agent (opus)'s statement of the user's turn: \"concise progress updates during long runs\" [preferences-1]\n\
-         The user: \"always keep progress updates short during long runs\" [preferences-1]"
-    );
-    let prompt = std::fs::read_to_string(fx.home().join("ask-stdin")).unwrap();
-    assert!(
-        prompt.contains("words=\"agent (opus)'s statement of the user's turn\""),
-        "{prompt}"
-    );
-    assert!(
-        prompt.contains(&format!("The user's words: \"{quote}\"")),
-        "{prompt}"
-    );
 }
 
 #[test]

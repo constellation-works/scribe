@@ -1,4 +1,0 @@
-answered	The user (captured by the session pass): "what if we cached the routing table per host?" [idea-1] scribe's statement of the user's turn, captured by the session pass (not typed by the user): "caching the routing table per host" [idea-1] The user: "a dry-run flag for the session pass" [idea-2]
-claim	idea-1	what if we cached the routing table per host?	The user (captured by the session pass)
-claim	idea-1	caching the routing table per host	scribe's statement of the user's turn, captured by the session pass (not typed by the user)
-claim	idea-2	a dry-run flag for the session pass	The user

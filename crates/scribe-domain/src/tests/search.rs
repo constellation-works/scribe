@@ -1,13 +1,13 @@
-//! `scribe search` over fixture records (2_design.md §6.8): `ask`'s units,
+//! `scribe search` over fixture records (2_design.md §6.8): the units,
 //! weights and filters, no model and no tasks.
 
 use super::{T0, entry, segment, session};
-use crate::ask::{Corpus, RecordKind};
 use crate::entry::{Entry, EntryStatus};
 use crate::record::{Author, DateRange};
-use crate::search::{self, SNIPPET_CHARS, SearchError, SearchQuery};
+use crate::search::{self, Corpus, RecordKind, SNIPPET_CHARS, SearchError, SearchQuery};
 use crate::session::{SegmentState, SessionRecord};
 use crate::tag::TagTable;
+use crate::text::tokens;
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use time::Duration;
@@ -200,7 +200,7 @@ fn terms_with_no_searchable_word_are_refused() {
 
 #[test]
 fn a_snippet_is_bounded_and_starts_near_the_first_match() {
-    let wanted: BTreeSet<String> = crate::ask::tokens("needle").into_iter().collect();
+    let wanted: BTreeSet<String> = crate::text::tokens("needle").into_iter().collect();
     let long = format!("{} needle {}", "word ".repeat(200), "tail ".repeat(200));
     let snip = search::snippet(&long, &wanted);
     assert!(
@@ -267,5 +267,17 @@ fn spoken_instruction_entry_snippet_labels_agents_statement_and_users_words() {
         format!(
             "agent (opus)'s statement of the user's turn: {statement} | The user's words: \"{quote}\""
         )
+    );
+}
+
+#[test]
+fn tokens_drop_stopwords_and_short_words_and_strip_suffixes() {
+    assert_eq!(
+        tokens("What did we decide about merging the PRs?"),
+        vec!["decid", "merg", "prs"]
+    );
+    assert_eq!(
+        tokens("release releases released releasing class classes"),
+        vec!["releas", "releas", "releas", "releas", "class", "class"]
     );
 }

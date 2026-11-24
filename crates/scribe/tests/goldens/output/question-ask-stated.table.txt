@@ -1,8 +1,0 @@
-status      answered
-answer      The user: "keep the whole history in an append-only log" [preferences-2]
-            scribe's statement of the user's turn: "session records keep the whole session's history" [preferences-2]
-lookup      -
-evidence    6 considered, 0 quotes dropped, 0 hidden matches
-claims      The user "keep the whole history in an append-only log" [preferences-2]
-            scribe's statement of the user's turn "session records keep the whole session's history" [preferences-2]
-conflicts   -

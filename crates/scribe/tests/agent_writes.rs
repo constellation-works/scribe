@@ -1480,43 +1480,4 @@ fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_
     assert_eq!(finding_hit["hits"][0]["evidence"], "exp-99");
     let remind_hit = json(&fx.ok(&["search", "widget cache warmup", "--json"]).stdout);
     assert_eq!(remind_hit["hits"][0]["id"], "remind-1");
-
-    let claude = "#!/bin/sh\n\
-        cat > \"$HOME/claude-stdin\"\n\
-        printf '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}\\n' \"$(cat \"$HOME/claude-answer.json\")\"\n";
-    let path = fx.fake_program("claude", claude);
-    std::fs::write(
-        fx.home().join("claude-answer.json"),
-        serde_json::json!({
-            "status": "answered",
-            "answer": "Reviewer mix gap was observed and cache warmup check remains.",
-            "claims": [
-                {"text": "opus claimed 44% vs 67%", "quote": "Observed 44% against 67% on the reviewer mix", "cite": "finding-1"},
-                {"text": "check widget cache warmup", "quote": "Re-check the widget cache warmup after deploy", "cite": "remind-1"}
-            ],
-            "conflicts": []
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let out = fx
-        .cmd(&[
-            "question",
-            "ask",
-            "what about reviewer mix and widget cache",
-            "--json",
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let asked = json(&out.stdout);
-    assert_eq!(asked["status"], "answered");
-    let cites: Vec<&str> = asked["claims"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["cite"].as_str().unwrap())
-        .collect();
-    assert_eq!(cites, ["finding-1", "remind-1"]);
 }

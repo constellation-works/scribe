@@ -710,27 +710,6 @@ fn instructed_retire_hides_daniels_entry_and_keeps_its_text() {
     assert!(!ids.contains(&"preferences-1"), "{ids:?}");
     assert!(ids.contains(&"decisions-2"), "{ids:?}");
 
-    // `ask` hands the model the active decision, never the retired one.
-    let claude = "#!/bin/sh\n\
-        cat > \"$HOME/claude-stdin\"\n\
-        printf '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":{\"status\":\"no_record\",\"answer\":\"\",\"claims\":[],\"conflicts\":[]}}\\n'\n";
-    let path = fx.fake_program("claude", claude);
-    let out = fx
-        .cmd(&[
-            "question",
-            "ask",
-            "how should commit subjects read and how do we merge agent PRs",
-            "--json",
-        ])
-        .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
-        .env("PATH", &path)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let prompt = std::fs::read_to_string(fx.home().join("claude-stdin")).unwrap();
-    assert!(prompt.contains("squash-merge agent PRs"), "{prompt}");
-    assert!(!prompt.contains(PREFERENCE), "{prompt}");
-
     let lines = audit_lines(&fx, "entry retire");
     assert_eq!(lines.len(), 2, "one refusal and one change: {lines:?}");
     assert_eq!(lines[0]["error_code"], "user_only");
