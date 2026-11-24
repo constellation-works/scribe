@@ -140,8 +140,11 @@ ORB-27707 where an import forces it:
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.
 
-`models` stays in `scribe-domain` with the `Models` port until ORB-27911
-step 2 removes scribe's in-process model calls. The other open targets are
+The model request and answer shapes (`models`) stay in `scribe-domain` until
+the domain is dissolved (ORB-27921 step 5): `scribe-store` and the domain use
+them. The `Models` port, `ModelError` and the `claude` and `codex` adapters
+live in `scribe-core/src/providers/` until ORB-27911 removes scribe's
+in-process model calls. The other open targets are
 listed in the four-crate decision.
 
 ## Module rules
@@ -150,14 +153,15 @@ Checked by grep over non-test sources in `scripts/check-dependency-direction.sh`
 and `scripts/check-terminal-guard.sh`: what a crate edge cannot express. "Module"
 includes any file added later.
 
-- `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store`.
-- `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir`); the caller passes resolved roots.
+- `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store`. The one exception is `scribe-core`'s `providers/`, which spawns the model processes (`std::process`).
+- `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots.
 - The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `annotation`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
-- A port imports none of the modules that call it; the `Models` port does not import `memory` or `group`.
+- A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
+- Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `fsio.rs` imports no business module and nothing else from the store. `codec.rs` and `audit.rs` do no file I/O. `archive.rs` reads the file store's archives through `fsio.rs` and reaches their tables through `db/archive.rs`.
 - In `scribe-store`, only `db.rs` and `db/` use `rusqlite` (and `testing.rs`, test support).
-- `app.rs` and `models.rs` with `models/` import no `cli`, `commands`, `output` or `audit_middleware`.
-- Only `models.rs` with `models/` (the model transports) spawns processes.
+- `app.rs` imports no `cli`, `commands`, `output` or `audit_middleware`.
+- The binary spawns no process: `scribe-core`'s `providers/` (the model transports) does.
 - `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.
 - `commands/` writes no file (`std::fs::write`, `create`, `rename`, `remove`, `copy`, `set_permissions`, `OpenOptions`); every write goes through the store.
 - Only `output/` touches stdout or stderr, asks whether a stream is a terminal, or reads the color and format variables.
@@ -166,5 +170,5 @@ The crate edges replaced these grep rules:
 
 - business modules name no store and no use case;
 - the store names no use case;
-- `tempfile` and `rustix` stay out of the business modules;
+- `tempfile` and `rustix` stay out of the domain (the core's `providers/` uses them for the model processes);
 - `rusqlite` stays out of the domain, the use cases and the CLI.

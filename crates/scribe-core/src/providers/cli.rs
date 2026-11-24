@@ -23,16 +23,17 @@
 //!   (R14): the leader's exit is observed with `waitid(WNOWAIT)`, which
 //!   leaves it waitable.
 //!
-//! The adapter spawns processes, so it lives in the CLI crate and the core
-//! stays free of `std::process` (ARCHITECTURE.md).
+//! The adapter spawns processes, so it lives under `providers/`, the one
+//! place in the core that names `std::process` (ARCHITECTURE.md).
 
 mod codex;
 
-use scribe_core::models::{
+use super::Models;
+use crate::models::{
     ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest, SESSION_HEADER_SCHEMA,
     SessionAnswer, SessionHeader, SessionHeaderRequest, SessionRequest,
 };
-use scribe_core::{Models, Provider, Redactor};
+use crate::{Provider, Redactor};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
@@ -71,7 +72,7 @@ const DRAIN_WAIT: Duration = Duration::from_secs(2);
 /// `credentials`, each once, with the value `lookup` finds; a name with no
 /// value is left out, and a `SCRIBE_*` name is never passed even when
 /// configured (STD-05 R11).
-pub(crate) fn allowed_env(
+pub fn allowed_env(
     credentials: &[String],
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Vec<(OsString, OsString)> {
@@ -126,7 +127,7 @@ pub(crate) fn argv(model: &str, schema: &str) -> Vec<String> {
 
 /// The `Models` port over the `claude` CLI.
 #[derive(Clone, Debug)]
-pub(crate) struct ClaudeCliModels {
+pub struct ClaudeCliModels {
     provider: Provider,
     program: OsString,
     env: Vec<(OsString, OsString)>,
@@ -144,7 +145,7 @@ impl ClaudeCliModels {
     /// Run [`PROGRAM`] with exactly `env` (see [`allowed_env`]). Failures
     /// mask the child's own credential values until
     /// [`ClaudeCliModels::with_redactor`] widens the set.
-    pub(crate) fn new(env: Vec<(OsString, OsString)>) -> Self {
+    pub fn new(env: Vec<(OsString, OsString)>) -> Self {
         Self {
             provider: Provider::ClaudeCode,
             program: OsString::from(PROGRAM),
@@ -159,7 +160,7 @@ impl ClaudeCliModels {
     /// a hook inherits the environment of the app that started it, and an
     /// app not started from a login shell may lack the variable the login
     /// shell exports, so `claude` exits refusing to run.
-    pub(crate) fn with_credentials(mut self, names: &[String]) -> Self {
+    pub fn with_credentials(mut self, names: &[String]) -> Self {
         let set = |name: &String| {
             self.env
                 .iter()
@@ -174,14 +175,14 @@ impl ClaudeCliModels {
     }
 
     /// Select the configured executable transport, with no model-name guessing.
-    pub(crate) fn with_provider(mut self, provider: Provider) -> Self {
+    pub fn with_provider(mut self, provider: Provider) -> Self {
         self.provider = provider;
         self
     }
 
     /// Mask failures with `redactor`: the composition root passes every
     /// configured secret name (`Config::secret_names`), as persisted text does.
-    pub(crate) fn with_redactor(mut self, redactor: Redactor) -> Self {
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
         self.redactor = redactor;
         self
     }
@@ -248,7 +249,7 @@ impl Models for ClaudeCliModels {
     fn group_summary(
         &self,
         model: &str,
-        evidence: &scribe_core::group::CloseEvidence,
+        evidence: &crate::models::CloseEvidence,
     ) -> Result<String, ModelError> {
         const SCHEMA: &str = r#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":4000}},"required":["summary"],"additionalProperties":false}"#;
         #[derive(Deserialize)]
@@ -256,12 +257,7 @@ impl Models for ClaudeCliModels {
         struct Summary {
             summary: String,
         }
-        let value = self.call(
-            model,
-            SCHEMA,
-            evidence.prompt(),
-            scribe_core::models::ASK_BUDGET,
-        )?;
+        let value = self.call(model, SCHEMA, evidence.prompt(), crate::models::ASK_BUDGET)?;
         serde_json::from_value::<Summary>(value)
             .map(|answer| answer.summary)
             .map_err(|e| malformed(&self.redactor, "not a group summary", &e))

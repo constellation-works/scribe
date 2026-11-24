@@ -21,8 +21,8 @@
 //!   [`consistency`]; reading a Claude Code transcript in [`transcript`]; the
 //!   quote check in [`verbatim`]; the check of an instruction Daniel typed
 //!   for an agent's write (word lists, freshness, interactive entry points)
-//!   in [`instruction`]; and the [`Models`] port, every model call
-//!   as a typed request, in [`models`];
+//!   in [`instruction`]; and every model call as a typed request, in
+//!   [`models`], carried by the [`Models`] port in [`providers`];
 //! - persistence in `store`, the `scribe-store` crate: the file-backed
 //!   [`Store`], its formats, the audit log ([`AuditEvent`]) and the
 //!   filesystem mechanisms, and nothing else;
@@ -38,6 +38,10 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+
+// Tests moved from the binary name the crate `scribe_core`, as they did there.
+#[cfg(test)]
+extern crate self as scribe_core;
 
 pub use scribe_domain::action;
 pub use scribe_domain::activity;
@@ -57,12 +61,19 @@ pub use scribe_domain::handoff;
 pub use scribe_domain::instruction;
 pub use scribe_domain::memory;
 pub use scribe_domain::message;
-pub use scribe_domain::models;
+/// The model request and answer shapes (`scribe-domain`), with the
+/// [`Models`] port and its [`ModelError`](providers::ModelError) from
+/// [`providers`] at their old paths.
+pub mod models {
+    pub use crate::providers::{ModelError, Models};
+    pub use scribe_domain::models::*;
+}
 pub use scribe_domain::origin;
 pub use scribe_domain::pass;
 pub(crate) use scribe_domain::proposal;
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
+pub mod providers;
 pub mod runtime;
 pub use scribe_domain::search;
 pub(crate) use scribe_domain::session;

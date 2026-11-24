@@ -396,12 +396,14 @@ name = "scribe-core"
 version = "0.3.0"
 dependencies = [
  "rusqlite",
+ "rustix",
  "scribe-core",
  "scribe-domain",
  "scribe-store",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "time",
  "tracing",
 ]

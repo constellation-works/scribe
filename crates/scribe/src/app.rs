@@ -6,7 +6,7 @@
 //! `crate::command` and `crate::output` imports here.
 
 use crate::error::CliError;
-use crate::models::{ClaudeCliModels, allowed_env};
+use scribe_core::providers::{ClaudeCliModels, allowed_env};
 use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

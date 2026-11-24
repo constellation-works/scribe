@@ -1,6 +1,6 @@
 //! Codex transport boundary tests against controlled children, never a live account.
 #![cfg(unix)]
-use crate::models::{ClaudeCliModels, allowed_env};
+use crate::providers::{ClaudeCliModels, allowed_env};
 use scribe_core::{
     Models, Provider,
     models::{Budgets, ModelError, SessionHeader, SessionHeaderRequest},

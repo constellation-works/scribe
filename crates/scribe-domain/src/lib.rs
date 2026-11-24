@@ -6,7 +6,7 @@
 //! [`ControlState`], [`Cadence`]) in `session`; proposals ([`Proposal`]) in
 //! `proposal`; the shared metadata ([`Project`], [`Topic`], [`Related`],
 //! [`Author`]) in `record`; `config.toml` ([`Config`]) in `config`; the
-//! [`Models`] port and every model request shape in [`models`]; the rules
+//! model request and answer shapes in [`models`]; the rules
 //! that select and judge records (capture, claims, consistency, the pass,
 //! search, instructions, the brief) in their modules; and the typed [`Error`].
 //!
@@ -64,7 +64,6 @@ pub use entry::{
 };
 pub use error::{Error, Result, WriteRefusal};
 pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
-pub use models::Models;
 pub use proposal::{
     Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
     ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
