@@ -398,7 +398,7 @@ pub mod audit {
 
 /// Store internals of `codec` that scribe-core's store tests reach.
 pub mod codec {
-    pub use crate::codec::{encode_entry, encode_session};
+    pub use crate::db::codec::{encode_entry, encode_session};
 }
 
 /// Store internals of `db` that scribe-core's store tests reach.
@@ -420,7 +420,7 @@ pub mod memory {
 
 /// Store internals of `write` that scribe-core's store tests reach.
 pub mod write {
-    pub use crate::write::{AUDIT_SPOOL_DIR, BEFORE_SPOOL_DRAIN};
+    pub use crate::db::write::{AUDIT_SPOOL_DIR, BEFORE_SPOOL_DRAIN};
 }
 
 /// A temporary directory that is owner-only whatever the umask, as a store

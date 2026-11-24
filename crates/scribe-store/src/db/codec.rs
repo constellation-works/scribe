@@ -35,7 +35,7 @@ use std::path::Path;
 
 /// The newest store format: the format this build writes in exports and
 /// stamps, and the newest it accepts.
-pub(super) const FORMAT: u32 = 31;
+pub(crate) const FORMAT: u32 = 31;
 
 /// What the frontmatter's `kind` says a Markdown record is.
 const ENTRY_KIND: &str = "entry";
@@ -44,7 +44,7 @@ const SESSION_KIND: &str = "session";
 /// A shape problem found after parsing: a missing delimiter, a section out
 /// of order, a record whose id does not match its file.
 #[derive(Debug)]
-pub(super) struct ShapeError(pub(super) String);
+pub(crate) struct ShapeError(pub(crate) String);
 
 impl fmt::Display for ShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -54,7 +54,7 @@ impl fmt::Display for ShapeError {
 
 impl std::error::Error for ShapeError {}
 
-pub(super) fn shape(path: &Path, message: impl Into<String>) -> Error {
+pub(crate) fn shape(path: &Path, message: impl Into<String>) -> Error {
     Error::corrupt(path, ShapeError(message.into()))
 }
 
@@ -82,7 +82,7 @@ fn check_format(path: &Path, probe: std::result::Result<FormatProbe, Error>) -> 
 /// starts with a `---` line; the next `---` line closes the frontmatter.
 /// The body is everything after it, less the one line break that ends the
 /// file.
-pub(super) fn split_frontmatter<'a>(path: &Path, bytes: &'a [u8]) -> Result<(&'a str, &'a str)> {
+pub(crate) fn split_frontmatter<'a>(path: &Path, bytes: &'a [u8]) -> Result<(&'a str, &'a str)> {
     let text = std::str::from_utf8(bytes).map_err(|e| Error::corrupt(path, e))?;
     let missing = || shape(path, "expected YAML frontmatter between two '---' lines");
     let rest = text.strip_prefix("---\n").ok_or_else(missing)?;
@@ -128,7 +128,7 @@ fn parse_frontmatter(path: &Path, front: &str, kind: &str) -> Result<(u32, yaml_
 /// An entry row with its content `body`, checked: its id and tag match
 /// `expected` and `tag_dir` (the row's id and tag), and its fields agree
 /// with each other.
-pub(super) fn checked_entry(
+pub(crate) fn checked_entry(
     path: &Path,
     mut entry: Entry,
     body: &str,
@@ -141,7 +141,7 @@ pub(super) fn checked_entry(
 }
 
 /// Validate the same entry invariants for both reads and writes.
-pub(super) fn validate_entry(
+pub(crate) fn validate_entry(
     path: &Path,
     entry: &Entry,
     body: &str,
@@ -421,7 +421,7 @@ pub fn encode_entry(path: &Path, entry: &Entry) -> Result<Vec<u8>> {
 /// the content as the body), for the test-support seeding only: the store
 /// reads entries from `scribe.db` rows, never from Markdown.
 #[cfg(feature = "test-support")]
-pub(super) fn decode_entry(path: &Path, bytes: &[u8]) -> Result<Entry> {
+pub(crate) fn decode_entry(path: &Path, bytes: &[u8]) -> Result<Entry> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, ENTRY_KIND)?;
     if from != FORMAT {
@@ -438,7 +438,7 @@ pub(super) fn decode_entry(path: &Path, bytes: &[u8]) -> Result<Entry> {
 /// Parse a session record's text, as a rebuild checkpoint row holds it:
 /// `expected` is the record's id. The body is the header and the log, which
 /// must agree with the frontmatter's `log`.
-pub(super) fn decode_session(path: &Path, bytes: &[u8], expected: &str) -> Result<SessionRecord> {
+pub(crate) fn decode_session(path: &Path, bytes: &[u8], expected: &str) -> Result<SessionRecord> {
     let (front, body) = split_frontmatter(path, bytes)?;
     let (from, value) = parse_frontmatter(path, front, SESSION_KIND)?;
     if from < SESSION_SINCE {
@@ -473,7 +473,7 @@ const SESSION_SINCE: u32 = 6;
 
 /// Refuse a JSON document whose `format` is newer than this build's: a
 /// stamp a newer build left. Reads only the `format`.
-pub(super) fn check_stamp(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn check_stamp(path: &Path, bytes: &[u8]) -> Result<()> {
     check_format(
         path,
         serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
@@ -669,7 +669,7 @@ struct ControlOut<'a> {
 
 /// `control.json`'s bytes at the current format, one line break at the end.
 /// [`decode_control`] reads it back to the same state.
-pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8>> {
+pub(crate) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(&ControlOut {
         format: FORMAT,
         sessions: &state.sessions,
@@ -682,7 +682,7 @@ pub(super) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8
 
 /// Refuse proposals whose fields disagree, as `proposals.json` is read: a
 /// file's and a `scribe.db` row's alike.
-pub(super) fn check_proposals(path: &Path, proposals: &[Proposal]) -> Result<()> {
+pub(crate) fn check_proposals(path: &Path, proposals: &[Proposal]) -> Result<()> {
     for proposal in proposals {
         // A context (format 24) is scribe's paragraph of either speaker's
         // turn; a statement (formats 14 to 23) its line of the user's turn.
@@ -810,7 +810,7 @@ struct ProposalsOut<'a> {
 
 /// `proposals.json`'s bytes at the current format, by id, one line break at
 /// the end. [`decode_proposals`] reads it back to the same proposals.
-pub(super) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Vec<u8>> {
+pub(crate) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Vec<u8>> {
     let mut sorted = proposals.to_vec();
     sorted.sort_by_key(|p| p.id);
     let mut bytes = serde_json::to_vec_pretty(&ProposalsOut {
@@ -831,7 +831,7 @@ struct TagsDocument {
 
 /// Refuse store tags that clash or lack agent authors: a file's and a
 /// `scribe.db` row's alike.
-pub(super) fn check_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<()> {
+pub(crate) fn check_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<()> {
     crate::TagTable::new(tags.iter().map(crate::StoreTag::definition).collect())
         .map_err(|e| Error::corrupt(path, e))?;
     if tags.iter().any(|t| {
@@ -845,7 +845,7 @@ pub(super) fn check_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u8>> {
+pub(crate) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u8>> {
     let mut tags = tags.to_vec();
     tags.sort_by(|a, b| a.name.cmp(&b.name));
     let mut bytes = serde_json::to_vec_pretty(&TagsDocument {
@@ -865,7 +865,7 @@ struct PickupsDocument {
 }
 
 /// Refuse a pickup without an agent author: a file's and a row's alike.
-pub(super) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<()> {
+pub(crate) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<()> {
     if pickups
         .iter()
         .any(|p| p.author.kind != crate::AuthorKind::Agent)
@@ -876,7 +876,7 @@ pub(super) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> R
 }
 
 /// `pickups.json`'s bytes at the current format, oldest first.
-pub(super) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<Vec<u8>> {
+pub(crate) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<Vec<u8>> {
     let mut pickups = pickups.to_vec();
     pickups.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.entry.cmp(&b.entry)));
     let mut bytes = serde_json::to_vec_pretty(&PickupsDocument {
@@ -897,7 +897,7 @@ struct MarksDocument {
 
 /// Refuse a mark whose fields disagree with its outcome: a file's and a
 /// row's alike.
-pub(super) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) -> Result<()> {
+pub(crate) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) -> Result<()> {
     if let Some(bad) = marks.iter().find(|m| !m.is_consistent()) {
         return Err(shape(
             path,
@@ -913,7 +913,7 @@ pub(super) fn check_marks(path: &Path, marks: &[crate::annotation::MarkRecord]) 
 }
 
 /// `marks.json`'s bytes at the current format, oldest first.
-pub(super) fn encode_marks(
+pub(crate) fn encode_marks(
     path: &Path,
     marks: &[crate::annotation::MarkRecord],
 ) -> Result<Vec<u8>> {
@@ -965,7 +965,7 @@ fn stem_of(path: &Path, stem: &str) -> Result<scribe_domain::memory::Stem> {
 }
 
 /// Parse `memory/now/<stem>.md`.
-pub(super) fn decode_now(
+pub(crate) fn decode_now(
     path: &Path,
     bytes: &[u8],
     stem: &str,
@@ -989,7 +989,7 @@ pub(super) fn decode_now(
 }
 
 /// A `now` file's bytes.
-pub(super) fn encode_now(path: &Path, item: &scribe_domain::memory::NowItem) -> Result<String> {
+pub(crate) fn encode_now(path: &Path, item: &scribe_domain::memory::NowItem) -> Result<String> {
     let front = yaml_serde::to_string(&scribe_domain::memory::NowFront {
         date: item.date,
         kind: item.kind,
@@ -1005,7 +1005,7 @@ pub(super) fn encode_now(path: &Path, item: &scribe_domain::memory::NowItem) -> 
 }
 
 /// Parse `memory/milestones/<stem>.md`.
-pub(super) fn decode_milestone(
+pub(crate) fn decode_milestone(
     path: &Path,
     bytes: &[u8],
     stem: &str,
@@ -1024,7 +1024,7 @@ pub(super) fn decode_milestone(
 }
 
 /// A milestone file's bytes.
-pub(super) fn encode_milestone(
+pub(crate) fn encode_milestone(
     path: &Path,
     item: &scribe_domain::memory::Milestone,
 ) -> Result<String> {

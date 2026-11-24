@@ -8,19 +8,22 @@
 //! module. It is split by responsibility:
 //!
 //! - this file, the [`Store`] facade: walk the layout, load, select;
-//! - `codec`: the current format's documents, as the export, the memory
-//!   files and rebuild checkpoints hold them, and the row checks;
-//! - `archive`: the file store's archives in `scribe.db`, imported once and
-//!   erased from by `forget` (phase 8);
+//! - `db/`: `scribe.db`, the SQLite database of every record kind
+//!   (2_design.md §15.7), its row access, and the storage mechanism under
+//!   it; the only user of `rusqlite`:
+//!   - `db/codec`: the current format's documents, as the export, the memory
+//!     files and rebuild checkpoints hold them, and the row checks;
+//!   - `db/import`: the file store's archives in `scribe.db`, imported once
+//!     and erased from by `forget` (phase 8);
+//!   - `db/write`: a store write as one `scribe.db` transaction, the archive
+//!     import, and audit lines that never wait;
+//!   - `db/locks`: the session and Codex-ingestion locks and rebuild
+//!     checkpoints;
+//!   - `db/fsio`: durable writes, locking and private-state checks,
+//!     mechanism only;
 //! - `audit`: the audit log's record shape;
-//! - `db`: `scribe.db`, the SQLite database of every record kind
-//!   (2_design.md §15.7), the only user of `rusqlite`;
-//! - `write`: a store write as one `scribe.db` transaction, the archive
-//!   import, and audit lines that never wait;
 //! - `documents`: entries, claims, tags, marks, pickups and the audit log,
-//!   read from the database;
-//! - `fsio`: durable writes, locking and private-state checks, mechanism
-//!   only.
+//!   read from the database.
 //!
 //! The layout (docs/design/scribe/2_design.md §3, §15.7):
 //!
@@ -50,15 +53,13 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-mod archive;
 mod audit;
 mod candidates;
-mod codec;
 mod db;
+pub use db::fsio;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
 pub use documents::Imported;
-pub mod fsio;
 mod ids;
 mod memory;
 pub use memory::{
@@ -68,15 +69,13 @@ pub use memory::{
 pub use memory::{bare, not_found};
 mod marks;
 mod pickups;
-mod rebuild;
 pub mod repo;
 pub use repo::{Snapshot, Tx};
 #[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
 mod tags;
-mod write;
-pub use rebuild::SessionLock;
+pub use db::locks::SessionLock;
 pub use sessions::{
     ExportCounts, ExportFormat, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
 };

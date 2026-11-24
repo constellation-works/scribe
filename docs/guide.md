@@ -222,7 +222,7 @@ lines. Direct writes, session passes and rebuilds, `session deactivate` and
 `session activate`, and consistency scans are audited.
 
 The build writes the store format named `FORMAT` in
-`crates/scribe-store/src/codec.rs` in exports and stamps, and refuses a
+`crates/scribe-store/src/db/codec.rs` in exports and stamps, and refuses a
 newer one. What each format changed is the store spec.
 
 ## Project init

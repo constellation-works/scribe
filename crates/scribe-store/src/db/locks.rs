@@ -6,9 +6,9 @@
 //! The per-session locks are lock files in `locks/`, held across model
 //! calls, which no SQLite transaction may be.
 
-use super::sessions::encode_checkpoint;
-use super::{Store, fsio};
+use crate::sessions::encode_checkpoint;
 use crate::{Result, SessionId, SessionRecord};
+use crate::{Store, fsio};
 use time::OffsetDateTime;
 
 /// Serializes rebuilders of one session without holding the store lock over
@@ -34,7 +34,7 @@ impl Store {
 
     /// Keep `record` as its session's rebuild checkpoint; `false` when the
     /// session has no row.
-    pub(super) fn keep_checkpoint(&self, record: &SessionRecord) -> Result<bool> {
+    pub(crate) fn keep_checkpoint(&self, record: &SessionRecord) -> Result<bool> {
         let text = encode_checkpoint(&self.root, record)?;
         let id = record.id.clone();
         self.sessions_tx(|tx| tx.put_checkpoint(&id, &text, OffsetDateTime::now_utc()))

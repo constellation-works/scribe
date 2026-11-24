@@ -3,7 +3,7 @@
 claim in the store specification names the FORMAT the code declares.
 
 The current document format is the `FORMAT` constant in
-crates/scribe-store/src/codec.rs. docs/design/scribe/specs/store.md also
+crates/scribe-store/src/db/codec.rs. docs/design/scribe/specs/store.md also
 states formats historically ("Format 28 adds ...", "the format-27 release
 wrote ..."); those are left alone. A claim about the build you are reading
 about is marked with an HTML comment placed directly before its number, so it
@@ -28,7 +28,7 @@ from pathlib import Path
 import re
 import sys
 
-FORMAT_RS = "crates/scribe-store/src/codec.rs"
+FORMAT_RS = "crates/scribe-store/src/db/codec.rs"
 SPEC = "docs/design/scribe/specs/store.md"
 KINDS = ("format", "stamp")
 

@@ -16,8 +16,9 @@
 //!   archives them with the other files the file store left (§15.7,
 //!   phase 8), and a read only counts them.
 
+use super::db::codec;
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Revision, Writer};
-use super::{RECORD_EXT, Skipped, Store, codec, fsio};
+use super::{RECORD_EXT, Skipped, Store, fsio};
 use crate::checks::refusal;
 use crate::models::{MemoryContext, PendingContext};
 use crate::{Error, Result, SessionId, WriteRefusal};

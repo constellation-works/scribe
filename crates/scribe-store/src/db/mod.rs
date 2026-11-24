@@ -25,7 +25,12 @@
 //!   `specs/store.md` gives every table's types and constraints.
 
 pub(super) mod archive;
+pub(crate) mod codec;
 pub(super) mod docs;
+pub mod fsio;
+pub(crate) mod import;
+pub(crate) mod locks;
+pub(crate) mod write;
 
 /// A `scribe.db` connection, as the store's writers hold it.
 pub(crate) type Conn = Connection;
@@ -38,7 +43,6 @@ pub use memory::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
 pub(super) use memory::{Journal, Writer, revision_at};
 pub use memory::{memory_view, pending_read};
 
-use super::fsio;
 use super::redact::Redactor;
 use crate::entry::Speaker;
 use crate::error::{Error, Result};

@@ -6,15 +6,16 @@
 //!   whose sessions never moved in is refused: this build has no file
 //!   decoder (phase 8).
 //! - **Migrate.** `scribe store migrate` imports the file store's archives
-//!   into the archive tables now (`archive.rs`), as the first write does on
+//!   into the archive tables now (`db/import.rs`), as the first write does on
 //!   its own; it is refused while a session is on, while a rebuild
 //!   checkpoint file waits, or when there is nothing to import.
 //! - **Locks.** The per-session locks held across model calls (Codex
 //!   ingestion, rebuild) are lock files in `locks/`; they hold no data.
 
+use super::db::codec;
 use super::db::sessions::{self as rows, SessionTx};
-use super::write::Move;
-use super::{CONTROL_FILE, Imported, RECORD_EXT, SESSIONS_DIR, Skipped, Store, codec, db, fsio};
+use super::db::write::Move;
+use super::{CONTROL_FILE, Imported, RECORD_EXT, SESSIONS_DIR, Skipped, Store, db, fsio};
 use crate::WriteRefusal;
 use crate::checks::refusal;
 use crate::error::{Error, Result};
@@ -261,7 +262,7 @@ impl Store {
                         .filter(|(table, _)| *table == "audit")
                         .filter_map(|(_, row)| row.get("spool").and_then(serde_json::Value::as_str))
                         .collect();
-                    let spool_dir = self.root.join(super::write::AUDIT_SPOOL_DIR);
+                    let spool_dir = self.root.join(super::db::write::AUDIT_SPOOL_DIR);
                     let mut pending = Vec::with_capacity(spooled.len());
                     for (name, format, event) in &spooled {
                         if !drained.contains(name.as_str()) {
@@ -363,7 +364,8 @@ impl Store {
             if number.is_none() {
                 rows::register(conn, path, id)?;
             }
-            let (files, archive_changed) = super::archive::scrub_session(conn, path, id, number)?;
+            let (files, archive_changed) =
+                super::db::import::scrub_session(conn, path, id, number)?;
             let (erased, already, mut changed) =
                 rows::forget(conn, path, id, now)?.ok_or_else(|| Error::SessionNotFound {
                     id: id.clone(),
