@@ -63,6 +63,7 @@
 mod contracts;
 mod db;
 mod error;
+mod redact;
 pub use db::documents::Imported;
 pub use db::fsio;
 pub use db::locks::SessionLock;
@@ -109,7 +110,14 @@ use scribe_domain::{
 };
 use scribe_domain::{
     annotation, capture, config, entry, group, handoff, instruction, message, models, proposal,
-    record, redact, session,
+    record, session,
+};
+// The domain names the redaction tests (`tests/redact.rs`) reach at the
+// crate root, as they did in the domain.
+#[cfg(test)]
+use scribe_domain::{
+    Admitted, AnswerIn, AuthorName, Decision, EntryCandidate, ItemAnswer, ItemClosure, OpenItem,
+    Outcome, OutcomeState, Window, WindowTurn,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;

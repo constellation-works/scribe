@@ -36,7 +36,6 @@ pub mod origin;
 pub mod proposal;
 pub mod provider;
 pub mod record;
-pub mod redact;
 pub mod session;
 pub mod tag;
 pub mod text;
@@ -45,7 +44,6 @@ pub mod trigger;
 pub mod verbatim;
 pub mod voice;
 pub use provider::Provider;
-pub use redact::Redactor;
 pub use transcript::codex;
 
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};

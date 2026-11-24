@@ -16,7 +16,6 @@ mod memory;
 mod message;
 mod proposal;
 mod record;
-mod redact;
 mod session;
 mod tag;
 mod transcript;

@@ -4,7 +4,9 @@
 //! (`src/tests/store/`); the helpers both share are in [`crate::testing`].
 
 pub(crate) use crate::testing::private_tempdir;
+pub(crate) use scribe_domain::fixtures::{T0, entry, session};
 
 mod audit;
 mod fsio;
 mod migrated;
+mod redact;
