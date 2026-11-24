@@ -114,8 +114,11 @@ every mode, with the last line `<n> stored message(s) match, and no entry or
 session does: scribe --root <dir> search --kind message [filters] -- <terms>
 lists them`. The command repeats the effective store root and the filters
 (`--project`, `--group`, `--topic`, the dates and `--include-hidden`), so
-`<n>` counts what it lists. The `--` before the terms preserves a literal term
-that starts with a dash. Its `--json` object gains `message_matches` (`<n>`)
+`<n>` counts what it lists. Each filter value and the terms are literal shell
+words: a value a shell would read otherwise is single-quoted, and a `--project`
+or `--group` value that starts with a dash is written `--<flag>=<value>`, so
+the command replays as the search ran. The `--` before the terms preserves a
+literal term that starts with a dash. Its `--json` object gains `message_matches` (`<n>`)
 after `warnings`. Only that case adds the line or the key: with no matching
 message the output is unchanged, and the default kinds do not change.
 

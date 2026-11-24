@@ -766,6 +766,83 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
 }
 
 #[test]
+fn a_message_search_hint_replays_a_project_with_an_apostrophe() {
+    let json = |out: &Output| -> Value { serde_json::from_slice(&out.stdout).unwrap() };
+    let s = Setup::new();
+    // A project is the cwd's basename, so this transcript names it with an
+    // apostrophe, which a POSIX shell reads as an opening quote.
+    let project = "editor's-project";
+    let quote = "Keep the quartzlark rollout note out of the release.";
+    s.write(
+        ON,
+        &[
+            json!({"type": "user", "uuid": "u-1", "timestamp": "2026-11-03T06:00:00Z",
+                 "cwd": format!("/nonexistent/work/{project}"),
+                 "message": {"role": "user", "content": quote}}),
+        ],
+    );
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    let search = s.fx.ok(&["search", "quartzlark", "--project", project]);
+    let stderr = text(&search.stderr);
+    let hint = stderr.lines().last().unwrap();
+    assert!(
+        hint.contains(r"--project 'editor'\''s-project'"),
+        "the project is one shell word: {hint}"
+    );
+
+    // The direct argv search is the reference the replayed hint must match.
+    let direct = json(&s.fx.ok(&[
+        "search",
+        "quartzlark",
+        "--kind",
+        "message",
+        "--project",
+        project,
+        "--json",
+    ]));
+    assert_eq!(direct["total"], 1, "{direct}");
+    assert_eq!(direct["hits"][0]["message"], "u-1", "{direct}");
+
+    // On Unix, replay the hinted command in sh, adding JSON before its
+    // terminator, and compare the hits with the direct argv search.
+    #[cfg(unix)]
+    {
+        let command = hint
+            .strip_prefix("1 stored message(s) match, and no entry or session does: ")
+            .unwrap()
+            .strip_suffix(" lists them")
+            .unwrap()
+            .replacen(" -- ", " --json -- ", 1);
+        let binary_dir = std::path::Path::new(support::BIN)
+            .parent()
+            .unwrap()
+            .display();
+        let path = format!("{binary_dir}:/usr/bin:/bin");
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .env_clear()
+            .env("HOME", s.fx.home())
+            .env("SCRIBE_ROOT", s.fx.root())
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{command}\n{}",
+            text(&out.stderr)
+        );
+        let replayed: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(replayed["total"], direct["total"], "{replayed}");
+        assert_eq!(replayed["hits"], direct["hits"], "{command}");
+    }
+}
+
+#[test]
 fn forgetting_an_entry_deletes_the_stored_message_it_cites() {
     let s = Setup::new();
     let quote = "I prefer short explanations beside each changed behavior.";
