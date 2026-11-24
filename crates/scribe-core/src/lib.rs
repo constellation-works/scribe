@@ -55,18 +55,28 @@ pub mod action {
 }
 pub use apps::session::rules::activity;
 /// `annotation` at its old path: the marker scanning (the domain's
-/// `capture`), the mark shapes (the store's contracts) and the refusal of a
+/// `capture`, now `scribe_tools::markers`), the mark shapes (the store's contracts) and the refusal of a
 /// marker (`apps/mark`).
 pub mod annotation {
     pub use crate::apps::mark::rules::{CheckRefusal, record_tag_refusal};
-    pub use scribe_domain::capture::{MAX_MARKS, Mark, MarkProblem, marks, turn_marks};
     pub use scribe_store::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
+    pub use scribe_tools::markers::{MAX_MARKS, Mark, MarkProblem, marks, turn_marks};
 }
 pub mod apps;
 pub mod composition;
 pub use apps::brief::rules as brief;
 pub use provider::Provider;
-pub use scribe_domain::capture;
+/// `capture` at its old path: the marker scanning and the settling-line
+/// parser (`scribe_tools::markers`), a typed turn and its prompt hashes
+/// (`apps/hook`), and the origin guard and hashes it re-exported.
+pub mod capture {
+    pub use crate::apps::hook::rules::{Turn, prompt_hashes};
+    pub use scribe_domain::origin::{
+        OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
+    };
+    pub use scribe_domain::text::{bytes_sha256, prompt_sha256};
+    pub use scribe_tools::markers::*;
+}
 pub(crate) use scribe_domain::claim;
 pub(crate) use scribe_domain::config;
 /// The consistency rules and the settling verbs, at the path they had in
@@ -100,7 +110,12 @@ pub mod group {
     pub use scribe_store::{Group, NewGroup, Seat, SeatHold};
 }
 pub use scribe_domain::handoff;
-pub use scribe_domain::instruction;
+/// `instruction` at its old path: the instruction check (`apps/entry`) and
+/// what a member's Claude capture has seen (the store's contracts).
+pub mod instruction {
+    pub use crate::apps::entry::rules::instruction::*;
+    pub use scribe_store::ClaudeSeen;
+}
 pub use scribe_domain::memory;
 pub use scribe_domain::message;
 /// The model request and answer shapes (`scribe-domain`), with the

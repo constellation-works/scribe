@@ -107,7 +107,9 @@ const MARKERS: [&str; 23] = [
     "without",
 ];
 
-pub(crate) fn is_marker(token: &str) -> bool {
+/// Whether `token` is a negation or exception marker.
+#[must_use]
+pub fn is_marker(token: &str) -> bool {
     MARKERS.contains(&token)
 }
 

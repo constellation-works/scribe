@@ -20,6 +20,7 @@ use crate::capture;
 use crate::entry::Speaker;
 use crate::error::{Error, WriteRefusal};
 use crate::session::SessionId;
+use crate::store::ClaudeSeen;
 use crate::transcript::{self, Message};
 use crate::verbatim;
 use serde::Deserialize;
@@ -592,17 +593,6 @@ pub struct ClaudeGroupTurns {
     /// Ids of refused typed forms in this batch, first copies only.
     refused: Vec<String>,
     claims: BTreeMap<String, bool>,
-}
-
-/// The first origin claim and whether a parseable message has already been
-/// seen for an id. These are separate because a metadata line can supply
-/// claims even when it does not produce a message.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct ClaudeSeen {
-    /// The first origin claim for the id: whether it permits the turn.
-    pub permitted: Option<bool>,
-    /// Whether a parseable message has been seen for the id.
-    pub message: bool,
 }
 
 impl ClaudeGroupTurns {

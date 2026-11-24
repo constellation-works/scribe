@@ -6,6 +6,7 @@
 //! - [`project`]: the project a working directory belongs to, from git's own
 //!   files;
 //! - [`host`]: this host's name;
+//! - [`markers`]: the `#scribe` markers and settling lines of a typed turn;
 //! - [`window`]: the messages a session pass reads and the window it sends;
 //! - [`fs`]: the crate's file-system access, the only module naming
 //!   `std::fs`.
@@ -21,6 +22,7 @@
 
 pub mod fs;
 pub mod host;
+pub mod markers;
 pub mod payload;
 pub mod project;
 pub mod transcript;
@@ -28,3 +30,6 @@ pub mod window;
 
 #[cfg(test)]
 mod tests;
+
+// The domain's session ids at the path `markers` names them by.
+use scribe_domain::session;

@@ -3,7 +3,7 @@
 //! memory rules and stored messages check (§13.8), and the SHA-256 hashes a
 //! cite and a transcript boundary carry. Pure functions and constants over
 //! text; no I/O (STD-02 R5). Each is re-exported from the module that first
-//! owned it ([`crate::memory`], [`crate::capture`]).
+//! owned it ([`crate::memory`], scribe-core's `capture`).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

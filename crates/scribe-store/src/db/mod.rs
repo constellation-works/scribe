@@ -58,8 +58,8 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 pub use groups::{
-    CaptureState, ClaudeCapturePosition, ClaudeGroupCapture, CloseHeader, GroupRows, MemberWindow,
-    RowError,
+    CaptureState, ClaudeCapturePosition, ClaudeGroupCapture, ClaudeSeenIds, CloseHeader, GroupRows,
+    MemberWindow, RowError,
 };
 
 /// The database's file name under the store root.
@@ -819,7 +819,7 @@ fn write_messages<'a>(
             ));
         }
         let text = redactor.message(&m.text);
-        let sha256 = crate::capture::prompt_sha256(&text);
+        let sha256 = crate::text::prompt_sha256(&text);
         changed += insert
             .execute((
                 m.session.as_str(),
@@ -1102,10 +1102,7 @@ fn store_id(path: &Path, created: &str) -> String {
         OffsetDateTime::now_utc().unix_timestamp_nanos(),
         path.display()
     );
-    crate::capture::prompt_sha256(&seed)
-        .chars()
-        .take(32)
-        .collect()
+    crate::text::prompt_sha256(&seed).chars().take(32).collect()
 }
 
 /// An FTS5 query: each token as a quoted prefix, any of them.

@@ -3,19 +3,18 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod capture;
 mod claim;
 mod config;
 mod control;
 mod entry;
 mod handoff;
-mod instruction;
 mod memory;
 mod message;
 mod proposal;
 mod record;
 mod session;
 mod tag;
+mod text;
 mod transcript;
 mod trigger;
 mod verbatim;

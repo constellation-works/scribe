@@ -1,9 +1,9 @@
 //! Incremental Claude group capture, scoped to one membership position.
 
 use super::{CaptureState, GroupRows, RowError, Rows, capture_state};
+use crate::ClaudeSeen;
 use crate::SessionId;
 use crate::db::{Fallible, refuse_newer};
-use crate::instruction::{ClaudeGroupTurns, ClaudeSeen, ResolvedClaudeTurns};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
@@ -65,39 +65,6 @@ impl GroupRows<'_> {
         snapshot(self.conn, self.path, session).map_err(RowError)
     }
 
-    /// Resolve `batch` against the ids membership row `position` has seen,
-    /// reading them only when `resumed`.
-    pub fn resolve_seen(
-        &self,
-        position: i64,
-        batch: ClaudeGroupTurns,
-        resumed: bool,
-    ) -> Rows<ResolvedClaudeTurns> {
-        let mut lookup = self
-            .conn
-            .prepare(
-                "SELECT permitted, message FROM group_claude_seen
-                 WHERE position = ?1 AND id_hash = ?2",
-            )
-            .map_err(|e| self.fail(e))?;
-        batch
-            .resolve(|id| {
-                if !resumed {
-                    return Ok(ClaudeSeen::default());
-                }
-                lookup
-                    .query_row((position, id), |row| {
-                        Ok(ClaudeSeen {
-                            permitted: row.get(0)?,
-                            message: row.get(1)?,
-                        })
-                    })
-                    .optional()
-                    .map(|seen| seen.unwrap_or_default())
-            })
-            .map_err(|e| self.fail(e))
-    }
-
     /// Keep membership row `position`'s byte progress in its transcript.
     pub fn save_progress(&self, position: i64, at: &ClaudeCapturePosition) -> Rows<()> {
         self.conn
@@ -127,6 +94,50 @@ impl GroupRows<'_> {
                 .map_err(|e| self.fail(e))?;
         }
         Ok(())
+    }
+}
+
+impl<'c> GroupRows<'c> {
+    /// The ids membership row `position` has seen, read one at a time
+    /// ([`ClaudeSeenIds::get`]).
+    pub fn seen(&self, position: i64) -> Rows<ClaudeSeenIds<'_, 'c>> {
+        let lookup = self
+            .conn
+            .prepare(
+                "SELECT permitted, message FROM group_claude_seen
+                 WHERE position = ?1 AND id_hash = ?2",
+            )
+            .map_err(|e| self.fail(e))?;
+        Ok(ClaudeSeenIds {
+            rows: self,
+            position,
+            lookup,
+        })
+    }
+}
+
+/// The message ids one membership row has seen, read through one prepared
+/// statement.
+pub struct ClaudeSeenIds<'r, 'c> {
+    rows: &'r GroupRows<'c>,
+    position: i64,
+    lookup: rusqlite::Statement<'c>,
+}
+
+impl ClaudeSeenIds<'_, '_> {
+    /// What the row has seen of the message whose id hashes to `id`; the
+    /// default when it has seen nothing of it.
+    pub fn get(&mut self, id: &str) -> Rows<ClaudeSeen> {
+        self.lookup
+            .query_row((self.position, id), |row| {
+                Ok(ClaudeSeen {
+                    permitted: row.get(0)?,
+                    message: row.get(1)?,
+                })
+            })
+            .optional()
+            .map(|seen| seen.unwrap_or_default())
+            .map_err(|e| self.rows.fail(e))
     }
 }
 

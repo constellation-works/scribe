@@ -2,7 +2,7 @@
 //! turn, or one Claude Code transcript line, was written by an agent or the
 //! harness rather than plainly typed by Daniel. Transcript parsing and
 //! `#scribe` capture both apply it; it is re-exported from
-//! [`crate::capture`], which first owned it. Pure functions over text and
+//! scribe-core's `capture`, which first owned it. Pure functions over text and
 //! JSON values; no I/O (STD-02 R5).
 
 use serde::Deserialize;
@@ -215,13 +215,16 @@ pub fn prompt_agent_originated(claims: &PromptClaims<'_>, prompt: &str) -> bool 
 /// so the guard refuses it as an unexpected shape rather than reading it as
 /// absent.
 #[derive(Deserialize)]
-pub(crate) struct LineMeta {
+pub struct LineMeta {
+    /// The line's `type`.
     #[serde(rename = "type", default)]
-    pub(crate) kind: Option<String>,
+    pub kind: Option<String>,
+    /// The line's `uuid`.
     #[serde(default)]
-    pub(crate) uuid: Option<serde_json::Value>,
+    pub uuid: Option<serde_json::Value>,
+    /// The line's `entrypoint`.
     #[serde(default)]
-    pub(crate) entrypoint: Option<serde_json::Value>,
+    pub entrypoint: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present_value")]
     source: Option<serde_json::Value>,
     #[serde(default, rename = "promptSource", deserialize_with = "present_value")]
@@ -255,7 +258,8 @@ impl LineMeta {
     /// so a claim that contradicts the others refuses the line wherever it
     /// sits. An ordinary row is corroborated by its own fields alone: an
     /// attachment on it is no claim on it.
-    pub(crate) fn origin_claims(&self) -> OriginClaims {
+    #[must_use]
+    pub fn origin_claims(&self) -> OriginClaims {
         let mut origin = OriginClaims::default();
         origin.push_claim(self.source.as_ref());
         origin.push_prompt_source(self.prompt_source_camel.as_ref());

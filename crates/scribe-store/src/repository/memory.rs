@@ -184,7 +184,7 @@ thread_local! {
 }
 
 fn sha256(text: &str) -> String {
-    crate::capture::prompt_sha256(text)
+    crate::text::prompt_sha256(text)
 }
 
 fn now_op(path: &Path, item: &NowItem) -> Result<FileOp> {
