@@ -36,8 +36,7 @@
 use super::audit::{self, AuditEvent};
 use super::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use super::{Store, fsio};
-use crate::WriteRefusal;
-use crate::checks::refusal;
+use crate::checks::admin;
 use crate::error::{Error, Result};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -487,30 +486,11 @@ impl Store {
         for name in self.archive_dirs()? {
             pending |= !db::archive::imported(conn, &db, &name)?;
         }
-        if !pending {
-            return Err(refusal(
-                WriteRefusal::MigrateBlocked,
-                "the store is already in scribe.db and no pre-sqlite-* or pre-issue-* archive is left to import; there is nothing to migrate",
-            ));
-        }
-        let control = self.control()?;
-        if let Some((id, _)) = control.sessions.iter().find(|(_, c)| c.on) {
-            return Err(refusal(
-                WriteRefusal::MigrateBlocked,
-                format!(
-                    "session {id} is switched on; switch it off (/scribe off) or let its pass settle, then migrate"
-                ),
-            ));
-        }
-        if let Some((id, path)) = self.checkpoint_files()?.first() {
-            return Err(refusal(
-                WriteRefusal::MigrateBlocked,
-                format!(
-                    "session {id} has a rebuild checkpoint at {}; finish it with `scribe session rebuild {id}` or delete the file, then migrate",
-                    path.display()
-                ),
-            ));
-        }
-        Ok(())
+        admin::check_migrate_pending(pending)?;
+        admin::check_migrate_none_on(&self.control()?)?;
+        let checkpoints = self.checkpoint_files()?;
+        admin::check_migrate_no_checkpoint(
+            checkpoints.first().map(|(id, path)| (id, path.as_path())),
+        )
     }
 }
