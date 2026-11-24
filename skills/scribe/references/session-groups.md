@@ -90,9 +90,15 @@ For open, join, leave and close in Codex, put `--provider codex` before
 - **Close with a quote.** From any other session, and only when the human asks
   in their own typed words, run `scribe group close <id> --quote '<span>'`. The
   span must be a verbatim substring of a turn the human typed in this session
-  and must contain the exact canonical group id (`g-<n>`), not a slug. It may
-  omit other words from that turn. The call closes the group without taking a
-  seat. Otherwise it is refused.
+  and must contain the exact canonical group id (`g-<n>`), not a slug. The call
+  closes the group without taking a seat. Otherwise it is refused.
+- **Quote length.** The span may omit other words from that turn only when it
+  still contains the complete id and has at least eight characters after the
+  shared quote normalization and trimming.
+- **Short span.** A span under eight characters is refused (`quote_not_found`)
+  even when it names the group. From the typed turn "end g-1 after the release",
+  `end g-1` (seven characters) is refused, while `end g-1 after` (thirteen
+  characters from the same turn) is accepted.
 - **Closing summary.** Scribe sends up to 16 of the members' newest active
   handoffs and 32 newest stored user turns to the ask model in one call. The
   4,000-character limit applies to the model's text: trimmed, it must be 1–4,000
