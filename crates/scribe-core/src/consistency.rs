@@ -705,6 +705,8 @@ pub fn forget(
     entry.evidence = None;
     entry.as_of = None;
     entry.quote = None;
+    entry.decision = None;
+    entry.item = None;
     entry.window = None;
     entry.retirement_reason = None;
     for instruction in [&mut entry.instruction, &mut entry.removal_instruction]

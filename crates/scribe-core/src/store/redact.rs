@@ -34,6 +34,14 @@ pub const REDACTED_FIELDS: &[&str] = &[
     "entry.window.text",
     "entry.outcome.reason",
     "entry.outcome.task",
+    "entry.decision.rationale",
+    "entry.decision.reason_quote",
+    "entry.decision.options",
+    "entry.item.options",
+    "entry.item.why",
+    "entry.item.blocked",
+    "entry.item.answer.words",
+    "entry.item.closed.note",
     "session.title",
     "session.summary",
     "session.goals",
@@ -368,6 +376,32 @@ pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)
         }
         if let Some(task) = &mut outcome.task {
             fields.push(("entry.outcome.task", task));
+        }
+    }
+    if let Some(decision) = &mut entry.decision {
+        if let Some(rationale) = &mut decision.rationale {
+            fields.push(("entry.decision.rationale", rationale));
+        }
+        if let Some(reason) = &mut decision.reason_quote {
+            fields.push(("entry.decision.reason_quote", reason));
+        }
+        for option in &mut decision.options {
+            fields.push(("entry.decision.options", option));
+        }
+    }
+    if let Some(item) = &mut entry.item {
+        for option in &mut item.options {
+            fields.push(("entry.item.options", option));
+        }
+        if let Some(why) = &mut item.why {
+            fields.push(("entry.item.why", why));
+        }
+        fields.push(("entry.item.blocked", &mut item.blocked));
+        if let Some(answer) = &mut item.answer {
+            fields.push(("entry.item.answer.words", &mut answer.words));
+        }
+        if let Some(closed) = &mut item.closed {
+            fields.push(("entry.item.closed.note", &mut closed.note));
         }
     }
     fields

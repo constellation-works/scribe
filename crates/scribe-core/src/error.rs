@@ -368,6 +368,36 @@ pub enum WriteRefusal {
     /// content did not come from a direct agent write (such as an approved
     /// assistant claim).
     NotAgentNote,
+    /// `decided_by_required`: a decision lacks its decider.
+    DecidedByRequired,
+    /// `asked_by_required`: an open item lacks its asker.
+    AskedByRequired,
+    /// `record_fields`: record flags were used under a different tag.
+    RecordFields,
+    /// `invalid_options`: the option count or text is invalid.
+    InvalidOptions,
+    /// `invalid_recommendation`: the option index is missing or invalid.
+    InvalidRecommendation,
+    /// `recommendation_why`: the reason for recommending an option is missing or misplaced.
+    RecommendationWhy,
+    /// `record_required`: a decision lacks its task, PR or repository reference.
+    RecordRequired,
+    /// `decision_too_long`: a decision exceeds 3,000 characters.
+    DecisionTooLong,
+    /// `decision_session`: a patch would change a user decision’s source session.
+    DecisionSession,
+    /// `decision_quote_not_allowed`: an agent decision includes a user quote.
+    DecisionQuoteNotAllowed,
+    /// `rationale_not_allowed`: a user decision includes an agent rationale.
+    RationaleNotAllowed,
+    /// `rationale_required`: an agent decision lacks its rationale.
+    RationaleRequired,
+    /// `invalid_settles`: the link does not name an open item.
+    InvalidSettles,
+    /// `invalid_supersedes`: the link does not name an active decision.
+    InvalidSupersedes,
+    /// `supersede_user_decision`: an agent decision would replace a user or untyped trial decision.
+    SupersedeUserDecision,
 }
 impl WriteRefusal {
     /// Stable machine-readable code.
@@ -423,6 +453,21 @@ impl WriteRefusal {
             Self::NotMemoryTag => "not_memory_tag",
             Self::NeedsRedaction => "needs_redaction",
             Self::NotAgentNote => "not_agent_note",
+            Self::DecidedByRequired => "decided_by_required",
+            Self::AskedByRequired => "asked_by_required",
+            Self::RecordFields => "record_fields",
+            Self::InvalidOptions => "invalid_options",
+            Self::InvalidRecommendation => "invalid_recommendation",
+            Self::RecommendationWhy => "recommendation_why",
+            Self::RecordRequired => "record_required",
+            Self::DecisionTooLong => "decision_too_long",
+            Self::DecisionSession => "decision_session",
+            Self::DecisionQuoteNotAllowed => "decision_quote_not_allowed",
+            Self::RationaleNotAllowed => "rationale_not_allowed",
+            Self::RationaleRequired => "rationale_required",
+            Self::InvalidSettles => "invalid_settles",
+            Self::InvalidSupersedes => "invalid_supersedes",
+            Self::SupersedeUserDecision => "supersede_user_decision",
         }
     }
 }

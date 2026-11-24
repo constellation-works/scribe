@@ -1,5 +1,7 @@
 //! Direct agent writes through the built binary, isolated from host state.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#[path = "agent_writes/records.rs"]
+mod records;
 mod support;
 use support::{Fixture, text};
 /// Files (relative to `root`) whose bytes or mode differ between two snapshots.
@@ -1416,7 +1418,16 @@ fn stored_remind_and_finding_entries_stay_readable_searchable_and_asked_without_
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tag_names, ["handoff", "preferences", "standard"]);
+    assert_eq!(
+        tag_names,
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "standard"
+        ]
+    );
 
     // Seed entries under `finding` and `remind` via a temporary config, then
     // remove config.toml so neither tag is configured.

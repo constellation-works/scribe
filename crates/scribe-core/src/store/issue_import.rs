@@ -416,6 +416,8 @@ fn convert(path: &Path, bytes: &[u8], tag: &TagName) -> Result<Converted> {
         removal_instruction: None,
         stated_by: None,
         handoff_mode: None,
+        decision: None,
+        item: None,
         outcome: None,
         content,
     };

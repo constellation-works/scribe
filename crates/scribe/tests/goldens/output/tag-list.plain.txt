@@ -1,5 +1,7 @@
+decision	0	-	decisions,dec	A decision that outlives its task.	config	-	-	-	-
 decisions	2	-	-	-	-	-	-	-	-
 handoff	0	-	-	An agent-written session handoff, recorded on the user's request.	config	-	-	-	-
+open-item	0	-	open-items,item	A question or action that waits for the user.	config	-	-	-	-
 preferences	1	180	preference,pref	how the user likes things done	config	-	-	-	propose
 rituals	1	-	-	-	-	-	-	-	-
 standard	0	-	-	A rule for how code or docs are written across the user's projects, in the user's words.	config	free,quote	0	0	propose

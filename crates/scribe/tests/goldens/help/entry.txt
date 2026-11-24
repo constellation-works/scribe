@@ -3,7 +3,7 @@ Read entries and write agent notes
 Usage: scribe entry [OPTIONS] <COMMAND>
 
 Commands:
-  add     Add an agent note (never attributed to the user)
+  add     Add an agent note, decision or open item
   update  Update an entry's content or metadata
   retire  Retire an entry with a reason
   forget  Forget an entry for good on the user's instruction

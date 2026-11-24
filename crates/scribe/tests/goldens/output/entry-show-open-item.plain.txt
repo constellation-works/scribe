@@ -1,0 +1,8 @@
+open-item-1	active	scribe	-	2026-11-10T01:00:00Z	Which API should the release use?	agent:opus	-
+asked_by	orbit-0-capt
+blocked	Publishing the release
+answer_in	any
+why	Compatibility tests cover the stable API.
+option	1. Use the stable API
+option	2. Use the experimental API
+recommended	1

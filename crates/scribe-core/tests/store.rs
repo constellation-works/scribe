@@ -106,8 +106,10 @@ fn the_fixture_reads_whole_and_reading_writes_nothing() {
     assert_eq!(
         rows,
         [
+            (String::from("decision"), 0, true),
             (String::from("decisions"), 2, false),
             (String::from("handoff"), 0, true),
+            (String::from("open-item"), 0, true),
             (String::from("preferences"), 1, true),
             (String::from("rituals"), 1, false),
             (String::from("standard"), 0, true),

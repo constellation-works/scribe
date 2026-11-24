@@ -1014,7 +1014,9 @@ run the gate before every push
         .replace("instruction: null\n", "")
         .replace("stated_by: null\n", "")
         .replace("outcome: null\n", "")
-        .replace("handoff_mode: null\n", "");
+        .replace("handoff_mode: null\n", "")
+        .replace("decision: null\n", "")
+        .replace("item: null\n", "");
     assert_eq!(entry(&stripped_entry).unwrap(), decoded_entry);
 
     // Format-11 entries must reject later keys.
@@ -1634,6 +1636,8 @@ fn a_format_thirteen_store_upgrades_with_null_statement_subject_and_stated_by_on
         .replace("stated_by: null\n", "")
         .replace("outcome: null\n", "")
         .replace("handoff_mode: null\n", "")
+        .replace("decision: null\n", "")
+        .replace("item: null\n", "")
         .replace("removal_instruction: null\n", "");
     assert_eq!(entry(&back).unwrap(), decoded);
     // Local YAML tags on a format-13 string survive the upgrade.
@@ -1787,6 +1791,8 @@ fn an_older_entry_keeps_an_approval_instruction_and_moves_a_removal_one() {
         }
         let v17 = text
             .replace("handoff_mode: null\n", "")
+            .replace("decision: null\n", "")
+            .replace("item: null\n", "")
             .replacen(&format!("format: {FORMAT}\n"), "format: 17\n", 1)
             .replacen("removal_instruction: null\n", "", 1);
         assert_eq!(entry(&v17).unwrap(), approved, "{role}");
@@ -2066,6 +2072,8 @@ fn an_instructed_approval_entry_rereads_at_format_15_and_is_refused_at_14() {
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
             .replace("outcome: null\n", "")
             .replace("handoff_mode: null\n", "")
+            .replace("decision: null\n", "")
+            .replace("item: null\n", "")
             .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&fifteen).unwrap(), e, "{role}");
         let old = fifteen.replacen("format: 15\n", "format: 14\n", 1);
@@ -2222,7 +2230,9 @@ fn a_format_fourteen_or_fifteen_entry_reads_with_no_outcome_and_a_stray_outcome_
             .replace("removal_instruction: null\n", "");
         let old = older
             .replace("outcome: null\n", "")
-            .replace("handoff_mode: null\n", "");
+            .replace("handoff_mode: null\n", "")
+            .replace("decision: null\n", "")
+            .replace("item: null\n", "");
         let e = entry(&old).unwrap();
         assert_eq!(e.outcome, None, "{from}");
         assert_eq!(e.stated_by, Some(crate::Author::session_pass()), "{from}");
@@ -2300,6 +2310,8 @@ fn a_format_fifteen_store_upgrades_with_a_null_outcome_only() {
             .replacen(&format!("format: {FORMAT}\n"), "format: 15\n", 1)
             .replace("outcome: null\n", "")
             .replace("handoff_mode: null\n", "")
+            .replace("decision: null\n", "")
+            .replace("item: null\n", "")
             .replace("removal_instruction: null\n", "");
         assert_eq!(entry(&back).unwrap(), decoded);
     }
@@ -2835,4 +2847,40 @@ fn a_spoken_instruction_agent_entry_reads_with_agent_stated_by_and_quote() {
         ))
         .unwrap_err(),
     );
+}
+
+#[test]
+fn format_thirty_trial_records_upgrade_without_rewriting_their_fields() {
+    use crate::store::format::encode_entry;
+
+    for (id, content, retired) in [
+        (
+            "decision-14",
+            "Decision prose with the user's quote and why.",
+            false,
+        ),
+        ("open-item-4", "What waits?\nANSWERED: Done.", true),
+    ] {
+        let mut trial = crate::tests::entry(id, crate::tests::T0);
+        trial.content = content.to_owned();
+        trial.author = crate::Author::agent("opus".parse().unwrap());
+        trial.content_from = crate::ContentFrom::Agent;
+        trial.cite = None;
+        trial.said.clear();
+        trial.related = vec!["task:ORB-42".parse().unwrap()];
+        if retired {
+            trial.status = crate::EntryStatus::Retired;
+            trial.inactive_since = Some(trial.created);
+            trial.retirement_reason = Some("closed: carried out in chat".to_owned());
+        }
+        let path = Path::new(id);
+        let modern = String::from_utf8(encode_entry(path, &trial).unwrap()).unwrap();
+        let text = modern
+            .replace(&format!("format: {FORMAT}\n"), "format: 30\n")
+            .replace("decision: null\n", "")
+            .replace("item: null\n", "");
+        let decoded = decode_entry(path, text.as_bytes(), id, trial.tag.as_str()).unwrap();
+        assert_eq!(decoded, trial);
+        assert_eq!(encode_entry(path, &decoded).unwrap(), modern.as_bytes());
+    }
 }

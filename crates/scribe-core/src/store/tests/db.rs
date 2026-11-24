@@ -99,7 +99,7 @@ fn the_first_write_creates_an_owner_only_wal_database_at_the_current_schema() {
         .unwrap();
     assert_eq!(written, 1);
     let (version, store_id) = db::meta(dir.path()).unwrap().unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     assert_eq!(store_id.len(), 32);
     // PERSIST_WAL: both companions outlive the last connection.
     for name in [DB_FILE, "scribe.db-wal", "scribe.db-shm"] {
@@ -294,7 +294,7 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
     db::execute(
         dir.path(),
         &format!(
-            "{} PRAGMA user_version = 9",
+            "{} ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item; PRAGMA user_version = 9",
             db::REMOVE_GROUP_CAPTURE_SCHEMA
         ),
     )
@@ -345,7 +345,7 @@ fn schema_nine_checkpoint_reports_a_neutral_holder_when_a_writer_is_active() {
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 16);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 17);
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
         .search_messages(&tokens("merge"))
         .unwrap();
     assert_eq!(found.matches.len(), WRITERS * WINDOWS * 3);
-    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 16);
+    assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 17);
 }
 
 #[test]
@@ -2060,4 +2060,96 @@ fn quoted_close_consent_for_a_closed_group_does_not_reach_its_reused_alias() {
     assert_eq!(err.code(), "group_membership");
     assert!(store.group(&replacement).unwrap().closed.is_none());
     assert!(store.group(&old).unwrap().closed.is_some());
+}
+
+#[test]
+fn schema_seventeen_replaces_trial_registrations_and_preserves_trial_rows() {
+    let dir = private_tempdir();
+    let root = dir.path();
+    let store = Store::open(root);
+    let author = crate::Author::agent("opus".parse().unwrap());
+    let mut entries = [
+        crate::tests::entry("decision-14", T0),
+        crate::tests::entry("open-item-4", T0),
+    ];
+    for entry in &mut entries {
+        entry.author = author.clone();
+        entry.content_from = crate::ContentFrom::Agent;
+        entry.cite = None;
+        entry.said.clear();
+        entry.content = format!("Trial entry {} with prose fields", entry.id);
+    }
+    entries[1].status = crate::EntryStatus::Retired;
+    entries[1].inactive_since = Some(T0);
+    entries[1].retirement_reason = Some("closed: recorded in prose".to_owned());
+    let tags = [
+        ("decision", vec!["decisions"]),
+        ("open-item", vec!["open-items", "ask"]),
+        ("notes", vec!["note"]),
+    ]
+    .map(|(name, aliases)| crate::StoreTag {
+        name: name.parse().unwrap(),
+        aliases: aliases
+            .into_iter()
+            .map(|alias| alias.parse().unwrap())
+            .collect(),
+        description: format!("Trial {name}"),
+        stale_after_days: None,
+        author: author.clone(),
+        updated_by: None,
+        created: T0,
+        updated: T0,
+    });
+    store
+        .write(|| {
+            for entry in &entries {
+                store.write_entry(entry, true)?;
+            }
+            store.write_tags(&tags)
+        })
+        .unwrap();
+    db::execute(
+        root,
+        "ALTER TABLE entries DROP COLUMN decision; ALTER TABLE entries DROP COLUMN item;
+         PRAGMA user_version = 16;",
+    )
+    .unwrap();
+
+    let read_trial = || {
+        for entry in &entries {
+            assert_eq!(store.entry(&entry.id).unwrap(), *entry);
+            assert_eq!(
+                store.tag_definition(entry.tag.as_str()).unwrap().1,
+                "config"
+            );
+        }
+        assert_eq!(store.store_tags().unwrap(), [tags[2].clone()]);
+        assert_eq!(
+            store.tag_definition("ask").unwrap_err().code(),
+            "tag_not_found"
+        );
+        assert_eq!(store.load_entries().unwrap().0, entries);
+    };
+    read_trial();
+    assert_eq!(
+        db::meta(root).unwrap().unwrap().0,
+        16,
+        "reads never migrate"
+    );
+
+    store
+        .write_messages(
+            &[message("s-1", "m-1", "write after trial")],
+            &Redactor::default(),
+        )
+        .unwrap();
+    assert_eq!(db::meta(root).unwrap().unwrap().0, 17);
+    read_trial();
+    let conn = rusqlite::Connection::open(root.join(DB_FILE)).unwrap();
+    let names: String = conn
+        .query_row("SELECT group_concat(name) FROM agent_tags", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(names, "notes");
 }

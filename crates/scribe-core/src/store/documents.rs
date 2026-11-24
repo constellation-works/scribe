@@ -312,9 +312,15 @@ impl Store {
 
     /// The store tags (`scribe tag add`), without writing.
     pub fn store_tags(&self) -> Result<Vec<StoreTag>> {
-        if let Some(tags) = self.read_db(docs::tags)? {
-            return Ok(tags);
-        }
+        let mut tags = match self.read_db(docs::tags)? {
+            Some(tags) => tags,
+            None => self.store_tag_file()?,
+        };
+        tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
+        Ok(tags)
+    }
+
+    fn store_tag_file(&self) -> Result<Vec<StoreTag>> {
         let path = self.root.join(TAGS_FILE);
         if !self.root_exists()? || !fsio::inspect_file(&path)? {
             return Ok(Vec::new());
@@ -523,14 +529,8 @@ impl Store {
         }
         let claims = self.proposal_file()?;
         docs::put_claims(conn, path, &[], &claims, fail)?;
-        let tags = {
-            let file = self.root.join(TAGS_FILE);
-            if fsio::inspect_file(&file)? {
-                format::decode_tags(&file, &fsio::read(&file)?)?
-            } else {
-                Vec::new()
-            }
-        };
+        let mut tags = self.store_tag_file()?;
+        tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
         docs::put_tags(conn, path, &tags, fail)?;
         let marks = {
             let file = self.root.join(MARKS_FILE);
@@ -1182,6 +1182,10 @@ fn detach_entry(entry: &mut Entry, matches: impl Fn(&str) -> bool, now: OffsetDa
         |r: &crate::Related| r.kind() == crate::RelatedKind::Session && matches(r.target());
     if entry.related.iter().any(source_reference) {
         entry.related.retain(|r| !source_reference(r));
+        if let Some(decision) = &mut entry.decision {
+            entry.quote = None;
+            decision.reason_quote = None;
+        }
         let marker = crate::Related::deleted_session();
         if !entry.related.contains(&marker) {
             entry.related.push(marker);
@@ -1610,6 +1614,17 @@ fn erased_texts(entry: &Entry, proposals: &[Proposal]) -> Vec<String> {
         for turn in &window.turns {
             push_non_empty(&mut out, &turn.text);
         }
+    }
+    if entry.decision.is_some() || entry.item.is_some() {
+        let mut record = entry.clone();
+        out.extend(
+            super::redact::entry_fields(&mut record)
+                .into_iter()
+                .filter_map(|(name, text)| {
+                    (name.starts_with("entry.decision.") || name.starts_with("entry.item."))
+                        .then(|| text.clone())
+                }),
+        );
     }
     collect_proposal_texts(&entry.id, proposals, &mut out);
     out.sort();

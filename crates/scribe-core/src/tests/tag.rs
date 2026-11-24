@@ -9,10 +9,19 @@ fn name(s: &str) -> TagName {
 }
 
 #[test]
-fn the_defaults_are_handoff_preferences_and_standard() {
+fn the_defaults_include_the_agent_written_records() {
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["handoff", "preferences", "standard"]);
+    assert_eq!(
+        names,
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "standard"
+        ]
+    );
     assert!(table.action(&name("preferences")).is_none());
     assert!(table.action(&name("handoff")).is_none());
     assert!(table.resolve("handoff").unwrap().requires_quote());
@@ -24,7 +33,18 @@ fn the_defaults_are_handoff_preferences_and_standard() {
     );
     assert!(table.action(&name("task")).is_none());
     assert!(table.action(&name("friction")).is_none());
-    for word in ["decisions", "decision", "dec", "remind", "finding"] {
+    for (tag, aliases) in [
+        ("decision", ["decisions", "dec"]),
+        ("open-item", ["open-items", "item"]),
+    ] {
+        let def = table.get(&name(tag)).unwrap();
+        assert!(def.action.is_none());
+        assert_eq!(def.capture, crate::tag::CaptureRules::default());
+        for alias in aliases {
+            assert_eq!(table.resolve(alias), Some(def));
+        }
+    }
+    for word in ["ask", "remind", "finding"] {
         assert!(table.resolve(word).is_none(), "{word} is no longer shipped");
     }
     assert_eq!(table.resolve("pref").unwrap().name.as_str(), "preferences");
@@ -98,7 +118,9 @@ fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {
     assert_eq!(
         view,
         [
+            ("decision", 0, true),
             ("handoff", 0, true),
+            ("open-item", 0, true),
             ("preferences", 2, true),
             ("rituals", 1, false),
             ("standard", 0, true)
@@ -111,7 +133,16 @@ fn the_shipped_catchers_are_exactly_preference_and_standard() {
     use crate::tag::{CaptureFrom, CaptureRoute, CaptureRules, DEFAULT_MAX_OPEN};
     let table = TagTable::defaults();
     let names: Vec<&str> = table.tags().iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["handoff", "preferences", "standard"]);
+    assert_eq!(
+        names,
+        [
+            "decision",
+            "handoff",
+            "open-item",
+            "preferences",
+            "standard"
+        ]
+    );
     assert_eq!(
         CaptureRules::shipped("handoff"),
         CaptureRules::default(),

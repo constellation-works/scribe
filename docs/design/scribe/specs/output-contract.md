@@ -213,6 +213,25 @@ Store format 28 adds `handoff_mode` to entry JSON. It is `continue` or `new`
 for a handoff that sets a mode, and `null` for other entries and legacy
 handoffs.
 
+Store format 31 adds `decision` and `item` to the entry JSON shared by
+`entry show`, `entry list` and entry writes. Each field is null for other
+entries and for the trial's prose-only records. A decision object has
+`decided_by`, `rationale`, `reason_quote`, `options`, `recommended`,
+`supersedes` and `settles`. `quote` keeps the user's decision words. An
+item object has `asked_by`, `options`, `recommended`, `why`, `blocked`,
+`answer_in`, `answer` and `closed`. `answer` and `closed` are null on a new
+item. Options are an array of strings and `recommended` is a one-based
+integer or null. `answer_in` is `any`, `hand` or `session:<id>`.
+
+For `entry show` and entry writes, table detail adds labelled fields for
+the supplied values. Plain output keeps the existing first row and
+appends labelled, tab-separated lines, including `quote` for a user
+decision. In both modes, each option has an `option` field with its
+one-based number. Plain and table list rows retain their existing columns.
+The `related` array can contain `doc:<repo>/<path>#<anchor>` references.
+When `decisions` resolves to the shipped `decision` tag, `ask --tag decisions`
+also includes entries filed under the historical `decisions` name.
+
 **Session** (`sessions[]`, `session show`): `id` (the provider's session
 id), (phase 6) `short_id` (`s-<n>`, or `null` for a session with no number;
 the table detail prints it as a `short id` field under `id`), `status` (`open`,
@@ -425,6 +444,23 @@ Entry writes use the entry-show shape, with `cite: null` and
 `--author`, and a reserved name (`user`, `daniel`, `scribe`, `consistency`,
 `session-pass`, `tag-retired`) is refused.
 
+For a new decision, `--decided-by user` takes a checked `--quote` and can
+take a checked `--reason-quote`. Either quote may be shorter than eight
+characters when it is a whole typed turn. An agent decision takes
+`--rationale`. Each decision names a `task:`, `pr:` or `repo:` reference,
+along with its source `session:` reference for a user decision. Use
+`--option` for each of two to six options and `--recommended` for a
+recommendation. `--supersedes` names the earlier active decision and
+`--settles` names an open item. For a new open item, `--asked-by` and
+`--blocked` are required. A choice also requires `--recommended` and
+`--why`. An action item has zero options. `--answer-in` defaults to `any`.
+
+To correct a decision, `entry update --option` replaces its options and
+sets a new recommendation when supplied. `--clear-options` clears both.
+`--recommended` alone updates the existing recommendation.
+`--rationale` replaces an agent decision's rationale. `--content`
+replaces the decision statement.
+
 For retrieval with any agent evidence, checked quotes and source labels
 form the answer and claim text; model-written attribution prose is not
 forwarded. Conflicts retain their checked cites with a fixed attribution
@@ -463,6 +499,18 @@ refusal after his turn was found (`not_interactive`, `instruction_stale`,
 `instruction_message` is `null` only when no turn of his held the
 instruction, or the turn holding it has no message id.
 
+Decision and open-item refusals use `decided_by_required`,
+`asked_by_required`, `record_fields` (flags for the wrong tag),
+`invalid_options`, `invalid_recommendation`, `recommendation_why`
+(missing or misplaced `--why`), `record_required` (missing task, PR or
+repository reference), `rationale_required`, `rationale_not_allowed`,
+`decision_quote_not_allowed` (user quote on an agent decision),
+`decision_session` (editing a user decision's source sessions),
+`decision_too_long`, `invalid_supersedes`, `supersede_user_decision`
+(including trial decisions with no typed decider), and `invalid_settles`.
+The marker hook records `unknown_tag` for a refused decision or open-item
+marker.
+
 Stable codes: `entry_not_found`, `session_not_found`, `io_error`,
 `store_corrupt`, `config_invalid`, `store_too_new`, `store_locked`,
 (phase 4) `store_database`,
@@ -488,9 +536,9 @@ violates the six fixed headings in order or exceeds 3,000 characters),
 `handoff_session` (a `handoff` entry with an invalid or multiple distinct
 `session:` references, or an `entry update` that adds, removes or replaces
 a handoff's `session:` reference),
-`not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, or a
-`require_evidence` tag), `needs_redaction` (a spoken-instruction `--quote`
-or annotation quote containing text redaction would alter), `not_agent_note`
+`not_memory_tag` (`entry add --spoken` on an action tag, `handoff`, `decision`,
+`open-item` or a `require_evidence` tag), `needs_redaction` (a checked
+decision, spoken-instruction or annotation quote that redaction would alter), `not_agent_note`
 (`entry update --content` on an approved claim rather than a direct agent
 note), for `tmux` `fzf_missing` and
 `tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the

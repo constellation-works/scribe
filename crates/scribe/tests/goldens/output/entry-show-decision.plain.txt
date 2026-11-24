@@ -1,0 +1,7 @@
+decision-1	active	scribe	-	2026-11-10T01:00:00Z	Keep the stable API for this release series.	agent:opus	-
+decided_by	0-chief
+rationale	Keeping two interfaces would double the maintenance work.
+settles	open-item-1
+option	1. Keep the stable API
+option	2. Maintain both interfaces
+recommended	1

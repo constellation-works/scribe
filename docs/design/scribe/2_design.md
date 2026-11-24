@@ -6982,8 +6982,10 @@ and its closing summary when available.
 
 ## 18. Decisions and open items (proposed)
 
-Designed in [ORB-27638]; not built. It waits for Daniel's approval, and the
-implementation tasks are listed in §18.11, not filed. It reverses, for
+Designed in [ORB-27638] and approved by Daniel on 2026-11-23. The
+records, `entry add` and decision corrections are implemented in
+[ORB-27655] (format 31). The sequence in §18.11 tracks the remaining
+delivery. It reverses, for
 decisions that outlive one task, the 2026-11-20 choice that scribe ships no
 decision tag ([4_decisions.md](./4_decisions.md#decisions-that-outlive-a-task-are-scribe-records-and-open-items-wait-for-daniel-in-scribe)).
 
@@ -7107,7 +7109,8 @@ Stored as an entry with one new object, `decision` (format bump, §18.7):
 - **Reversal.** `--supersedes decision-<n>` writes the new entry and, in the
   same transaction, sets the older one `superseded` with `superseded_by`. An
   agent cannot supersede a decision Daniel made: superseding a `user`
-  decision requires `decided_by: user` (`supersede_user_decision`). The
+  decision requires `decided_by: user` (`supersede_user_decision`). A
+  trial decision with no typed decider also requires a user reversal. The
   older entry stays readable (`entry show`), and `ask` stops quoting it, as
   for every superseded entry ([4_decisions.md](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed)).
 - **Size.** At most 3,000 characters across content, options, rationale and
@@ -7334,13 +7337,13 @@ declaration). `decision` then means only this record, and a `decision` entry
 never files a drafting task. This must land before the relay runs against a
 store with shipped decisions.
 
-### 18.11 Implementation, in order (not filed)
+### 18.11 Implementation, in order
 
 1. **The intake rename** (constellation, standards plugin and scribe relay):
    `decision` → `design-decision` in both `TAGS` lists, the action-tag
    declaration and the plugin's tests. First, because the trial's entries
    already sit under `decision`.
-2. **Records** (scribe): ship `decision` and `open-item`; the format step and
+2. **Records** (scribe, [ORB-27655]): ship `decision` and `open-item`; the format step and
    migration; `entry add` flags, the checks of §18.3 and §18.4 (verbatim with
    short whole turns, rationale and reason, options count, supersede rules,
    size), the marker refusal, the `doc:` related kind; goldens.
@@ -7352,8 +7355,6 @@ store with shipped decisions.
 5. **Skill** (scribe): `references/decisions.md` and the router line.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
-
-Daniel approves this design before step 1 is filed.
 
 ## Task References
 

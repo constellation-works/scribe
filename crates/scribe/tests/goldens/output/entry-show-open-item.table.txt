@@ -1,0 +1,25 @@
+id          open-item-1
+tag         open-item
+status      active
+project     scribe
+topics      -
+related     task:ORB-42
+provider    cli
+host        host
+created     2026-11-10T01:00:00Z
+updated     2026-11-10T01:00:00Z
+review      -
+superseded  -
+from        agent note (opus)
+cite        agent note (opus)
+cwd         -
+said        -
+author      agent:opus
+asked_by    orbit-0-capt
+blocked     Publishing the release
+answer_in   any
+why         Compatibility tests cover the stable API.
+option      1. Use the stable API
+option      2. Use the experimental API
+recommended 1
+content     Which API should the release use?

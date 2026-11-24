@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 31: decisions and open items; format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
 last_validated: 2026-11-22
 ---
 
@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format <!-- current-format -->30 and reads formats 1–<!-- current-format -->30. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format <!-- current-format -->31 and reads formats 1–<!-- current-format -->31. Format 31 adds the optional `decision` and `item` entry objects. SQLite schema 17 adds their nullable JSON columns and replaces the trial tag registrations. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -20,7 +20,7 @@ and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
 introduced moving the other kinds into `scribe.db`; the format-27 release
 wrote the format stamps, including `control.json`, at 27. The current
-format-<!-- current-format -->30 build retains that migration and stamps at <!-- current-stamp -->30 after its first
+format-<!-- current-format -->31 build retains that migration and stamps at <!-- current-stamp -->31 after its first
 eligible store write transaction moves every kind still in files, sessions
 first. A standalone audit line does not start that move: it is inserted
 without waiting, or spooled under `audit-spool/` while the store is still in
@@ -124,7 +124,7 @@ user's file could pass for one of Daniel's records.
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion, until its entry is forgotten (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
-├── control.json                         0600, optional; after the move only the format stamp (see [Formats 27–30](#documents-in-scribedb-phase-7))
+├── control.json                         0600, optional; after the move only the format stamp (see [Formats 27–31](#documents-in-scribedb-phase-7))
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
@@ -198,7 +198,11 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
   table. `scribe export --as jsonl` leaves those rows out even before that
-  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Version 11 adds summary, membership capture time and cursor, and group-only message provenance. Because old memberships have no join time, their capture starts at migration. Messages that already exist retain their independent session-pass provenance. Version 12 adds the nullable `groups.slug` column and the unique partial index `group_open_slug` on `groups(slug) WHERE slug IS NOT NULL AND closed IS NULL`. Version 13 adds `deferred_ancestry` for pending first-prompt ancestry checks when a session starts before transcript creation. Version 14 permits the `withdrawn` reason on claims and reserves deleted handoff ids. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
+  migration runs. Version 9 adds the group, seat and membership tables. Before advancing past versions 8 or 9, a writer truncates the WAL; if another reader or writer connection keeps the checkpoint from completing, the write fails and leaves the version available for retry. Version 10 records that cleanup without changing tables. Version 11 adds summary, membership capture time and cursor, and group-only message provenance. Because old memberships have no join time, their capture starts at migration. Messages that already exist retain their independent session-pass provenance. Version 12 adds the nullable `groups.slug` column and the unique partial index `group_open_slug` on `groups(slug) WHERE slug IS NOT NULL AND closed IS NULL`. Version 13 adds `deferred_ancestry` for pending first-prompt ancestry checks when a session starts before transcript creation. Version 14 permits the `withdrawn` reason on claims and reserves deleted handoff ids. Version 17 adds nullable JSON columns
+  `entries.decision` and `entries.item` and deletes the old `agent_tags`
+  registrations for those two tags. Existing entry rows retain every previous
+  field, id and status. Reads at earlier schemas return null for the new
+  fields and leave the database unchanged. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
 - **Errors.** Contention is `store_locked`: a write that waits past the lock
   wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
   `another scribe.db writer`, and a schema 8 or 9 WAL cleanup blocked by an
@@ -281,6 +285,36 @@ call outside the SQLite write transaction. The group lock precedes the SQLite
 write lock on every close. It checks the input again before
 committing `closed` and `summary` together. A model error or changed evidence
 leaves the group open for retry.
+
+### Decisions and open items
+
+Format 31 adds two nullable entry fields. A structured `decision` entry has
+`decision: {decided_by, rationale, reason_quote, options, recommended, supersedes,
+settles}`. A structured `open-item` has `item: {asked_by, options, recommended,
+why, blocked, answer_in, answer, closed}`. A new item starts with `answer` and
+`closed` null. Decision quotes remain in the existing top-level `quote` and
+in `decision.reason_quote`. The options are strings in presentation order.
+Recommendations are optional one-based indexes. `answer_in` is `any`, `hand`
+or `session:<id>`.
+
+A read of the trial's entries returns both objects as null. The format
+upgrade and SQLite schema 17 preserve their complete prose and metadata.
+On a file-store import the two old tag registrations are omitted, and on
+an existing database schema 17 removes just their registration rows.
+The shipped aliases take over, including removal of the trial alias `ask`.
+Other tag registrations stay as written.
+
+A decision's reversal and the old entry's `superseded_by` and status commit
+with one audit event. The old decision remains readable. A change to the
+decision's content, options or rationale rechecks the size limit. Its
+decider, source sessions for user quotes, quotes and decision links stay
+fixed. The redactor masks free text and refuses a new decision when it
+would alter a checked quote. Forgetting an entry clears its typed object
+along with the body and quote. Forgetting a source session clears the
+decision's quotes and detaches the session reference.
+
+A `doc:<repo>/<path>#<anchor>` related reference points to a section in a
+repository document. It is stored and filtered as a reference string.
 
 ### Messages
 
@@ -471,10 +505,10 @@ Rebuild also checks after acquiring its per-session lock.
   format, and a torn line is counted and left in the moved file. After the
   commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format <!-- current-stamp -->30, so a format-29 build refuses the
+  written as empty stamps at format <!-- current-stamp -->31, so older builds refuse the
   store instead of writing files beside the database. The format-27 release
   wrote these stamps at 27, the format-28 release at 28, and the format-29
-  release at 29. A
+  release at 29 and the format-30 release at 30. A
   standalone audit
   line does not trigger this move; a later eligible transaction imports the
   records and drains its spool. A write that refuses rolls the move back
@@ -521,12 +555,12 @@ Rebuild also checks after acquiring its per-session lock.
   event. A torn line, which the reader skips, is dropped if it contains the
   text. Other files in `pre-sqlite-<date>/` are the user's and are never
   rewritten.
-- **Formats 27–30.** Format 27 introduced the move of every kind still in
+- **Formats 27–31.** Format 27 introduced the move of every kind still in
   files into `scribe.db`, sessions first, and stamped `control.json` at 27.
   The format-28 release kept that migration path and stamped `control.json`
   at 28 after the move. Format 29 adds groups and seats. The current
-  format-<!-- current-format -->30 build keeps that migration path and stamps `control.json` at <!-- current-stamp -->30. After the move `control.json` holds only that stamp, with an
-  empty `sessions` and `codex_cursors`, so its `format` is <!-- current-stamp -->30.
+  format-<!-- current-format -->31 build keeps that migration path and stamps `control.json` at <!-- current-stamp -->31. After the move `control.json` holds only that stamp, with an
+  empty `sessions` and `codex_cursors`, so its `format` is <!-- current-stamp -->31.
   Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
   The upgrade registry remains append-only for persisted document shapes; SQL
@@ -534,7 +568,7 @@ Rebuild also checks after acquiring its per-session lock.
   read a store left at any older format for the support window; phase 8
   removes them with the file decoders.
 - **`scribe export <dir>`** writes records into a separate directory. `--as markdown` writes the
-  file store's files at format <!-- current-format -->30 (`sessions/`, `entries/<tag>/<id>.md`,
+  file store's files at format <!-- current-format -->31 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
   `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
   in again unchanged. Each exported audit line keeps its original audit
@@ -1057,11 +1091,14 @@ instruction that is empty, longer than 4000 characters or holds a control
 character other than a newline or tab, are `config_invalid`. Neither key
 changes a stored record.
 
-The shipped tags are `handoff` (non-action, `require_quote`, no capture
+The shipped tags are `decision` (aliases `decisions`, `dec`), `open-item`
+(aliases `open-items`, `item`), `handoff` (non-action, `require_quote`, no capture
 rules; 2_design.md §16), `preferences` (aliases `preference`, `pref`; stale
 after 180 days) and the action tag `standard` (`require_quote`); `preferences`
 and `standard` are catchers
-([specs/catchers.md](catchers.md)); `idea` stopped shipping in phase 2. A
+([specs/catchers.md](catchers.md)). Decisions and open items are memory tags
+written through `entry add`. The marker hook refuses them and the pass never
+mines them. `idea` stopped shipping in phase 2. A
 `[tags]` table merges with that set: declaring a tag that is not shipped adds
 it, and declaring a shipped tag overrides only the fields it sets (`aliases`,
 `description`, `stale_after_days`, `action`, `require_quote`, `ask_first`,
@@ -1079,7 +1116,8 @@ word is its name, and `tag list` prints a line naming both. The file stays
 readable (`tag list`, `entry list` and `scribe search` still run). Omitting
 `aliases` does not claim the inherited aliases. A word that two config
 entries claim is `config_invalid`. An entry under a tag no config or
-`tags.json` names (such as a `decisions`, `remind` or `finding` entry from
+`tags.json` names (such as an entry with the historical tag name `decisions`,
+`remind` or `finding` from
 before that tag stopped shipping) stays listed, shown, searched, cited by
 `ask` and settled. `ask_first` on a tag whose effective
 action status is false is `config_invalid`; that status comes from configured

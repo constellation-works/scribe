@@ -1,8 +1,11 @@
 //! Locked direct writes from the CLI. Authors always describe the agent channel.
+use super::entry_records::{
+    check_decision_redaction, check_decision_size, check_decision_update, patch_decision,
+};
 use super::ids::resolve;
 use super::{Redactor, Store};
 use crate::WriteRefusal;
-use crate::entry::{AgentEntry, EntryPatch};
+use crate::entry::{AgentEntry, DECISION_TAG, EntryPatch, is_decision_or_item};
 use crate::record::patch;
 use crate::{
     Author, AuthorKind, AuthorName, ContentFrom, Entry, EntryId, EntryStatus, Error, Label,
@@ -107,10 +110,10 @@ fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
 }
 
 fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
-    if def.name.as_str() == crate::handoff::HANDOFF_TAG {
+    if def.name.as_str() == crate::handoff::HANDOFF_TAG || is_decision_or_item(def.name.as_str()) {
         return Err(refusal(
             WriteRefusal::NotMemoryTag,
-            "handoff is an agent handoff note, not a spoken-instruction statement; omit --spoken",
+            format!("{} has its own entry fields; omit --spoken", def.name),
         ));
     }
     if def.action.is_some() {
@@ -401,10 +404,10 @@ impl Store {
         if spoken {
             check_spoken_tag(&def)?;
             check_spoken_quote(quote)?;
-        } else {
-            if def.name.as_str() != crate::handoff::HANDOFF_TAG || quote.is_some() {
-                check_quote(&def, quote)?;
-            }
+        } else if def.name.as_str() != DECISION_TAG
+            && (def.name.as_str() != crate::handoff::HANDOFF_TAG || quote.is_some())
+        {
+            check_quote(&def, quote)?;
         }
         check_evidence(&def, evidence)?;
         check_handoff(&def.name, content)?;
@@ -447,6 +450,8 @@ impl Store {
             .tags
             .resolve(draft.tag.as_str())
             .ok_or_else(unknown_tag)?;
+        self.check_new_entry_records(&tag.name, &draft)?;
+        check_decision_redaction(&draft, redactor)?;
         if draft.spoken {
             check_spoken_tag(tag)?;
             check_spoken_quote(draft.quote.as_deref())?;
@@ -469,7 +474,7 @@ impl Store {
                 if !draft.self_refresh_verified {
                     return Err(refusal(WriteRefusal::QuoteRequired, "a quote-less handoff requires a verified self-refresh session"));
                 }
-            } else {
+            } else if tag.name.as_str() != DECISION_TAG {
                 check_quote(tag, draft.quote.as_deref())?;
             }
             check_handoff_related(&tag.name, &draft.related)?;
@@ -490,6 +495,12 @@ impl Store {
         }
         check_evidence(tag, draft.evidence.as_deref())?;
         check_handoff(&tag.name, &draft.content)?;
+        let mut replaced = draft
+            .decision
+            .as_ref()
+            .map(|decision| self.decision_replacement(decision))
+            .transpose()?
+            .flatten();
         let (entries, skipped) = self.load_entries()?;
         if tag.require_evidence {
             let session = draft_session(&draft.related);
@@ -548,11 +559,17 @@ impl Store {
             stated_by: draft.spoken.then(|| Author::agent(author)),
             outcome: None,
             handoff_mode: draft.handoff_mode,
+            decision: draft.decision,
+            item: draft.item,
             content: draft.content,
         };
         redactor.entry(&mut entry);
-        if let Some(cover) =
-            crate::pass::covering_entry(&entries, &entry.content, &entry.tag, &entry.project)
+        if let Some(decision) = &entry.decision {
+            check_decision_size(decision, &entry.content, entry.quote.as_deref())?;
+        }
+        if !is_decision_or_item(entry.tag.as_str())
+            && let Some(cover) =
+                crate::pass::covering_entry(&entries, &entry.content, &entry.tag, &entry.project)
         {
             return Err(refusal(
                 WriteRefusal::AlreadyCovered,
@@ -560,6 +577,14 @@ impl Store {
             ));
         }
         self.write_entry(&entry, true)?;
+        if let Some(older) = &mut replaced {
+            older.status = EntryStatus::Superseded;
+            older.superseded_by = Some(entry.id.clone());
+            older.inactive_since = Some(now);
+            older.updated = now;
+            older.updated_by = Some(entry.author.clone());
+            self.write_entry(older, false)?;
+        }
         Ok(entry)
             })
     }
@@ -587,6 +612,7 @@ impl Store {
                     "only an active entry can be updated",
                 ));
             }
+            patch_decision(&mut entry, &patching, redactor)?;
             if let Some(content) = patching.content {
                 if entry.author.kind != AuthorKind::Agent {
                     return Err(refusal(
@@ -624,6 +650,7 @@ impl Store {
                 &patching.add_related,
                 &patching.remove_related,
             );
+            check_decision_update(&before, &entry)?;
             let changed = entry != before;
             if changed {
                 entry.updated = now;

@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 
 /// The newest store format: this build reads formats 1 to `FORMAT` of every
 /// document and would write `FORMAT`.
-pub(super) const FORMAT: u32 = 30;
+pub(super) const FORMAT: u32 = 31;
 
 /// Which document an upgrade step is applied to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +104,23 @@ pub(super) const UPGRADES: &[Upgrade] = &[
     handoff_mode,
     session_groups,
     session_forget,
+    decision_and_item,
 ];
+
+/// Format 30 -> 31 adds nullable objects, preserving the trial entries.
+fn decision_and_item(
+    document: Document,
+    mut value: serde_json::Value,
+) -> serde_json::Result<serde_json::Value> {
+    if matches!(document, Document::Entry)
+        && let Some(entry) = value.as_object_mut()
+    {
+        for key in ["decision", "item"] {
+            entry.entry(key).or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(value)
+}
 
 /// Format 29 -> 30 permits withdrawn claims and deleted source markers.
 fn session_forget(_: Document, value: serde_json::Value) -> serde_json::Result<serde_json::Value> {
@@ -1245,6 +1261,8 @@ impl EntryV12 {
             removal_instruction: None,
             stated_by: None,
             handoff_mode: None,
+            decision: None,
+            item: None,
             outcome: None,
             content: String::new(),
         }
@@ -1330,6 +1348,8 @@ impl EntryV13 {
             removal_instruction,
             stated_by: None,
             handoff_mode: None,
+            decision: None,
+            item: None,
             outcome: None,
             content: String::new(),
         }
@@ -1417,6 +1437,8 @@ impl EntryV14 {
             removal_instruction,
             stated_by: self.stated_by,
             handoff_mode: None,
+            decision: None,
+            item: None,
             outcome: None,
             content: String::new(),
         }
@@ -1507,6 +1529,8 @@ impl EntryV16 {
             stated_by: self.stated_by,
             outcome: self.outcome,
             handoff_mode: None,
+            decision: None,
+            item: None,
             content: String::new(),
         }
     }
@@ -2036,6 +2060,23 @@ pub(super) fn validate_entry(
         }
     };
     let forgotten = entry.status == crate::EntryStatus::Forgotten;
+    if entry.decision.is_some() || entry.item.is_some() {
+        let typed_tag_matches = match (&entry.decision, &entry.item) {
+            (Some(_), None) => entry.tag.as_str() == crate::entry::DECISION_TAG,
+            (None, Some(_)) => entry.tag.as_str() == crate::entry::OPEN_ITEM_TAG,
+            _ => false,
+        };
+        if !typed_tag_matches
+            || forgotten
+            || entry.author.kind != crate::AuthorKind::Agent
+            || entry.content_from != crate::ContentFrom::Agent
+        {
+            return Err(shape(
+                path,
+                "decision and item objects require a direct agent entry of the matching tag",
+            ));
+        }
+    }
     let outcome_valid = match &entry.outcome {
         None => entry.author.kind != crate::AuthorKind::Scribe,
         Some(outcome) => {

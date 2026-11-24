@@ -3,6 +3,21 @@
     {
       "author": null,
       "source": "config",
+      "name": "decision",
+      "aliases": [
+        "decisions",
+        "dec"
+      ],
+      "description": "A decision that outlives its task.",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
+      "action": null,
+      "route": null
+    },
+    {
+      "author": null,
+      "source": "config",
       "name": "handoff",
       "aliases": [],
       "description": "An agent-written session handoff, recorded on the user's request.",
@@ -26,6 +41,21 @@
       "stale_after_days": null,
       "configured": false,
       "entries": 1,
+      "action": null,
+      "route": null
+    },
+    {
+      "author": null,
+      "source": "config",
+      "name": "open-item",
+      "aliases": [
+        "open-items",
+        "item"
+      ],
+      "description": "A question or action that waits for the user.",
+      "stale_after_days": null,
+      "configured": true,
+      "entries": 0,
       "action": null,
       "route": null
     },
@@ -62,7 +92,7 @@
       "route": "propose"
     }
   ],
-  "total": 4,
+  "total": 6,
   "truncated": false,
   "warnings": []
 }

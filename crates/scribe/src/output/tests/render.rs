@@ -55,6 +55,8 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         stated_by: None,
         outcome: None,
         handoff_mode: None,
+        decision: None,
+        item: None,
         removal_instruction: None,
         action: None,
     }

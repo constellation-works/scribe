@@ -1,0 +1,57 @@
+{
+  "id": "decision-1",
+  "tag": "decision",
+  "status": "active",
+  "project": "scribe",
+  "topics": [],
+  "related": [
+    "task:ORB-42"
+  ],
+  "provider": "cli",
+  "host": "host",
+  "created": "2026-11-10T01:00:00Z",
+  "updated": "2026-11-10T01:00:00Z",
+  "said": "",
+  "content": "Keep the stable API for this release series.",
+  "content_from": {
+    "kind": "agent",
+    "role": null,
+    "message": null,
+    "at": null
+  },
+  "cite": null,
+  "superseded_by": null,
+  "review_after": null,
+  "author": {
+    "kind": "agent",
+    "name": "opus"
+  },
+  "updated_by": null,
+  "retirement_reason": null,
+  "quote": null,
+  "evidence": null,
+  "as_of": null,
+  "window_turns": null,
+  "window": null,
+  "action": null,
+  "admitted": null,
+  "approved_by": null,
+  "instruction": null,
+  "stated_by": null,
+  "outcome": null,
+  "handoff_mode": null,
+  "decision": {
+    "decided_by": "0-chief",
+    "rationale": "Keeping two interfaces would double the maintenance work.",
+    "reason_quote": null,
+    "options": [
+      "Keep the stable API",
+      "Maintain both interfaces"
+    ],
+    "recommended": 1,
+    "supersedes": null,
+    "settles": "open-item-1"
+  },
+  "item": null,
+  "removal_instruction": null
+}

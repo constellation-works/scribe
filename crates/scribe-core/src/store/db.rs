@@ -86,7 +86,15 @@ const MIGRATIONS: &[&str] = &[
     docs::V14,
     groups::V15,
     V16,
+    V17,
 ];
+
+/// Version 17 ships typed records and replaces the trial's tag registrations.
+const V17: &str = "
+ALTER TABLE entries ADD COLUMN decision TEXT CHECK (decision IS NULL OR json_valid(decision));
+ALTER TABLE entries ADD COLUMN item TEXT CHECK (item IS NULL OR json_valid(item));
+DELETE FROM agent_tags WHERE name IN ('decision', 'open-item');
+";
 
 /// Protect legacy issue erasure obligations from older writers. They can
 /// read the digest rows but would discard them without erasing pre-issue

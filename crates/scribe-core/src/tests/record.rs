@@ -42,10 +42,27 @@ fn related_references_need_a_known_kind_and_a_target() {
     assert_eq!(pr.kind(), RelatedKind::Pr);
     assert_eq!(pr.target(), "constellation-works/scribe#7");
     assert_eq!(pr.to_string(), "pr:constellation-works/scribe#7");
+    let doc = "doc:scribe/docs/design/scribe/4_decisions.md#agent-records";
+    let parsed: Related = doc.parse().unwrap();
+    assert_eq!(parsed.kind(), RelatedKind::Doc);
+    assert_eq!(parsed.to_string(), doc);
+    assert_eq!(
+        serde_json::from_str::<Related>(&serde_json::to_string(&parsed).unwrap()).unwrap(),
+        parsed
+    );
     for good in ["task:<id>", "repo:scribe", "session:abc"] {
         assert!(Related::try_from(good.to_owned()).is_ok(), "{good}");
     }
-    for bad in ["issue:3", "task:", "scribe", "repo:two words"] {
+    for bad in [
+        "issue:3",
+        "task:",
+        "scribe",
+        "repo:two words",
+        "doc:scribe#anchor",
+        "doc:scribe/file.md",
+        "doc:scribe/file.md#",
+        "doc:scribe/#anchor",
+    ] {
         assert!(Related::try_from(bad.to_owned()).is_err(), "{bad}");
     }
 }
