@@ -32,6 +32,11 @@ pub trait PortError: std::fmt::Display {
 pub trait Clock {
     /// Now, at the precision the CLI has always stamped with.
     fn now(&self) -> OffsetDateTime;
+
+    /// Now, at the system clock's full precision. Only the instruction
+    /// check's 30-minute window reads it, as it always has; every other site
+    /// reads [`Clock::now`].
+    fn now_precise(&self) -> OffsetDateTime;
 }
 
 /// The redactor for a config ([`Redactor`]), built from the live values of
@@ -90,6 +95,23 @@ pub trait Transcripts {
     ///
     /// [`Unreadable`].
     fn read_checked(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+    ) -> Result<Option<Vec<u8>>, Unreadable>;
+
+    /// [`Transcripts::read_checked`] without its Codex rollout check: the
+    /// file's path, type, owner, mode and size are checked on one open handle
+    /// and its bytes returned unparsed. It differs from `read_checked` only
+    /// for Codex, whose rollout it does not parse, so a caller that classifies
+    /// the session itself (the instruction check) refuses a `codex exec`
+    /// rollout as not interactive before it would refuse it as unreadable.
+    ///
+    /// # Errors
+    ///
+    /// [`Unreadable`].
+    fn read_checked_unparsed(
         &self,
         provider: Provider,
         path: &Path,

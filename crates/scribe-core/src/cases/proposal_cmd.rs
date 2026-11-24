@@ -2,10 +2,12 @@
 //! proposal writes. Arguments are refused before an unset `[redact]` env
 //! name is reported.
 
-use crate::cases::Ctx;
 use crate::cases::entry::EntryVerbs;
+use crate::cases::instruction_check::{self, Instruction};
 use crate::cases::proposal::ProposalVerbs;
 use crate::cases::write_error::{WriteError, redactor};
+use crate::cases::{Ctx, PortError};
+use crate::instruction::{Act, Target};
 use crate::{AuthorName, Proposal, ProposalChange, ProposalKind, WriteRefusal};
 
 /// What `proposal add` runs.
@@ -77,6 +79,67 @@ pub fn update<E>(
         Some(reason),
         None,
         author,
+        ctx.clock.now(),
+        &redactor,
+    )?)
+}
+
+/// What `proposal settle` runs.
+pub struct ProposalSettleInput<'i> {
+    /// The proposal id or unique prefix.
+    pub id: &'i str,
+    /// Approve (apply) or reject (close without applying).
+    pub approve: bool,
+    /// A replacement explanation for the settlement.
+    pub reason: Option<&'i str>,
+    /// The agent.
+    pub author: AuthorName,
+    /// `--session` and `--instruction`.
+    pub instruction: Instruction<'i>,
+}
+
+/// `proposal settle`: approve or reject the proposal `id`, on the user's
+/// instruction when one is given. The instruction's session is noted first,
+/// then the author, the reason and the proposal are checked; the instruction
+/// is checked before the store lock, so a refusal changes nothing. A passing
+/// check lets settle accept a candidate (2_design.md §12.1); a proposal about
+/// Daniel's entry stays his.
+///
+/// # Errors
+///
+/// [`WriteError`]: a refusal, the instruction check, the redactor, or a
+/// store error.
+pub fn settle<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: ProposalSettleInput<'_>,
+) -> Result<(Proposal, bool), WriteError<E>> {
+    instruction_check::note(ctx, &input.instruction);
+    crate::check_agent_author(&input.author)?;
+    if let Some(reason) = input.reason {
+        crate::check_reason(reason)?;
+    }
+    let target = ctx.store.resolve_proposal(input.id)?;
+    let instructed = instruction_check::check(
+        ctx,
+        &input.instruction,
+        if input.approve {
+            Act::Approve
+        } else {
+            Act::Reject
+        },
+        &Target::new(target.id.to_string(), input.id),
+    )?;
+    let redactor = redactor(ctx)?;
+    Ok(ctx.store.change_agent_proposal(
+        input.id,
+        if input.approve {
+            ProposalChange::Approve
+        } else {
+            ProposalChange::Reject
+        },
+        input.reason,
+        instructed.as_ref(),
+        input.author,
         ctx.clock.now(),
         &redactor,
     )?)

@@ -188,38 +188,15 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             Ok(written(proposal, changed))
         }
         ProposalCommand::Settle(args) => {
-            args.instruction.note(ctx);
-            scribe_core::check_agent_author(&args.author)?;
-            if let Some(reason) = &args.reason {
-                scribe_core::check_reason(reason)?;
-            }
-            let target = ctx.store().resolve_proposal(&args.id)?;
-            // Before the store lock; a refusal changes nothing. A passing
-            // check lets settle accept a candidate (2_design.md §12.1); a
-            // proposal about Daniel's entry stays his.
-            let instructed = super::instruction::check(
-                ctx,
-                &args.instruction,
-                if args.approve {
-                    scribe_core::instruction::Act::Approve
-                } else {
-                    scribe_core::instruction::Act::Reject
+            let (proposal, changed) = proposal_cmd::settle(
+                &ctx.core(),
+                proposal_cmd::ProposalSettleInput {
+                    id: &args.id,
+                    approve: args.approve,
+                    reason: args.reason.as_deref(),
+                    author: args.author,
+                    instruction: args.instruction.case(ctx),
                 },
-                &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
-            )?;
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (proposal, changed) = ctx.store().change_agent_proposal(
-                &args.id,
-                if args.approve {
-                    scribe_core::ProposalChange::Approve
-                } else {
-                    scribe_core::ProposalChange::Reject
-                },
-                args.reason.as_deref(),
-                instructed.as_ref(),
-                args.author,
-                ctx.now(),
-                &redactor,
             )?;
             Ok(written(proposal, changed))
         }

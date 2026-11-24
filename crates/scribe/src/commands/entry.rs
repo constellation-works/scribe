@@ -2,7 +2,7 @@
 
 mod records;
 
-use self::records::{RecordArgs, find_answer, verify_decision_quotes};
+use self::records::RecordArgs;
 use super::{DateArgs, ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
@@ -323,68 +323,27 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         EntryCommand::List(args) => list(args, ctx),
         EntryCommand::Show(args) => show(&args, ctx),
         EntryCommand::Add(args) => {
-            scribe_core::check_agent_author(&args.author)?;
-            // Arguments first: a bad tag or empty content is reported before
-            // an unset [redact] env name.
-            let topics = scribe_core::Topics::try_from(args.topic)
-                .map_err(|e| CliError::Usage(e.to_string()))?;
-            // A session given as a unique prefix is stored as the full id.
-            let related = super::resolve_relateds(ctx, &args.related)?;
-            let def = ctx.store().check_new_entry_full(
-                &args.tag,
-                &args.content,
-                args.quote.as_deref(),
-                args.evidence.as_deref(),
-                args.spoken,
+            let written = entry_cmd::add(
+                &ctx.core(),
+                entry_cmd::AddInput {
+                    tag: args.tag,
+                    content: args.content,
+                    author: args.author,
+                    project: args.project,
+                    topics: args.topic,
+                    related: args.related,
+                    quote: args.quote,
+                    mode: args.mode,
+                    evidence: args.evidence,
+                    as_of: args.as_of,
+                    spoken: args.spoken,
+                    record: args.record.into_fields(),
+                    provider: ctx.provider(),
+                    host: ctx.host(),
+                    current_session: std::env::var("CLAUDE_CODE_SESSION_ID").ok(),
+                },
             )?;
-            scribe_core::check_handoff_related(&def.name, &related)?;
-            let self_refresh_verified =
-                if def.name.as_str() == scribe_core::HANDOFF_TAG && args.quote.is_none() {
-                    verify_self_refresh(ctx, &related, args.mode)?;
-                    true
-                } else {
-                    false
-                };
-            let (decision, item) = args.record.into_records(ctx, &def.name)?;
-            let draft = scribe_core::AgentEntry {
-                tag: args.tag,
-                content: args.content,
-                project: args.project,
-                topics,
-                related,
-                host: ctx.host(),
-                quote: args.quote,
-                evidence: args.evidence,
-                as_of: args.as_of,
-                spoken: args.spoken,
-                handoff_mode: args.mode,
-                self_refresh_verified,
-                decision,
-                item,
-            };
-            ctx.store().check_new_entry_records(&def.name, &draft)?;
-            if let Some(quote) = &draft.quote {
-                if let Some(decision) = &draft.decision {
-                    verify_decision_quotes(
-                        ctx,
-                        &draft.related,
-                        quote,
-                        decision.reason_quote.as_deref(),
-                    )?;
-                } else {
-                    verify_quote(
-                        ctx,
-                        &draft.related,
-                        quote,
-                        def.name.as_str() == scribe_core::HANDOFF_TAG,
-                    )?;
-                }
-            }
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let entry = ctx
-                .store()
-                .add_agent_entry(draft, args.author, ctx.now(), &redactor)?;
-            written_with_action(ctx, entry, true)
+            Ok(output(written))
         }
         EntryCommand::Pickup(args) => {
             let written = entry_cmd::pickup(
@@ -416,31 +375,36 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             Ok(output(written))
         }
         EntryCommand::Retire(args) => {
-            args.instruction.note(ctx);
-            scribe_core::check_agent_author(&args.author)?;
-            scribe_core::check_reason(&args.reason)?;
-            let target = ctx.store().resolve_entry(&args.id)?;
-            // Before the store lock; a refusal changes nothing. A passing
-            // check lets retire accept Daniel's entry (§12.1).
-            let instructed = super::instruction::check(
-                ctx,
-                &args.instruction,
-                scribe_core::instruction::Act::Retire,
-                &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
-            )?;
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (entry, changed) = ctx.store().retire_agent_entry(
+            let written = entry_cmd::retire(
+                &ctx.core(),
                 &args.id,
                 &args.reason,
-                instructed.as_ref(),
                 args.author,
-                ctx.now(),
-                &redactor,
+                &args.instruction.case(ctx),
             )?;
-            written_with_action(ctx, entry, changed)
+            Ok(output(written))
         }
-        EntryCommand::Forget(args) => forget(&args, ctx),
-        EntryCommand::Answer(args) => answer(&args, ctx),
+        EntryCommand::Forget(args) => {
+            let written = entry_cmd::forget(
+                &ctx.core(),
+                &args.id,
+                &args.author,
+                args.confirm,
+                &args.instruction.case(ctx),
+            )?;
+            Ok(output(written))
+        }
+        EntryCommand::Answer(args) => {
+            let written = entry_cmd::answer(
+                &ctx.core(),
+                &args.id,
+                &args.author,
+                &args.quote,
+                &args.related,
+                ctx.provider(),
+            )?;
+            Ok(output(written))
+        }
         EntryCommand::Close(args) => {
             let written = entry_cmd::close(
                 &ctx.core(),
@@ -475,81 +439,6 @@ fn resolve_relateds_preserving_input(
         ctx.provider(),
         related,
     )?)
-}
-
-/// `entry answer`: the item is checked before any transcript is read, and
-/// again by the store under the lock (2_design.md §18.4).
-fn answer(args: &AnswerArgs, ctx: &Context) -> Result<Output, CliError> {
-    scribe_core::check_agent_author(&args.author)?;
-    let target = ctx.store().resolve_entry(&args.id)?;
-    scribe_core::check_unsettled_item(&target)?;
-    let related = super::resolve_relateds(ctx, &args.related)?;
-    let (session, at) = find_answer(ctx, &related, &args.quote)?;
-    let answer = scribe_core::ItemAnswer {
-        words: args.quote.clone(),
-        session,
-        at,
-        recorded_by: args.author.clone(),
-    };
-    let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-    let (entry, changed) = ctx
-        .store()
-        .answer_open_item(&args.id, answer, ctx.now(), &redactor)?;
-    // An answer recorded here is not an approval in the session that must
-    // act (§18.8). Base the reminder on the choice that remains stored: an
-    // older answer may have been ignored by the store.
-    let notice = entry
-        .item
-        .as_ref()
-        .and_then(|item| match (&item.answer_in, &item.answer) {
-            (scribe_core::AnswerIn::Session(only), Some(answer))
-                if *only != answer.session =>
-            {
-                Some(format!(
-                    "{} asks for its answer in session:{only}, whose auto mode accepts only what is typed there; the user must also type it in that session",
-                    entry.id
-                ))
-            }
-            _ => None,
-        });
-    let mut output = written_with_action(ctx, entry, changed)?;
-    if let (Some(notice), Output::Written { notices, .. }) = (notice, &mut output) {
-        notices.push(notice);
-    }
-    Ok(output)
-}
-
-/// `entry forget`: exists only with an instruction and `--confirm`; both
-/// refusals, and every check of the instruction, come before the store lock
-/// and change nothing (§12.4).
-fn forget(args: &ForgetArgs, ctx: &Context) -> Result<Output, CliError> {
-    args.instruction.note(ctx);
-    scribe_core::check_agent_author(&args.author)?;
-    let target = ctx.store().resolve_entry(&args.id)?;
-    let uninstructed = || {
-        CliError::Usage(String::from(
-            "entry forget runs only on the user's instruction: pass --session <id> and --instruction '<their words>'",
-        ))
-    };
-    if args.instruction.session.is_none() || args.instruction.instruction.is_none() {
-        return Err(uninstructed());
-    }
-    if !args.confirm {
-        return Err(CliError::ForgetConfirmRequired(target.id.to_string()));
-    }
-    let Some(instructed) = super::instruction::check(
-        ctx,
-        &args.instruction,
-        scribe_core::instruction::Act::Forget,
-        &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
-    )?
-    else {
-        return Err(uninstructed());
-    };
-    let (entry, changed) =
-        ctx.store()
-            .forget_entry(&args.id, &instructed, args.author.clone(), ctx.now())?;
-    written_with_action(ctx, entry, changed)
 }
 
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
@@ -693,217 +582,6 @@ impl Actions {
             payload
         }
     }
-}
-
-/// Refuse a quote that is not verbatim in the user's typed turns of a session
-/// the entry names (`--related session:<id>`), or whose transcript cannot be
-/// read on this host (docs/design/scribe/2_design.md §4.6). When
-/// `require_all_sessions` is true (used for `handoff`, §16.1), every
-/// `session:` reference in `related` must parse as a `SessionId` and verify
-/// the quote against its transcript.
-fn verify_quote(
-    ctx: &Context,
-    related: &[Related],
-    quote: &str,
-    require_all_sessions: bool,
-) -> Result<(), CliError> {
-    use super::hook::payload;
-    let refuse = |kind, message: String| -> CliError {
-        scribe_core::Error::AgentWrite { kind, message }.into()
-    };
-    let session_refs: Vec<&Related> = related
-        .iter()
-        .filter(|r| r.kind() == scribe_core::RelatedKind::Session)
-        .collect();
-    let sessions: Vec<scribe_core::SessionId> = if require_all_sessions {
-        let mut parsed = Vec::with_capacity(session_refs.len());
-        for rel in &session_refs {
-            let Ok(id) = rel.target().parse::<scribe_core::SessionId>() else {
-                return Err(refuse(
-                    scribe_core::WriteRefusal::QuoteNotFound,
-                    format!("cannot verify quote for invalid session reference '{rel}'"),
-                ));
-            };
-            if !parsed.contains(&id) {
-                parsed.push(id);
-            }
-        }
-        parsed
-    } else {
-        session_refs
-            .iter()
-            .filter_map(|r| r.target().parse().ok())
-            .collect()
-    };
-    if sessions.is_empty() {
-        return Err(refuse(
-            scribe_core::WriteRefusal::QuoteRequired,
-            String::from(
-                "a quote is checked against the session it was typed in; pass --related session:<id>",
-            ),
-        ));
-    }
-    let check_one = |id: &scribe_core::SessionId| -> Result<bool, CliError> {
-        let Some(path) = payload::locate(ctx, id)? else {
-            return Ok(false);
-        };
-        if !matches!(
-            payload::check(ctx, &path, id),
-            Ok(payload::Transcript::Present)
-        ) {
-            return Ok(false);
-        }
-        match payload::read_for(ctx, &path) {
-            Ok(bytes) => {
-                let messages = scribe_core::transcript::parse(&bytes);
-                Ok(scribe_core::action::quote_found(&messages, quote))
-            }
-            Err(err) => {
-                tracing::warn!(path = %path.display(), %err, "cannot read the transcript");
-                Ok(false)
-            }
-        }
-    };
-    let not_found = || {
-        refuse(
-            scribe_core::WriteRefusal::QuoteNotFound,
-            String::from(
-                "the quote is not word for word in the user's typed turns of the session named, or its transcript is not readable on this host; quote the user's own words exactly, or file a friction instead",
-            ),
-        )
-    };
-    if require_all_sessions {
-        for id in &sessions {
-            if !check_one(id)? {
-                return Err(not_found());
-            }
-        }
-        return Ok(());
-    }
-    for id in &sessions {
-        if check_one(id)? {
-            return Ok(());
-        }
-    }
-    Err(not_found())
-}
-
-fn verify_self_refresh(
-    ctx: &Context,
-    related: &[Related],
-    mode: Option<scribe_core::handoff::Mode>,
-) -> Result<(), CliError> {
-    use super::hook::payload;
-    let refuse = |kind, message: &str| -> CliError {
-        scribe_core::Error::AgentWrite {
-            kind,
-            message: message.to_owned(),
-        }
-        .into()
-    };
-    let current = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
-    let target = related
-        .iter()
-        .find(|r| r.kind() == scribe_core::RelatedKind::Session);
-    if mode.is_none() || current.as_deref() != target.map(Related::target) || current.is_none() {
-        return Err(refuse(
-            scribe_core::WriteRefusal::QuoteRequired,
-            "a quote-less refresh requires --mode and the current CLAUDE_CODE_SESSION_ID matching the related session",
-        ));
-    }
-    let id = target
-        .and_then(|r| r.target().parse::<scribe_core::SessionId>().ok())
-        .ok_or_else(|| {
-            refuse(
-                scribe_core::WriteRefusal::QuoteRequired,
-                "invalid refresh session",
-            )
-        })?;
-    // Walk launchers in metadata order with one budget and cycle guard. A
-    // clear predecessor takes precedence over every launch edge at that node.
-    // A cycle is a link already on the current path; a session an earlier
-    // branch already examined (a shared ancestor) is skipped, not refused.
-    enum Step {
-        Enter(scribe_core::SessionId),
-        Leave(scribe_core::SessionId),
-    }
-    let mut last_failure: CliError = scribe_core::Error::AgentWrite {
-        kind: scribe_core::WriteRefusal::QuoteNotFound,
-        message: format!("refresh session {id}: transcript is not readable on this host"),
-    }
-    .into();
-    let mut pending = vec![Step::Enter(id)];
-    let mut seen = std::collections::HashSet::new();
-    let mut on_path = std::collections::HashSet::new();
-    while let Some(step) = pending.pop() {
-        let link = match step {
-            Step::Leave(link) => {
-                on_path.remove(&link);
-                continue;
-            }
-            Step::Enter(link) => link,
-        };
-        let failed = |reason: &str| -> CliError {
-            scribe_core::Error::AgentWrite {
-                kind: scribe_core::WriteRefusal::QuoteNotFound,
-                message: format!("refresh session {link}: {reason}"),
-            }
-            .into()
-        };
-        if on_path.contains(&link) {
-            return Err(failed("ancestry contains a cycle"));
-        }
-        if !seen.insert(link.clone()) {
-            continue;
-        }
-        on_path.insert(link.clone());
-        pending.push(Step::Leave(link.clone()));
-        let path = payload::locate(ctx, &link).ok().flatten();
-        let bytes = path
-            .as_ref()
-            .and_then(|path| payload::read_checked(ctx, path, &link).ok().flatten());
-        if let Some(bytes) = bytes {
-            let typed = if ctx.provider() == scribe_core::Provider::ClaudeCode {
-                scribe_core::instruction::claude_conversation_raw_typed(&bytes)
-                    .iter()
-                    .any(|turn| turn.typed.is_some())
-            } else {
-                scribe_core::transcript::parse(&bytes)
-                    .iter()
-                    .filter_map(scribe_core::transcript::user_turn)
-                    .any(|turn| !turn.own.trim().is_empty())
-            };
-            if typed {
-                return Ok(());
-            }
-            let parents = if ctx.provider() == scribe_core::Provider::ClaudeCode {
-                scribe_core::transcript::predecessors(&bytes)
-            } else {
-                scribe_core::transcript::Predecessors::default()
-            };
-            if parents.clear.len() > 1 {
-                return Err(failed("ambiguous: more than one clear predecessor"));
-            }
-            if let Some(parent) = parents.clear.first() {
-                pending.push(Step::Enter(parent.clone()));
-            } else {
-                pending.extend(parents.launch.into_iter().rev().map(Step::Enter));
-            }
-            last_failure = failed(
-                "transcript must contain a typed user turn or a clear or launch predecessor",
-            );
-        } else {
-            last_failure = failed("transcript failed provenance or is not readable on this host");
-        }
-        if seen.len() == 16
-            && pending
-                .iter()
-                .any(|step| matches!(step, Step::Enter(next) if !seen.contains(next)))
-        {
-            return Err(failed("ancestry exceeds the 16-transcript limit"));
-        }
-    }
-    Err(last_failure)
 }
 
 #[derive(Debug, Args)]
@@ -1052,13 +730,4 @@ pub(crate) struct ForgetArgs {
     confirm: bool,
     #[command(flatten)]
     instruction: super::instruction::InstructionArgs,
-}
-
-fn written_with_action(
-    ctx: &Context,
-    entry: scribe_core::Entry,
-    changed: bool,
-) -> Result<Output, CliError> {
-    let payload = Actions::load(ctx)?.payload(&entry, false);
-    Ok(Output::written(Record::Entry(Box::new(payload)), changed))
 }
