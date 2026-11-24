@@ -28,12 +28,13 @@
 //! refusal is audited with its code; a no-op or a status writes nothing, except
 //! that an explicit off during deferred ancestry records and audits the opt-out.
 
+use super::continuation;
+use super::reply::{HookPortError, HookReply, PROVENANCE_FAILED, chain};
 use crate::apps::group;
 use crate::apps::session;
-use crate::cases::continuation;
-use crate::cases::hook::{HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain};
 use crate::control::{self, Change, Switch};
 use crate::runtime::Ctx;
+use crate::runtime::audit::HookOutcome;
 use crate::{Author, Provider, SessionControl, SessionId, SessionLink, SessionRecord};
 use std::path::Path;
 use time::OffsetDateTime;

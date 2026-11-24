@@ -1,5 +1,5 @@
 //! `scribe hook session-end`: the payload, then
-//! [`scribe_core::cases::session_end::run`]. The session ended, so its last
+//! the hook app's `SessionEnd`. The session ended, so its last
 //! pass is due and final (docs/design/scribe/2_design.md §5.2).
 //!
 //! Model-free and cheap: it reads `control.json` and, only for a session
@@ -13,11 +13,12 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::SessionId;
-use scribe_core::cases::session_end as case;
+use scribe_core::apps::hook::{Command, exec};
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
-    Ok(Output::Hook(case::run(&ctx.core(), &session(input)?)?))
+    let command = Command::SessionEnd(session(input)?);
+    Ok(super::replied(exec(&ctx.runtime(), command)?))
 }
 
 /// The session a `SessionEnd` payload names.

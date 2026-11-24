@@ -12,15 +12,17 @@
 //! `SessionEnd` and `Stop` payloads are decoded up front, and a decode error
 //! is raised where the old adapter decoded them.
 
+use super::reply::{HookPortError, HookReply, PROVENANCE_FAILED};
+use super::session_end;
+use super::stop::{self, StopInput};
+use super::user_prompt_submit::{self, PromptInput, mark_echoes};
 use crate::apps::group;
+use crate::apps::group::HookError;
 use crate::capture::{PromptClaims, prompt_agent_originated};
-use crate::cases::hook::{HookError, HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED};
-use crate::cases::session_end;
-use crate::cases::stop::{self, StopInput};
-use crate::cases::user_prompt_submit::{self, PromptInput};
 use crate::codex::TypedTurn;
 use crate::control::{command_text, is_control};
 use crate::message::NewMessage;
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::audit::PersistedAudit;
 use crate::runtime::{Ctx, TranscriptState};
 use crate::{Label, Provider, SessionId, annotation, capture, control};
@@ -386,4 +388,29 @@ where
         block: None,
         outcomes,
     })
+}
+
+/// A verified typed turn's `#scribe` markers echoed in `reply`, once: Stop
+/// replays turns through the prompt hook, which therefore does not echo
+/// them under Codex. A refusal (unverified or wrong session) says Stop
+/// retries, so it echoes nothing.
+pub(super) fn with_mark_echoes(mut reply: HookReply, prompt: &str) -> HookReply {
+    if reply
+        .outcomes
+        .iter()
+        .any(|o| o.error_code == Some("provenance_failed"))
+        || !has_marks(prompt)
+    {
+        return reply;
+    }
+    let (texts, contexts): (Vec<String>, Vec<String>) = mark_echoes(prompt).into_iter().unzip();
+    if texts.is_empty() {
+        return reply;
+    }
+    let join = |first: Option<String>, more: Vec<String>| {
+        Some(first.into_iter().chain(more).collect::<Vec<_>>().join("\n"))
+    };
+    reply.message = join(reply.message.take(), texts);
+    reply.context = join(reply.context.take(), contexts);
+    reply
 }

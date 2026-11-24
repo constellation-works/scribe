@@ -30,11 +30,14 @@
 //! its user messages are the host-attributed typed inputs, its cwd the
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
+use super::reply::{chain, quote};
 use crate::annotation::{self, AGENT_HANDOFF, Mark};
+use crate::apps::group::HookError;
+use crate::apps::group::refusal;
 use crate::apps::mark;
 use crate::capture::{self, Turn};
-use crate::cases::hook::{HookError, HookOutcome, chain, quote, refusal};
 use crate::control::is_control;
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};
 use crate::{Label, TagTable};

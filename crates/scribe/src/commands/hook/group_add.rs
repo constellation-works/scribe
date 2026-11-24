@@ -1,6 +1,6 @@
 //! `/scribe group add <slug> <session-id>...`: add past sessions to a project
 //! group on a typed line (docs/design/scribe/2_design.md §4.4): the
-//! arguments, then [`scribe_core::cases::group_add::run`].
+//! arguments, then the hook app's `group add`.
 //!
 //! The caller has already checked that the prompt is a typed user turn and
 //! that its transcript passes the provenance check, exactly as for
@@ -26,7 +26,7 @@ use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::SessionId;
 #[cfg(test)]
-use scribe_core::cases::group_add::{self as case, GroupAddInput};
+use scribe_core::apps::hook::{self, GroupAddInput};
 use scribe_core::message::NewMessage;
 use std::path::Path;
 
@@ -63,8 +63,10 @@ pub(super) fn run_with_transcript_reader(
     ctx: &Context,
     mut read_past: impl FnMut(&Context, &SessionId, &Path) -> Result<Option<Vec<NewMessage>>, CliError>,
 ) -> Result<Output, CliError> {
-    let reply = case::run(
-        &ctx.core(),
+    let mut read_past =
+        |provider, id: &_, path: &_| read_past(&ctx.with_provider(provider), id, path);
+    let reply = hook::group_add(
+        &ctx.runtime(),
         &GroupAddInput {
             slug,
             named,
@@ -72,7 +74,7 @@ pub(super) fn run_with_transcript_reader(
             cwd: &payload.cwd,
             provider: ctx.provider(),
         },
-        |provider, id, path| read_past(&ctx.with_provider(provider), id, path),
+        &mut read_past,
     )?;
     Ok(Output::Hook(reply))
 }

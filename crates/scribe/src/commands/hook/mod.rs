@@ -196,5 +196,12 @@ pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliErro
     }
 }
 
+/// A hook outcome as its output: the reply.
+fn replied(outcome: scribe_core::apps::hook::Outcome) -> Output {
+    match outcome {
+        scribe_core::apps::hook::Outcome::Replied(reply) => Output::Hook(*reply),
+    }
+}
+
 #[cfg(test)]
 mod tests;

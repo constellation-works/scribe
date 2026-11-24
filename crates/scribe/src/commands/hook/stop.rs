@@ -2,7 +2,7 @@
 //! (§4.1), catalog the turn's `#scribe` markers, and mark a switched-on
 //! session's pass due (§5.2).
 //!
-//! The `#scribe` markers the user typed are cataloged (`scribe_core::cases::annotation`, §14):
+//! The `#scribe` markers the user typed are cataloged (the hook app's annotation, §14):
 //! the only model call this hook makes, one per marked turn, bounded. A
 //! marker given up after its last failed call is echoed to the user and, with
 //! its line, to the agent (`additionalContext`). A transcript that fails the
@@ -30,21 +30,18 @@ use super::payload::{self, StopPayload};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
-use scribe_core::cases::stop::{self as case, StopInput};
+use scribe_core::apps::hook::{Command, StopInput, exec};
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: StopPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
-    let reply = case::run(
-        &ctx.core(),
-        StopInput {
-            session: &session,
-            transcript_path: &payload.transcript_path,
-            cwd: payload.cwd,
-            provider: ctx.provider(),
-            host: ctx.host(),
-        },
-    )?;
-    Ok(Output::Hook(reply))
+    let command = Command::Stop(StopInput {
+        session: &session,
+        transcript_path: &payload.transcript_path,
+        cwd: payload.cwd,
+        provider: ctx.provider(),
+        host: ctx.host(),
+    });
+    Ok(super::replied(exec(&ctx.runtime(), command)?))
 }

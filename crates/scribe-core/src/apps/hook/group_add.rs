@@ -8,7 +8,7 @@
 //! It opens the group when absent and adds each named session, whether or not
 //! the session was ever recorded. A session whose transcript is on disk has its
 //! typed turns stored, chosen as a member's own turns are chosen
-//! ([`crate::cases::group_turns::past`]); one without a transcript gets membership
+//! (the group app's `past_turns`); one without a transcript gets membership
 //! only. The reply says which, per session. A session already in another
 //! group refuses the whole line. The session the line is typed in is added
 //! only when it names itself.
@@ -17,11 +17,13 @@
 //! blocked as a `/scribe` line always is. Audit outcomes carry session ids and
 //! error codes only.
 
+use super::reply::{HookPortError, HookReply};
+use super::user_prompt_submit::EVENT;
 use crate::apps::group as group_app;
-use crate::cases::hook::{HookError, HookOutcome, HookPortError, HookReply};
-use crate::cases::user_prompt_submit::EVENT;
+use crate::apps::group::HookError;
 use crate::group::{Added, GroupAddition};
 use crate::message::NewMessage;
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, Discovered};
 use crate::{Provider, SessionId, Store};
 use std::path::Path;

@@ -3,7 +3,7 @@
 //! `#scribe retire <entry-id>`, `#scribe forget <entry-id>` and `#scribe
 //! forget <session-id>`.
 //!
-//! [`crate::cases::user_prompt_submit`] hands each such line here after the transcript
+//! [`super::user_prompt_submit`] hands each such line here after the transcript
 //! check, in prompt order. One locked store call per line applies it
 //! ([`proposal::settle`]) and the line gets one echo:
 //!
@@ -25,12 +25,14 @@
 //! settle: no CLI verb and no Orbit tool reaches this code (4_decisions.md,
 //! "Proposals are settled only by #scribe in a typed turn").
 
+use super::reply::{chain, quote};
 use crate::EntryStatus;
+use crate::apps::group::refusal;
 use crate::apps::proposal;
 use crate::capture::{Settling, Turn};
-use crate::cases::hook::{HookOutcome, chain, quote, refusal};
 use crate::consistency::Settled;
 use crate::runtime::Ctx;
+use crate::runtime::audit::HookOutcome;
 
 /// The echo and the audit outcome of one settling line.
 #[derive(Debug)]
