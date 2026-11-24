@@ -181,14 +181,21 @@ The manual-link row reports the hook process exit and its audited refusal code.
   stored sessions and local transcripts, including uncataloged sessions. If
   there is no match, it keeps the id as typed for transcript lookup. If there
   is no matching transcript on this host, the check returns
-  `instruction_not_found`. For Codex, before parsing the rollout or comparing
-  its `session_meta` id with the requested id, scribe requires a
+  `instruction_not_found`. The transcript file's provenance is checked before
+  its bytes are read or its Codex source is classified: a path that is not
+  under this host's transcripts root or not named for the session, a provider
+  that does not match `--provider`, a link, a file that is not regular, a file
+  another user owns, or a file with a group or other write bit returns
+  `instruction_not_found`. So a group-writable Codex `exec` rollout returns
+  `instruction_not_found`, and the same rollout private to this user returns
+  `not_interactive`. For Codex, before parsing the rollout or comparing its
+  `session_meta` id with the requested id, scribe requires a
   `session_meta.payload.source` of `cli` or `vscode`; a missing or unsupported
   source, including a rollout with no `session_meta`, returns
   `not_interactive`. After an allowed source, a rollout that fails parsing or
-  identifies another session returns `instruction_not_found`. An I/O error
-  finding or reading a transcript is `io_error`. Other noninteractive
-  sessions, such as a Codex `exec` rollout, return `not_interactive`.
+  identifies another session returns `instruction_not_found`. A genuine I/O
+  error finding or reading a transcript is `io_error`. Other noninteractive
+  sessions, such as a private Codex `exec` rollout, return `not_interactive`.
 - A `session:<id>` reference is not a lookup. `--related` on `entry add` and
   `entry update --add-related` keeps an id that matches no session as written:
   `entry add --tag preferences --related session:abcd` succeeds on a store with

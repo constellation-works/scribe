@@ -211,14 +211,21 @@ Rules every verb keeps:
   unique prefix across stored sessions and local transcripts, including
   uncataloged sessions. If there is no match, it keeps the id as typed for
   transcript lookup. If there is no matching transcript on this host, the
-  check returns `instruction_not_found`. For Codex, before parsing the rollout
-  or comparing its `session_meta` id with the requested id, scribe requires a
+  check returns `instruction_not_found`. The transcript file's provenance is
+  checked before its bytes are read or its Codex source is classified: a path
+  that is not under this host's transcripts root or not named for the session,
+  a provider that does not match `--provider`, a link, a file that is not
+  regular, a file another user owns, or a file with a group or other write bit
+  returns `instruction_not_found`. So a group-writable Codex `exec` rollout
+  returns `instruction_not_found`, and the same rollout private to this user
+  returns `not_interactive`. For Codex, before parsing the rollout or comparing
+  its `session_meta` id with the requested id, scribe requires a
   `session_meta.payload.source` of `cli` or `vscode`; a missing or unsupported
   source, including a rollout with no `session_meta`, returns
   `not_interactive`. After an allowed source, a rollout that fails parsing or
-  identifies another session returns `instruction_not_found`. An I/O error
-  finding or reading a transcript is `io_error`. Other noninteractive
-  sessions, such as a Codex `exec` rollout, return `not_interactive`.
+  identifies another session returns `instruction_not_found`. A genuine I/O
+  error finding or reading a transcript is `io_error`. Other noninteractive
+  sessions, such as a private Codex `exec` rollout, return `not_interactive`.
   `session pass --session <id>` also keeps a no-match id and refuses it as
   `session_not_on`. Other session lookups refuse a no-match as
   `session_not_found`. A record written from a prefix stores the full id,
@@ -3777,7 +3784,8 @@ Three checks, all in the CLI before the lock:
    (the terminal UI, `originator: codex-tui`) and `"vscode"` (the IDE and
    desktop app) are interactive; `"exec"` (`codex exec`,
    `originator: codex_exec`) and a subagent's source are refused
-   `not_interactive` before the rollout is parsed. Of 400 rollouts
+   `not_interactive` once the provenance check of §4.1 passes and before the
+   rollout is parsed. Of 400 rollouts
    sampled on dk-server-1 on 2026-11-21, 353 were `exec`, 28 a Codex
    Desktop `guardian` subagent and 2 `cli`; the parse already admits only
    `cli` and `vscode` main threads (§4.1), so the mapping refuses nothing

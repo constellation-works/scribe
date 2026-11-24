@@ -58,8 +58,8 @@ fn claude(fx: &Fixture, entrypoint: Option<&str>, turns: &[Turn<'_>]) -> PathBuf
 }
 
 /// A Codex rollout recorded with `source`, holding Daniel's typed `turns`
-/// `(id, text, minutes before now)`.
-fn codex(fx: &Fixture, source: &str, turns: &[(&str, &str, i64)]) {
+/// `(id, text, minutes before now)`, private to this user; returns its path.
+fn codex(fx: &Fixture, source: &str, turns: &[(&str, &str, i64)]) -> PathBuf {
     let dir = fx.home().join(".codex/sessions/2026/11/21");
     fx.create_private_dir_all(&dir);
     let path = dir.join(format!("rollout-2026-11-21T00-00-00-{CODEX_SESSION}.jsonl"));
@@ -84,6 +84,7 @@ fn codex(fx: &Fixture, source: &str, turns: &[(&str, &str, i64)]) {
     }
     std::fs::write(&path, out).unwrap();
     make_private(&path);
+    path
 }
 
 /// Run `args` with the seeded store's `[redact]` env name set.
@@ -531,6 +532,51 @@ fn codex_cli_and_vscode_sessions_are_interactive_and_exec_is_not() {
             assert_eq!(state(&fx), before, "{source} changes nothing");
         }
     }
+}
+
+#[test]
+fn a_group_writable_codex_exec_rollout_is_refused_before_its_source_is_classified() {
+    use std::os::unix::fs::PermissionsExt;
+    // Provenance is checked before the Codex source: the same `exec` rollout
+    // is `instruction_not_found` while another user can write it, and
+    // `not_interactive` once it is private to this user.
+    let fx = store_with_agent_entry();
+    let words = "retire preferences-2 please";
+    let rollout = codex(&fx, "exec", &[("m-1", words, 1)]);
+    let args = [
+        "--provider",
+        "codex",
+        "entry",
+        "retire",
+        "preferences-2",
+        "--author",
+        "opus",
+        "--reason",
+        "Daniel asked",
+        "--session",
+        CODEX_SESSION,
+        "--instruction",
+        words,
+    ];
+    std::fs::set_permissions(&rollout, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let before = state(&fx);
+    let (code, err) = refusal(&fx, &args);
+    assert_eq!(code, Some(1), "{err}");
+    assert_eq!(err["code"], "instruction_not_found", "{err}");
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap()
+            .contains("writable by another user"),
+        "the provenance check refused it: {err}"
+    );
+    assert_eq!(state(&fx), before, "a refusal changes nothing");
+
+    std::fs::set_permissions(&rollout, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let (code, err) = refusal(&fx, &args);
+    assert_eq!(code, Some(1), "{err}");
+    assert_eq!(err["code"], "not_interactive", "{err}");
+    assert_eq!(state(&fx), before, "a refusal changes nothing");
 }
 
 #[test]
