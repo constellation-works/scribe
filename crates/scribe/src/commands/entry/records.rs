@@ -190,8 +190,9 @@ pub(super) fn verify_decision_quotes(
 }
 
 /// Find the user's answer to an open item, checked as a decision quote is
-/// (2_design.md §18.4): the first named session holding it in a typed turn,
-/// and when they typed it (the latest such turn there).
+/// (2_design.md §18.4): the latest typed turn holding it across the named
+/// sessions, with the session it was typed in. An exact tie in time goes to
+/// the session named first.
 pub(super) fn find_answer(
     ctx: &Context,
     related: &[Related],
@@ -203,17 +204,17 @@ pub(super) fn find_answer(
             "an answer is checked against the session the user typed it in; pass --related session:<id>",
         ));
     }
+    let mut latest: Option<(SessionId, OffsetDateTime)> = None;
     for (session, turns) in typed_sessions(ctx, related)? {
-        if let Some(at) = turns
-            .iter()
-            .filter(|(_, words)| instruction::quoted_in(words, quote))
-            .map(|(at, _)| *at)
-            .max()
-        {
-            return Ok((session, at));
+        for (at, words) in turns {
+            if instruction::quoted_in(&words, quote)
+                && latest.as_ref().is_none_or(|(_, best)| at > *best)
+            {
+                latest = Some((session.clone(), at));
+            }
         }
     }
-    Err(not_found("--quote"))
+    latest.ok_or_else(|| not_found("--quote"))
 }
 
 fn not_found(flag: &str) -> CliError {
