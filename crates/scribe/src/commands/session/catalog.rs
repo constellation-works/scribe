@@ -23,10 +23,13 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
+#[cfg(test)]
+use scribe_core::Author;
 use scribe_core::cases::catalog::{self as case, CatalogInput};
-use scribe_core::{Author, AuthorName, Models, Project, SessionId};
+use scribe_core::{AuthorName, Models, Project, SessionId};
 
 /// A catalog begun: its switch, whether this run wrote it, and the bytes.
+#[cfg(test)]
 pub(in crate::commands) use scribe_core::cases::catalog::Begun;
 
 pub(in crate::commands) const COMMAND: &str = scribe_core::cases::pass::CATALOG_COMMAND;
@@ -90,6 +93,7 @@ pub(in crate::commands) fn run_with<M: Models>(
 }
 
 /// Begin a catalog of `input` by `by` ([`scribe_core::cases::catalog::begin`]).
+#[cfg(test)]
 pub(in crate::commands) fn begin(
     ctx: &Context,
     input: &SessionId,

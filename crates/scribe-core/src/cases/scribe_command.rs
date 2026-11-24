@@ -1,6 +1,6 @@
 //! `/scribe on|off|status|link|catalog`, intercepted by
 //! `scribe hook user-prompt-submit` (docs/design/scribe/2_design.md §5.1,
-//! §5.4, §5.8).
+//! §5.4, §5.8; ORB-27707 step 3b).
 //!
 //! A successful `/scribe continue <handoff-id>` passes the handoff to the
 //! agent as context. For the other commands, the hook returns
@@ -19,7 +19,7 @@
 //! `session_cataloged` refusal) and runs no window, because a catalog can
 //! take many model calls; `session catalog` or the next `session pass` runs
 //! them and keeps the attribution. Agents' prompts never reach here
-//! (`payload::agent_originated`), so no CLI path records the user.
+//! (the CLI's `payload::agent_originated`), so no CLI path records the user.
 //!
 //! The payload is checked like a `#scribe` line's (an accident guard, not a
 //! security boundary): a transcript outside Claude Code's projects
@@ -28,35 +28,49 @@
 //! refusal is audited with its code; a no-op or a status writes nothing, except
 //! that an explicit off during deferred ancestry records and audits the opt-out.
 
-use super::payload::{self, PromptPayload};
-use crate::app::Context;
-use crate::output::{HookOutcome, HookReply, Output};
-use scribe_core::GroupVerbs;
-use scribe_core::SessionVerbs;
-use scribe_core::control::{self, Change, Switch};
-use scribe_core::{Author, SessionControl, SessionId, SessionLink, SessionRecord};
+use crate::cases::Ctx;
+use crate::cases::catalog;
+use crate::cases::continuation;
+use crate::cases::group::GroupVerbs;
+use crate::cases::hook::{HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain};
+use crate::cases::session::SessionVerbs;
+use crate::control::{self, Change, Switch};
+use crate::{Author, Provider, SessionControl, SessionId, SessionLink, SessionRecord};
+use std::path::Path;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 /// The hook event this replies to.
 const EVENT: &str = "UserPromptSubmit";
-/// The code of a payload whose transcript failed the provenance check.
-const PROVENANCE_FAILED: &str = "provenance_failed";
 /// The code of a `/scribe` argument that is not a command.
 const UNKNOWN_COMMAND: &str = "unknown_scribe_command";
 /// The commands, for a refusal.
 const USAGE: &str = "use /scribe on, /scribe off, /scribe status, /scribe on --from <id>, /scribe link <id> [--type spawned_from|continues], /scribe catalog <id>, /scribe group <slug>, /scribe group add <slug> <session-id>..., /scribe group move <session-id> <slug>, /scribe group remove <session-id>, /scribe session update <session-id> project|title <value> or /scribe continue <handoff-id>";
 
+/// What a `/scribe` command runs on.
+pub struct ScribeCommandInput<'i> {
+    /// The command.
+    pub switch: &'i Switch,
+    /// The session it is typed in.
+    pub session: &'i SessionId,
+    /// Its transcript.
+    pub transcript_path: &'i Path,
+    /// The provider whose hook this is.
+    pub provider: Provider,
+}
+
 /// Apply `switch` for the payload's session and block the prompt with the
 /// result.
-pub(super) fn run(
-    switch: &Switch,
-    payload: &PromptPayload,
-    session: &SessionId,
-    ctx: &Context,
-) -> Output {
+#[must_use]
+pub fn run<E: HookPortError>(ctx: &Ctx<'_, E>, input: &ScribeCommandInput<'_>) -> HookReply {
+    let ScribeCommandInput {
+        switch,
+        session,
+        transcript_path,
+        provider,
+    } = *input;
     let target = || Some(format!("session:{session}"));
-    if let Err(reason) = payload::check(ctx, &payload.transcript_path, session) {
+    if let Err(reason) = ctx.transcripts.check(provider, transcript_path, session) {
         return blocked(
             format!(
                 "scribe: {} not applied — the hook payload failed the transcript check: {reason}",
@@ -68,15 +82,15 @@ pub(super) fn run(
             }],
         );
     }
-    let store = ctx.store();
+    let store = ctx.store;
     if let Switch::Link { link, on } = switch {
-        return run_link(switch, link, *on, session, ctx);
+        return run_link(ctx, provider, switch, link, *on, session);
     }
     if let Switch::Catalog(target) = switch {
-        return run_catalog(switch, target, ctx);
+        return run_catalog(ctx, provider, switch, target);
     }
     if let Switch::Continue(id) = switch {
-        if ctx.provider() != scribe_core::Provider::ClaudeCode {
+        if provider != Provider::ClaudeCode {
             return blocked(
                 "scribe: handoff continuation requires Claude Code".to_owned(),
                 vec![HookOutcome {
@@ -85,12 +99,7 @@ pub(super) fn run(
                 }],
             );
         }
-        return Output::Hook(super::continuation::restore(
-            ctx,
-            EVENT,
-            session,
-            scribe_core::HandoffSelection::Named(id),
-        ));
+        return continuation::restore(ctx, EVENT, session, crate::HandoffSelection::Named(id));
     }
     let change = match switch {
         Switch::Link { .. }
@@ -114,8 +123,8 @@ pub(super) fn run(
                         state,
                         session,
                         switch,
-                        ctx.now(),
-                        ctx.provider(),
+                        ctx.clock.now(),
+                        provider,
                     );
                     // An explicit opt-out must survive a later deferred inheritance.
                     let recorded_off = pending
@@ -125,7 +134,7 @@ pub(super) fn run(
                         state.sessions.insert(
                             session.clone(),
                             SessionControl {
-                                provider: ctx.provider(),
+                                provider,
                                 ..SessionControl::default()
                             },
                         );
@@ -219,8 +228,13 @@ fn typed(switch: &Switch) -> String {
 /// `/scribe catalog <id>`: start the user's catalog of a past session, or say
 /// that one is already under way. Audited as a write when the switch was
 /// written and as a refusal with its code; a resume writes nothing.
-fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
-    match crate::commands::session::catalog::begin(ctx, target, Author::user()) {
+fn run_catalog<E: HookPortError>(
+    ctx: &Ctx<'_, E>,
+    provider: Provider,
+    switch: &Switch,
+    target: &SessionId,
+) -> HookReply {
+    match catalog::begin(ctx, provider, target, Author::user()).map_err(E::from) {
         Ok(begun) => {
             let id = &begun.id;
             if begun.wrote_switch {
@@ -255,16 +269,30 @@ fn run_catalog(switch: &Switch, target: &SessionId, ctx: &Context) -> Output {
 /// `/scribe on --from <id>` or `/scribe link <id>`: link the session (and
 /// switch it on for the first), audited as a write when anything changed
 /// and as a refusal with the link's code.
-fn run_link(
+fn run_link<E: HookPortError>(
+    ctx: &Ctx<'_, E>,
+    provider: Provider,
     switch: &Switch,
     link: &SessionLink,
     on: bool,
     session: &SessionId,
-    ctx: &Context,
-) -> Output {
+) -> HookReply {
     let target = || Some(format!("session:{session}"));
-    // A unique prefix of the target is stored, and reported, as the full id.
-    let resolved = match crate::commands::resolve_session_or_typed(ctx, &link.session) {
+    // A unique prefix of the target is stored, and reported, as the full id,
+    // across the store and the provider transcripts on disk.
+    let extra: Vec<String> = ctx
+        .transcripts
+        .files(provider)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    let resolved = match ctx
+        .store
+        .read()
+        .sessions()
+        .resolve_or_typed_with(&link.session, &extra)
+    {
         Ok(id) => id,
         Err(err) => {
             return blocked(
@@ -282,8 +310,8 @@ fn run_link(
     };
     let relation = format!("{} {}", link.kind, link.session);
     match ctx
-        .store()
-        .link_session_for_provider(session, link, on, ctx.now(), ctx.provider())
+        .store
+        .link_session_for_provider(session, link, on, ctx.clock.now(), provider)
     {
         Ok(linked) => {
             let outcomes = if linked.added || linked.switched_on {
@@ -385,10 +413,10 @@ fn status(change: &Change, record: Option<&SessionRecord>) -> String {
 
 /// The session's record, if it has one that reads; a status is still
 /// given without it.
-fn record_of(ctx: &Context, session: &SessionId) -> Option<SessionRecord> {
-    match ctx.store().read().sessions().get(session) {
+fn record_of<E>(ctx: &Ctx<'_, E>, session: &SessionId) -> Option<SessionRecord> {
+    match ctx.store.read().sessions().get(session) {
         Ok(view) => Some(view.record),
-        Err(scribe_core::Error::SessionNotFound { .. }) => None,
+        Err(crate::Error::SessionNotFound { .. }) => None,
         Err(err) => {
             tracing::warn!(%session, %err, "cannot read the session record for /scribe status");
             None
@@ -406,25 +434,13 @@ fn timestamp(at: OffsetDateTime) -> String {
     at.format(&Rfc3339).unwrap_or_else(|_| at.to_string())
 }
 
-/// An error and its causes on one line.
-fn chain(err: &dyn std::error::Error) -> String {
-    let mut message = err.to_string();
-    let mut source = err.source();
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
-}
-
 /// Block the prompt with `reason`.
-fn blocked(reason: String, outcomes: Vec<HookOutcome>) -> Output {
-    Output::Hook(HookReply {
+fn blocked(reason: String, outcomes: Vec<HookOutcome>) -> HookReply {
+    HookReply {
         event: EVENT,
         message: None,
         context: None,
         block: Some(reason),
         outcomes,
-    })
+    }
 }

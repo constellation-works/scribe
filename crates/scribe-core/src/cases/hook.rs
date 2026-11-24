@@ -3,6 +3,8 @@
 //! text helpers their echoes use. The JSON a hook prints from a
 //! [`HookReply`] (Claude Code's hook protocol) is rendered by the CLI.
 
+use crate::cases::PortError;
+use crate::cases::catalog::CatalogError;
 use crate::control;
 use crate::{Error, SessionId};
 
@@ -63,6 +65,31 @@ pub enum HookError<E> {
         /// Why.
         reason: String,
     },
+    /// A usage error.
+    Usage(String),
+}
+
+/// The port error of the prompt-side hooks: a reply that reports an error
+/// in its text formats it as the port error it becomes, so the text, the
+/// code and the cause chain are the CLI's own.
+pub trait HookPortError:
+    PortError
+    + std::error::Error
+    + From<Error>
+    + From<HookError<Self>>
+    + From<CatalogError<Self>>
+    + Sized
+{
+}
+
+impl<E> HookPortError for E where
+    E: PortError
+        + std::error::Error
+        + From<Error>
+        + From<HookError<E>>
+        + From<CatalogError<E>>
+        + Sized
+{
 }
 
 impl<E> From<Error> for HookError<E> {

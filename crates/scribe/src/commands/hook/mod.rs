@@ -32,8 +32,6 @@ mod group_add;
 pub(super) mod group_turns;
 pub(super) mod payload;
 pub(super) mod project;
-mod proposal_command;
-mod scribe_command;
 mod session_end;
 mod session_start;
 mod stop;

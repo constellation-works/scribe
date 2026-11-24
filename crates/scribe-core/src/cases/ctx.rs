@@ -100,6 +100,27 @@ pub trait Transcripts {
     fn project_of(&self, cwd: &Path) -> Project;
 
     /// Check `path` as `session`'s `provider` transcript and read its
+    /// opening header records; `None` when there is no file yet.
+    ///
+    /// # Errors
+    ///
+    /// [`Unreadable`].
+    fn claude_header(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+    ) -> Result<Option<Vec<u8>>, Unreadable>;
+
+    /// Every `provider` transcript on this host by session id, and the
+    /// entries named like one whose file type is refused.
+    ///
+    /// # Errors
+    ///
+    /// When the transcripts tree cannot be listed.
+    fn discovered(&self, provider: Provider) -> Result<Discovered, Self::Error>;
+
+    /// Check `path` as `session`'s `provider` transcript and read its
     /// complete records after `prior`, the capture's saved position (from
     /// the start when it no longer matches); `None` when there is no file
     /// yet.
@@ -137,6 +158,15 @@ pub struct ClaudeWindow {
     pub resumed: bool,
     /// Where the records end, for the next read.
     pub position: ClaudeCapturePosition,
+}
+
+/// The transcripts found on this host ([`Transcripts::discovered`]).
+#[derive(Debug, Default)]
+pub struct Discovered {
+    /// The regular transcripts, by session id.
+    pub files: Vec<(SessionId, PathBuf)>,
+    /// The entries named like a transcript whose file type is refused.
+    pub refused: Vec<(SessionId, PathBuf)>,
 }
 
 /// Whether a transcript that passed its checks is there yet.

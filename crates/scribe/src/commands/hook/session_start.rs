@@ -10,7 +10,7 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::GroupVerbs;
-use scribe_core::group::SeatStart;
+use scribe_core::cases::session_start::{SeatReply, seat_at_start};
 use scribe_core::{ProposalState, Provider, SessionFilter, SessionId, TagName};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -99,7 +99,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             ..SeatReply::default()
         },
         Some(Err(err)) => deferral_failure(&session, &err),
-        None if start_ancestry => seat_at_start(ctx, &session, &predecessor),
+        None if start_ancestry => seat_at_start(&ctx.core(), &session, &predecessor),
         None => SeatReply::default(),
     };
     outcomes.extend(seat.outcomes);
@@ -144,86 +144,6 @@ fn deferral_failure(child: &SessionId, err: &scribe_core::Error) -> SeatReply {
             target: Some(format!("session:{child}")),
             error_code: Some(err.code()),
         }],
-    }
-}
-
-#[derive(Default)]
-pub(super) struct SeatReply {
-    pub(super) context: Option<String>,
-    pub(super) message: Option<String>,
-    pub(super) outcomes: Vec<HookOutcome>,
-}
-
-pub(super) fn seat_at_start(
-    ctx: &Context,
-    child: &SessionId,
-    predecessor: &ClearedPredecessor,
-) -> SeatReply {
-    let parent = match predecessor {
-        ClearedPredecessor::One(parent) => Some(parent),
-        ClearedPredecessor::None | ClearedPredecessor::Multiple(_) => None,
-    };
-    match ctx.store().inherit_seat(child, parent) {
-        Ok(SeatStart::NoOpenGroups) => SeatReply::default(),
-        Ok(SeatStart::AlreadySeated(hold)) => SeatReply {
-            context: Some(format!(
-                "scribe: session {child} holds seat {} ({}) in {}",
-                hold.seat, hold.role, hold.group
-            )),
-            message: None,
-            outcomes: Vec::new(),
-        },
-        Ok(SeatStart::Replaced) => SeatReply {
-            context: Some(format!(
-                "scribe: session {child} was replaced on its group seat and holds none now; nothing inherited"
-            )),
-            message: None,
-            outcomes: Vec::new(),
-        },
-        Ok(SeatStart::Inherited { hold, from }) => SeatReply {
-            context: Some(format!(
-                "scribe: session {child} holds seat {} ({}) in {} (inherited from {from})",
-                hold.seat, hold.role, hold.group
-            )),
-            message: None,
-            outcomes: vec![HookOutcome {
-                target: Some(hold.group),
-                error_code: None,
-            }],
-        },
-        Ok(SeatStart::Unjoined) => {
-            let reason = match predecessor {
-                ClearedPredecessor::None => {
-                    "scribe: no predecessor line in this transcript; no group seat was inherited — re-run `scribe group join` if your brief names a group"
-                        .to_owned()
-                }
-                ClearedPredecessor::One(parent) => format!(
-                    "scribe: predecessor {parent} holds no open group seat; nothing inherited — re-run `scribe group join` if your brief names a group"
-                ),
-                ClearedPredecessor::Multiple(_) => {
-                    "scribe: multiple cleared predecessors in this transcript; no group seat was inherited — re-run `scribe group join` if your brief names a group"
-                        .to_owned()
-                }
-            };
-            SeatReply {
-                context: Some(reason),
-                message: None,
-                outcomes: Vec::new(),
-            }
-        }
-        Err(err) => {
-            tracing::warn!(%err, "cannot inherit group seat");
-            SeatReply {
-                context: Some(format!(
-                    "scribe: could not inherit group seat ({err}) — re-run `scribe group join` if your brief names a group"
-                )),
-                message: Some(format!("scribe: could not inherit group seat — {err}")),
-                outcomes: vec![HookOutcome {
-                    target: Some(format!("session:{child}")),
-                    error_code: Some(err.code()),
-                }],
-            }
-        }
     }
 }
 
