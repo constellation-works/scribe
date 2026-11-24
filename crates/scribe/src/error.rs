@@ -203,6 +203,40 @@ impl From<scribe_core::cases::pass::PassRunError<CliError>> for CliError {
     }
 }
 
+/// The Stop-side hooks' errors (`hook stop`, the marker catalog, group turn
+/// capture), each the variant it was before the flow moved to
+/// `scribe_core::cases` (ORB-27707 step 3b).
+impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::hook::HookError<CliError>) -> Self {
+        use scribe_core::cases::hook::HookError;
+        match err {
+            HookError::Core(e) => Self::Core(e),
+            HookError::Port(e) => e,
+            HookError::Read { what, source } => Self::Read { what, source },
+            HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+        }
+    }
+}
+
+/// `mark retry`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {
+        use scribe_core::cases::mark_retry::MarkRetryError;
+        match err {
+            MarkRetryError::Core(e) => Self::Core(e),
+            MarkRetryError::Port(e) => e,
+            MarkRetryError::TranscriptMissing(id) => Self::TranscriptMissing(id),
+            MarkRetryError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            MarkRetryError::Read { what, source } => Self::Read { what, source },
+            MarkRetryError::StillFailed(message) => {
+                Self::Model(scribe_core::models::ModelError::Failed(message))
+            }
+        }
+    }
+}
+
 /// `session catalog`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::catalog::CatalogError<CliError>> for CliError {
     fn from(err: scribe_core::cases::catalog::CatalogError<CliError>) -> Self {

@@ -13,20 +13,27 @@
 //! neither the business modules nor `store/` may name it
 //! (scripts/check-dependency-direction.sh).
 
+pub mod annotation;
 pub mod audit;
 pub mod catalog;
 mod ctx;
 pub mod entry;
 pub mod group;
+pub mod group_turns;
+pub mod hook;
 pub mod mark;
+pub mod mark_retry;
 pub mod memory;
 pub mod pass;
 pub mod pickup;
 pub mod proposal;
 pub mod rebuild;
 pub mod session;
+pub mod stop;
 pub mod tag;
 
+#[cfg(unix)]
+pub use ctx::{ClaudeRead, ClaudeWindow};
 pub use ctx::{
     Clock, Ctx, PortError, Redaction, RunLimits, TranscriptState, Transcripts, Unreadable,
 };

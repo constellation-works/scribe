@@ -45,8 +45,6 @@ use scribe_core::{Label, Provider, SessionId, annotation};
 
 /// The hook event this replies to.
 pub(super) const EVENT: &str = "UserPromptSubmit";
-/// The longest quote an echo shows, in characters; `entry show` has it all.
-const ECHO_CHARS: usize = 200;
 /// What the agent is told after an applied echo, so it does not act on it
 /// again.
 const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
@@ -604,26 +602,4 @@ fn reply(echoes: Vec<Echo>, outcomes: Vec<HookOutcome>) -> Output {
     })
 }
 
-/// `text` on one line, cut to [`ECHO_CHARS`].
-pub(super) fn quote(text: &str) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= ECHO_CHARS {
-        flat
-    } else {
-        let mut cut: String = flat.chars().take(ECHO_CHARS).collect();
-        cut.push('…');
-        cut
-    }
-}
-
-/// An error and its causes on one line.
-pub(super) fn chain(err: &scribe_core::Error) -> String {
-    let mut message = err.to_string();
-    let mut source = std::error::Error::source(err);
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
-}
+pub(super) use scribe_core::cases::hook::{chain, quote};

@@ -1,5 +1,5 @@
 //! Catalog the `#scribe` markers the user typed inside their sentences, at the
-//! Stop of the turn (docs/design/scribe/2_design.md §14).
+//! Stop of the turn (docs/design/scribe/2_design.md §14; ORB-27707 step 3b).
 //!
 //! The prompt hook only echoed the marker. Here, after the reply, each
 //! typed turn of the transcript with a marker that `marks.json` has not
@@ -40,31 +40,47 @@
 //! its user messages are the host-attributed typed inputs, its cwd the
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
-use super::payload::{self, StopPayload, Transcript};
-use super::project;
-use super::user_prompt_submit::{chain, quote};
-use crate::app::Context;
-use crate::error::CliError;
-use crate::output::HookOutcome;
-use scribe_core::MarkVerbs;
-use scribe_core::annotation::{self, Checked, MAX_ATTEMPTS, Mark};
-use scribe_core::capture::{self, Turn};
-use scribe_core::transcript::{self, Message};
-use scribe_core::{
+use crate::annotation::{self, Checked, MAX_ATTEMPTS, Mark};
+use crate::capture::{self, Turn};
+use crate::cases::hook::{HookError, HookOutcome, chain, is_control, quote, refusal};
+use crate::cases::mark::MarkVerbs;
+use crate::cases::{Ctx, PortError, TranscriptState};
+use crate::transcript::{self, Message};
+use crate::{
     COVERED, Config, Label, MODEL_FAILED, MarkChange, MarkKey, MarkResult, Models, NEEDS_REDACTION,
     Provider, SessionId, Speaker,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+/// What `run` catalogs: one session's Stop, or `scribe mark retry`.
+pub struct AnnotationInput<'i, F> {
+    /// The session.
+    pub session: &'i SessionId,
+    /// Its transcript.
+    pub transcript_path: &'i Path,
+    /// The cwd the Stop payload named, for a line that carries none.
+    pub cwd: Option<String>,
+    /// The provider whose transcript it is.
+    pub provider: Provider,
+    /// This host, as records name it.
+    pub host: Label,
+    /// The most marked turns to call a model for.
+    pub turns: usize,
+    /// Builds the `Models` adapter for the config, only when a call is due.
+    pub models: F,
+}
 
 /// What the hook tells the user and the agent, and audits.
-#[derive(Default)]
-pub(in crate::commands) struct Cataloged {
+#[derive(Debug, Default)]
+pub struct Cataloged {
     /// For the user, one per marker outcome.
-    pub(in crate::commands) echoes: Vec<String>,
+    pub echoes: Vec<String>,
     /// For the agent: one per given-up marker, with the line and what the
     /// agent may do instead.
-    pub(in crate::commands) context: Vec<String>,
-    pub(in crate::commands) outcomes: Vec<HookOutcome>,
+    pub context: Vec<String>,
+    /// For the audit log: one per write or refusal.
+    pub outcomes: Vec<HookOutcome>,
 }
 
 /// One marked turn still to catalog.
@@ -103,30 +119,43 @@ impl Say {
 /// Catalog the session's unsettled markers, at most `turns` marked turns
 /// (oldest first), building the model adapter with `models` only when a
 /// call is due.
-pub(in crate::commands) fn run<M: Models>(
-    payload: &StopPayload,
-    session: &SessionId,
-    ctx: &Context,
-    turns: usize,
-    models: impl FnOnce(&Config) -> M,
-) -> Result<Cataloged, CliError> {
+///
+/// # Errors
+///
+/// [`HookError`]: a store read failed or the transcript could not be read.
+/// A config, redactor or write failure is echoed and audited instead.
+pub fn run<E: PortError, M: Models>(
+    ctx: &Ctx<'_, E>,
+    input: AnnotationInput<'_, impl FnOnce(&Config) -> M>,
+) -> Result<Cataloged, HookError<E>> {
+    let AnnotationInput {
+        session,
+        transcript_path,
+        cwd: payload_cwd,
+        provider,
+        host,
+        turns,
+        models,
+    } = input;
     let mut out = Cataloged::default();
     // Stop checked the transcript first and reported a failure.
     if !matches!(
-        payload::check(ctx, &payload.transcript_path, session),
-        Ok(Transcript::Present)
+        ctx.transcripts.check(provider, transcript_path, session),
+        Ok(TranscriptState::Present)
     ) {
         return Ok(out);
     }
-    let bytes =
-        payload::read_for(ctx, &payload.transcript_path).map_err(|source| CliError::Read {
-            what: payload.transcript_path.display().to_string(),
+    let bytes = ctx
+        .transcripts
+        .read(provider, transcript_path)
+        .map_err(|source| HookError::Read {
+            what: transcript_path.display().to_string(),
             source,
         })?;
     // Codex: the rollout's verified typed inputs and assistant text, and
     // the session's cwd; the dispatcher already checked its identity.
-    let (messages, codex_cwd, line_indices) = if ctx.provider() == Provider::Codex {
-        match scribe_core::codex::parse(&bytes) {
+    let (messages, codex_cwd, line_indices) = if provider == Provider::Codex {
+        match crate::codex::parse(&bytes) {
             Ok(rollout) if rollout.session == *session => {
                 (rollout.messages, Some(rollout.cwd), None)
             }
@@ -146,7 +175,7 @@ pub(in crate::commands) fn run<M: Models>(
     if marked.is_empty() {
         return Ok(out);
     }
-    let store = ctx.store();
+    let store = ctx.store;
     let records = store.read().marks().of_session(session)?;
     let unsettled = |message: &Message, mark: &Mark| {
         !records
@@ -169,7 +198,7 @@ pub(in crate::commands) fn run<M: Models>(
     // shares (§4.1): the line's origin claims, then his words (a slash
     // command's args, not its harness tags) free of agent wrappers.
     let typed: BTreeSet<String> = if codex_cwd.is_none() {
-        scribe_core::instruction::claude_conversation_raw_typed(&bytes)
+        crate::instruction::claude_conversation_raw_typed(&bytes)
             .into_iter()
             .filter(|spoken| spoken.typed.is_some())
             .map(|spoken| spoken.message.uuid)
@@ -188,14 +217,14 @@ pub(in crate::commands) fn run<M: Models>(
         // host-attributed typed inputs.
         let cwd = match &codex_cwd {
             Some(cwd) => {
-                if super::codex::is_control(&message.text()) {
+                if is_control(&message.text()) {
                     continue;
                 }
                 cwd.clone()
             }
             None => {
                 if !typed.contains(&message.uuid)
-                    || scribe_core::control::parse(&message.text()).is_some()
+                    || crate::control::parse(&message.text()).is_some()
                 {
                     continue;
                 }
@@ -205,7 +234,7 @@ pub(in crate::commands) fn run<M: Models>(
                     .and_then(serde_json::Value::as_str)
                     .filter(|cwd| !cwd.is_empty())
                     .map(str::to_owned)
-                    .or_else(|| payload.cwd.clone())
+                    .or_else(|| payload_cwd.clone())
                     .unwrap_or_default()
             }
         };
@@ -216,10 +245,10 @@ pub(in crate::commands) fn run<M: Models>(
             session: session.clone(),
             at: message.at,
             prompt_sha256: capture::prompt_sha256(&message.text()),
-            project: project::of(std::path::Path::new(&cwd)),
+            project: ctx.transcripts.project_of(Path::new(&cwd)),
             cwd,
-            provider: Label::sanitized(ctx.provider().as_str(), ctx.provider().as_str()),
-            host: ctx.host(),
+            provider: Label::sanitized(provider.as_str(), provider.as_str()),
+            host: host.clone(),
         };
         let written = written_lines(ctx, session, message)?;
         let (refused, open): (Vec<Mark>, Vec<Mark>) = marks
@@ -244,8 +273,8 @@ pub(in crate::commands) fn run<M: Models>(
         return Ok(out);
     }
 
-    let config = match ctx.config() {
-        Ok(config) => config,
+    let config = match store.read().tags().config() {
+        Ok(config) => config.for_provider(provider),
         Err(err) => {
             out.echoes.push(format!(
                 "scribe: could not catalog #scribe in your message — {err}; will retry at the next reply"
@@ -254,7 +283,7 @@ pub(in crate::commands) fn run<M: Models>(
             return Ok(out);
         }
     };
-    let redactor = match ctx.redactor(&config) {
+    let redactor = match ctx.redaction.redactor(&config) {
         Ok(redactor) => redactor,
         Err(err) => {
             out.echoes.push(format!(
@@ -313,7 +342,7 @@ pub(in crate::commands) fn run<M: Models>(
             window,
             &config.tags,
             &config.models.annotation,
-            config.voice(scribe_core::voice::ModelUse::Annotation),
+            config.voice(crate::voice::ModelUse::Annotation),
         );
         if adapter.is_none() {
             adapter = models.take().map(|build| build(&config));
@@ -370,7 +399,7 @@ pub(in crate::commands) fn run<M: Models>(
     if updates.is_empty() {
         return Ok(out);
     }
-    let results = match store.record_marks(updates, &redactor, ctx.now()) {
+    let results = match store.record_marks(updates, &redactor, ctx.clock.now()) {
         Ok(results) => results,
         Err(err) => {
             out.echoes.push(format!(
@@ -486,23 +515,16 @@ fn gave_up_note(session: &SessionId) -> String {
     )
 }
 
-fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
-    HookOutcome {
-        target: Some(format!("session:{session}")),
-        error_code: Some(code),
-    }
-}
-
 /// The lines of `message` that already hold an entry: lines recorded
 /// verbatim before markers took them over (§14.6). A prompt hook may have
 /// received one text block rather than the joined message, so each block's
 /// cites are translated into the joined text's line numbers too.
-fn written_lines(
-    ctx: &Context,
+fn written_lines<E>(
+    ctx: &Ctx<'_, E>,
     session: &SessionId,
     message: &Message,
-) -> Result<BTreeSet<u32>, CliError> {
-    let store = ctx.store();
+) -> Result<BTreeSet<u32>, HookError<E>> {
+    let store = ctx.store;
     let mut written: BTreeSet<u32> = store
         .read()
         .entries()

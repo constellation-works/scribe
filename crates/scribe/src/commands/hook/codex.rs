@@ -16,51 +16,8 @@ use scribe_core::{Provider, annotation, capture, codex::TypedTurn, control};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// Normalize only exact typed skill-control invocations. Injected skill text
-/// never reaches this function: host content provenance is checked first.
-fn command_text(original: &str) -> String {
-    let text = original.trim();
-    let args = text.strip_prefix("$scribe ").or_else(|| {
-        let (label, rest) = text.split_once("](")?;
-        if !matches!(label, "[$scribe]" | "[$scribe:scribe]")
-            && !matches!(label, "[$scribe" | "[$scribe:scribe")
-        {
-            return None;
-        }
-        let (path, args) = rest.split_once(") ")?;
-        if !path.ends_with("/scribe/SKILL.md") {
-            return None;
-        }
-        Some(args)
-    });
-    if let Some(args) = args.filter(|s| !s.contains('\n')) {
-        let candidate = format!("/scribe {args}");
-        if matches!(
-            control::parse(&candidate),
-            Some(
-                control::Switch::On
-                    | control::Switch::Off
-                    | control::Switch::Status
-                    | control::Switch::Link { .. }
-                    | control::Switch::Catalog(_)
-                    | control::Switch::Group(_)
-                    | control::Switch::GroupAdd { .. }
-                    | control::Switch::GroupMove { .. }
-                    | control::Switch::GroupRemove(_)
-                    | control::Switch::SessionUpdate { .. }
-            )
-        ) {
-            return candidate;
-        }
-    }
-    original.to_owned()
-}
-
-/// Whether a typed Codex input is a session control, `/scribe …` or its
-/// `$scribe …` skill form.
-pub(super) fn is_control(text: &str) -> bool {
-    control::parse(&command_text(text)).is_some()
-}
+use scribe_core::cases::hook::command_text;
+pub(super) use scribe_core::cases::hook::is_control;
 
 /// Whether `prompt` holds a `#scribe` annotation marker, cataloged at Stop.
 fn has_marks(prompt: &str) -> bool {
