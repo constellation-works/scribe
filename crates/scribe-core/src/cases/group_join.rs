@@ -1,7 +1,7 @@
 //! `scribe group join` (ORB-27707 step 3c): seat the calling session in a
 //! group under its own author name.
 
-use crate::cases::continuation::{self, ClearedPredecessor};
+use crate::apps::session::{self, ClearedPredecessor};
 use crate::cases::group::GroupVerbs;
 use crate::cases::group_cmd::{GroupError, earlier_turns, ended, redactor};
 use crate::group::{JoinGroup, automatic_seat};
@@ -88,7 +88,7 @@ pub fn run<E: PortError>(
                     .transcripts
                     .locate_own(provider, &caller)
                     .map_err(GroupError::Port)?;
-                match continuation::cleared_predecessor(ctx, provider, path.as_deref(), &caller) {
+                match session::cleared_predecessor(ctx, provider, path.as_deref(), &caller) {
                     ClearedPredecessor::One(parent) if &parent == previous => Some(parent),
                     ClearedPredecessor::None
                     | ClearedPredecessor::One(_)

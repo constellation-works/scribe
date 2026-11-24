@@ -53,6 +53,7 @@ pub trait PassVerbs {
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>>;
 
+    #[cfg(any(test, feature = "test-support"))]
     /// Persist one intermediate window under the store lock, redacted and
     /// atomically replaced. Keep the pass due until its last window settles.
     /// `expected` is checked as in [`PassVerbs::settle_pass`].
@@ -63,6 +64,7 @@ pub trait PassVerbs {
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>>;
 
+    #[cfg(any(test, feature = "test-support"))]
     /// The last window of a live `session catalog`: write the record and
     /// leave the switch on and due, clearing retry backoff, so the hooks
     /// carry on. `expected` is checked as in [`PassVerbs::settle_pass`].
@@ -105,6 +107,7 @@ pub trait PassVerbs {
         redactor: &Redactor,
     ) -> Result<PassWritten>;
 
+    #[cfg(any(test, feature = "test-support"))]
     /// Open the window's candidates in the write under way, or in one of its
     /// own (`open_candidates`).
     ///
@@ -138,6 +141,7 @@ impl PassVerbs for Store {
         )
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn checkpoint_pass(
         &self,
         record: SessionRecord,
@@ -155,6 +159,7 @@ impl PassVerbs for Store {
         )
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn checkpoint_catalog(
         &self,
         record: SessionRecord,
@@ -217,6 +222,7 @@ impl PassVerbs for Store {
         )
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn open_pass_candidates(
         &self,
         record: &SessionRecord,

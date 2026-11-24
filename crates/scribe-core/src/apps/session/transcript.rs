@@ -2,7 +2,7 @@
 //! this host with no session record, surveyed without cataloging them.
 //! Both read transcripts and the store and write nothing.
 
-use crate::cases::catalog::{self, CatalogError};
+use super::catalog::{self, CatalogError};
 use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::transcript::{self, Survey};
 use crate::{Config, Project, Provider, SessionId};

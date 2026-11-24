@@ -174,10 +174,10 @@ impl CliError {
 }
 
 /// `session pass`'s errors, each the variant it was before the flow moved to
-/// `scribe_core::cases::pass` (ORB-27707 step 3).
-impl From<scribe_core::cases::pass::PassRunError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::pass::PassRunError<CliError>) -> Self {
-        use scribe_core::cases::pass::PassRunError;
+/// the session app (ORB-27707 step 3).
+impl From<scribe_core::apps::session::PassRunError<CliError>> for CliError {
+    fn from(err: scribe_core::apps::session::PassRunError<CliError>) -> Self {
+        use scribe_core::apps::session::PassRunError;
         match err {
             PassRunError::Core(e) => Self::Core(e),
             PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
@@ -243,6 +243,21 @@ impl From<scribe_core::apps::entry::Error<CliError>> for CliError {
     }
 }
 
+/// `scribe session` and `scribe transcript`'s errors, each the variant it was
+/// before the app moved.
+impl From<scribe_core::apps::session::Error<CliError>> for CliError {
+    fn from(err: scribe_core::apps::session::Error<CliError>) -> Self {
+        use scribe_core::apps::session::Error;
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+            Error::Pass(e) => e.into(),
+            Error::Catalog(e) => e.into(),
+            Error::Rebuild(e) => e.into(),
+        }
+    }
+}
+
 /// `scribe proposal`'s errors, each the variant it was before the app moved.
 impl From<scribe_core::apps::proposal::Error<CliError>> for CliError {
     fn from(err: scribe_core::apps::proposal::Error<CliError>) -> Self {
@@ -299,9 +314,9 @@ impl From<scribe_core::runtime::errors::ReadError<CliError>> for CliError {
 }
 
 /// `session catalog`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::catalog::CatalogError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::catalog::CatalogError<CliError>) -> Self {
-        use scribe_core::cases::catalog::CatalogError;
+impl From<scribe_core::apps::session::CatalogError<CliError>> for CliError {
+    fn from(err: scribe_core::apps::session::CatalogError<CliError>) -> Self {
+        use scribe_core::apps::session::CatalogError;
         match err {
             CatalogError::Core(e) => Self::Core(e),
             CatalogError::Port(e) => e,
@@ -317,9 +332,9 @@ impl From<scribe_core::cases::catalog::CatalogError<CliError>> for CliError {
 }
 
 /// `session rebuild`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::rebuild::RebuildError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::rebuild::RebuildError<CliError>) -> Self {
-        use scribe_core::cases::rebuild::RebuildError;
+impl From<scribe_core::apps::session::RebuildError<CliError>> for CliError {
+    fn from(err: scribe_core::apps::session::RebuildError<CliError>) -> Self {
+        use scribe_core::apps::session::RebuildError;
         match err {
             RebuildError::Core(e) => Self::Core(e),
             RebuildError::Port(e) => e,

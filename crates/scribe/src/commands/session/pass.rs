@@ -1,18 +1,19 @@
-//! `scribe session pass`: the arguments, then [`scribe_core::cases::pass::run`].
+//! `scribe session pass`: the arguments, then the session app's pass.
 
+use super::passed;
 use crate::app::Context;
 use crate::commands::RunLimits;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
-use scribe_core::cases::pass::{self as case, PassInput};
+use scribe_core::apps::session::{self as app, Command, PassInput, exec};
 use scribe_core::{Config, Models, SessionId};
 
 /// Redact, flatten and bound a failure reason, as a pass report has it.
 #[cfg(test)]
-pub(super) use scribe_core::cases::pass::short_reason;
+pub(super) use scribe_core::apps::session::short_reason;
 
-pub(in crate::commands) const COMMAND: &str = case::PASS_COMMAND;
+pub(in crate::commands) const COMMAND: &str = app::PASS_COMMAND;
 
 pub(super) const PASS_EXAMPLES: &str = "\
 The plugin routine ships disabled; once enabled on a host it runs every
@@ -58,17 +59,13 @@ pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
     } else {
         args.sessions.len()
     };
-    let report = case::run(
-        &ctx.core(),
-        PassInput {
-            sessions: &args.sessions,
-            resolve: true,
-            models: |config: &Config| ctx.models(config),
-            limits: RunLimits::new(max),
-            host: ctx.host(),
-        },
-    )?;
-    Ok(Output::Pass(report))
+    pass(
+        ctx,
+        &args.sessions,
+        true,
+        |config: &Config| ctx.models(config),
+        RunLimits::new(max),
+    )
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config, so a
@@ -82,15 +79,26 @@ pub(in crate::commands) fn run_with<M: Models>(
     limits: RunLimits,
     only: &[SessionId],
 ) -> Result<Output, CliError> {
-    let report = case::run(
-        &ctx.core(),
-        PassInput {
-            sessions: only,
-            resolve: false,
-            models,
-            limits,
-            host: ctx.host(),
-        },
-    )?;
-    Ok(Output::Pass(report))
+    pass(ctx, only, false, models, limits)
+}
+
+/// A pass over `sessions` (resolved as typed when `resolve`), each with the
+/// adapter `models` builds for its config.
+fn pass<M: Models>(
+    ctx: &Context,
+    sessions: &[SessionId],
+    resolve: bool,
+    mut models: impl FnMut(&Config) -> M,
+    limits: RunLimits,
+) -> Result<Output, CliError> {
+    let mut each = |config: &Config| Box::new(models(config)) as Box<dyn Models + '_>;
+    let models: app::ModelsEach<'_> = &mut each;
+    let input = PassInput {
+        sessions,
+        resolve,
+        models,
+        limits,
+        host: ctx.host(),
+    };
+    Ok(passed(exec(&ctx.runtime(), Command::Pass(input))?, ctx))
 }

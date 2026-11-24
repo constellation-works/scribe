@@ -3,7 +3,7 @@
 //! text helpers their echoes use. The JSON a hook prints from a
 //! [`HookReply`] (Claude Code's hook protocol) is rendered by the CLI.
 
-use crate::cases::catalog::CatalogError;
+use crate::apps::session::CatalogError;
 use crate::runtime::PortError;
 use crate::{Error, SessionId};
 

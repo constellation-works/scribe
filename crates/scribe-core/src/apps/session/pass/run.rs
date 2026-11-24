@@ -2,7 +2,7 @@
 //! pass's step sequence, over the store and the ports in [`Ctx`]. The CLI
 //! parses, calls [`run`] and renders the [`PassReport`].
 
-use crate::cases::pass::PassVerbs;
+use super::PassVerbs;
 use crate::control;
 use crate::models::SessionRequest;
 use crate::runtime::audit::PersistedAudit;
