@@ -861,11 +861,11 @@ pub(crate) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u
 #[serde(deny_unknown_fields)]
 struct PickupsDocument {
     format: u32,
-    pickups: Vec<crate::action::Pickup>,
+    pickups: Vec<crate::Pickup>,
 }
 
 /// Refuse a pickup without an agent author: a file's and a row's alike.
-pub(crate) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<()> {
+pub(crate) fn check_pickups(path: &Path, pickups: &[crate::Pickup]) -> Result<()> {
     if pickups
         .iter()
         .any(|p| p.author.kind != crate::AuthorKind::Agent)
@@ -876,7 +876,7 @@ pub(crate) fn check_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> R
 }
 
 /// `pickups.json`'s bytes at the current format, oldest first.
-pub(crate) fn encode_pickups(path: &Path, pickups: &[crate::action::Pickup]) -> Result<Vec<u8>> {
+pub(crate) fn encode_pickups(path: &Path, pickups: &[crate::Pickup]) -> Result<Vec<u8>> {
     let mut pickups = pickups.to_vec();
     pickups.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.entry.cmp(&b.entry)));
     let mut bytes = serde_json::to_vec_pretty(&PickupsDocument {

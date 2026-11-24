@@ -2,8 +2,8 @@
 //! (docs/design/scribe/2_design.md §4.6).
 
 use super::Pickups;
+use crate::Pickup;
 use crate::Store;
-use crate::action::Pickup;
 use crate::db::{self, docs};
 use crate::error::Result;
 

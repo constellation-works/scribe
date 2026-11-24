@@ -3,7 +3,6 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod action;
 mod activity;
 mod annotation;
 mod capture;
