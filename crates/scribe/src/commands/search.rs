@@ -229,7 +229,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     {
         notices.push(format!(
             "{count} stored message(s) match, and no entry or session does: {} lists them",
-            message_command(&query, args.group.as_deref(), &args.dates)
+            message_command(store.root(), &query, args.group.as_deref(), &args.dates)
         ));
         *shown = Some(count);
     }
@@ -244,13 +244,17 @@ fn usage(e: SearchError) -> CliError {
 }
 
 /// The `scribe search` command that lists the messages a hint counts: the
-/// same terms and filters, with `--kind message` (the order the criteria
-/// notice uses).
-fn message_command(query: &SearchQuery, group: Option<&str>, dates: &DateArgs) -> String {
+/// effective store root, the same filters, then the literal terms after `--`.
+fn message_command(
+    root: &std::path::Path,
+    query: &SearchQuery,
+    group: Option<&str>,
+    dates: &DateArgs,
+) -> String {
     let mut words = vec![
-        String::from("scribe search"),
-        shell_word(&query.terms),
-        String::from("--kind message"),
+        String::from("scribe --root"),
+        shell_word(&root.display().to_string()),
+        String::from("search --kind message"),
     ];
     if let Some(project) = &query.project {
         words.push(format!("--project {project}"));
@@ -263,6 +267,8 @@ fn message_command(query: &SearchQuery, group: Option<&str>, dates: &DateArgs) -
     if query.include_hidden {
         words.push(String::from("--include-hidden"));
     }
+    words.push(String::from("--"));
+    words.push(shell_word(&query.terms));
     words.join(" ")
 }
 

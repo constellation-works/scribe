@@ -111,12 +111,13 @@ inactive sessions; --include-hidden shows them`.
 (ORB-27628) A default `scribe search` (no `--kind`) that finds no entry or
 session, while stored messages match the same filters, ends its stderr, in
 every mode, with the last line `<n> stored message(s) match, and no entry or
-session does: scribe search <terms> [filters] --kind message lists them`. The
-command repeats the terms and the filters (`--project`, `--group`, `--topic`,
-the dates and `--include-hidden`), so `<n>` counts what it lists. Its `--json`
-object gains `message_matches` (`<n>`) after `warnings`. Only that case adds
-the line or the key: with no matching message the output is unchanged, and
-the default kinds do not change.
+session does: scribe --root <dir> search --kind message [filters] -- <terms>
+lists them`. The command repeats the effective store root and the filters
+(`--project`, `--group`, `--topic`, the dates and `--include-hidden`), so
+`<n>` counts what it lists. The `--` before the terms preserves a literal term
+that starts with a dash. Its `--json` object gains `message_matches` (`<n>`)
+after `warnings`. Only that case adds the line or the key: with no matching
+message the output is unchanged, and the default kinds do not change.
 
 (S11) List filters: `entry list` and `session list` take `--since <date>`
 and `--until <date>` (`YYYY-MM-DD`, both days included), `--status`,

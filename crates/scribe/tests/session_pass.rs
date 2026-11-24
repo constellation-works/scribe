@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use support::{Fixture, context_of, make_private, text};
 
 const ON: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
@@ -619,11 +619,13 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
     // names the messages and the command that lists them.
     let found = s.fx.ok(&["search", "quartzlark"]);
     assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
+    let default_root = s.fx.root().display().to_string();
+    let hint = format!(
+        "1 stored message(s) match, and no entry or session does: scribe --root {default_root} search --kind message -- quartzlark lists them"
+    );
     assert_eq!(
         text(&found.stderr).lines().last(),
-        Some(
-            "1 stored message(s) match, and no entry or session does: scribe search quartzlark --kind message lists them"
-        ),
+        Some(hint.as_str()),
         "{}",
         text(&found.stderr)
     );
@@ -665,6 +667,102 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
     assert_eq!(answered["total"], 1, "{answered}");
     assert!(answered.get("message_matches").is_none(), "{answered}");
     assert!(!text(&s.fx.ok(&["search", "quartzlark"]).stderr).contains("stored message"));
+}
+
+#[test]
+fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
+    let s = Setup::new();
+    let quote = "Keep the quartzlark rollout note out of the release.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    // Move the populated fixture store to a nondefault root with spaces so
+    // the suggested command must preserve both the selected root and quote it.
+    let root = s.fx.elsewhere("selected store");
+    std::fs::rename(s.fx.root(), &root).unwrap();
+    let root_arg = root.display().to_string();
+    let search = s.fx.ok(&[
+        "--root",
+        &root_arg,
+        "search",
+        "--project",
+        "scribe",
+        "--since",
+        "2026-11-03",
+        "--until",
+        "2026-11-03",
+        "--",
+        "-quartzlark",
+    ]);
+    let hint = format!(
+        "1 stored message(s) match, and no entry or session does: scribe --root '{}' search --kind message --project scribe --since 2026-11-03 --until 2026-11-03 -- -quartzlark lists them",
+        root.display()
+    );
+    assert_eq!(
+        text(&search.stderr).lines().last(),
+        Some(hint.as_str()),
+        "{}",
+        text(&search.stderr)
+    );
+
+    // Execute the hinted command with JSON inserted before its terminator.
+    let listed: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "--root",
+                &root_arg,
+                "search",
+                "--kind",
+                "message",
+                "--project",
+                "scribe",
+                "--since",
+                "2026-11-03",
+                "--until",
+                "2026-11-03",
+                "--json",
+                "--",
+                "-quartzlark",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(listed["total"], 1, "{listed}");
+    assert_eq!(listed["hits"][0]["message"], "u-1", "{listed}");
+
+    // On Unix, run the actual shell command from the hint, adding JSON before
+    // its terminator so the output can be checked.
+    #[cfg(unix)]
+    {
+        let stderr = text(&search.stderr);
+        let line = stderr.lines().last().unwrap();
+        let command = line
+            .strip_prefix("1 stored message(s) match, and no entry or session does: ")
+            .unwrap()
+            .strip_suffix(" lists them")
+            .unwrap()
+            .replacen(" -- ", " --json -- ", 1);
+        let binary_dir = std::path::Path::new(support::BIN)
+            .parent()
+            .unwrap()
+            .display();
+        let path = format!("{binary_dir}:/usr/bin:/bin");
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .env_clear()
+            .env("HOME", s.fx.home())
+            .env("SCRIBE_ROOT", s.fx.root())
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        let shell_listed: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(shell_listed["total"], 1, "{shell_listed}");
+        assert_eq!(shell_listed["hits"][0]["message"], "u-1", "{shell_listed}");
+    }
 }
 
 #[test]
