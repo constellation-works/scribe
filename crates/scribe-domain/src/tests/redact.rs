@@ -62,10 +62,10 @@ fn proposal() -> Proposal {
 /// A session record with one term, so the term's fields are listed.
 fn session_with_term() -> SessionRecord {
     let mut s = session("s-1", T0);
-    s.active_change = Some(crate::activity::ActiveChange {
+    s.active_change = Some(crate::session::ActiveChange {
         at: T0,
         by: crate::record::Author::user(),
-        route: crate::activity::ActiveRoute::Manual,
+        route: crate::session::ActiveRoute::Manual,
         reason: String::new(),
         cite: None,
     });

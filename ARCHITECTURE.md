@@ -117,9 +117,9 @@ map; a new module fails the check until it is given a ring.
 | Ring | Modules |
 |------|---------|
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
-| 2. records | `session`, `activity`, `control`, `entry`, `handoff`, `tag`, `proposal` |
+| 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `group`, `memory`, `message`, `annotation`, `redact` |
+| 4. rules | `trigger`, `voice`, `claim`, `capture`, `instruction`, `models`, `config`, `error`, `group`, `memory`, `message`, `annotation`, `redact` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -146,6 +146,21 @@ checks went to `apps/session/rules.rs`. `checks::group::number`, the
 `resolve_prefix`, where the store keeps id-format parsing; contracts hold
 shapes only. The store root re-exports it as `group_number`.
 
+PR 5-6 moved `activity` and `pass` out and split `control`:
+
+- `activity` went whole to `apps/session/rules/activity.rs`.
+- `control`'s switch transitions went to `apps/session/rules/control.rs`.
+  Its line parser (`parse`, `command_text`, `is_control`, `Switch`) stays in
+  the domain's `control`, because the domain's `transcript` reads it. It
+  goes to `tools/markers` once `transcript` leaves the domain.
+- `pass` went to `apps/session/rules/pass.rs`, with `pass/repair` under it.
+- The pass's window (`conversation`, `window`, `window_with_limits`) went
+  to `scribe-tools/src/window.rs`.
+- `pass/candidates` went to `apps/proposal/rules/candidates.rs`.
+
+The core's root re-exports them as `crate::activity`, `crate::control` and
+`crate::pass`.
+
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
@@ -161,16 +176,15 @@ ORB-27707 where an import forces it:
     in `models`.
 - **`transcript` comes before rules, not after.** The rules read
   transcripts: `capture` imports `transcript::Message`, and `instruction`,
-  `pass`, `memory`, `message` and `action` import from it too. In turn,
+  `memory` and `message` import from it too. In turn,
   `transcript` imports only the records ring (`control::parse`, `entry`,
   `session`) and base (`origin`, `text`, `record`).
 - **`config` is in rules, not a ring of its own after transcript.** It imports
-  `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, and `pass`,
+  `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, and
   `error` and `redact` import it back, so it cannot sit after rules.
 - **Modules the lists did not name:**
   - `origin` is in base and imports nothing;
-  - `control` is in records, since it imports `activity::CatalogedBy` and
-    `session`;
+  - `control` is in records, since it imports `session`;
   - `error` (imports `config::ConfigError`), `models` (imports
     `voice`) and `redact` (imports `config`, `group::NewGroup`) are in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live

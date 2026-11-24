@@ -3,9 +3,9 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod activity;
 mod annotation;
 mod capture;
+mod claim;
 mod config;
 mod control;
 mod entry;
@@ -14,7 +14,6 @@ mod handoff;
 mod instruction;
 mod memory;
 mod message;
-mod pass;
 mod proposal;
 mod record;
 mod redact;
@@ -25,4 +24,4 @@ mod trigger;
 mod verbatim;
 mod voice;
 
-pub(crate) use crate::fixtures::{T0, entry, segment, session, tags_with_idea};
+pub(crate) use crate::fixtures::{T0, entry, session, tags_with_idea};

@@ -19,7 +19,6 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod activity;
 pub mod annotation;
 pub mod capture;
 pub mod claim;
@@ -34,7 +33,6 @@ pub mod memory;
 pub mod message;
 pub mod models;
 pub mod origin;
-pub mod pass;
 pub mod proposal;
 pub mod provider;
 pub mod record;

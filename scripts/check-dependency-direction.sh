@@ -171,9 +171,9 @@ done
 # (`crate::SessionId`). A new module fails until it is given a ring here.
 DOMAIN_RINGS='
 base:       record text verbatim provider origin
-records:    session activity control entry handoff tag proposal
+records:    session control entry handoff tag proposal
 transcript: transcript
-rules:      trigger voice claim capture pass instruction models config error group memory message annotation redact
+rules:      trigger voice claim capture instruction models config error group memory message annotation redact
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -487,7 +487,10 @@ for retired in \
   crates/scribe-domain/src/search.rs \
   crates/scribe-domain/src/consistency.rs \
   crates/scribe-domain/src/action.rs \
-  crates/scribe-domain/src/checks; do
+  crates/scribe-domain/src/checks \
+  crates/scribe-domain/src/activity.rs \
+  crates/scribe-domain/src/pass.rs \
+  crates/scribe-domain/src/pass; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

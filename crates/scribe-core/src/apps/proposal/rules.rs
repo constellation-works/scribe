@@ -24,7 +24,12 @@
 //! The pass's claims, as the store writes them under its lock (2_design.md
 //! §15.2, §15.3): the checks a claim passes and the entry it becomes.
 //!
+//! [`candidates`] holds the pass's claim admission, provenance and
+//! duplicate policy (§5.3, §11.2).
+//!
 //! Pure functions over loaded records: no I/O (STD-02 R5).
+
+pub mod candidates;
 
 use crate::apps::entry::{SettleRefusal, Settled, forget};
 use crate::entry::{Cite, Entry, EntryId, EntryStatus};

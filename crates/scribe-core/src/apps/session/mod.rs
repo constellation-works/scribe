@@ -15,6 +15,8 @@ mod pass;
 mod rebuild;
 pub mod rules;
 mod show;
+#[cfg(test)]
+mod tests;
 mod transcript;
 mod verbs;
 mod view;

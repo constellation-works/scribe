@@ -212,7 +212,7 @@ can override.
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
 | Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-core/src/{session,record,activity}.rs`, `store/` | S8 |
-| Segment-writing passes, `session rebuild` | `crates/scribe-core/src/pass.rs`, `commands/session/rebuild.rs` | S9 |
+| Segment-writing passes, `session rebuild` | `crates/scribe-core/src/apps/session/rules/pass.rs`, `commands/session/rebuild.rs` | S9 |
 | Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
 | `scribe search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/search.rs` | S11 |
 | Agent write verbs and the author guard | `commands/{entry,tag,proposal}.rs` | S12 |

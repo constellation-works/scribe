@@ -53,7 +53,7 @@ pub mod action {
     pub use crate::apps::tag::rules::tag_counts;
     pub use crate::store::Pickup;
 }
-pub use scribe_domain::activity;
+pub use apps::session::rules::activity;
 pub use scribe_domain::annotation;
 pub mod apps;
 pub mod composition;
@@ -71,7 +71,13 @@ pub mod consistency {
     pub use crate::apps::entry::rules::{SettleRefusal, Settled, forget};
     pub use crate::apps::proposal::rules::*;
 }
-pub use scribe_domain::control;
+/// `control` at its old path: the `/scribe` line's parser (the domain's
+/// `control`, until the domain's `transcript` stops reading it) and the
+/// switch transitions (`apps/session`).
+pub mod control {
+    pub use crate::apps::session::rules::control::*;
+    pub use scribe_domain::control::*;
+}
 pub(crate) use scribe_domain::entry;
 pub(crate) use scribe_domain::error;
 pub use scribe_domain::group;
@@ -87,7 +93,13 @@ pub mod models {
     pub use scribe_domain::models::*;
 }
 pub use scribe_domain::origin;
-pub use scribe_domain::pass;
+/// `pass` at its old path: the session pass (`apps/session`), its claim
+/// checks (`apps/proposal`, re-exported by the pass) and its window
+/// (`scribe_tools::window`).
+pub mod pass {
+    pub use crate::apps::session::rules::pass::*;
+    pub use scribe_tools::window::*;
+}
 pub(crate) use scribe_domain::proposal;
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;

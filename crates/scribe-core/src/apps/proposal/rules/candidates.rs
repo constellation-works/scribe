@@ -130,7 +130,12 @@ pub fn admission(tags: &TagTable, tag: &TagName, speaker: Speaker, own: &str) ->
     })
 }
 
-pub(super) fn check(
+/// The claims of a pass answer the pass keeps: within the request's slots
+/// for proposals and, per tag, for collected entries (§11.6, §15.2), each
+/// passing its own checks. The session pass calls it while checking an
+/// answer.
+#[must_use]
+pub fn check(
     answers: Vec<EntryCandidateAnswer>,
     request: &SessionRequest,
 ) -> Vec<EntryCandidateAnswer> {
