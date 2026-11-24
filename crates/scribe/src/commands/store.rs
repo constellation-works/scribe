@@ -4,7 +4,7 @@
 //! choose the moment and is refused while a session is switched on, while
 //! a rebuild checkpoint waits, or when there is nothing to import.
 
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;

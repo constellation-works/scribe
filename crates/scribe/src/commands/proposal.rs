@@ -1,7 +1,7 @@
 //! Proposal listing and audited direct agent writes and settlement.
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};

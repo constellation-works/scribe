@@ -8,7 +8,7 @@
 //! (STD-01 R31). The reads are the brief app's, which the
 //! `SessionStart` hook also uses for an interactive session's context.
 
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::{BriefPayload, MemoryBlockPayload, Output, Record};
 use clap::Args;

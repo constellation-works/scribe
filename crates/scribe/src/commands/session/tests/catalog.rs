@@ -4,9 +4,10 @@
 //! resumes without moving `since`.
 
 use super::super::catalog::{self, CatalogArgs};
-use crate::app::{AppEnv, Context};
+use crate::Context;
 use crate::output::PassFailure;
 use crate::output::{Output, PassReport};
+use scribe_core::composition::Env as AppEnv;
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
     ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,

@@ -36,7 +36,7 @@
 
 use super::group_add;
 use super::payload::{self, PromptPayload};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, PromptInput, exec};

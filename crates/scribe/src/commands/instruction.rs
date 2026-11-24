@@ -9,7 +9,7 @@
 //! does) and hands the bytes to [`scribe_core::instruction`], before the
 //! command takes the store lock. Any refusal changes nothing.
 
-use crate::app::Context;
+use crate::Context;
 use clap::Args;
 use scribe_core::SessionId;
 use scribe_core::apps::entry::Instruction;

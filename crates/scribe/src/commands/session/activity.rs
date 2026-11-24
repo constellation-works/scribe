@@ -13,7 +13,7 @@
 //! record, says `nothing changed` on stderr and writes no audit line.
 
 use super::{SessionRef, View, parse_session_ref};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};

@@ -20,7 +20,7 @@
 //! (4_decisions.md "The user writes only through their typed prompt").
 
 use super::{once, passed};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;

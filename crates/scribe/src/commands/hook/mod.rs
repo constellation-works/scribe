@@ -35,7 +35,7 @@ mod session_start;
 mod stop;
 mod user_prompt_submit;
 
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;

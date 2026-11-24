@@ -47,6 +47,7 @@ pub use scribe_domain::action;
 pub use scribe_domain::activity;
 pub use scribe_domain::annotation;
 pub mod apps;
+pub mod composition;
 pub use provider::Provider;
 pub use scribe_domain::brief;
 pub use scribe_domain::capture;

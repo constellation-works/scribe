@@ -5,7 +5,7 @@
 //! after every model call failed (`model_failed`). It reads only.
 
 use super::{ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records};

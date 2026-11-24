@@ -1,6 +1,6 @@
-//! What Claude Code sends a hook on stdin, and the transcript provenance
-//! check (docs/design/scribe/2_design.md §4.1), read through
-//! `scribe_tools::transcript` over this context's roots and provider.
+//! What Claude Code sends a hook on stdin (docs/design/scribe/2_design.md
+//! §4.1). The transcript provenance check it is held to is
+//! `scribe_core::runtime::host`'s, over `scribe_tools::transcript`.
 //!
 //! The payload is a claim, not authority (STD-05 R1): any process running as
 //! the user can pipe JSON into `scribe hook`. Before a hook acts on a session,
@@ -13,14 +13,10 @@
 
 use crate::error::CliError;
 use scribe_core::SessionId;
-/// What the provenance check found, and why [`read_checked`] gave no bytes
-/// for a transcript that exists: the core port's types.
-pub(in crate::commands) use scribe_core::runtime::{TranscriptState as Transcript, Unreadable};
-use scribe_tools::transcript::{self, DiscoverError, Scope};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The largest payload read from stdin. A prompt with pasted logs can be
 /// large, but not this large; more is refused rather than buffered without
@@ -151,108 +147,4 @@ pub(super) fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, CliError> {
 pub(super) fn session(id: &str) -> Result<SessionId, CliError> {
     id.parse()
         .map_err(|e: scribe_core::SessionError| CliError::HookPayload(e.to_string()))
-}
-
-/// The transcript roots and provider `ctx` reads as.
-fn scope(ctx: &crate::app::Context) -> Scope<'_> {
-    Scope::new(ctx.transcript_roots(), ctx.provider())
-}
-
-/// A listing failure as the CLI error it was before the move.
-fn listing(err: DiscoverError) -> CliError {
-    match err {
-        DiscoverError::Read { what, source } => CliError::Read { what, source },
-        DiscoverError::Refused(why) => CliError::Usage(why),
-    }
-}
-
-/// Provider-aware check ([`transcript::check`]).
-pub(in crate::commands) fn check(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Transcript, String> {
-    transcript::check(&scope(ctx), path, session)
-}
-
-/// Check and read through one handle ([`transcript::read_checked`]).
-pub(in crate::commands) fn read_checked(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Option<Vec<u8>>, Unreadable> {
-    transcript::read_checked(&scope(ctx), path, session)
-}
-
-/// [`read_checked`] without its Codex rollout check
-/// ([`transcript::read_checked_bytes`]).
-pub(in crate::commands) fn read_checked_bytes(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Option<Vec<u8>>, Unreadable> {
-    transcript::read_checked_bytes(&scope(ctx), path, session)
-}
-
-/// Read only the transcript prelude ([`transcript::claude_header`]).
-pub(in crate::commands) fn claude_header(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Option<Vec<u8>>, Unreadable> {
-    transcript::claude_header(&scope(ctx), path, session)
-}
-
-/// Open and check one file before any read or seek
-/// ([`transcript::open_checked`]), for the read tests.
-#[cfg(test)]
-pub(super) fn open_checked(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Option<(scribe_tools::fs::File, scribe_tools::fs::Metadata)>, Unreadable> {
-    transcript::open_checked(&scope(ctx), path, session)
-}
-
-/// Read a transcript [`check`] passed ([`transcript::read_for`]).
-pub(in crate::commands) fn read_for(
-    ctx: &crate::app::Context,
-    path: &Path,
-) -> std::io::Result<Vec<u8>> {
-    transcript::read_for(&scope(ctx), path)
-}
-
-/// The active provider's live and archived rollouts
-/// ([`transcript::files_for`]).
-pub(in crate::commands) fn files_for(
-    ctx: &crate::app::Context,
-) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
-    transcript::files_for(&scope(ctx)).map_err(listing)
-}
-
-/// [`files_for`], with the refused entries of every root
-/// ([`transcript::discovered_for`]).
-pub(in crate::commands) fn discovered_for(
-    ctx: &crate::app::Context,
-) -> Result<scribe_core::runtime::Discovered, CliError> {
-    transcript::discovered_for(&scope(ctx)).map_err(listing)
-}
-
-/// The transcript of `id` alone ([`transcript::locate_own`]).
-pub(in crate::commands) fn locate_own(
-    ctx: &crate::app::Context,
-    id: &SessionId,
-) -> Result<Option<PathBuf>, CliError> {
-    transcript::locate_own(&scope(ctx), id).map_err(listing)
-}
-
-/// The transcripts port's Claude window ([`transcript::claude_window`]).
-#[cfg(unix)]
-pub(in crate::commands) fn claude_window(
-    ctx: &crate::app::Context,
-    path: &Path,
-    session: &SessionId,
-    prior: Option<&scribe_core::ClaudeCapturePosition>,
-) -> Result<Option<scribe_core::runtime::ClaudeRead>, Unreadable> {
-    transcript::claude_window(&scope(ctx), path, session, prior)
 }

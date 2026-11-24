@@ -31,7 +31,7 @@
 //! call writes is known only once the envelope is read (4_decisions.md).
 
 use super::{RunLimits, consistency, session};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};

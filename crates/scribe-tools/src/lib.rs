@@ -5,6 +5,7 @@
 //!   transcript roots and read under the provenance checks;
 //! - [`project`]: the project a working directory belongs to, from git's own
 //!   files;
+//! - [`host`]: this host's name;
 //! - [`fs`]: the crate's file-system access, the only module naming
 //!   `std::fs`.
 //!
@@ -18,6 +19,7 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod fs;
+pub mod host;
 pub mod project;
 pub mod transcript;
 

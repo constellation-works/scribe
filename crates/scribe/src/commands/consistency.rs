@@ -29,7 +29,7 @@
 //! scan still writes one success line per persisted write, then its failure
 //! line.
 
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{

@@ -22,10 +22,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Unix only: transcripts and git metadata are opened beneath their root
-# without following a link (`openat` with `O_NOFOLLOW`), and a transcript's
-# owner is checked against the effective uid (STD-05 R9).
+# without following a link (`openat` with `O_NOFOLLOW`), a transcript's
+# owner is checked against the effective uid (STD-05 R9), and the host name
+# stamped on records is the node name (`uname`).
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "system"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

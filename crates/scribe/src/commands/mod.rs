@@ -21,7 +21,6 @@ mod instruction;
 mod mark;
 pub(in crate::commands) mod memory;
 mod plugin;
-mod ports;
 mod proposal;
 mod search;
 mod session;
@@ -29,7 +28,7 @@ mod store;
 mod tag;
 mod transcript;
 
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};

@@ -6,7 +6,7 @@
 //! FTS5's `bm25()` (§15.7).
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};

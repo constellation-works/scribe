@@ -18,7 +18,7 @@ pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{

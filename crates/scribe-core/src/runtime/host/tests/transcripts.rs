@@ -2,8 +2,8 @@
 //! handle, opened without following links, and checked on that handle
 //! (STD-03, STD-05 R7).
 
-use crate::app::{AppEnv, Context};
-use crate::commands::hook::payload::{self, Transcript, Unreadable};
+use crate::composition::{Context, Env as AppEnv};
+use crate::runtime::host::transcripts::{self as payload, Transcript, Unreadable};
 use scribe_core::SessionId;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;

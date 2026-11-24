@@ -9,7 +9,7 @@
 //! itself runs later from `scribe session pass`. It prints nothing.
 
 use super::payload::{self, SessionEndPayload};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::SessionId;

@@ -1,7 +1,7 @@
 //! Quote-checked group opening, caller-bound seat membership and roster reads.
 
 use super::{ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};

@@ -6,7 +6,7 @@
 //! scribe-authored, so an agent acknowledges or forgets an item without the
 //! user's instruction check, as it may an agent note.
 
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{

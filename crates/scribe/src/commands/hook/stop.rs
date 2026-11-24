@@ -27,7 +27,7 @@
 //! that is off or was never switched on.
 
 use super::payload::{self, StopPayload};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, StopInput, exec};

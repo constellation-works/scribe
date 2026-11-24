@@ -6,4 +6,5 @@ pub(crate) use scribe_domain::fixtures::{T0, entry, session};
 // `super::super::db` and `::write` in `store/`, as inside the store.
 use crate::store::{db, write};
 
+mod composition;
 pub(crate) mod store;
