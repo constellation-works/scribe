@@ -34,10 +34,8 @@ mod memory;
 pub(super) mod scope;
 pub(super) mod sessions;
 
-pub(super) use memory::{
-    FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer, memory_view, pending_read,
-    revision_at,
-};
+pub use memory::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
+pub(super) use memory::{Journal, Writer, memory_view, pending_read, revision_at};
 
 use super::fsio;
 use super::redact::Redactor;

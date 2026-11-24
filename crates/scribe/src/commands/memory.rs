@@ -14,6 +14,7 @@ use crate::output::{
     RevisionPayload,
 };
 use clap::{Args, Subcommand};
+use scribe_core::MemoryVerbs;
 use scribe_core::{AuthorName, MemoryShown, Models, SessionId};
 use std::time::Duration;
 

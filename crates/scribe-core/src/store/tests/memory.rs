@@ -1,4 +1,5 @@
 use super::{Seed, private_tempdir, seed};
+use crate::MemoryVerbs;
 use crate::ProposalVerbs;
 use crate::error::Error;
 use crate::memory::{Checked, Draft, ElementKind, NowKind, profile};

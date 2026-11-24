@@ -15,6 +15,7 @@
 
 pub mod entry;
 pub mod group;
+pub mod memory;
 pub mod pass;
 pub mod proposal;
 pub mod rebuild;
