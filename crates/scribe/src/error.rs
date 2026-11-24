@@ -6,7 +6,7 @@
 //! before a command runs, except [`CliError::Usage`]: arguments that each
 //! parse but contradict each other.
 
-use scribe_core::runtime::errors::CommandError;
+use scribe_core::CommandError;
 use std::io;
 
 /// Why a command failed. Every variant but [`CliError::Usage`] exits 1
@@ -209,29 +209,3 @@ impl From<CommandError> for CliError {
         }
     }
 }
-
-/// An app's error, through the core's mapping to [`CommandError`].
-macro_rules! via_command_error {
-    ($($app:ty),+ $(,)?) => {$(
-        impl From<$app> for CliError {
-            fn from(err: $app) -> Self {
-                CommandError::from(err).into()
-            }
-        }
-    )+};
-}
-
-via_command_error!(
-    scribe_core::apps::session::PassRunError<CommandError>,
-    scribe_core::apps::group::HookError<CommandError>,
-    scribe_core::apps::group::Error<CommandError>,
-    scribe_core::apps::memory::Error<CommandError>,
-    scribe_core::apps::entry::Error<CommandError>,
-    scribe_core::apps::session::Error<CommandError>,
-    scribe_core::apps::proposal::Error<CommandError>,
-    scribe_core::apps::consistency::ScanError<CommandError>,
-    scribe_core::runtime::errors::WriteError<CommandError>,
-    scribe_core::runtime::errors::ReadError<CommandError>,
-    scribe_core::apps::session::CatalogError<CommandError>,
-    scribe_core::apps::session::RebuildError<CommandError>,
-);

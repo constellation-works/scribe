@@ -4,13 +4,13 @@ mod records;
 
 use self::records::RecordArgs;
 use super::{DateArgs, ListNotice, list_output};
-use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::apps::entry::{self, Command, Outcome, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,
@@ -310,21 +310,24 @@ impl EntryCommand {
 
 /// The id of the entry `input` resolves to, or `None` when it does not.
 fn resolved_entry(ctx: &Context, input: &str) -> Option<String> {
-    entry::resolved_id(&ctx.runtime(), input)
+    entry::resolved_id(ctx, input)
 }
 
 /// Run one `entry` verb.
-pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliError> {
-    let runtime = ctx.runtime();
+pub(super) fn run(
+    command: EntryCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let command = match command {
         EntryCommand::List(args) => {
             let input = list_input(&args, ctx);
-            let outcome = exec(&runtime, Command::List(Box::new(input)))?;
+            let outcome = exec(ctx, audit, Command::List(Box::new(input)))?;
             return Ok(output(outcome, false, Some(&args), ctx));
         }
         EntryCommand::Show(args) => {
             return Ok(output(
-                exec(&runtime, Command::Show(args.id))?,
+                exec(ctx, audit, Command::Show(args.id))?,
                 args.window,
                 None,
                 ctx,
@@ -345,7 +348,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             record: args.record.into_fields(),
             provider: ctx.provider(),
             host: ctx.host(),
-            current_session: std::env::var("CLAUDE_CODE_SESSION_ID").ok(),
+            current_session: ctx.claude_session(),
         })),
         EntryCommand::Pickup(args) => {
             let PickupArgs {
@@ -362,7 +365,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 provider: ctx.provider(),
             };
             return Ok(output(
-                exec(&runtime, Command::Pickup(input))?,
+                exec(ctx, audit, Command::Pickup(input))?,
                 false,
                 None,
                 ctx,
@@ -397,7 +400,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 author,
                 instruction: instruction.case(ctx),
             };
-            return Ok(output(exec(&runtime, command)?, false, None, ctx));
+            return Ok(output(exec(ctx, audit, command)?, false, None, ctx));
         }
         EntryCommand::Forget(args) => {
             let ForgetArgs {
@@ -412,7 +415,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 confirm,
                 instruction: instruction.case(ctx),
             };
-            return Ok(output(exec(&runtime, command)?, false, None, ctx));
+            return Ok(output(exec(ctx, audit, command)?, false, None, ctx));
         }
         EntryCommand::Answer(args) => Command::Answer {
             id: args.id,
@@ -428,7 +431,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             author: args.author,
         },
     };
-    Ok(output(exec(&runtime, command)?, false, None, ctx))
+    Ok(output(exec(ctx, audit, command)?, false, None, ctx))
 }
 
 /// The output of `outcome`: `window` is `show --window`, and a list
@@ -486,7 +489,7 @@ fn list(listed: entry::Listed, args: Option<&ListArgs>, ctx: &Context) -> Output
     let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
-        ctx.store().root().display()
+        ctx.root().display()
     );
     let mut criteria =
         criteria_with_related(&filter, args.map_or(&filter.related, |args| &args.related));

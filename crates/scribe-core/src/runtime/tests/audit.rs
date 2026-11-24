@@ -1,6 +1,7 @@
-use crate::audit_middleware::{AuditGuard, AuditMeta};
-use crate::error::CliError;
-use crate::output::{EntryPayload, HookOutcome, HookReply, Output, Record};
+use crate::apps::entry::{EntryWritten, Outcome as Output};
+use crate::apps::hook::{HookReply, Outcome as HookOutput};
+use crate::runtime::audit::{AuditGuard, AuditMeta, HookOutcome};
+use crate::runtime::errors::CommandError as CliError;
 use scribe_core::testing::StoreTestReads;
 use scribe_core::{AuditStatus, Store};
 use std::path::PathBuf;
@@ -72,9 +73,12 @@ secret content
     );
     store.seed_records(&[&text]).unwrap();
     let entry = store.entry(&"preferences-1".parse().unwrap()).unwrap();
-    Output::Show {
-        record: Record::Entry(Box::new(EntryPayload::from(&entry))),
-    }
+    Output::Written(Box::new(EntryWritten {
+        entry,
+        changed: true,
+        action: None,
+        notices: Vec::new(),
+    }))
 }
 
 #[test]
@@ -98,7 +102,7 @@ fn a_success_records_the_record_it_acted_on_and_nothing_it_contained() {
     let store = Store::open(dir.path());
     let output = shown_entry(&store);
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    guard.mark_result(&Ok(output));
+    guard.mark_result(&Ok::<_, CliError>(output));
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines[0]["status"], "success");
@@ -116,7 +120,7 @@ fn a_failure_records_the_stable_code_never_the_message() {
     let err = CliError::Core(store.entry(&"preferences-9".parse().unwrap()).unwrap_err());
     let message = err.to_string();
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    guard.mark_result(&Err(err));
+    guard.mark_result(&Err::<Output, _>(err));
     drop(guard);
     let lines = lines(&store);
     assert_eq!(lines[0]["status"], "failure");
@@ -135,13 +139,13 @@ fn an_unwritable_audit_log_fails_open() {
     std::fs::write(&file, b"").unwrap();
     let store = Store::open(PathBuf::from(&file));
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    guard.mark_result(&Err(CliError::NoDataDir));
+    guard.mark_result(&Err::<Output, _>(CliError::NoDataDir));
     drop(guard);
     assert_eq!(std::fs::read(&file).unwrap(), b"");
 }
 
-fn hook_reply(outcomes: Vec<HookOutcome>) -> Output {
-    Output::Hook(HookReply {
+fn hook_reply(outcomes: Vec<HookOutcome>) -> HookOutput {
+    HookOutput::Replied(Box::new(HookReply {
         event: "UserPromptSubmit",
         message: Some(String::from(
             "scribe: added preferences-1 to preferences — \"secret content\"",
@@ -149,7 +153,7 @@ fn hook_reply(outcomes: Vec<HookOutcome>) -> Output {
         context: None,
         block: None,
         outcomes,
-    })
+    }))
 }
 
 #[test]
@@ -157,7 +161,7 @@ fn a_hook_writes_one_line_per_write_or_refusal_with_ids_and_codes_only() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    guard.mark_result(&Ok(hook_reply(vec![
+    guard.mark_result(&Ok::<_, CliError>(hook_reply(vec![
         HookOutcome {
             target: Some(String::from("preferences-1")),
             error_code: None,
@@ -185,7 +189,7 @@ fn a_hook_that_changed_nothing_writes_no_line() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
-    guard.mark_result(&Ok(hook_reply(Vec::new())));
+    guard.mark_result(&Ok::<_, CliError>(hook_reply(Vec::new())));
     drop(guard);
     assert!(!store.audit_path().exists());
 }
@@ -199,16 +203,13 @@ fn committed_flag_suppresses_guard_lines_on_mark_result_and_drop() {
     let store = Store::open(dir.path());
     let committed = Arc::new(AtomicBool::new(false));
 
-    let Output::Show {
-        record: Record::Entry(entry),
-    } = shown_entry(&store)
-    else {
+    let Output::Written(entry) = shown_entry(&store) else {
         panic!("expected shown entry");
     };
     let mut guard = AuditGuard::start(&store, ADD, datetime!(2026-09-26 12:00:00 UTC));
     guard.set_committed_flag(Arc::clone(&committed));
     committed.store(true, Ordering::Release);
-    guard.mark_result(&Ok(Output::written(Record::Entry(entry), true)));
+    guard.mark_result(&Ok::<_, CliError>(Output::Written(entry)));
     drop(guard);
     assert!(store.audit_events().unwrap().0.is_empty());
 

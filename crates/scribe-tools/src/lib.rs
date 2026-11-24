@@ -20,6 +20,7 @@
 
 pub mod fs;
 pub mod host;
+pub mod payload;
 pub mod project;
 pub mod transcript;
 

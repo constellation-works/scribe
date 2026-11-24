@@ -6,14 +6,14 @@
 //! A turn that is not plainly typed by the user (an agent or harness wrapper
 //! such as `<agent-message>`, `<task-notification>`,
 //! `<side-sessions-event>` or a scheduled/loop wrapper, or a non-plain
-//! payload origin field; see `payload::agent_originated`) is skipped at
+//! payload origin field; see the core's hook payload docs) is skipped at
 //! once: it echoes nothing, settles nothing and does not run `/scribe`.
 //!
 //! Every `#scribe` the user typed, inside a sentence or opening a line
 //! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
 //! (§14.6): this hook writes nothing and calls no model for it, it only
 //! echoes that the marker is noted; the Stop of this turn catalogs it
-//! (the hook app's annotation). Under Codex the adapter (`codex.rs`) echoes them
+//! (the hook app's annotation). Under Codex the hook app's Codex adapter echoes them
 //! instead, once it has verified the typed turn.
 //!
 //! A settling line (`#scribe approve|reject <p-id>`,
@@ -34,30 +34,21 @@
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 
+#![cfg(test)]
+
 use super::group_add;
-use super::payload::{self, PromptPayload};
 use crate::error::CliError;
 use crate::output::Output;
-use scribe_core::apps::hook::{Command, PromptInput, exec};
+use scribe_core::apps::hook::{Event, exec};
 use scribe_core::composition::Context;
 
-/// Run the hook on its stdin payload.
+/// Run the hook on `input`, unaudited, as the tests drive it.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
-    let payload: PromptPayload = payload::decode(input)?;
-    let session = payload::session(&payload.session_id)?;
     let mut read_past =
         |provider, id: &_, path: &_| group_add::read_past(&ctx.with_provider(provider), id, path);
-    let command = Command::UserPromptSubmit {
-        input: PromptInput {
-            session: &session,
-            transcript_path: &payload.transcript_path,
-            cwd: &payload.cwd,
-            prompt: &payload.prompt,
-            agent_originated: payload::agent_originated(&payload),
-            provider: ctx.provider(),
-            host: ctx.host(),
-        },
+    let event = Event::UserPromptSubmit {
+        input: Ok(input.to_vec()),
         read_past: &mut read_past,
     };
-    Ok(super::replied(exec(&ctx.runtime(), command)?))
+    Ok(super::replied(exec(ctx, None, event)?))
 }

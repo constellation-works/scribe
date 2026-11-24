@@ -6,7 +6,6 @@
 //! scribe-authored, so an agent acknowledges or forgets an item without the
 //! user's instruction check, as it may an agent note.
 
-use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{
     MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, Output, Record, RefreshPayload,
@@ -15,6 +14,7 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::apps::memory::{Command, Outcome, Shown, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{AuthorName, Models, SessionId};
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
@@ -215,7 +215,11 @@ impl MemoryCommand {
 }
 
 /// Run one `memory` verb.
-pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: MemoryCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let mut page = false;
     let command = match command {
         MemoryCommand::Show(args) => {
@@ -244,22 +248,19 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         MemoryCommand::Restore(args) => Command::Restore {
             revision: args.revision,
         },
-        MemoryCommand::Refresh(RefreshArgs {}) => {
-            let config = ctx.config()?;
-            return refresh(ctx, &ctx.models(&config));
-        }
+        MemoryCommand::Refresh(RefreshArgs {}) => return refresh(ctx, audit),
     };
-    Ok(output(exec(&ctx.runtime(), command)?, ctx, page))
+    Ok(output(exec(ctx, audit, command)?, ctx, page))
 }
 
-/// `memory refresh` with the adapter `models` (a test answers with a
-/// fake): the memory app's refresh.
-pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, CliError> {
+/// `memory refresh` with the `claude` CLI as the profile model, audited as
+/// `audit` declares: the memory app's refresh.
+pub(crate) fn refresh(ctx: &Context, audit: Option<Audit>) -> Result<Output, CliError> {
     let command = Command::Refresh {
         provider: ctx.provider(),
-        models,
+        models: Box::new(|config| Box::new(ctx.models(config)) as Box<dyn Models>),
     };
-    Ok(output(exec(&ctx.runtime(), command)?, ctx, false))
+    Ok(output(exec(ctx, audit, command)?, ctx, false))
 }
 
 /// The output of `outcome`. `page` is `memory show --page`.
@@ -277,7 +278,7 @@ fn output(outcome: Outcome, ctx: &Context, page: bool) -> Output {
                 record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
             },
             Shown::Block(view) => {
-                let mut block = MemoryBlockPayload::from_view(&view, ctx.store().root());
+                let mut block = MemoryBlockPayload::from_view(&view, ctx.root());
                 if page {
                     block.warnings.push(String::from(
                         "warning: memory show --page is deprecated (usage_deprecated): run memory show with no id",

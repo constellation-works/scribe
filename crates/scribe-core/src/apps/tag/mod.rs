@@ -14,8 +14,11 @@ pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::TagVerbs;
 
+use crate::composition::Context;
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::runtime::errors::WriteError;
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, StoreTag, TagList, TagName, TagPatch};
 
 /// A `tag` command.
@@ -57,8 +60,12 @@ pub type Error<E> = WriteError<E>;
 /// # Errors
 ///
 /// [`Error`]: a refusal, the redactor, or a store error.
-pub fn exec<E: PortError>(runtime: &Runtime<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
+    command: Command,
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -76,4 +83,17 @@ pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Ou
             Outcome::Updated(Box::new(tag), changed)
         }
     })
+}
+
+/// A write names its tag when it changed it, and writes no line when it did
+/// not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Added(tag) => vec![Line::success(Some(tag.name.to_string()))],
+            Self::Updated(tag, changed) => Line::written(Some(tag.name.to_string()), *changed),
+            // Reads: never audited (STD-01 R31).
+            Self::List(_) | Self::Show(_) => vec![Line::success(None)],
+        }
+    }
 }

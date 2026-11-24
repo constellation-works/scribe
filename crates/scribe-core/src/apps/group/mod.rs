@@ -23,11 +23,14 @@ pub use turns::{claude as claude_turns, codex as codex_turns, past as past_turns
 pub use verbs::GroupVerbs;
 
 use crate::apps::session::{self, ModelsOnce};
+use crate::composition::Context;
 use crate::group::{GroupAdded, GroupAddition, SeatStart};
 use crate::message::NewMessage;
 use crate::models::ModelError;
 use crate::runtime::audit::HookOutcome;
-use crate::runtime::{Ctx, PortError, Runtime, Unreadable, resolve};
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
+use crate::runtime::{Ctx, PortError, Unreadable, resolve};
 use crate::{Project, Provider, Redactor, Related, SessionId, Store, transcript};
 use Error as GroupError;
 use std::path::PathBuf;
@@ -47,8 +50,14 @@ pub enum Command<'i> {
         /// The provider whose sessions' transcripts are read.
         provider: Provider,
     },
-    /// `group leave`: the calling session.
-    Leave(SessionId),
+    /// `group leave`.
+    Leave {
+        /// The calling session, from the provider's session variable;
+        /// `None` refuses the command as a usage error.
+        session: Option<SessionId>,
+        /// The provider whose session calls.
+        provider: Provider,
+    },
     /// `group close`.
     Close(GroupCloseInput<'i, ModelsOnce<'i>>),
     /// `group show`: the group (an id, prefix or slug).
@@ -170,20 +179,50 @@ pub(crate) fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     }
 }
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `command` against `ctx`, inside the audit guard when `audit` names
+/// one.
 ///
 /// # Errors
 ///
 /// [`Error`]: the flow's own error, as it was before the app moved.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
+/// [`past_turns`] against `ctx` for its provider: the typed turns of a past
+/// session whose transcript is at `path`, as `/scribe group add` reads a
+/// named session's.
+///
+/// # Errors
+///
+/// A refused or unreadable transcript.
+pub fn past_turns_of(
+    ctx: &Context,
+    session: &SessionId,
+    path: &std::path::Path,
+) -> Result<Option<Vec<NewMessage>>, CommandError> {
+    Ok(past_turns(&ctx.core(), ctx.provider(), session, path)?)
+}
+
+/// The calling session, or the usage error that names the variable the
+/// command should have been run with.
+pub(crate) fn calling<E>(
+    session: Option<SessionId>,
+    provider: Provider,
+) -> Result<SessionId, Error<E>> {
+    session.ok_or_else(|| {
+        Error::Usage(format!(
+            "run this command in the calling session with a valid {}",
+            crate::composition::caller_env(provider)
+        ))
+    })
+}
+
 pub(crate) fn run<E: PortError>(
     ctx: &Ctx<'_, E>,
     command: Command<'_>,
@@ -202,7 +241,10 @@ pub(crate) fn run<E: PortError>(
                 ctx, &id, provider,
             )?)));
         }
-        Command::Leave(session) => (leave::run(ctx, &session)?, true, Vec::new()),
+        Command::Leave { session, provider } => {
+            let session = calling(session, provider)?;
+            (leave::run(ctx, &session)?, true, Vec::new())
+        }
         Command::Close(input) => {
             let GroupCloseInput {
                 session,
@@ -238,18 +280,11 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The group `id` (an id, prefix or slug) resolves to, or `None` when it
-/// does not: the audit line's target. Until migration step 3 moves the
-/// audit guard into core, the binary resolves it through this.
+/// does not: the audit subject's target, which the binary names before the command
+/// runs.
 #[must_use]
-pub fn resolved_id<E>(runtime: &Runtime<'_, E>, id: &str) -> Option<String> {
-    runtime
-        .ctx()
-        .store
-        .read()
-        .groups()
-        .get(id)
-        .ok()
-        .map(|g| g.id)
+pub fn resolved_id(ctx: &Context, id: &str) -> Option<String> {
+    ctx.store().read().groups().get(id).ok().map(|g| g.id)
 }
 
 /// Create or join an open project group on a user-typed hook command
@@ -478,6 +513,23 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
             Error::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
             Error::Usage(message) => Self::Usage(message),
             Error::Model(e) => Self::Model(e),
+        }
+    }
+}
+
+/// A write names its group when it changed it; a backfill names it when it
+/// stored a turn.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(written) => {
+                Line::written(Some(written.group.id.clone()), written.changed)
+            }
+            Self::Backfilled(report) => {
+                Line::written(Some(report.group.clone()), report.stored != 0)
+            }
+            Self::Shown(group) => vec![Line::success(Some(group.id.clone()))],
+            Self::Listed(_) => vec![Line::success(None)],
         }
     }
 }

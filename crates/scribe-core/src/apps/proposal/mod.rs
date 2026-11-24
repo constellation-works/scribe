@@ -18,9 +18,12 @@ pub use settle::ProposalSettleInput;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::ProposalVerbs;
 
+use crate::composition::Context;
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Cite, Proposal, ProposalFilter, Redactor, Store};
 
 /// A `proposal` command.
@@ -92,11 +95,12 @@ impl<E> From<crate::Error> for Error<E> {
 ///
 /// [`Error`]: a refusal, a usage error, the instruction check, the
 /// redactor, or a store error.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -125,11 +129,11 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The id of the proposal `input` resolves to, or `None` when it does
-/// not: the audit line's target. Until migration step 3 moves the audit
-/// guard into core, the binary resolves it through this.
+/// not: the audit subject's target, which the binary names before the
+/// command runs.
 #[must_use]
-pub fn resolved_id<E>(runtime: &Runtime<'_, E>, input: &str) -> Option<String> {
-    verbs::ProposalVerbs::resolve_proposal(runtime.ctx().store, input)
+pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
+    verbs::ProposalVerbs::resolve_proposal(ctx.store(), input)
         .ok()
         .map(|proposal| proposal.id.to_string())
 }
@@ -195,6 +199,20 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
         match err {
             Error::Read(e) => e.into(),
             Error::Write(e) => e.into(),
+        }
+    }
+}
+
+/// A write names its proposal when it changed it, and writes no line when it
+/// did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(proposal, changed) => {
+                Line::written(Some(proposal.id.to_string()), *changed)
+            }
+            Self::Shown(proposal) => vec![Line::success(Some(proposal.id.to_string()))],
+            Self::Listed { .. } => vec![Line::success(None)],
         }
     }
 }

@@ -4,12 +4,12 @@
 //! choose the moment and is refused while a session is switched on, while
 //! a rebuild checkpoint waits, or when there is nothing to import.
 
-use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, Subcommand};
 use scribe_core::apps::admin::{Command, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -49,11 +49,15 @@ impl StoreCommand {
 }
 
 /// Run one `store` verb.
-pub(super) fn run(command: StoreCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: StoreCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     match command {
         StoreCommand::Migrate(MigrateArgs {}) => {
-            let command = Command::Migrate { now: ctx.now() };
-            Ok(super::admin::output(exec(&ctx.runtime(), command)?))
+            let command = Command::Migrate;
+            Ok(super::admin::output(exec(ctx, audit, command)?))
         }
     }
 }

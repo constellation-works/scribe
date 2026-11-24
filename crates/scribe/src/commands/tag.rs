@@ -1,12 +1,12 @@
 //! Configured and store tags: listing and audited direct writes.
 
 use super::{ListNotice, list_output};
-use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
 use scribe_core::apps::tag::{Command, Outcome, TagAddInput, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta};
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:
@@ -82,7 +82,11 @@ impl TagCommand {
 }
 
 /// Run one `tag` verb.
-pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: TagCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let command = match command {
         TagCommand::List(ListArgs {}) => Command::List,
         TagCommand::Show(args) => Command::Show(args.tag),
@@ -104,7 +108,7 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
             author: args.author,
         },
     };
-    Ok(match exec(&ctx.runtime(), command)? {
+    Ok(match exec(ctx, audit, command)? {
         Outcome::List(found) => list(found),
         Outcome::Show(shown) => Output::Show {
             record: Record::TagRules(Box::new(TagShowPayload::new(

@@ -19,17 +19,17 @@
 
 use super::group_turns;
 #[cfg(test)]
-use super::payload::PromptPayload;
-#[cfg(test)]
 use crate::error::CliError;
 #[cfg(test)]
 use crate::output::Output;
+use scribe_core::CommandError;
 use scribe_core::SessionId;
+#[cfg(test)]
+use scribe_core::apps::hook::PromptPayload;
 #[cfg(test)]
 use scribe_core::apps::hook::{self, GroupAddInput};
 use scribe_core::composition::Context;
 use scribe_core::message::NewMessage;
-use scribe_core::runtime::errors::CommandError;
 use std::path::Path;
 
 /// Apply a typed `group add` line.
@@ -72,7 +72,7 @@ pub(super) fn run_with_transcript_reader(
     let mut read_past =
         |provider, id: &_, path: &_| read_past(&ctx.with_provider(provider), id, path);
     let reply = hook::group_add(
-        &ctx.runtime(),
+        ctx,
         &GroupAddInput {
             slug,
             named,

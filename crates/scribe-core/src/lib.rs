@@ -75,7 +75,10 @@ pub(crate) use scribe_domain::proposal;
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
 pub mod providers;
-pub mod runtime;
+pub(crate) mod runtime;
+pub use runtime::RunLimits;
+pub use runtime::audit::{Audit, AuditMeta, AuditSubject};
+pub use runtime::errors::CommandError;
 pub use scribe_domain::search;
 pub(crate) use scribe_domain::session;
 #[cfg(not(test))]

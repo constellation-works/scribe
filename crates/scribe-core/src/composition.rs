@@ -12,12 +12,40 @@
 
 use crate::providers::{ClaudeCliModels, allowed_env};
 use crate::runtime::errors::CommandError;
-use crate::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
+use crate::{Config, Label, Provider, Redactor, SessionId, Store, unresolved_redact_env};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
+
+/// The variable a provider sets to the calling session's id: what `group`
+/// reads to know who calls.
+pub(crate) const fn caller_env(provider: Provider) -> &'static str {
+    match provider {
+        Provider::ClaudeCode => "CLAUDE_CODE_SESSION_ID",
+        Provider::Codex => "CODEX_THREAD_ID",
+    }
+}
+
+/// The running scribe executable, which `init`'s hooks point at.
+///
+/// # Errors
+///
+/// [`CommandError::Read`] when it cannot be resolved, and
+/// [`CommandError::Usage`] when its path is not UTF-8.
+pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
+    let binary = std::env::current_exe().map_err(|source| CommandError::Read {
+        what: String::from("installed scribe executable"),
+        source,
+    })?;
+    if binary.to_str().is_none() {
+        return Err(CommandError::Usage(String::from(
+            "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
+        )));
+    }
+    Ok(binary)
+}
 
 /// Environment variable naming the data directory.
 pub const ROOT_ENV: &str = "SCRIBE_ROOT";
@@ -34,6 +62,21 @@ const UNKNOWN_HOST: &str = "unknown-host";
 
 /// Directory under `$HOME` used when nothing else names one.
 const DEFAULT_DIR: &str = ".scribe";
+
+/// Define an accessor of the context's state: public to the binary's tests
+/// (`test-support`), which read the store and the clock they run against,
+/// and crate-visible otherwise, so the binary holds the context opaquely
+/// (ORB-27921 step 3).
+macro_rules! state_accessor {
+    ($(#[$meta:meta])* fn $name:ident $($rest:tt)*) => {
+        $(#[$meta])*
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn $name $($rest)*
+        $(#[$meta])*
+        #[cfg(not(any(test, feature = "test-support")))]
+        pub(crate) fn $name $($rest)*
+    };
+}
 
 /// The configuration-relevant environment, captured once.
 #[derive(Clone, Debug, Default)]
@@ -151,6 +194,38 @@ impl Context {
         }
     }
 
+    /// The calling session, as the provider's session variable names it
+    /// ([`caller_env`]), or `None` when it is unset or not a session id.
+    #[must_use]
+    pub fn caller(&self) -> Option<SessionId> {
+        std::env::var(caller_env(self.provider))
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
+    /// The Claude Code session this process runs under
+    /// (`CLAUDE_CODE_SESSION_ID`), which `entry add` reads for a quote-less
+    /// refresh.
+    #[must_use]
+    pub fn claude_session(&self) -> Option<String> {
+        std::env::var("CLAUDE_CODE_SESSION_ID").ok()
+    }
+
+    /// The project of the working directory, or `None` when it cannot be
+    /// read: what `brief` lists first when no `--project` is given.
+    #[must_use]
+    pub fn cwd_project(&self) -> Option<crate::Project> {
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| scribe_tools::project::of(&cwd))
+    }
+
+    /// The data directory.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        self.store.root()
+    }
+
     /// A provider-scoped view sharing the same store.
     #[must_use]
     pub fn with_provider(&self, provider: Provider) -> Self {
@@ -167,7 +242,7 @@ impl Context {
         self
     }
     /// All permitted transcript roots for this provider, including archives.
-    pub fn transcript_roots(&self) -> Vec<&Path> {
+    pub(crate) fn transcript_roots(&self) -> Vec<&Path> {
         match self.provider {
             Provider::ClaudeCode => self.transcripts.iter().map(PathBuf::as_path).collect(),
             Provider::Codex => self
@@ -179,45 +254,54 @@ impl Context {
         }
     }
 
-    /// Note the session a command's instruction is looked for in, before
-    /// anything can refuse it, so its audit line names it.
-    pub fn note_instruction_session(&self, session: &str) {
-        if let Ok(mut note) = self.instruction.lock() {
-            note.session = Some(session.to_owned());
+    state_accessor! {
+        /// Note the session a command's instruction is looked for in, before
+        /// anything can refuse it, so its audit line names it.
+        fn note_instruction_session(&self, session: &str) {
+            if let Ok(mut note) = self.instruction.lock() {
+                note.session = Some(session.to_owned());
+            }
         }
     }
 
-    /// Note the turn a passing instruction check found.
-    pub fn note_instruction_message(&self, message: &str) {
-        if let Ok(mut note) = self.instruction.lock() {
-            note.message = Some(message.to_owned());
+    state_accessor! {
+        /// Note the turn a passing instruction check found.
+        fn note_instruction_message(&self, message: &str) {
+            if let Ok(mut note) = self.instruction.lock() {
+                note.message = Some(message.to_owned());
+            }
         }
     }
 
-    /// What the running command noted of its instruction.
-    pub fn instruction_note(&self) -> InstructionNote {
-        self.instruction
-            .lock()
-            .map(|note| note.clone())
-            .unwrap_or_default()
+    state_accessor! {
+        /// What the running command noted of its instruction.
+        fn instruction_note(&self) -> InstructionNote {
+            self.instruction
+                .lock()
+                .map(|note| note.clone())
+                .unwrap_or_default()
+        }
     }
 
-    /// Note that a stepwise command already committed its success audit inside
-    /// its final store write transaction.
-    pub fn note_audit_committed(&self) {
-        self.audit_committed.store(true, Ordering::Release);
+    state_accessor! {
+        /// Note that a stepwise command already committed its success audit inside
+        /// its final store write transaction.
+        fn note_audit_committed(&self) {
+            self.audit_committed.store(true, Ordering::Release);
+        }
     }
 
-    /// Shared flag telling the enclosing `AuditGuard` that the audit row was
-    /// already committed inside a store write transaction.
-    pub fn audit_committed_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.audit_committed)
+    state_accessor! {
+        /// Shared flag telling the enclosing `AuditGuard` that the audit row was
+        /// already committed inside a store write transaction.
+        fn audit_committed_flag(&self) -> Arc<AtomicBool> {
+            Arc::clone(&self.audit_committed)
+        }
     }
 
-    /// The active transcript provider.
     /// Whether this runs under an interactive Claude Code session.
     #[must_use]
-    pub fn interactive(&self) -> bool {
+    pub(crate) fn interactive(&self) -> bool {
         self.interactive
     }
 
@@ -226,11 +310,13 @@ impl Context {
     pub fn provider(&self) -> Provider {
         self.provider
     }
+
     /// Config with provider-specific model defaults resolved.
     ///
     /// # Errors
     ///
     /// When the store or `config.toml` cannot be read.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn config(&self) -> Result<Config, CommandError> {
         Ok(self
             .store
@@ -240,53 +326,59 @@ impl Context {
             .for_provider(self.provider))
     }
 
-    /// Refuse scaffolding when the selected runtime is not executable on PATH.
-    ///
-    /// # Errors
-    ///
-    /// [`CommandError::Usage`] when it is not.
-    pub fn require_runtime(&self) -> Result<(), CommandError> {
-        let program = match self.provider {
-            Provider::Codex => "codex",
-            Provider::ClaudeCode => "claude",
-        };
-        let found = std::env::var_os("PATH").is_some_and(|path| {
-            std::env::split_paths(&path).any(|dir| {
-                let path = dir.join(program);
-                std::fs::metadata(path).is_ok_and(|m| {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        m.is_file() && m.permissions().mode() & 0o111 != 0
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        m.is_file()
-                    }
+    state_accessor! {
+        /// Refuse scaffolding when the selected runtime is not executable on PATH.
+        ///
+        /// # Errors
+        ///
+        /// [`CommandError::Usage`] when it is not.
+        fn require_runtime(&self) -> Result<(), CommandError> {
+            let program = match self.provider {
+                Provider::Codex => "codex",
+                Provider::ClaudeCode => "claude",
+            };
+            let found = std::env::var_os("PATH").is_some_and(|path| {
+                std::env::split_paths(&path).any(|dir| {
+                    let path = dir.join(program);
+                    std::fs::metadata(path).is_ok_and(|m| {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            m.is_file() && m.permissions().mode() & 0o111 != 0
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            m.is_file()
+                        }
+                    })
                 })
-            })
-        });
-        if !found {
-            return Err(CommandError::Usage(format!(
-                "{program} is not executable on PATH; install the selected runtime and rerun scribe init"
-            )));
+            });
+            if !found {
+                return Err(CommandError::Usage(format!(
+                    "{program} is not executable on PATH; install the selected runtime and rerun scribe init"
+                )));
+            }
+            Ok(())
         }
-        Ok(())
     }
 
-    /// The scribe store.
-    pub fn store(&self) -> &Store {
-        &self.store
+    state_accessor! {
+        /// The scribe store.
+        fn store(&self) -> &Store {
+            &self.store
+        }
     }
 
-    /// Where Claude Code keeps session transcripts:
-    /// `$CLAUDE_CONFIG_DIR/projects`, else `$HOME/.claude/projects`. `None`
-    /// when neither is set, which makes every transcript fail the
-    /// provenance check.
-    pub fn transcripts(&self) -> Option<&Path> {
-        match self.provider {
-            Provider::ClaudeCode => self.transcripts.as_deref(),
-            Provider::Codex => self.codex_transcripts.as_deref(),
+    state_accessor! {
+        /// Where Claude Code keeps session transcripts:
+        /// `$CLAUDE_CONFIG_DIR/projects`, else `$HOME/.claude/projects`. `None`
+        /// when neither is set, which makes every transcript fail the
+        /// provenance check.
+        fn transcripts(&self) -> Option<&Path> {
+            match self.provider {
+                Provider::ClaudeCode => self.transcripts.as_deref(),
+                Provider::Codex => self.codex_transcripts.as_deref(),
+            }
         }
     }
 
@@ -295,29 +387,31 @@ impl Context {
         Label::sanitized(host_name().as_deref().unwrap_or_default(), UNKNOWN_HOST)
     }
 
-    /// The redactor for `config`: the live values of the variables it names,
-    /// read from this process's environment. Fails closed when a
-    /// `[redact] env` name has no value here (a plugin routine whose
-    /// `env_pass` does not carry it, for instance): persisting text then
-    /// would store the very value the operator configured scribe to mask,
-    /// unmasked and without warning (STD-05 R13). The model credentials
-    /// are not checked: they are alternatives, so one may be unset.
-    ///
-    /// # Errors
-    ///
-    /// [`CommandError::RedactEnvUnset`] when a name has no value.
-    pub fn redactor(&self, config: &Config) -> Result<Redactor, CommandError> {
-        let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
-        if !missing.is_empty() {
-            tracing::warn!(
-                names = %missing.join(","),
-                "refusing to write: a configured [redact] env name has no value in this environment"
-            );
-            return Err(CommandError::RedactEnvUnset(missing));
+    state_accessor! {
+        /// The redactor for `config`: the live values of the variables it names,
+        /// read from this process's environment. Fails closed when a
+        /// `[redact] env` name has no value here (a plugin routine whose
+        /// `env_pass` does not carry it, for instance): persisting text then
+        /// would store the very value the operator configured scribe to mask,
+        /// unmasked and without warning (STD-05 R13). The model credentials
+        /// are not checked: they are alternatives, so one may be unset.
+        ///
+        /// # Errors
+        ///
+        /// [`CommandError::RedactEnvUnset`] when a name has no value.
+        fn redactor(&self, config: &Config) -> Result<Redactor, CommandError> {
+            let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
+            if !missing.is_empty() {
+                tracing::warn!(
+                    names = %missing.join(","),
+                    "refusing to write: a configured [redact] env name has no value in this environment"
+                );
+                return Err(CommandError::RedactEnvUnset(missing));
+            }
+            Ok(Redactor::from_config(config, |name| {
+                std::env::var(name).ok()
+            }))
         }
-        Ok(Redactor::from_config(config, |name| {
-            std::env::var(name).ok()
-        }))
     }
 
     /// The model adapter for `config`: `claude` run with `PATH`, `HOME`,
@@ -349,10 +443,12 @@ impl Context {
             }))
     }
 
-    /// The current time, whole seconds, for records created by this invocation.
-    pub fn now(&self) -> OffsetDateTime {
-        let now = OffsetDateTime::now_utc();
-        now.replace_nanosecond(0).unwrap_or(now)
+    state_accessor! {
+        /// The current time, whole seconds, for records created by this invocation.
+        fn now(&self) -> OffsetDateTime {
+            let now = OffsetDateTime::now_utc();
+            now.replace_nanosecond(0).unwrap_or(now)
+        }
     }
 }
 

@@ -6,10 +6,10 @@
 //! FTS5's `bm25()` (§15.7).
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
+use scribe_core::AuditMeta;
 use scribe_core::composition::Context;
 use scribe_core::search::{DEFAULT_LIMIT, RecordKind, SearchQuery};
 use scribe_core::{Project, TagName, Topic};
@@ -116,13 +116,13 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         include_hidden: args.include_hidden,
         limit,
     };
-    let store = ctx.store();
+    let root = ctx.root();
     let command = scribe_core::apps::search::Command {
         query: &query,
         group: args.group.as_deref(),
     };
     let scribe_core::apps::search::Outcome::Searched(searched) =
-        scribe_core::apps::search::exec(&ctx.runtime(), command)?;
+        scribe_core::apps::search::exec(ctx, command)?;
     let (found, group, skipped, read_only_copy, message_matches) = (
         searched.found,
         searched.group,
@@ -149,7 +149,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     criteria.extend(args.dates.criteria());
     let empty = format!(
         "no records in {}; entries come from #scribe lines, and sessions from /scribe on",
-        store.root().display()
+        root.display()
     );
     let notice = ListNotice {
         noun: "records",
@@ -169,7 +169,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     if read_only_copy && let Output::List { notices, .. } = &mut output {
         notices.push(format!(
             "read-only copy: {} has no -wal or -shm file and its directory is read-only, so it was opened immutable; messages a live writer has not checkpointed are not shown",
-            store.root().join(scribe_core::DB_FILE).display()
+            root.join(scribe_core::DB_FILE).display()
         ));
     }
     // Last, so it ends the output: the stderr line and the JSON count. When
@@ -189,7 +189,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         };
         notices.push(format!(
             "{count} stored message(s) match, and no {scope}entry or session does: {} lists them",
-            message_command(store.root(), &query, args.group.as_deref(), &args.dates)
+            message_command(root, &query, args.group.as_deref(), &args.dates)
         ));
         *shown = Some(count);
     }

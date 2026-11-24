@@ -13,9 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 scribe-core = { workspace = true }
-# Interim, ORB-27921 step 3 PR 2 to PR 4: the hook adapters call the
-# transcript reads here until composition moves into the core.
-scribe-tools = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

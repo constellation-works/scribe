@@ -380,7 +380,6 @@ dependencies = [
  "rusqlite",
  "rustix",
  "scribe-core",
- "scribe-tools",
  "serde",
  "serde_json",
  "tempfile",

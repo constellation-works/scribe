@@ -29,7 +29,6 @@
 //! scan still writes one success line per persisted write, then its failure
 //! line.
 
-use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{
     CoveredPayload, DeactivatedPayload, DeactivationFailure, MemoryScanPayload, Output,
@@ -38,6 +37,7 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::apps::consistency::{self as app, Command, Outcome, ScanInput, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta};
 
 /// The command path in the audit log.
 pub(in crate::commands) const COMMAND: &str = app::COMMAND;
@@ -90,18 +90,22 @@ impl ConsistencyCommand {
 }
 
 /// Run one `consistency` verb.
-pub(super) fn run(command: ConsistencyCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: ConsistencyCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     match command {
-        ConsistencyCommand::Scan(ScanArgs {}) => scan(ctx),
+        ConsistencyCommand::Scan(ScanArgs {}) => scan(ctx, audit),
     }
 }
 
 /// Scan (the consistency app's `scan`).
-pub(in crate::commands) fn scan(ctx: &Context) -> Result<Output, CliError> {
+pub(in crate::commands) fn scan(ctx: &Context, audit: Option<Audit>) -> Result<Output, CliError> {
     let input = ScanInput {
         provider: ctx.provider(),
     };
-    let Outcome::Scanned(outcome) = exec(&ctx.runtime(), Command::Scan(input))?;
+    let Outcome::Scanned(outcome) = exec(ctx, audit, Command::Scan(input))?;
     let outcome = *outcome;
     let report = ScanReport {
         reapplied: outcome

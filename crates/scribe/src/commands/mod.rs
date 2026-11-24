@@ -2,7 +2,7 @@
 //! through, and one module per noun.
 //!
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
-//! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
+//! (STD-02 R24): today the audit declaration each app's `exec` audits under.
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`,
 //! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`); a noun that
@@ -28,13 +28,12 @@ mod store;
 mod tag;
 mod transcript;
 
-use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
+pub(crate) use scribe_core::RunLimits;
 use scribe_core::composition::Context;
-pub(crate) use scribe_core::runtime::RunLimits;
-use scribe_core::{DateRange, Skipped};
+use scribe_core::{Audit, AuditMeta, AuditSubject, DateRange, Skipped};
 use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
@@ -231,71 +230,36 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         );
         extra.extend(groups.iter().map(|g| g.opener.clone()));
     }
-    scribe_core::runtime::resolve::short_ids(&ctx.core(), ctx.provider(), extra)
+    ctx.short_ids(extra)
 }
 
-/// Run one command, auditing it if it is audited.
-///
-/// The guard exists before dispatch and records when it is dropped, so a
-/// command that returns early or panics is still logged, as a failure. An
-/// audited command that calls no model runs as one store transaction with
-/// its audit lines ([`AuditMeta::stepwise`]): they commit together, and a
-/// refusal rolls back every write it made before refusing.
+/// Run one command, auditing it if it is audited: the command's path and
+/// subject, declared here, are handed to its app's `exec`, which runs it
+/// inside the audit guard (`scribe_core::Audit`).
 pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
-    let meta = command.audit();
-    let mut audit = meta.map(|meta| AuditGuard::start(ctx.store(), meta, ctx.now()));
-    if let Some(audit) = audit.as_mut() {
-        audit.set_committed_flag(ctx.audit_committed_flag());
-    }
-    let subject = command.subject(ctx);
-    if let Some(audit) = audit.as_mut() {
-        subject.apply(audit);
-    }
-    let finish = |audit: &mut Option<AuditGuard<'_>>, result: &Result<Output, CliError>| {
-        if let Some(audit) = audit.as_mut() {
-            audit.mark_result(result);
-            subject.apply(audit);
-            audit.set_instruction(ctx.instruction_note());
-        }
-    };
-    if meta.is_none_or(|meta| meta.stepwise) {
-        let result = dispatch(command, ctx);
-        finish(&mut audit, &result);
-        return result;
-    }
-    let result = ctx.store().transaction(|| {
-        let result = dispatch(command, ctx);
-        finish(&mut audit, &result);
-        let output = result?;
-        if let Some(audit) = audit.as_mut() {
-            audit.flush()?;
-        }
-        Ok(output)
+    let audit = command.audit().map(|meta| Audit {
+        meta,
+        subject: command.subject(ctx),
     });
-    if result.is_err() {
-        // The lines flushed inside rolled back with the transaction: the
-        // guard writes the failure after it.
-        finish(&mut audit, &result);
-    }
-    result
+    dispatch(command, audit, ctx)
 }
 
-fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
+fn dispatch(command: Command, audit: Option<Audit>, ctx: &Context) -> Result<Output, CliError> {
     match command {
-        Command::Init(args) => init::run(args, ctx),
-        Command::Group(command) => group::run(command, ctx),
-        Command::Entry(command) => entry::run(command, ctx),
-        Command::Session(command) => session::run(command, ctx),
+        Command::Init(args) => init::run(args, audit, ctx),
+        Command::Group(command) => group::run(command, audit, ctx),
+        Command::Entry(command) => entry::run(command, audit, ctx),
+        Command::Session(command) => session::run(command, audit, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),
         Command::Mark(command) => mark::run(command, ctx),
-        Command::Proposal(command) => proposal::run(command, ctx),
-        Command::Memory(command) => memory::run(command, ctx),
+        Command::Proposal(command) => proposal::run(command, audit, ctx),
+        Command::Memory(command) => memory::run(command, audit, ctx),
         Command::Search(args) => search::run(args, ctx),
-        Command::Consistency(command) => consistency::run(command, ctx),
-        Command::Store(command) => store::run(command, ctx),
+        Command::Consistency(command) => consistency::run(command, audit, ctx),
+        Command::Store(command) => store::run(command, audit, ctx),
         Command::Export(args) => export::run(&args, ctx),
-        Command::Tag(command) => tag::run(command, ctx),
-        Command::Hook(command) => hook::run(command, ctx),
+        Command::Tag(command) => tag::run(command, audit, ctx),
+        Command::Hook(command) => hook::run(command, audit, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
     }

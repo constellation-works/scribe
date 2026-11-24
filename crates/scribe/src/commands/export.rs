@@ -50,5 +50,5 @@ pub(super) fn run(args: &ExportArgs, ctx: &Context) -> Result<Output, CliError> 
         dir: &args.dir,
         format,
     };
-    Ok(super::admin::output(exec(&ctx.runtime(), command)?))
+    Ok(super::admin::output(exec(ctx, None, command)?))
 }

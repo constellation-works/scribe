@@ -37,12 +37,15 @@ pub use verbs::SessionVerbs;
 pub(crate) use continuation::{ClearedPredecessor, cleared_predecessor, try_cleared_predecessor};
 
 use crate::activity::{ActiveOutcome, SetActive};
+use crate::composition::Context;
 use crate::models::{
     CloseEvidence, ModelError, ProfileAnswer, ProfileRequest, SessionAnswer, SessionHeader,
     SessionHeaderRequest, SessionRequest,
 };
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::{Ctx, PortError};
 use crate::{Author, Config, Models, Provider, Redactor, SessionId, SessionLink, Store, control};
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
@@ -158,11 +161,12 @@ impl<E> From<RebuildError<E>> for Error<E> {
 /// # Errors
 ///
 /// [`Error`]: the flow's own error, as it was before the app moved.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -266,26 +270,26 @@ impl Models for Adapter<'_> {
 }
 
 /// The session `id` (an id or unique prefix) resolves to, or `None` when
-/// it does not: the audit line's target. Until migration step 3 moves the
-/// audit guard into core, the binary resolves it through this.
+/// it does not: the audit subject's target, which the binary names before the command
+/// runs.
 #[must_use]
-pub fn resolved_id<E>(runtime: &Runtime<'_, E>, id: &SessionId) -> Option<SessionId> {
-    runtime.ctx().store.read().sessions().resolve(id).ok()
+pub fn resolved_id(ctx: &Context, id: &SessionId) -> Option<SessionId> {
+    ctx.store().read().sessions().resolve(id).ok()
 }
 
 /// The transcript `input` names, resolved against the `provider`
-/// transcripts on this host. Reads only. Until migration step 3 the
-/// binary resolves `session catalog`'s audit target through this.
+/// transcripts on this host. Reads only: `session catalog`'s audit
+/// target, which the binary names before the command runs.
 ///
 /// # Errors
 ///
 /// An unknown or ambiguous id.
-pub fn resolve_transcript<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn resolve_transcript(
+    ctx: &Context,
     provider: Provider,
     input: &SessionId,
-) -> Result<SessionId, CatalogError<E>> {
-    catalog::resolve_transcript(&runtime.ctx(), provider, input)
+) -> Result<SessionId, CatalogError<CommandError>> {
+    catalog::resolve_transcript(&ctx.core(), provider, input)
 }
 
 /// Begin a catalog of `input` by `by`: its switch, whether this run wrote
@@ -309,13 +313,13 @@ pub(crate) fn begin<E: PortError>(
 ///
 /// As [`begin`].
 #[cfg(any(test, feature = "test-support"))]
-pub fn begin_catalog<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn begin_catalog(
+    ctx: &Context,
     provider: Provider,
     input: &SessionId,
     by: Author,
-) -> Result<Begun, CatalogError<E>> {
-    catalog::begin(&runtime.ctx(), provider, input, by)
+) -> Result<Begun, CommandError> {
+    Ok(catalog::begin(&ctx.core(), provider, input, by)?)
 }
 
 /// Link `session` to another, under the store lock, stamping `provider`.
@@ -391,4 +395,61 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
             Error::Rebuild(e) => e.into(),
         }
     }
+}
+
+/// A pass, catalog or rebuild writes one line per session passed (see
+/// [`PassReport`]'s lines); an activity write names its session when it
+/// changed it.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Passed(report) => pass_lines(report),
+            Self::Activity(written) => Line::written(
+                Some(format!("session:{}", written.view.record.id)),
+                written.changed,
+            ),
+            // Reads: never audited (STD-01 R31).
+            Self::Listed(_) | Self::Shown(_) | Self::Transcripts(_) | Self::Transcript(_) => {
+                vec![Line::success(None)]
+            }
+        }
+    }
+}
+
+/// One line per pass that is not waiting: a success, or a failure with its
+/// code. A catalog that wrote its switch logs the switch as one more success
+/// line first, but only when no window failed: a failed catalog is one
+/// failure outcome, whose line names the session whose switch it left due.
+/// Then one success line per target the run persisted and per memory target.
+fn pass_lines(report: &PassReport) -> Vec<Line> {
+    let mut lines: Vec<Line> = report
+        .passes
+        .iter()
+        .filter(|p| p.result != "waiting")
+        .map(|p| {
+            let target = Some(format!("session:{}", p.session));
+            match p.error_code {
+                Some(code) => Line::failure(target, code),
+                None => Line::success(target),
+            }
+        })
+        .collect();
+    let failed = lines
+        .iter()
+        .any(|line| line.status == crate::AuditStatus::Failure);
+    if report.switch_written && !failed {
+        let target = report
+            .passes
+            .first()
+            .map(|p| format!("session:{}", p.session));
+        lines.insert(0, Line::success(target));
+    }
+    for id in report
+        .persisted_targets
+        .iter()
+        .chain(&report.memory_targets)
+    {
+        lines.push(Line::success(Some(id.clone())));
+    }
+    lines
 }

@@ -26,20 +26,17 @@
 //! writes is audited, and none calls a model
 //! except Stop's annotation call in `annotation.rs`.
 
-mod codex;
 mod group_add;
 pub(super) mod group_turns;
 pub(super) mod payload;
-mod session_end;
-mod session_start;
-mod stop;
 mod user_prompt_submit;
 
-use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, Subcommand};
+use scribe_core::apps::hook::{Event, Outcome, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta};
 
 pub(super) const HOOK_EXAMPLES: &str = "\
 These run from provider packages or scribe init hooks, not by hand.
@@ -169,36 +166,52 @@ impl HookCommand {
     }
 }
 
-/// Run one `hook` verb on the payload read from stdin.
-pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliError> {
+/// Run one `hook` verb on the payload read from stdin: the hook app decodes
+/// it, inside the audit guard `audit` names.
+pub(super) fn run(
+    command: HookCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     #[cfg(test)]
     let input = match tests::group_add::take_hook_input() {
-        Some(input) => input,
-        None => payload::read_stdin()?,
+        Some(input) => Ok(input),
+        None => payload::read_stdin(),
     };
     #[cfg(not(test))]
-    let input = payload::read_stdin()?;
-    if ctx.provider() == scribe_core::Provider::Codex {
+    let input = payload::read_stdin();
+    let mut read_past =
+        |provider, id: &_, path: &_| group_add::read_past(&ctx.with_provider(provider), id, path);
+    let event = if ctx.provider() == scribe_core::Provider::Codex {
         let event = match command {
             HookCommand::SessionStart(_) => "SessionStart",
             HookCommand::UserPromptSubmit(_) => "UserPromptSubmit",
             HookCommand::Stop(_) => "Stop",
             HookCommand::SessionEnd(_) => "SessionEnd",
         };
-        return codex::run(event, &input, ctx);
-    }
-    match command {
-        HookCommand::SessionStart(HookArgs {}) => session_start::run(&input, ctx),
-        HookCommand::UserPromptSubmit(HookArgs {}) => user_prompt_submit::run(&input, ctx),
-        HookCommand::Stop(HookArgs {}) => stop::run(&input, ctx),
-        HookCommand::SessionEnd(HookArgs {}) => session_end::run(&input, ctx),
-    }
+        Event::Codex {
+            event,
+            input,
+            read_past: &mut read_past,
+        }
+    } else {
+        match command {
+            HookCommand::SessionStart(HookArgs {}) => Event::SessionStart(input),
+            HookCommand::UserPromptSubmit(HookArgs {}) => Event::UserPromptSubmit {
+                input,
+                read_past: &mut read_past,
+            },
+            HookCommand::Stop(HookArgs {}) => Event::Stop(input),
+            HookCommand::SessionEnd(HookArgs {}) => Event::SessionEnd(input),
+        }
+    };
+    Ok(replied(exec(ctx, audit, event)?))
 }
 
 /// A hook outcome as its output: the reply.
-fn replied(outcome: scribe_core::apps::hook::Outcome) -> Output {
+fn replied(outcome: Outcome) -> Output {
     match outcome {
-        scribe_core::apps::hook::Outcome::Replied(reply) => Output::Hook(*reply),
+        Outcome::Replied(reply) => Output::Hook(*reply),
     }
 }
 

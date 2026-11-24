@@ -7,8 +7,10 @@ mod query;
 
 pub use query::Searched;
 
+use crate::composition::Context;
+use crate::runtime::errors::CommandError;
 use crate::runtime::errors::ReadError;
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::{Ctx, PortError};
 use crate::search::SearchQuery;
 
 /// A `search` command: the query, scoped to the sessions of `group` when
@@ -29,18 +31,15 @@ pub enum Outcome {
 /// Why a `search` command did not run.
 pub type Error<E> = ReadError<E>;
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `command` against `ctx`, inside the audit guard when `audit` names
+/// one.
 ///
 /// # Errors
 ///
 /// [`ReadError::Usage`] for a query with no terms or an unknown group, or a
 /// store error.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
-    command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    Ok(run(&ctx.core(), command)?)
 }
 
 /// Run `command` against `ctx`: dispatch only.

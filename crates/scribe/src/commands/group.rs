@@ -1,7 +1,6 @@
 //! Quote-checked group opening, caller-bound seat membership and roster reads.
 
 use super::{ListNotice, list_output};
-use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
@@ -10,7 +9,8 @@ use scribe_core::apps::group::{
     GroupOpenInput, Outcome, exec,
 };
 use scribe_core::composition::Context;
-use scribe_core::{AuthorName, Config, Label, Project, Provider, Related, SessionId};
+use scribe_core::{Audit, AuditMeta, AuditSubject};
+use scribe_core::{AuthorName, Config, Label, Project, Related};
 
 pub(super) const EXAMPLES: &str = "Examples:
   scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
@@ -116,11 +116,11 @@ impl GroupCommand {
         match self {
             Self::Join { id, author, .. } => AuditSubject {
                 author: Some(author.to_string()),
-                target: app::resolved_id(&ctx.runtime(), id),
+                target: app::resolved_id(ctx, id),
             },
             Self::Close { id, .. } | Self::Backfill { id } => AuditSubject {
                 author: None,
-                target: app::resolved_id(&ctx.runtime(), id),
+                target: app::resolved_id(ctx, id),
             },
             Self::Open { .. } | Self::Leave | Self::List | Self::Show { .. } => {
                 AuditSubject::default()
@@ -129,22 +129,11 @@ impl GroupCommand {
     }
 }
 
-fn caller(ctx: &Context) -> Result<SessionId, CliError> {
-    let key = match ctx.provider() {
-        Provider::ClaudeCode => "CLAUDE_CODE_SESSION_ID",
-        Provider::Codex => "CODEX_THREAD_ID",
-    };
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| {
-            CliError::Usage(format!(
-                "run this command in the calling session with a valid {key}"
-            ))
-        })
-}
-
-pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: GroupCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let command = match command {
         GroupCommand::Open {
             title,
@@ -153,7 +142,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             related,
             quote,
         } => Command::Open(GroupOpenInput {
-            session: caller(ctx)?,
+            session: ctx.caller(),
             title,
             kind,
             project,
@@ -169,7 +158,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             role,
             replace,
         } => Command::Join(GroupJoinInput {
-            session: caller(ctx)?,
+            session: ctx.caller(),
             id,
             seat,
             author,
@@ -181,9 +170,12 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             id,
             provider: ctx.provider(),
         },
-        GroupCommand::Leave => Command::Leave(caller(ctx)?),
+        GroupCommand::Leave => Command::Leave {
+            session: ctx.caller(),
+            provider: ctx.provider(),
+        },
         GroupCommand::Close { id, quote } => Command::Close(GroupCloseInput {
-            session: caller(ctx)?,
+            session: ctx.caller(),
             id,
             quote,
             provider: ctx.provider(),
@@ -193,7 +185,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
         GroupCommand::Show { id } => Command::Show(id),
         GroupCommand::List => Command::List,
     };
-    Ok(output(exec(&ctx.runtime(), command)?))
+    Ok(output(exec(ctx, audit, command)?))
 }
 
 /// A `group` outcome as its output.

@@ -9,8 +9,7 @@ pub(crate) mod transcripts;
 #[cfg(unix)]
 use super::ClaudeRead;
 use super::{
-    AuditNotes, Clock, Ctx, Discovered, Redaction, Runtime, TranscriptState, Transcripts,
-    Unreadable,
+    AuditNotes, Clock, Ctx, Discovered, Redaction, TranscriptState, Transcripts, Unreadable,
 };
 #[cfg(unix)]
 use crate::ClaudeCapturePosition;
@@ -23,7 +22,7 @@ use transcripts as payload;
 
 impl Context {
     /// The store and this context's ports, for a use case's `run`.
-    pub fn core(&self) -> Ctx<'_, CommandError> {
+    pub(crate) fn core(&self) -> Ctx<'_, CommandError> {
         Ctx {
             store: self.store(),
             clock: self,
@@ -32,9 +31,12 @@ impl Context {
         }
     }
 
-    /// The store and this context's ports, for an app's `exec`.
-    pub fn runtime(&self) -> Runtime<'_, CommandError> {
-        Runtime::from_parts(self.store(), self, self, self)
+    /// Display names for session ids, unique across the stored sessions,
+    /// this provider's transcripts on disk and `extra` (the group members
+    /// and openers the output names) ([`resolve::short_ids`](crate::runtime::resolve::short_ids)).
+    #[must_use]
+    pub fn short_ids(&self, extra: impl IntoIterator<Item = String>) -> crate::ShortIds {
+        crate::runtime::resolve::short_ids(&self.core(), self.provider(), extra)
     }
 }
 

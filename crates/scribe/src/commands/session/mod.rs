@@ -18,7 +18,6 @@ pub(in crate::commands) mod pass;
 pub(in crate::commands) mod rebuild;
 
 use super::{DateArgs, ListNotice, list_output};
-use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{
     Kin, Output, Record, Records, SessionHandoffsPayload, SessionPayload, TreeRow,
@@ -26,6 +25,7 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::apps::session::{self as app, Command, ModelsOnce, Outcome, Shown, exec};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{
     Config, Models, Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus,
     Topic,
@@ -183,12 +183,11 @@ impl SessionCommand {
             // A prefix is resolved before the line is written; an id that
             // resolves to no record leaves the target null, never the typed id.
             Self::Rebuild(args) => AuditSubject {
-                target: app::resolved_id(&ctx.runtime(), &args.id)
-                    .map(|id| format!("session:{id}")),
+                target: app::resolved_id(ctx, &args.id).map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
             },
             Self::Catalog(args) => AuditSubject {
-                target: app::resolve_transcript(&ctx.runtime(), ctx.provider(), &args.id)
+                target: app::resolve_transcript(ctx, ctx.provider(), &args.id)
                     .ok()
                     .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
@@ -229,15 +228,19 @@ impl SessionCommand {
 }
 
 /// Run one `session` verb.
-pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(
+    command: SessionCommand,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     match command {
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
-        SessionCommand::Rebuild(args) => rebuild::run(&args, ctx),
-        SessionCommand::Pass(args) => pass::run(&args, ctx),
-        SessionCommand::Deactivate(args) => activity::deactivate(args, ctx),
-        SessionCommand::Activate(args) => activity::activate(args, ctx),
-        SessionCommand::Catalog(args) => catalog::run(&args, ctx),
+        SessionCommand::Rebuild(args) => rebuild::run(&args, audit, ctx),
+        SessionCommand::Pass(args) => pass::run(&args, audit, ctx),
+        SessionCommand::Deactivate(args) => activity::deactivate(args, audit, ctx),
+        SessionCommand::Activate(args) => activity::activate(args, audit, ctx),
+        SessionCommand::Catalog(args) => catalog::run(&args, audit, ctx),
     }
 }
 
@@ -258,7 +261,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         group: args.group.clone(),
         provider: ctx.provider(),
     };
-    let outcome = exec(&ctx.runtime(), Command::List(Box::new(input)))?;
+    let outcome = exec(ctx, None, Command::List(Box::new(input)))?;
     Ok(output(
         outcome,
         View {
@@ -274,7 +277,7 @@ fn listed(listed: app::Listed, args: Option<&ListArgs>, ctx: &Context) -> Output
     let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no session records in {}; a session is cataloged after /scribe on",
-        ctx.store().root().display()
+        ctx.root().display()
     );
     let mut criteria = Vec::new();
     if let Some(project) = &filter.project {
@@ -357,7 +360,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         (flag, cite) => flag.or(cite),
     };
     let outcome = exec(
-        &ctx.runtime(),
+        ctx,
+        None,
         Command::Show {
             id: args.id.id.clone(),
             segment,

@@ -44,18 +44,14 @@ fn sessions_parser(text: &str) -> Result<usize, String> {
 
 /// Run `brief`.
 pub(super) fn run(args: &BriefArgs, ctx: &Context) -> Result<Output, CliError> {
-    let project = args.project.clone().or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .map(|cwd| scribe_tools::project::of(&cwd))
-    });
+    let project = args.project.clone().or_else(|| ctx.cwd_project());
     let input = BriefInput {
         project: project.as_ref(),
         sessions: args.sessions,
         provider: ctx.provider(),
     };
-    let Outcome::Page(page) = exec(&ctx.runtime(), Command::Brief(input))?;
-    let block = MemoryBlockPayload::from_view(&page.view, ctx.store().root());
+    let Outcome::Page(page) = exec(ctx, Command::Brief(input))?;
+    let block = MemoryBlockPayload::from_view(&page.view, ctx.root());
     let mut payload = BriefPayload::new(&page.brief, block);
     payload.text = page.brief.text_with_ids(&page.ids);
     Ok(Output::Show {

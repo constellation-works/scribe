@@ -3,6 +3,7 @@
 use super::admin;
 use crate::{error::CliError, output::Output};
 use clap::Args;
+use scribe_core::Audit;
 use scribe_core::apps::admin::{Command, exec};
 use scribe_core::composition::Context;
 use std::path::PathBuf;
@@ -37,23 +38,12 @@ pub(crate) struct InitArgs {
     target: PathBuf,
 }
 
-pub(super) fn run(args: InitArgs, ctx: &Context) -> Result<Output, CliError> {
-    ctx.require_runtime()?;
-    let binary = std::env::current_exe().map_err(|source| CliError::Read {
-        what: String::from("installed scribe executable"),
-        source,
-    })?;
-    if binary.to_str().is_none() {
-        return Err(CliError::Usage(String::from(
-            "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
-        )));
-    }
+pub(super) fn run(args: InitArgs, audit: Option<Audit>, ctx: &Context) -> Result<Output, CliError> {
     let command = Command::Init {
         target: &args.target,
         provider: ctx.provider(),
-        binary: &binary,
         skill: SKILL,
         skill_files: SKILL_FILES,
     };
-    Ok(admin::output(exec(&ctx.runtime(), command)?))
+    Ok(admin::output(exec(ctx, audit, command)?))
 }
