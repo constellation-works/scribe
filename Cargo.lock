@@ -397,6 +397,7 @@ version = "0.3.0"
 dependencies = [
  "rusqlite",
  "rustix",
+ "scribe-core",
  "serde",
  "serde_json",
  "sha2",
