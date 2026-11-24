@@ -919,6 +919,29 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
 }
 
+#[test]
+fn a_quoted_close_under_eight_characters_is_refused_even_when_it_names_the_group() {
+    let f = Fixture::new();
+    for id in [A, B] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    transcript(
+        &f,
+        D,
+        &[row(D, "u-close", "user", "end g-1 after the release")],
+    );
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let path = summary_model(&f);
+    // Seven characters name g-1 but fall below the shared eight-character minimum.
+    assert_close_refused_with(&f, &path, D, &["--quote", "end g-1"], "quote_not_found");
+    assert_eq!(model_calls(&f), 0);
+    // Thirteen characters from the same typed turn clear the minimum and name g-1.
+    let out = close_with(&f, &path, D, &["--quote", "end g-1 after"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
+}
+
 /// Restores owner access to a path a test made unreadable, even on a panic.
 #[cfg(unix)]
 struct RestoreMode(PathBuf, u32);
