@@ -37,6 +37,7 @@ use crate::apps::group::HookError;
 use crate::apps::group::refusal;
 use crate::apps::mark;
 use crate::apps::mark::{MarkChange, MarkKey, MarkResult};
+use crate::apps::tag::ConfigReads;
 use crate::capture::{self, Turn};
 use crate::control::is_control;
 use crate::runtime::audit::HookOutcome;

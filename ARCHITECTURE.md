@@ -118,7 +118,7 @@ map; a new module fails the check until it is given a ring.
 |------|---------|
 | 1. base | `record`, `text`, `verbatim`, `provider` |
 | 2. records | `session`, `entry`, `handoff`, `tag`, `proposal` |
-| 3. rules | `trigger`, `voice`, `claim`, `models`, `config` |
+| 3. rules | `trigger`, `voice`, `claim`, `models` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -241,18 +241,21 @@ the moved code uses. The core's root re-exports `crate::transcript`,
 domain has no transcript ring now.
 
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
-re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
-`unresolved_redact_env` as before. `Redactor::from_config` and
-`unresolved_redact_env` read the domain's `Config`, and they stay in the store
-until `config` leaves the domain (PR 5-13). Then they go to `core/config.rs`
-and build a `Redactor` from plain names.
+re-exports `Redactor`, `REDACTED_FIELDS` and `MIN_SECRET_CHARS`.
+
+PR 5-13 moved `config` to `scribe-core/src/config.rs`. The store returns
+`config.toml`'s text (`Tags::config_text`) and the store tags (`Tags::all`).
+The core parses the text (`config::load`), and the tag app merges in the
+store tags (`apps/tag/config.rs`, `ConfigReads`: `config`, `configured` and
+`definition`). `Error::Config` carries the parse error as a boxed source.
+`Redactor::from_config` (now the core's `RedactorFromConfig` trait) and
+`unresolved_redact_env` went with `config`, and build the `Redactor` through
+`Redactor::new`. The window limits (`WindowLimits`, `WINDOW_MESSAGES`,
+`WINDOW_CHARS`) went to `scribe-tools/src/window.rs`, which uses them.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
-- **`config` is in rules, not a ring of its own.** It imports
-  `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, both in
-  rules.
 - **Modules the lists did not name:**
   - `models` (imports `voice`) is in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
@@ -273,7 +276,7 @@ includes any file added later.
 
 - `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
 - `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
-- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
+- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; the tools' `window` owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `db/fsio.rs` imports nothing of the store but its error type, and `contracts/` imports nothing from `db/` or `repository/` and has no `check_*` function.

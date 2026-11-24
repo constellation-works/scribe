@@ -2,6 +2,7 @@
 //! with `cataloged_by` and run every window of its transcript.
 
 use super::pass::{CatalogJob, PassReport, RunFailure, run_catalog};
+use crate::apps::tag::ConfigReads;
 use crate::control::{self, CatalogGate};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, Unreadable};

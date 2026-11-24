@@ -10,6 +10,7 @@
 //! [`Context`]'s ports and its own failures report a
 //! [`CommandError`](crate::runtime::errors::CommandError).
 
+use crate::config::RedactorFromConfig;
 use crate::providers::{ClaudeCliModels, allowed_env};
 use crate::runtime::errors::CommandError;
 use crate::{Config, Label, Provider, Redactor, SessionId, Store, unresolved_redact_env};
@@ -309,21 +310,6 @@ impl Context {
     #[must_use]
     pub fn provider(&self) -> Provider {
         self.provider
-    }
-
-    /// Config with provider-specific model defaults resolved.
-    ///
-    /// # Errors
-    ///
-    /// When the store or `config.toml` cannot be read.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn config(&self) -> Result<Config, CommandError> {
-        Ok(self
-            .store
-            .read()
-            .tags()
-            .config()?
-            .for_provider(self.provider))
     }
 
     state_accessor! {

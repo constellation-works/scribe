@@ -8,26 +8,6 @@ use crate::session::{Segment, SegmentOrigin, SegmentState, SessionRecord, Sessio
 use time::OffsetDateTime;
 use time::macros::datetime;
 
-/// The `idea` catcher scribe shipped until 2_design.md §15.9 phase 2, now
-/// a config example (specs/catchers.md): an action tag whose claims the
-/// pass writes itself.
-pub const IDEA_CATCHER: &str = r#"
-[tags.idea]
-action = true
-description = "a future consideration worth revisiting"
-[tags.idea.capture]
-from = "user"
-route = "write"
-triggers = ["have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we"]
-criteria = "The user proposes something that could be built, changed or tried, and the session does not carry it out."
-not = "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out."
-"#;
-
-/// The shipped tags plus [`IDEA_CATCHER`].
-pub fn tags_with_idea() -> crate::tag::TagTable {
-    crate::config::Config::parse(IDEA_CATCHER).unwrap().tags
-}
-
 /// An active entry `id` created at `created`, in project `scribe`.
 pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
     let id: crate::entry::EntryId = id.parse().unwrap();

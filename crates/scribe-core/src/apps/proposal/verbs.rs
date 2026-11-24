@@ -3,6 +3,7 @@
 //! (2_design.md §11, §12).
 
 use crate::apps::entry::{required_message, required_reason};
+use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;
 use crate::consistency::{
     self, CoveredCandidate, Draft, Reapplied, ReapplyReport, Settle, Settled,

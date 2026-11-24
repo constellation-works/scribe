@@ -78,7 +78,7 @@ pub mod capture {
     };
 }
 pub(crate) use scribe_domain::claim;
-pub(crate) use scribe_domain::config;
+pub(crate) mod config;
 /// The consistency rules and the settling verbs, at the path they had in
 /// the domain: the stale step (`apps/consistency`), settling and approval
 /// (`apps/proposal`) and `forget` with the outcome every verb reports
@@ -207,7 +207,9 @@ pub use apps::tag::TagList;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
 pub use apps::tag::rules::{check_agent_author, check_description};
-pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
+pub use config::{
+    Config, ConfigError, ModelIds, RedactorFromConfig, SessionsConfig, unresolved_redact_env,
+};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
     EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, InvalidItemState, ItemAnswer,
@@ -240,7 +242,6 @@ pub use store::{
     MILESTONES_DIR, MIN_SECRET_CHARS, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
     PROFILE_FILE, PROPOSALS_FILE, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
     SessionForget, SessionLock, SessionRow, Skipped, Snapshot, Store, Tx, resolve_prefix,
-    unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
@@ -257,7 +258,10 @@ pub use tag::{
 pub mod testing {
     pub use scribe_store::testing::*;
 
-    use crate::{Result, SessionFilter, SessionId, SessionList, SessionView, Store, TagList};
+    use crate::apps::tag::ConfigReads;
+    use crate::{
+        Config, Result, SessionFilter, SessionId, SessionList, SessionView, Store, TagDef, TagList,
+    };
 
     /// The reads the tests call by their store names whose view an app now
     /// derives. Each is one call to that app's read.
@@ -268,6 +272,10 @@ pub mod testing {
         fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList>;
         /// [`crate::apps::tag::list_tags`].
         fn list_tags(&self) -> Result<TagList>;
+        /// [`ConfigReads::config`].
+        fn config(&self) -> Result<Config>;
+        /// [`ConfigReads::definition`].
+        fn tag_definition(&self, word: &str) -> Result<(TagDef, &'static str)>;
     }
 
     impl ViewTestReads for Store {
@@ -279,6 +287,12 @@ pub mod testing {
         }
         fn list_tags(&self) -> Result<TagList> {
             crate::apps::tag::list_tags(&self.read())
+        }
+        fn config(&self) -> Result<Config> {
+            self.read().tags().config()
+        }
+        fn tag_definition(&self, word: &str) -> Result<(TagDef, &'static str)> {
+            self.read().tags().definition(word)
         }
     }
 }

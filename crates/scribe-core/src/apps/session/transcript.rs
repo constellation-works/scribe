@@ -3,6 +3,7 @@
 //! Both read transcripts and the store and write nothing.
 
 use super::catalog::{self, CatalogError};
+use crate::apps::tag::ConfigReads;
 use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::transcript::{self, Survey};
 use crate::{Config, Project, Provider, SessionId};

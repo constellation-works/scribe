@@ -426,7 +426,7 @@ impl Topic {
 }
 
 /// Lowercase letters and digits in words joined by single hyphens.
-pub(crate) fn is_kebab(value: &str, max: usize) -> bool {
+pub fn is_kebab(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
         && value.split('-').all(|word| {

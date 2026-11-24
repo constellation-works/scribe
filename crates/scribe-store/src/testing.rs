@@ -15,8 +15,8 @@
 use crate::group::Group;
 use crate::message::{MessageSearch, NewMessage};
 use crate::{
-    AuditEvent, Config, ControlState, Entry, EntryFilter, EntryId, EntryList, Proposal, Redactor,
-    Result, SessionId, Store,
+    AuditEvent, ControlState, Entry, EntryFilter, EntryId, EntryList, Proposal, Redactor, Result,
+    SessionId, Store,
 };
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -37,8 +37,6 @@ pub trait StoreTestReads {
     fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList>;
     /// [`crate::repository::Proposals::all`].
     fn proposals(&self) -> Result<Vec<Proposal>>;
-    /// [`crate::repository::Tags::config`].
-    fn config(&self) -> Result<Config>;
     /// [`crate::repository::Groups::all`].
     fn groups(&self) -> Result<Vec<Group>>;
     /// [`crate::repository::Groups::get`].
@@ -73,9 +71,6 @@ impl StoreTestReads for Store {
     }
     fn proposals(&self) -> Result<Vec<Proposal>> {
         self.read().proposals().all()
-    }
-    fn config(&self) -> Result<Config> {
-        self.read().tags().config()
     }
     fn groups(&self) -> Result<Vec<Group>> {
         self.read().groups().all()
@@ -120,8 +115,6 @@ pub trait StoreTestInternals {
     fn proposals(&self) -> Result<Vec<crate::Proposal>>;
     /// The audit log, and how many lines did not read. (`Store::audit_events`).
     fn audit_events(&self) -> Result<(Vec<crate::AuditEvent>, usize)>;
-    /// The configuration. (`Store::config`).
-    fn config(&self) -> Result<crate::Config>;
     /// The entries `filter` selects. (`Store::list_entries`).
     fn list_entries(&self, filter: &crate::EntryFilter) -> Result<crate::EntryList>;
     /// The on/off state. (`Store::control`).
@@ -196,8 +189,6 @@ pub trait StoreTestInternals {
     )>;
     /// Every session record. (`Store::load_sessions`).
     fn load_sessions(&self) -> Result<crate::LoadedSessions>;
-    /// The definition of tag `word`, and where it comes from. (`Store::tag_definition`).
-    fn tag_definition(&self, word: &str) -> Result<(crate::TagDef, &'static str)>;
     /// Record one audit event. (`Store::record_audit`).
     fn record_audit(&self, event: &crate::AuditEvent) -> Result<()>;
     /// Run a pass window's memory step outside a session write.
@@ -241,9 +232,6 @@ impl StoreTestInternals for Store {
     }
     fn audit_events(&self) -> Result<(Vec<crate::AuditEvent>, usize)> {
         Store::audit_events(self)
-    }
-    fn config(&self) -> Result<crate::Config> {
-        Store::config(self)
     }
     fn list_entries(&self, filter: &crate::EntryFilter) -> Result<crate::EntryList> {
         Store::list_entries(self, filter)
@@ -344,9 +332,6 @@ impl StoreTestInternals for Store {
     fn load_sessions(&self) -> Result<crate::LoadedSessions> {
         Store::load_sessions(self)
     }
-    fn tag_definition(&self, word: &str) -> Result<(crate::TagDef, &'static str)> {
-        Store::tag_definition(self, word)
-    }
     fn record_audit(&self, event: &crate::AuditEvent) -> Result<()> {
         Store::record_audit(self, event)
     }
@@ -375,6 +360,8 @@ impl StoreTestInternals for Store {
 pub mod audit {
     pub use crate::repository::audit::{AuditEvent, AuditStatus, IssueAudit, decode_formatted};
 }
+
+pub mod redact;
 
 /// Store internals of `codec` that scribe-core's store tests reach.
 pub mod codec {

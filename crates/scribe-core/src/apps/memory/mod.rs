@@ -29,6 +29,7 @@ pub use verbs::MemoryVerbs;
 pub use window::WindowMemoryTestWrites;
 pub use window::{WindowMemory, plan_window};
 
+use crate::apps::tag::ConfigReads;
 use crate::composition::Context;
 use crate::memory::NowItem;
 use crate::models::ModelError;

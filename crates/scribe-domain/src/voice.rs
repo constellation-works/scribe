@@ -183,7 +183,7 @@ impl Instructions {
 /// `text` trimmed, if it is a valid `instructions.<key>` value: nonempty, at
 /// most [`INSTRUCTION_CHARS`] characters, and no control characters other
 /// than newlines and tabs.
-pub(crate) fn check_instruction<'a>(key: &str, text: &'a str) -> Result<&'a str, String> {
+pub fn check_instruction<'a>(key: &str, text: &'a str) -> Result<&'a str, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err(format!("instructions.{key} must not be empty"));

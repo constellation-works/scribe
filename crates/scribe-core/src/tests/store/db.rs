@@ -13,6 +13,7 @@ use crate::group::GroupCloser;
 use crate::message::NewMessage;
 use crate::store::{AuditEvent, AuditStatus, Redactor, Store};
 use crate::testing::StoreTestInternals;
+use crate::testing::ViewTestReads;
 use crate::tests::T0;
 use std::path::Path;
 use std::time::Duration;

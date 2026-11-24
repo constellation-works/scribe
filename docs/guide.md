@@ -307,7 +307,7 @@ scribe session pass --session <id> --json
 
 Codex model work defaults to Luna (`gpt-6-luna`), with no fallback. Override it
 in the private store's `config.toml`. Missing keys keep the defaults in
-`ModelIds::codex()` (`crates/scribe-domain/src/config.rs`):
+`ModelIds::codex()` (`crates/scribe-core/src/config.rs`):
 
 ```toml
 [codex.models]

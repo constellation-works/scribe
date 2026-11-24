@@ -2,6 +2,7 @@
 //! CLI runs before it builds a redactor (`scribe tag add`, `scribe tag
 //! update`).
 
+use super::ConfigReads;
 use super::rules::check_agent_author;
 use super::rules::check_description;
 use crate::record::patch;

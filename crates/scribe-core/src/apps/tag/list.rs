@@ -1,6 +1,7 @@
 //! `scribe tag list`: the config and store tags. Read-only: no lock, no
 //! audit, no write.
 
+use super::ConfigReads;
 use crate::runtime::Ctx;
 use crate::store::refusal;
 use crate::tag::{self, TagSummary};

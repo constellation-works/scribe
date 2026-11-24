@@ -21,6 +21,7 @@ use super::reply::{HookPortError, HookReply};
 use super::user_prompt_submit::EVENT;
 use crate::apps::group as group_app;
 use crate::apps::group::HookError;
+use crate::apps::tag::ConfigReads;
 use crate::group::{Added, GroupAddition};
 use crate::message::NewMessage;
 use crate::runtime::audit::HookOutcome;

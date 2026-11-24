@@ -4,7 +4,6 @@
 //! `store/tests/`.
 
 mod claim;
-mod config;
 mod entry;
 mod handoff;
 mod proposal;
@@ -14,6 +13,5 @@ mod tag;
 mod text;
 mod trigger;
 mod verbatim;
-mod voice;
 
-pub(crate) use crate::fixtures::{T0, entry, session, tags_with_idea};
+pub(crate) use crate::fixtures::{T0, entry, session};

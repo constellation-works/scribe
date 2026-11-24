@@ -31,6 +31,7 @@ use super::reply::{HookReply, PROVENANCE_FAILED};
 use crate::apps::entry;
 use crate::apps::group;
 use crate::apps::group::HookError;
+use crate::apps::tag::ConfigReads;
 use crate::control::{self, Since};
 use crate::runtime::audit::HookOutcome;
 use crate::runtime::resolve::refuse_forgotten;

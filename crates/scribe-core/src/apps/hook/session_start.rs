@@ -10,6 +10,7 @@ use super::reply::HookReply;
 use crate::apps::brief;
 use crate::apps::group;
 use crate::apps::session::{self, ClearedPredecessor};
+use crate::apps::tag::ConfigReads;
 use crate::group::SeatStart;
 use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, PortError, TranscriptState};
