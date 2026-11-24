@@ -1363,27 +1363,7 @@ impl MemoryBlockPayload {
     pub(crate) fn from_view(view: &scribe_core::MemoryView, root: &std::path::Path) -> Self {
         let mut now: Vec<&scribe_core::memory::NowItem> = view.now.iter().collect();
         now.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.stem.cmp(&b.stem)));
-        let mut warnings = Vec::new();
-        if view.pending {
-            warnings.push(String::from(
-                "warning: memory_pending: a memory write was interrupted; the profile shown is its committed revision, and the next memory write completes it",
-            ));
-        }
-        if view.read_only_copy {
-            warnings.push(format!(
-                "read-only copy: {} has no -wal or -shm file and its directory is read-only, so it was opened immutable",
-                root.join(scribe_core::DB_FILE).display()
-            ));
-        }
-        for skipped in &view.skipped {
-            warnings.push(format!("warning: skipped {}", skipped.error));
-        }
-        if view.unmigrated > 0 {
-            warnings.push(format!(
-                "warning: {} format-24 memory item(s) not read; the next store write archives them",
-                view.unmigrated
-            ));
-        }
+        let warnings = scribe_core::cases::memory_block::warnings(view, root);
         Self {
             profile: view.profile.as_ref().map(|p| ProfileBlockPayload {
                 text: p.text.clone(),
@@ -1405,7 +1385,7 @@ impl MemoryBlockPayload {
                     title: m.title.clone(),
                 })
                 .collect(),
-            text: scribe_core::memory::block(view.profile.as_ref(), &view.now, &view.milestones),
+            text: scribe_core::cases::memory_block::text(view),
             warnings,
         }
     }

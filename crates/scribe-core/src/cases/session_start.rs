@@ -1,10 +1,11 @@
 //! SessionStart (ORB-27707 step 3c) reports open proposals and unpicked
 //! actions to the user.
-//! An interactive Claude session also receives the ordinary brief, which the
-//! CLI appends to [`run`]'s context. A clear
+//! An interactive session also receives the ordinary brief
+//! ([`crate::cases::brief`]) after the rest of [`run`]'s context. A clear
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use crate::cases::brief;
 use crate::cases::continuation::{self, ClearedPredecessor};
 use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookOutcome, HookReply};
@@ -134,7 +135,14 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
         .chain(seat.message)
         .collect();
     let message = (!lines.is_empty()).then(|| lines.join("\n"));
-    let context_parts: Vec<String> = handoff.into_iter().chain(seat.context).collect();
+    let brief = interactive
+        .then(|| brief::at_start(ctx, provider, &session, cwd))
+        .flatten();
+    let context_parts: Vec<String> = handoff
+        .into_iter()
+        .chain(seat.context)
+        .chain(brief)
+        .collect();
     let context = (!context_parts.is_empty()).then(|| context_parts.join("\n\n"));
     HookReply {
         event: EVENT,

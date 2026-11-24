@@ -234,6 +234,43 @@ impl From<scribe_core::cases::GroupError<CliError>> for CliError {
     }
 }
 
+/// `scribe memory`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::memory_cmd::MemoryError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::memory_cmd::MemoryError<CliError>) -> Self {
+        use scribe_core::cases::memory_cmd::MemoryError;
+        match err {
+            MemoryError::Core(e) => Self::Core(e),
+            MemoryError::Port(e) => e,
+            MemoryError::Model(e) => Self::Model(e),
+            MemoryError::ConfirmRequired(shown) => {
+                Self::ForgetConfirmRequired(crate::output::MemoryPayload::from_shown(&shown).id)
+            }
+        }
+    }
+}
+
+/// `consistency scan`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::consistency_scan::ScanError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::consistency_scan::ScanError<CliError>) -> Self {
+        use scribe_core::cases::consistency_scan::ScanError;
+        match err {
+            ScanError::Core(e) => Self::Core(e),
+            ScanError::Port(e) => e,
+        }
+    }
+}
+
+/// `ask`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::ask::AskError> for CliError {
+    fn from(err: scribe_core::cases::ask::AskError) -> Self {
+        use scribe_core::cases::ask::AskError;
+        match err {
+            AskError::Core(e) => Self::Core(e),
+            AskError::Model(e) => Self::Model(e),
+        }
+    }
+}
+
 /// `mark retry`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
     fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {
