@@ -124,7 +124,7 @@ user's file could pass for one of Daniel's records.
 ├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
 ├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion, until its entry is forgotten (phase 2)
 ├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
-├── control.json                         0600, optional; after the move only the format stamp (see [Formats 27–31](#documents-in-scribedb-phase-7))
+├── control.json                         0600, optional; after the move only the format stamp
 ├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
@@ -143,6 +143,9 @@ user's file could pass for one of Daniel's records.
 ├── audit.jsonl                          0600, the audit log until the move (formats 1–26)
 └── .lock                                0600, the store lock before phase 7; an existing file stays at the root (the move neither archives nor removes it)
 ```
+
+The `control.json` format stamp after the move is described in
+[Documents in scribe.db (phase 7)](#documents-in-scribedb-phase-7).
 
 The root is `--root` > `SCRIBE_ROOT` > `~/.scribe`. A missing root, a
 missing subdirectory or a missing optional file is empty, not an error.
