@@ -6,8 +6,8 @@
 //! Model-free and read-only: it reads the memory, the session records and
 //! the proposals, takes no lock and writes nothing.
 
+use crate::apps::memory as memory_app;
 use crate::brief::{self, Brief, DEFAULT_SESSIONS};
-use crate::cases::memory_block;
 use crate::runtime::{Ctx, PortError};
 use crate::{
     EntryFilter, EntryStatus, MemoryView, Project, Provider, SessionFilter, SessionId, ShortIds,
@@ -45,7 +45,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &BriefInput<'_>) -> crate::Res
     let view = ctx.store.read().memory().view()?;
     let brief = build(
         ctx,
-        Some(memory_block::text(&view)),
+        Some(memory_app::text(&view)),
         input.project,
         None,
         input.sessions,
@@ -116,10 +116,10 @@ fn short_ids<E: PortError>(ctx: &Ctx<'_, E>, provider: Provider, brief: &Brief) 
 fn memory_text<E>(ctx: &Ctx<'_, E>) -> Option<String> {
     match ctx.store.read().memory().view() {
         Ok(view) => {
-            for warning in memory_block::warnings(&view, ctx.store.root()) {
+            for warning in memory_app::warnings(&view, ctx.store.root()) {
                 tracing::warn!("{warning}");
             }
-            (!memory_block::is_empty(&view)).then(|| memory_block::text(&view))
+            (!memory_app::is_empty(&view)).then(|| memory_app::text(&view))
         }
         Err(err) => {
             tracing::warn!(%err, "cannot read the memory; not injecting the memory block");

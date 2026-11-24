@@ -49,7 +49,6 @@ impl<'a, E> Runtime<'a, E> {
     }
 
     /// The context a flow receives.
-    #[expect(dead_code, reason = "the first app's exec calls it (ORB-27921 step 2)")]
     pub(crate) fn ctx(&self) -> Ctx<'a, E> {
         let Ctx {
             store,

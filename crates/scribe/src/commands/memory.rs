@@ -14,8 +14,8 @@ use crate::output::{
     RevisionPayload,
 };
 use clap::{Args, Subcommand};
-use scribe_core::cases::memory_cmd as case;
-use scribe_core::{AuthorName, MemoryShown, Models, SessionId};
+use scribe_core::apps::memory::{Command, Outcome, Shown, exec};
+use scribe_core::{AuthorName, Models, SessionId};
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
 Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
@@ -216,104 +216,110 @@ impl MemoryCommand {
 
 /// Run one `memory` verb.
 pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        MemoryCommand::Show(args) => show(&args, ctx),
-        MemoryCommand::Rules(RulesArgs {}) => Ok(Output::Show {
-            record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
-        }),
-        MemoryCommand::Ack(args) => {
-            let (item, changed) = case::ack(
-                &ctx.core(),
-                &args.id,
-                &args.session,
-                args.author,
-                ctx.provider(),
-            )?;
-            Ok(Output::written(
-                Record::Memory(Box::new(MemoryPayload::now(&item))),
-                changed,
-            ))
+    let mut page = false;
+    let command = match command {
+        MemoryCommand::Show(args) => {
+            page = args.page;
+            Command::Show {
+                revision: args.revision,
+                id: args.id,
+            }
         }
-        MemoryCommand::Forget(args) => {
-            let shown = case::forget(&ctx.core(), &args.id, args.author, args.confirm)?;
-            Ok(Output::written(
-                Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
-                true,
-            ))
+        MemoryCommand::Rules(RulesArgs {}) => {
+            return Ok(Output::Show {
+                record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
+            });
         }
-        MemoryCommand::Restore(args) => {
-            let (shown, written) = case::restore(&ctx.core(), args.revision)?;
-            Ok(Output::written(
-                Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
-                written,
-            ))
-        }
+        MemoryCommand::Ack(args) => Command::Ack {
+            id: args.id,
+            session: args.session,
+            author: args.author,
+            provider: ctx.provider(),
+        },
+        MemoryCommand::Forget(args) => Command::Forget {
+            id: args.id,
+            author: args.author,
+            confirm: args.confirm,
+        },
+        MemoryCommand::Restore(args) => Command::Restore {
+            revision: args.revision,
+        },
         MemoryCommand::Refresh(RefreshArgs {}) => {
             let config = ctx.config()?;
-            refresh(ctx, &ctx.models(&config))
+            return refresh(ctx, &ctx.models(&config));
         }
-    }
+    };
+    Ok(output(exec(&ctx.runtime(), command)?, ctx, page))
 }
 
 /// `memory refresh` with the adapter `models` (a test answers with a
-/// fake): [`scribe_core::cases::memory_cmd::refresh`].
+/// fake): the memory app's refresh.
 pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, CliError> {
-    let payload = match case::refresh(&ctx.core(), ctx.provider(), models)? {
-        None => RefreshPayload {
-            result: "nothing_new",
-            revision: None,
-            sessions: 0,
-            backlog: 0,
-            milestones: Vec::new(),
-            removed: Vec::new(),
-        },
-        Some(written) => RefreshPayload {
-            result: "written",
-            revision: written.revision,
-            sessions: written.sessions,
-            backlog: written.backlog,
-            milestones: written.milestones,
-            removed: written.removed,
-        },
+    let command = Command::Refresh {
+        provider: ctx.provider(),
+        models,
     };
-    let changed = payload.result == "written";
-    Ok(Output::written(
-        Record::MemoryRefresh(Box::new(payload)),
-        changed,
-    ))
+    Ok(output(exec(&ctx.runtime(), command)?, ctx, false))
 }
 
-fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    if let Some(n) = args.revision {
-        let revision = ctx.store().read().memory().profile_revision(n)?;
-        return Ok(Output::Show {
-            record: Record::MemoryRevision(Box::new(RevisionPayload {
-                revision: revision.n,
-                created: revision.created,
-                text: revision.content,
-            })),
-        });
+/// The output of `outcome`. `page` is `memory show --page`.
+fn output(outcome: Outcome, ctx: &Context, page: bool) -> Output {
+    match outcome {
+        Outcome::Show(shown) => match *shown {
+            Shown::Revision(revision) => Output::Show {
+                record: Record::MemoryRevision(Box::new(RevisionPayload {
+                    revision: revision.n,
+                    created: revision.created,
+                    text: revision.content,
+                })),
+            },
+            Shown::Item(shown) => Output::Show {
+                record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
+            },
+            Shown::Block(view) => {
+                let mut block = MemoryBlockPayload::from_view(&view, ctx.store().root());
+                if page {
+                    block.warnings.push(String::from(
+                        "warning: memory show --page is deprecated (usage_deprecated): run memory show with no id",
+                    ));
+                }
+                Output::Show {
+                    record: Record::MemoryBlock(Box::new(block)),
+                }
+            }
+        },
+        Outcome::Acked(item, changed) => {
+            Output::written(Record::Memory(Box::new(MemoryPayload::now(&item))), changed)
+        }
+        Outcome::Forgotten(shown) => Output::written(
+            Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
+            true,
+        ),
+        Outcome::Restored(shown, written) => Output::written(
+            Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
+            written,
+        ),
+        Outcome::Refreshed(written) => {
+            let payload = match written.map(|written| *written) {
+                None => RefreshPayload {
+                    result: "nothing_new",
+                    revision: None,
+                    sessions: 0,
+                    backlog: 0,
+                    milestones: Vec::new(),
+                    removed: Vec::new(),
+                },
+                Some(written) => RefreshPayload {
+                    result: "written",
+                    revision: written.revision,
+                    sessions: written.sessions,
+                    backlog: written.backlog,
+                    milestones: written.milestones,
+                    removed: written.removed,
+                },
+            };
+            let changed = payload.result == "written";
+            Output::written(Record::MemoryRefresh(Box::new(payload)), changed)
+        }
     }
-    if let Some(id) = &args.id {
-        let shown: MemoryShown = ctx.store().read().memory().file(id)?;
-        return Ok(Output::Show {
-            record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
-        });
-    }
-    let mut block = block(ctx)?;
-    if args.page {
-        block.warnings.push(String::from(
-            "warning: memory show --page is deprecated (usage_deprecated): run memory show with no id",
-        ));
-    }
-    Ok(Output::Show {
-        record: Record::MemoryBlock(Box::new(block)),
-    })
-}
-
-/// The memory block (2_design.md §15.4). Read-only: no lock, no write, no
-/// replay.
-pub(super) fn block(ctx: &Context) -> Result<MemoryBlockPayload, CliError> {
-    let view = ctx.store().read().memory().view()?;
-    Ok(MemoryBlockPayload::from_view(&view, ctx.store().root()))
 }

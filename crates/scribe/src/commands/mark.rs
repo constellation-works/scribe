@@ -11,6 +11,7 @@ use crate::error::CliError;
 use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
 use scribe_core::SessionId;
+use scribe_core::apps::mark::{Command, Outcome, exec};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -62,20 +63,24 @@ impl MarkCommand {
 }
 
 pub(super) fn run(command: MarkCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        MarkCommand::List(args) => list(&args, ctx),
-    }
+    let command = match command {
+        MarkCommand::List(args) => Command::List {
+            session: args.session,
+            provider: ctx.provider(),
+        },
+    };
+    Ok(match exec(&ctx.runtime(), command)? {
+        Outcome::List { session, marks } => list(session, marks),
+    })
 }
 
 /// Read-only: no lock, no audit, no write.
-fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let (session, marks) =
-        scribe_core::cases::mark::list(&ctx.core(), ctx.provider(), args.session.as_ref())?;
+fn list(session: Option<SessionId>, marks: Vec<scribe_core::annotation::MarkRecord>) -> Output {
     let notice = ListNotice {
         noun: "#scribe markers with no entry from scribe",
         criteria: session.iter().map(|id| format!("--session {id}")).collect(),
         empty: "no #scribe markers without an entry from scribe",
     };
     let total = marks.len();
-    Ok(list_output(Records::Marks(marks), total, &[], &notice))
+    list_output(Records::Marks(marks), total, &[], &notice)
 }

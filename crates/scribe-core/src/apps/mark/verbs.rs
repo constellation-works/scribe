@@ -3,7 +3,7 @@
 
 use crate::annotation::{MarkRecord, MarkState};
 use crate::runtime::resolve::refuse_forgotten;
-use crate::{MarkChange, MarkKey, MarkResult, Result, SessionId, Store};
+use crate::{MarkChange, MarkKey, MarkResult, Result, Store};
 use time::OffsetDateTime;
 
 /// The mark verbs, implemented for [`Store`].
@@ -68,25 +68,4 @@ impl MarkVerbs for Store {
             Ok(out)
         })
     }
-}
-
-/// `mark list`: the markers scribe wrote no entry for (pending, given up
-/// or handed to the agent), of `session` when
-/// given, resolved across the store and the `provider` transcripts on disk
-/// (an unknown id is kept as typed). The session as resolved, and the
-/// markers.
-///
-/// # Errors
-///
-/// An ambiguous or too-short prefix, or a store error.
-pub fn list<E: crate::runtime::PortError>(
-    ctx: &crate::runtime::Ctx<'_, E>,
-    provider: crate::Provider,
-    session: Option<&SessionId>,
-) -> Result<(Option<SessionId>, Vec<MarkRecord>)> {
-    let session = session
-        .map(|id| crate::runtime::resolve::session_or_typed(ctx, provider, id))
-        .transpose()?;
-    let marks = ctx.store.read().marks().uncataloged(session.as_ref())?;
-    Ok((session, marks))
 }

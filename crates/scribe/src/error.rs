@@ -218,9 +218,9 @@ impl From<scribe_core::cases::GroupError<CliError>> for CliError {
 }
 
 /// `scribe memory`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::memory_cmd::MemoryError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::memory_cmd::MemoryError<CliError>) -> Self {
-        use scribe_core::cases::memory_cmd::MemoryError;
+impl From<scribe_core::apps::memory::Error<CliError>> for CliError {
+    fn from(err: scribe_core::apps::memory::Error<CliError>) -> Self {
+        use scribe_core::apps::memory::Error as MemoryError;
         match err {
             MemoryError::Core(e) => Self::Core(e),
             MemoryError::Port(e) => e,

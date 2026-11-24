@@ -6,6 +6,7 @@ use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
+use scribe_core::apps::tag::{Command, Outcome, TagAddInput, exec};
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:
@@ -82,53 +83,42 @@ impl TagCommand {
 
 /// Run one `tag` verb.
 pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        TagCommand::List(ListArgs {}) => list(ctx),
-        TagCommand::Show(args) => show(&args, ctx),
-        TagCommand::Add(args) => {
-            let tag = scribe_core::cases::tag_cmd::add(
-                &ctx.core(),
-                scribe_core::cases::tag_cmd::TagAddInput {
-                    name: args.name,
-                    aliases: args.alias,
-                    description: args.description,
-                    stale_after_days: args.stale_after_days,
-                    author: args.author,
-                },
-            )?;
-            Ok(Output::written(Record::Tag(Box::new(tag)), true))
-        }
-        TagCommand::Update(args) => {
-            let patch = scribe_core::TagPatch {
+    let command = match command {
+        TagCommand::List(ListArgs {}) => Command::List,
+        TagCommand::Show(args) => Command::Show(args.tag),
+        TagCommand::Add(args) => Command::Add(TagAddInput {
+            name: args.name,
+            aliases: args.alias,
+            description: args.description,
+            stale_after_days: args.stale_after_days,
+            author: args.author,
+        }),
+        TagCommand::Update(args) => Command::Update {
+            name: args.name,
+            patch: scribe_core::TagPatch {
                 description: args.description,
                 add_aliases: args.add_alias,
                 remove_aliases: args.remove_alias,
                 stale_after_days: args.stale_after_days,
-            };
-            let (tag, changed) =
-                scribe_core::cases::tag_cmd::update(&ctx.core(), &args.name, patch, args.author)?;
-            Ok(Output::written(Record::Tag(Box::new(tag)), changed))
-        }
-    }
-}
-
-/// Read-only: no lock, no audit, no write.
-fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let (def, source) = ctx.store().read().tags().definition(&args.tag)?;
-    let file = ctx
-        .store()
-        .read()
-        .tags()
-        .config_path()
-        .display()
-        .to_string();
-    Ok(Output::Show {
-        record: Record::TagRules(Box::new(TagShowPayload::new(&def, source, &file))),
+            },
+            author: args.author,
+        },
+    };
+    Ok(match exec(&ctx.runtime(), command)? {
+        Outcome::List(found) => list(found),
+        Outcome::Show(shown) => Output::Show {
+            record: Record::TagRules(Box::new(TagShowPayload::new(
+                &shown.def,
+                shown.source,
+                &shown.config_file,
+            ))),
+        },
+        Outcome::Added(tag) => Output::written(Record::Tag(tag), true),
+        Outcome::Updated(tag, changed) => Output::written(Record::Tag(tag), changed),
     })
 }
 
-fn list(ctx: &Context) -> Result<Output, CliError> {
-    let found = ctx.store().read().tags().list()?;
+fn list(found: scribe_core::TagList) -> Output {
     let notice = ListNotice {
         noun: "tags",
         criteria: Vec::new(),
@@ -140,7 +130,7 @@ fn list(ctx: &Context) -> Result<Output, CliError> {
     if let Output::List { notices, .. } = &mut output {
         notices.extend(found.warnings);
     }
-    Ok(output)
+    output
 }
 
 #[derive(Debug, Args)]
