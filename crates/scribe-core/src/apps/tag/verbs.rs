@@ -5,6 +5,7 @@
 use super::ConfigReads;
 use super::rules::check_agent_author;
 use super::rules::check_description;
+use super::rules::tags::MergeStore;
 use crate::record::patch;
 use crate::repository::Tags;
 use crate::store::refusal;

@@ -2,6 +2,7 @@
 //! audit, no write.
 
 use super::ConfigReads;
+use super::rules::tags::MergeStore;
 use crate::runtime::Ctx;
 use crate::store::refusal;
 use crate::tag::{self, TagSummary};

@@ -90,6 +90,11 @@ pub use contracts::proposal::{
 };
 // The proposal shapes at the path the store's code names them by.
 use contracts::proposal;
+use contracts::tag;
+pub use contracts::tag::{
+    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG, Rule,
+    RuleOrigin, StoreTag, TagDef, TagError, TagTable,
+};
 pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
@@ -117,10 +122,9 @@ use repository::audit;
 use crate as store;
 use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::session::{ControlState, SessionId, SessionRecord};
-use scribe_domain::tag::{self};
 use scribe_domain::{
     Author, AuthorKind, ContentFrom, EntryStatus, Instruction, Label, LinkType, Project, Related,
-    RelatedKind, SessionError, SessionStatus, Speaker, StoreTag, TagTable,
+    RelatedKind, SessionError, SessionStatus, Speaker,
 };
 use scribe_domain::{entry, handoff, record, session};
 // The domain names the redaction tests (`tests/redact.rs`) and their

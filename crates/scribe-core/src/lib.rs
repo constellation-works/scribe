@@ -182,7 +182,14 @@ mod store {
     pub(crate) use crate::apps::mark::{MarkChange, MarkKey};
     pub(crate) use crate::apps::session::PassWrite;
 }
-pub(crate) use scribe_domain::tag;
+pub(crate) mod tag {
+    pub use crate::apps::entry::rules::MAX_FINDINGS_PER_SESSION;
+    pub use crate::apps::tag::rules::tags::*;
+    pub use scribe_store::{
+        ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG, Rule,
+        RuleOrigin, StoreTag, TagDef, TagError, TagTable,
+    };
+}
 /// `text` at its old path: the text primitives (`scribe_tools::text`) and
 /// the hashes (`scribe_store::digest`).
 pub mod text {
