@@ -1,22 +1,19 @@
 //! The `question` noun: `ask`, which answers a question from the store with
 //! verbatim-checked quotes (docs/design/scribe/2_design.md §6).
 //!
-//! [`answer_with`] is the one implementation behind both `question ask` and
+//! [`answer`] is the one implementation behind both `question ask` and
 //! the Orbit tool `scribe.ask` (`plugin call`), so the two return the same
-//! payload for the same store. It reads the store once (entries, session
-//! records and `control.json`, no lock, no write), then runs
-//! `scribe_core::ask::answer`: a lookup answers from the stored records
-//! with no model call, otherwise retrieval packs evidence for the `ask`
-//! model. Read-only, so never audited (STD-01 R31).
+//! payload for the same store; the flow is [`scribe_core::cases::ask`].
+//! Read-only, so never audited (STD-01 R31).
 
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{AskPayload, Output, SessionsContext};
 use clap::{Args, Subcommand, ValueEnum};
-use scribe_core::ask::{self, Corpus, NoTasks, Question, RecordKind, Scope, Tasks};
-use scribe_core::group::Group;
-use scribe_core::{Config, EntryFilter, Models, Project, SessionFilter, Store, TagName, Topic};
-use time::{Date, OffsetDateTime};
+use scribe_core::ask::{self, Question, RecordKind, Scope};
+use scribe_core::cases::ask::{self as case, AskInput};
+use scribe_core::{Config, Models, Project, TagName, Topic};
+use time::Date;
 
 pub(super) const QUESTION_EXAMPLES: &str = "\
 Examples:
@@ -120,111 +117,41 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
                 },
                 include_hidden: args.include_hidden,
             };
-            let config = ctx.config()?;
-            let group = args
-                .group
-                .as_deref()
-                .map(|id| ctx.store().read().groups().get(id))
-                .transpose()?;
             let orbit = ctx.tasks();
-            let tasks: &dyn Tasks = if group.is_some() { &NoTasks } else { &orbit };
-            let payload = answer_with_config(
-                &config,
-                ctx.store(),
-                question,
-                |config| ctx.models(config),
-                tasks,
-                ctx.now(),
-                group.as_ref(),
+            let payload = answer(
+                ctx,
+                AskInput {
+                    question,
+                    group: args.group.as_deref(),
+                    provider: Some(ctx.provider()),
+                    models: |config: &Config| ctx.models(config),
+                    tasks: &orbit,
+                },
             )?;
             Ok(Output::Ask(Box::new(payload)))
         }
     }
 }
 
-/// Answer `question` from `store`, with the `Models` adapter `models` builds
-/// for the store's config and the task source `tasks`. Tag names in the
-/// scope are resolved through the configured aliases.
-pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
-    store: &Store,
-    question: Question,
-    models: impl FnOnce(&Config) -> M,
-    tasks: &T,
-    now: OffsetDateTime,
+/// Answer with [`scribe_core::cases::ask::run`] on `ctx`'s store and render
+/// the payload: the one implementation behind both `question ask` and the
+/// Orbit tool `scribe.ask`.
+pub(super) fn answer<M: Models>(
+    ctx: &Context,
+    input: AskInput<'_, impl FnOnce(&Config) -> M>,
 ) -> Result<AskPayload, CliError> {
-    let config = store.read().tags().config()?;
-    answer_with_config(&config, store, question, models, tasks, now, None)
-}
-
-fn answer_with_config<M: Models, T: Tasks + ?Sized>(
-    config: &Config,
-    store: &Store,
-    mut question: Question,
-    models: impl FnOnce(&Config) -> M,
-    tasks: &T,
-    now: OffsetDateTime,
-    group: Option<&Group>,
-) -> Result<AskPayload, CliError> {
-    let members = group.map(Group::members);
-    let entries = store
-        .read()
-        .entries()
-        .list_scoped(&EntryFilter::default(), members.as_ref())?;
-    let sessions = store.read().sessions().list_scoped(
-        &SessionFilter {
-            include_inactive: group.is_some(),
-            ..SessionFilter::default()
-        },
-        members.as_ref(),
-    )?;
-    let messages = if let Some(group) = group {
-        store
-            .read()
-            .groups()
-            .search_messages(&group.id, &ask::tokens(&question.text))?
-            .matches
-    } else {
-        Vec::new()
-    };
-    let mut historical = Vec::new();
-    for tag in &mut question.scope.tags {
-        if let Some(def) = config.tags.resolve(tag.as_str()) {
-            // The new alias also names a historical tag with its own entries.
-            if tag.as_str() == "decisions" && def.name.as_str() == "decision" {
-                historical.push(tag.clone());
-            }
-            *tag = def.name.clone();
-        }
-    }
-    question.scope.tags.extend(historical);
-    let corpus = Corpus {
-        entries: &entries.listing.items,
-        sessions: &sessions.listing.items,
-        messages: &messages,
-        tags: &config.tags,
-        user: &config.user,
-    };
-    let adapter = models(config);
-    let answer = ask::answer(
-        &question,
-        corpus,
-        &adapter,
-        tasks,
-        &config.models.ask,
-        &config.voice(scribe_core::voice::ModelUse::Ask),
-        now,
-    )?;
-    let mut skipped = entries.skipped;
-    skipped.extend(sessions.skipped);
+    let asked = case::run(&ctx.core(), input)?;
+    let mut skipped = asked.entries.skipped;
+    skipped.extend(asked.sessions.skipped);
     let context = SessionsContext {
-        control: &sessions.control,
-        children: &sessions.children,
-        titles: &sessions.titles,
-        numbers: &sessions.numbers,
-        forgotten: &sessions.forgotten,
-        entries: &entries.listing.items,
+        control: &asked.sessions.control,
+        children: &asked.sessions.children,
+        titles: &asked.sessions.titles,
+        numbers: &asked.sessions.numbers,
+        forgotten: &asked.sessions.forgotten,
+        entries: &asked.entries.listing.items,
     };
-    Ok(AskPayload::new(&answer, &context, &skipped))
+    Ok(AskPayload::new(&asked.answer, &context, &skipped))
 }
 
 /// A question: not blank, at most 2000 characters.

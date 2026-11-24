@@ -36,7 +36,6 @@ use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
 pub(crate) use scribe_core::cases::RunLimits;
-pub(in crate::commands) use scribe_core::cases::audit::PersistedAudit;
 use scribe_core::{DateRange, Skipped};
 use time::Date;
 
@@ -276,26 +275,23 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
 /// of uncataloged sessions alongside the store's own ids. If discovery is
 /// incomplete, callers keep resolving against the store alone.
 pub(in crate::commands) fn transcript_session_ids(ctx: &Context) -> Result<Vec<String>, CliError> {
-    Ok(hook::payload::files_for(ctx)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(id, _)| id.to_string())
-        .collect())
+    Ok(scribe_core::cases::resolve::transcript_session_ids(
+        &ctx.core(),
+        ctx.provider(),
+    ))
 }
 
 /// Resolve a session id or unique prefix across the store and provider
-/// transcripts on disk, returning an unknown id as typed so its own check can
-/// report it. Ambiguity and short prefixes are still refused.
+/// transcripts on disk ([`scribe_core::cases::resolve::session_or_typed`]).
 pub(in crate::commands) fn resolve_session_or_typed(
     ctx: &Context,
     input: &scribe_core::SessionId,
 ) -> Result<scribe_core::SessionId, CliError> {
-    let extra = transcript_session_ids(ctx)?;
-    Ok(ctx
-        .store()
-        .read()
-        .sessions()
-        .resolve_or_typed_with(input, &extra)?)
+    Ok(scribe_core::cases::resolve::session_or_typed(
+        &ctx.core(),
+        ctx.provider(),
+        input,
+    )?)
 }
 
 /// Resolve one `--related` or `--result` `session:<id>` reference across the

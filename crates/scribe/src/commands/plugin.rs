@@ -8,7 +8,7 @@
 //! `{"ok": false, "error": {"code", "message", "retryable"}}`, exiting 0
 //! either way (a non-zero exit is an execution error to the host).
 //!
-//! - `scribe.ask` runs [`super::question::answer_with`], the code behind
+//! - `scribe.ask` runs [`super::question::answer`], the code behind
 //!   `question ask`, against the store at the plugin's `root` setting, so
 //!   both return the same payload for the same store.
 //! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
@@ -33,7 +33,7 @@
 //! change — `plugin call` itself has no audit entry, because which store a
 //! call writes is known only once the envelope is read (4_decisions.md).
 
-use super::question::{answer_with, date_parser, question_parser};
+use super::question::{answer, date_parser, question_parser};
 use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
@@ -41,8 +41,9 @@ use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
 use scribe_core::ask::{Question, RecordKind, Scope};
+use scribe_core::cases::ask::AskInput as CaseAskInput;
 use scribe_core::models::ModelError;
-use scribe_core::{Project, Store, TagName, Topic};
+use scribe_core::{Project, TagName, Topic};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
@@ -443,14 +444,17 @@ fn ask(input: Value, config: &Value, ctx: &Context) -> PluginReply {
         Ok(path) => path,
         Err(reply) => return reply,
     };
-    let model_ctx = Context::at(root.clone(), None).with_codex_home(codex_home);
-    let store = Store::open(root);
-    match answer_with(
-        &store,
-        question,
-        |config| model_ctx.models(config),
-        &ctx.tasks().with_workspaces(task_workspaces(config)),
-        ctx.now(),
+    let model_ctx = Context::at(root, None).with_codex_home(codex_home);
+    let tasks = ctx.tasks().with_workspaces(task_workspaces(config));
+    match answer(
+        &model_ctx,
+        CaseAskInput {
+            question,
+            group: None,
+            provider: None,
+            models: |config: &scribe_core::Config| model_ctx.models(config),
+            tasks: &tasks,
+        },
     ) {
         Ok(payload) => PluginReply::Ask(Box::new(payload)),
         Err(err) => {

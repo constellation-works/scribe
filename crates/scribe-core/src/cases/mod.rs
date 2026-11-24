@@ -14,9 +14,12 @@
 //! (scripts/check-dependency-direction.sh).
 
 pub mod annotation;
+pub mod ask;
 pub mod audit;
+pub mod brief;
 pub mod catalog;
 pub mod codex;
+pub mod consistency_scan;
 pub mod continuation;
 mod ctx;
 pub mod entry;
@@ -33,11 +36,14 @@ pub mod hook;
 pub mod mark;
 pub mod mark_retry;
 pub mod memory;
+pub mod memory_block;
+pub mod memory_cmd;
 pub mod pass;
 pub mod pickup;
 pub mod proposal;
 pub mod proposal_command;
 pub mod rebuild;
+pub mod resolve;
 pub mod scribe_command;
 pub mod session;
 pub mod session_end;

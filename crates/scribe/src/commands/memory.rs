@@ -14,12 +14,8 @@ use crate::output::{
     RevisionPayload,
 };
 use clap::{Args, Subcommand};
-use scribe_core::MemoryVerbs;
+use scribe_core::cases::memory_cmd as case;
 use scribe_core::{AuthorName, MemoryShown, Models, SessionId};
-use std::time::Duration;
-
-/// `memory refresh`'s model budget, fixed (2_design.md §15.6).
-pub(crate) const REFRESH_BUDGET: Duration = Duration::from_secs(120);
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
 Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
@@ -226,37 +222,30 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
             record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
         }),
         MemoryCommand::Ack(args) => {
-            let session = super::resolve_session_or_typed(ctx, &args.session)?;
-            let (item, changed) =
-                ctx.store()
-                    .ack_memory(&args.id, session, args.author, ctx.now())?;
+            let (item, changed) = case::ack(
+                &ctx.core(),
+                &args.id,
+                &args.session,
+                args.author,
+                ctx.provider(),
+            )?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::now(&item))),
                 changed,
             ))
         }
         MemoryCommand::Forget(args) => {
-            if !args.confirm {
-                // Names the file, or refuses one that does not exist.
-                let shown = ctx.store().read().memory().file(&args.id)?;
-                return Err(CliError::ForgetConfirmRequired(
-                    MemoryPayload::from_shown(&shown).id,
-                ));
-            }
-            let shown = ctx
-                .store()
-                .forget_memory(&args.id, args.author, ctx.now())?;
+            let shown = case::forget(&ctx.core(), &args.id, args.author, args.confirm)?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
                 true,
             ))
         }
         MemoryCommand::Restore(args) => {
-            let written = ctx.store().restore_profile(args.revision, ctx.now())?;
-            let shown = ctx.store().read().memory().file("profile")?;
+            let (shown, written) = case::restore(&ctx.core(), args.revision)?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
-                written.is_some(),
+                written,
             ))
         }
         MemoryCommand::Refresh(RefreshArgs {}) => {
@@ -267,43 +256,30 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
 }
 
 /// `memory refresh` with the adapter `models` (a test answers with a
-/// fake): read the inputs under the lock, ask the model without it, then
-/// check and write under the lock again (2_design.md §15.6).
+/// fake): [`scribe_core::cases::memory_cmd::refresh`].
 pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, CliError> {
-    let config = ctx.config()?;
-    let redactor = ctx.redactor(&config)?;
-    let store = ctx.store();
-    let inputs = store.profile_inputs(ctx.now())?;
-    if inputs.nothing_new() {
-        return Ok(Output::written(
-            Record::MemoryRefresh(Box::new(RefreshPayload {
-                result: "nothing_new",
-                revision: None,
-                sessions: 0,
-                backlog: 0,
-                milestones: Vec::new(),
-                removed: Vec::new(),
-            })),
-            false,
-        ));
-    }
-    let request = inputs.request(
-        config.models.profile.clone(),
-        REFRESH_BUDGET,
-        config.voice(scribe_core::voice::ModelUse::Profile),
-    );
-    let answer = models.profile(&request)?;
-    let written = store.write_refresh(&inputs, &answer, &redactor, ctx.now())?;
-    Ok(Output::written(
-        Record::MemoryRefresh(Box::new(RefreshPayload {
+    let payload = match case::refresh(&ctx.core(), ctx.provider(), models)? {
+        None => RefreshPayload {
+            result: "nothing_new",
+            revision: None,
+            sessions: 0,
+            backlog: 0,
+            milestones: Vec::new(),
+            removed: Vec::new(),
+        },
+        Some(written) => RefreshPayload {
             result: "written",
             revision: written.revision,
             sessions: written.sessions,
             backlog: written.backlog,
             milestones: written.milestones,
             removed: written.removed,
-        })),
-        true,
+        },
+    };
+    let changed = payload.result == "written";
+    Ok(Output::written(
+        Record::MemoryRefresh(Box::new(payload)),
+        changed,
     ))
 }
 
