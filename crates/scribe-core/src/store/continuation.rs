@@ -1,6 +1,6 @@
 //! Restore a Claude session's handoff and switch from one store snapshot.
 
-use super::{Store, agent};
+use super::Store;
 use crate::{
     Entry, EntryStatus, LinkType, Provider, Result, SessionId, SessionLink, WriteRefusal, control,
     handoff,
@@ -27,7 +27,7 @@ impl Store {
             HandoffSelection::Named(id) => {
                 let entry = self.resolve_entry(id)?;
                 if entry.status != EntryStatus::Active {
-                    return Err(agent::refusal(
+                    return Err(crate::checks::refusal(
                         WriteRefusal::EntryNotActive,
                         "the handoff is no longer active",
                     ));
@@ -35,7 +35,7 @@ impl Store {
                 if entry.tag.as_str() != handoff::HANDOFF_TAG
                     || entry.handoff_mode != Some(handoff::Mode::Continue)
                 {
-                    return Err(agent::refusal(
+                    return Err(crate::checks::refusal(
                         WriteRefusal::HandoffSession,
                         "choose an active handoff with mode continue",
                     ));
@@ -61,9 +61,10 @@ impl Store {
             let Some(entry) = self.continuation_entry(selection)? else {
                 return Ok(None);
             };
-            agent::check_handoff(&entry.tag, &entry.content)?;
-            let parent = handoff::check_related(&entry.related)
-                .map_err(|err| agent::refusal(WriteRefusal::HandoffSession, err.to_string()))?;
+            crate::checks::entry::check_handoff(&entry.tag, &entry.content)?;
+            let parent = handoff::check_related(&entry.related).map_err(|err| {
+                crate::checks::refusal(WriteRefusal::HandoffSession, err.to_string())
+            })?;
             let link = SessionLink {
                 kind: LinkType::Continues,
                 session: parent,

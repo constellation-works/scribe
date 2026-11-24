@@ -1,7 +1,7 @@
 //! Store tags and their config-first routing table.
-use super::agent::{check_agent_author, refusal};
 use super::{Redactor, Store};
 use crate::WriteRefusal;
+use crate::checks::{check_agent_author, refusal};
 use crate::record::patch;
 use crate::{
     Author, AuthorKind, AuthorName, Result, StoreTag, TagDef, TagName, TagPatch, TagTable,

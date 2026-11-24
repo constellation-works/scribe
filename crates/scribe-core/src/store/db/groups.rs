@@ -10,12 +10,12 @@ pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
+use crate::checks::refusal;
 use crate::group::{
     Added, Group, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat,
     SeatHold, SeatStart,
 };
 use crate::message::NewMessage;
-use crate::store::agent::refusal;
 use crate::{Error, Project, Redactor, RelatedKind, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;

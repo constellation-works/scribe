@@ -14,10 +14,9 @@
 
 use super::db::sessions::{self as rows, SessionTx};
 use super::write::Move;
-use super::{
-    CONTROL_FILE, Moved, RECORD_EXT, SESSIONS_DIR, Skipped, Store, agent::refusal, codec, db, fsio,
-};
+use super::{CONTROL_FILE, Moved, RECORD_EXT, SESSIONS_DIR, Skipped, Store, codec, db, fsio};
 use crate::WriteRefusal;
+use crate::checks::refusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionId, SessionRecord};
 use std::collections::{BTreeMap, BTreeSet};

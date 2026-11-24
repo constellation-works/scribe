@@ -26,9 +26,9 @@
 use super::memory::read;
 use super::{DB_FILE, Fallible, db_error, optimize_fts, stamp};
 use crate::WriteRefusal;
+use crate::checks::refusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord, check_log};
-use crate::store::agent::refusal;
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value};

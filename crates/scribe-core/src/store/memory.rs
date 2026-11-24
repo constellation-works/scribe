@@ -16,9 +16,9 @@
 //!   archives them with the other files the file store left (§15.7,
 //!   phase 8), and a read only counts them.
 
-use super::agent::{check_agent_author, refusal};
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer};
 use super::{RECORD_EXT, Redactor, Skipped, Store, codec, fsio};
+use crate::checks::{check_agent_author, refusal};
 use crate::entry::EntryStatus;
 use crate::memory::{
     self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem, profile,

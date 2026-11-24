@@ -45,6 +45,7 @@ pub mod annotation;
 pub mod ask;
 pub mod brief;
 pub mod capture;
+mod checks;
 mod claim;
 pub use transcript::codex;
 mod config;

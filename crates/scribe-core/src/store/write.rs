@@ -33,11 +33,11 @@
 //!   write drains into the table. So a command refused for a locked store
 //!   waits once, and its line is kept.
 
-use super::agent::refusal;
 use super::audit::{self, AuditEvent};
 use super::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use super::{Store, fsio};
 use crate::WriteRefusal;
+use crate::checks::refusal;
 use crate::error::{Error, Result};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
