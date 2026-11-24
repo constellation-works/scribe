@@ -524,6 +524,108 @@ fn failed_session_pass_matches_golden() {
     report(&failures);
 }
 
+/// The default search's hint when stored messages match and no entry or
+/// session does (ORB-27628): the session pass keeps the user's turn `u-1`
+/// under one segment that starts at it, and nothing else says the searched
+/// word `rollout`. The goldens pin the JSON `message_matches` count,
+/// unfiltered and filtered (the count takes the filters), and the
+/// `search --kind message` listing the hint names, in every form.
+#[cfg(unix)]
+#[test]
+fn message_search_hint_matches_goldens() {
+    const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+    let fx = Fixture::new();
+    let project = fx.home().join(".claude/projects/-work-scribe");
+    std::fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{SESSION}.jsonl"));
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n",
+            json!({
+                "type": "user",
+                "uuid": "u-1",
+                "timestamp": "2026-11-03T06:00:00Z",
+                "cwd": "/work/scribe",
+                "message": {"role": "user", "content": "Keep the rollout note out of the release."}
+            })
+        ),
+    )
+    .unwrap();
+    support::make_private(&transcript);
+    let hook = json!({
+        "session_id": SESSION,
+        "transcript_path": transcript,
+        "cwd": "/work/scribe",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "/scribe on"
+    });
+    let switched = run_with_input(
+        &fx,
+        &["hook", "user-prompt-submit"],
+        hook.to_string().as_bytes(),
+        None,
+    );
+    assert_eq!(
+        switched.status.code(),
+        Some(0),
+        "{}",
+        text(&switched.stderr)
+    );
+
+    let answer = json!({
+        "title": "Release note",
+        "summary": "Scribe keeps the release note out.",
+        "goals": "Ship the release.",
+        "open": null,
+        "new": [{"starts_at": "u-1", "heading": "Release", "text": "The note stays out.", "topics": [], "related": []}],
+        "next": [],
+        "topics": [],
+        "related": [],
+        "terms": []
+    });
+    let reply = fx.elsewhere("claude-reply.json");
+    std::fs::write(
+        &reply,
+        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
+            .to_string(),
+    )
+    .unwrap();
+    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
+    let path = fx.fake_program("claude", &script);
+    let pass = run_with_input(
+        &fx,
+        &["session", "pass", "--session", SESSION, "--json"],
+        b"",
+        Some(&path),
+    );
+    assert_eq!(pass.status.code(), Some(0), "{}", text(&pass.stderr));
+
+    let commands: &[(&str, &[&str])] = &[
+        ("search-message-hint", &["search", "rollout"]),
+        (
+            "search-message-hint-filtered",
+            &["search", "rollout", "--project", "scribe"],
+        ),
+        (
+            "search-message-listed",
+            &["search", "--kind", "message", "rollout"],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, args) in commands {
+        for (suffix, mode) in MODES {
+            let out = fx.ok(&[*args, *mode].concat());
+            failures.extend(check(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    report(&failures);
+}
+
 #[test]
 fn transcript_list_and_show_match_goldens() {
     const SESSION: &str = "c0ffee00-1111-4222-8333-444455556666";
