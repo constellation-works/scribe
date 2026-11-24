@@ -178,8 +178,8 @@ expect fail check-readme-links.py "$(tree readme-absent)" "a repository with no 
 format_tree() {
   local root
   root=$(tree "$1")
-  mkdir -p "$root/crates/scribe-core/src/store" "$root/docs/design/scribe/specs"
-  printf 'pub(super) const FORMAT: u32 = %s;\n' "$2" >"$root/crates/scribe-core/src/store/codec.rs"
+  mkdir -p "$root/crates/scribe-store/src" "$root/docs/design/scribe/specs"
+  printf 'pub(super) const FORMAT: u32 = %s;\n' "$2" >"$root/crates/scribe-store/src/codec.rs"
   cat >"$root/docs/design/scribe/specs/store.md"
   echo "$root"
 }

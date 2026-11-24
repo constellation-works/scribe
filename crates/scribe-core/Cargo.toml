@@ -11,31 +11,27 @@ repository.workspace = true
 name = "scribe_core"
 path = "src/lib.rs"
 
-# Domain dependencies only. scripts/check-dependency-direction.sh rejects
-# clap, tracing-subscriber and any other surface crate here.
+# Use cases over the store. scripts/check-dependency-direction.sh rejects
+# clap, tracing-subscriber, any other surface crate and rusqlite here; the
+# store tests stage database states with rusqlite as a dev-dependency.
 [features]
 # `Store::seed_records`, for the CLI's integration tests to stage records in
-# `scribe.db`, and `testing::StoreTestReads`. Only dev-dependencies turn it
-# on: `scribe`'s, and scribe-core's own for its integration tests.
-test-support = []
+# `scribe.db`, and `testing` (`scribe_store::testing`). Only dev-dependencies
+# turn it on: `scribe`'s, and scribe-core's own for its tests.
+test-support = ["scribe-store/test-support"]
 
 [dependencies]
 scribe-domain = { workspace = true }
-rusqlite = { workspace = true }
+scribe-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
-tempfile = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
-yaml_serde = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 scribe-core = { path = ".", features = ["test-support"] }
 scribe-domain = { workspace = true, features = ["test-support"] }
+rusqlite = { workspace = true }
 tempfile = { workspace = true }
 time = { workspace = true, features = ["macros"] }
 

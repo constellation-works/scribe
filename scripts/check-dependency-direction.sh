@@ -33,9 +33,16 @@ policy() {
       # processes or scribe.db: those belong to the store.
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile rustix"
       ;;
-    scribe-core)
+    scribe-store)
       ALLOWED="scribe-domain"
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored"
+      ;;
+    scribe-core)
+      ALLOWED="scribe-domain scribe-store"
+      # The use cases reach files and scribe.db only through the store. Its
+      # tests may stage database states with rusqlite: dev-dependencies are
+      # exempt (declared_deps reads normal dependencies only).
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile rustix"
       ;;
     scribe)
       ALLOWED="scribe-core"
@@ -122,6 +129,7 @@ ban_std() {
 # A `crate::cases` path, or a `*Verbs` trait the core root re-exports.
 USE_CASES='crate::cases|[^[:alnum:]_][A-Z][[:alnum:]]*Verbs([^[:alnum:]_]|$)'
 DOMAIN=crates/scribe-domain/src
+STORE=crates/scribe-store/src
 CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
@@ -136,24 +144,18 @@ for path in "$DOMAIN"/*; do
   ban "$path" "$USE_CASES"          "domain/$name is business logic: it must not depend on the use cases"
 done
 
-# Core is one persistence module (R5) and the use cases over it, with the
-# crate root re-exporting scribe-domain. Every core module but store/ is
-# I/O-free. cases/ (ORB-27707) is the use-case layer: it alone may name the
-# store, and store/ may not name it, by path or by a `*Verbs` trait the crate
-# root re-exports. Step 4b cuts store/ into scribe-store, and these lines
-# become crate edges.
+# Core is the use cases (cases/, ORB-27707) over scribe-store, with the crate
+# root re-exporting scribe-domain and scribe-store at their old paths. It
+# does no I/O of its own: it reaches files through the store. scribe-store
+# cannot name the use cases at all (no crate edge); these bans also keep a
+# `*Verbs` name out of its source, as a doc path or otherwise.
 for path in "$CORE"/*; do
   name=$(basename "$path")
-  case "$name" in store | tests) continue ;; esac
-  ban_std "$path" 'fs|net|process' "core/$name is business logic: file and process access belong in store/"
-  ban "$path" 'tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
-  [[ "$name" == cases ]] && continue
-  ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
-  # lib.rs declares the modules and re-exports the traits: the crate root.
-  [[ "$name" == lib.rs ]] && continue
-  ban "$path" "$USE_CASES"                                "core/$name is business logic: it must not depend on the use cases"
+  [[ "$name" == tests ]] && continue
+  ban_std "$path" 'fs|net|process' "core/$name is the use cases: file and process access belong in scribe-store"
+  ban "$path" 'tempfile::|rustix::' "core/$name is the use cases: file and process access belong in scribe-store"
 done
-ban "$CORE/store" "$USE_CASES"                            "store/ is persistence: it must not depend on the use cases"
+ban "$STORE" "$USE_CASES"                                 "scribe-store is persistence: it must not depend on the use cases"
 # Pass is an orchestrator; its lower-level callers cannot depend on it.
 for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
   ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "core/$path must not depend on pass"
@@ -178,24 +180,27 @@ fi
 # Inside store/: fsio is mechanism with no knowledge of records, and the
 # codec and audit record shapes do no I/O of their own (R4, R5). Redaction
 # moved to scribe-domain, whose loop above bans its I/O.
-ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
+ban "$STORE/fsio.rs"        'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
                                                                  "store/fsio.rs is mechanism only; it must not know records or the store"
 for shape in codec:"converts bytes" audit:"is a record shape"; do
-  file="$CORE/store/${shape%%:*}.rs"
+  file="$STORE/${shape%%:*}.rs"
   ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   ban "$file" 'super::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
 done
 # SQLite is one store module's mechanism (2_design.md §15.7): every other
 # module, in any crate, reaches scribe.db through the Store.
-for path in "$CORE"/* "$CORE"/store/*; do
-  case "$(basename "$path")" in store | tests | db.rs | db) continue ;; esac
-  ban "$path" 'rusqlite' "core/${path#"$CORE"/} must not use rusqlite: scribe.db belongs to store/db.rs and store/db/"
+# testing.rs is test support: it hands the tests a connection.
+for path in "$STORE"/*; do
+  case "$(basename "$path")" in tests | db.rs | db | testing.rs) continue ;; esac
+  ban "$path" 'rusqlite' "scribe-store/${path#"$STORE"/} must not use rusqlite: scribe.db belongs to db.rs and db/"
 done
-ban "$DOMAIN" 'rusqlite' "the domain must not use rusqlite: scribe.db belongs to store/db.rs and store/db/"
+ban "$CORE" 'rusqlite' "the core crate must not use rusqlite: scribe.db belongs to scribe-store's db.rs and db/"
+ban "$DOMAIN" 'rusqlite' "the domain must not use rusqlite: scribe.db belongs to scribe-store's db.rs and db/"
 ban "$CLI" 'rusqlite' "the CLI must not use rusqlite: scribe.db is reached through scribe_core::Store"
 # The domain receives resolved roots and configuration (R3).
 ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
 ban "$DOMAIN"        'std::env::|home_dir|current_dir'           "the domain crate must not read the environment or discover paths"
+ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
 # Composition does not know about parsing, dispatch or rendering (R2).
 ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
 # The model adapter is composed by app.rs and knows nothing of the surface (R2).
