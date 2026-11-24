@@ -1,9 +1,9 @@
-//! Text primitives every layer may use: the ranking tokens `ask` and the
+//! Text primitives every layer may use: the ranking tokens search and the
 //! consistency routine compare (§6.2), the sensitive and finance words the
 //! memory rules and stored messages check (§13.8), and the SHA-256 hashes a
 //! cite and a transcript boundary carry. Pure functions and constants over
 //! text; no I/O (STD-02 R5). Each is re-exported from the module that first
-//! owned it ([`crate::ask`], [`crate::memory`], [`crate::capture`]).
+//! owned it ([`crate::memory`], [`crate::capture`]).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

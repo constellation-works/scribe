@@ -8,9 +8,6 @@
 //! `{"ok": false, "error": {"code", "message", "retryable"}}`, exiting 0
 //! either way (a non-zero exit is an execution error to the host).
 //!
-//! - `scribe.ask` runs [`super::question::answer`], the code behind
-//!   `question ask`, against the store at the plugin's `root` setting, so
-//!   both return the same payload for the same store.
 //! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
 //!   routine's job) and `scribe.consistency-scan` runs `consistency scan`
 //!   (the `scribe-consistency` routine's), and `scribe.memory-refresh` runs
@@ -27,23 +24,18 @@
 //! or `HOME`: the plugin's sandbox grants access to those paths alone. A
 //! session-pass run with any failed pass is an error envelope,
 //! `session_pass_failed`.
-//! `scribe.ask` reads only and is not audited. The two routine tools write,
+//! The routine tools write,
 //! and are audited here, inside the call, under the same command names as
 //! the CLI verbs (`session pass`, `consistency scan`) and in the store they
 //! change — `plugin call` itself has no audit entry, because which store a
 //! call writes is known only once the envelope is read (4_decisions.md).
 
-use super::question::{answer, date_parser, question_parser};
 use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
-use scribe_core::ask::{Question, RecordKind, Scope};
-use scribe_core::cases::ask::AskInput as CaseAskInput;
-use scribe_core::models::ModelError;
-use scribe_core::{Project, TagName, Topic};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
@@ -70,7 +62,7 @@ stdout, exiting 0 whenever a reply was printed. The store is the plugin's
 [plugins.scribe] root setting, an absolute path.
 
 Examples:
-  printf '%s' '{\"schema_version\":1,\"tool\":\"scribe.ask\",\"input\":{\"question\":\"how do we merge agent PRs?\"},\"context\":{\"config\":{\"root\":\"/home/me/.scribe\"}}}' | scribe plugin call";
+  printf '%s' '{\"schema_version\":1,\"tool\":\"scribe.session-pass\",\"input\":{},\"context\":{\"config\":{\"root\":\"/home/me/.scribe\"}}}' | scribe plugin call";
 
 /// The namespace the plugin's tools live in.
 const NAMESPACE: &str = "scribe";
@@ -94,7 +86,7 @@ pub(crate) enum PluginCommand {
 pub(crate) struct CallArgs {}
 
 impl PluginCommand {
-    /// `None`: `scribe.ask` reads only, and the routine tools audit
+    /// `None`: the routine tools audit
     /// themselves in the store their call names (see the module docs).
     pub(super) fn audit(&self) -> Option<crate::audit_middleware::AuditMeta> {
         match self {
@@ -137,32 +129,6 @@ struct EnvelopeContext {
     config: Value,
 }
 
-/// `scribe.ask`'s input (`schemas/ask.input.json`).
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AskInput {
-    question: String,
-    #[serde(default)]
-    scope: ScopeInput,
-    #[serde(default)]
-    include_hidden: bool,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ScopeInput {
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    topics: Vec<String>,
-    #[serde(default)]
-    project: Option<String>,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    since: Option<String>,
-}
-
 fn failure(code: &'static str, message: impl Into<String>, retryable: bool) -> PluginReply {
     PluginReply::Error(PluginError {
         code,
@@ -199,7 +165,6 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         .and_then(|rest| rest.strip_prefix('.'))
         .unwrap_or_default();
     match verb {
-        "ask" => ask(envelope.input, &envelope.context.config, ctx),
         "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
         "memory-refresh" => memory_refresh(&envelope.input, &envelope.context.config, ctx),
@@ -354,10 +319,7 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
 fn pass_reply(reply: PluginReply) -> PluginReply {
     let failed = match &reply {
         PluginReply::Pass(report) => failed_passes(report),
-        PluginReply::Scan(_)
-        | PluginReply::Refresh(_)
-        | PluginReply::Ask(_)
-        | PluginReply::Error(_) => None,
+        PluginReply::Scan(_) | PluginReply::Refresh(_) | PluginReply::Error(_) => None,
     };
     failed.unwrap_or(reply)
 }
@@ -427,63 +389,6 @@ fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply 
     })
 }
 
-fn ask(input: Value, config: &Value, ctx: &Context) -> PluginReply {
-    let input: AskInput = match serde_json::from_value(input) {
-        Ok(input) => input,
-        Err(e) => return failure("invalid_input", format!("scribe.ask input: {e}"), false),
-    };
-    let question = match parse_question(input) {
-        Ok(question) => question,
-        Err(message) => return failure("invalid_input", message, false),
-    };
-    let root = match store_root(config) {
-        Ok(root) => root,
-        Err(reply) => return reply,
-    };
-    let codex_home = match codex_home(config) {
-        Ok(path) => path,
-        Err(reply) => return reply,
-    };
-    let model_ctx = Context::at(root, None).with_codex_home(codex_home);
-    let tasks = ctx.tasks().with_workspaces(task_workspaces(config));
-    match answer(
-        &model_ctx,
-        CaseAskInput {
-            question,
-            group: None,
-            provider: None,
-            models: |config: &scribe_core::Config| model_ctx.models(config),
-            tasks: &tasks,
-        },
-    ) {
-        Ok(payload) => PluginReply::Ask(Box::new(payload)),
-        Err(err) => {
-            let retryable = matches!(
-                err,
-                CliError::Model(ModelError::Timeout { .. } | ModelError::Failed(_))
-            );
-            failure(err.code(), message_of(&err), retryable)
-        }
-    }
-}
-
-/// The workspaces the plugin's `task_workspaces` setting names; none means
-/// the workspace the call is bound to.
-fn task_workspaces(config: &Value) -> Vec<String> {
-    config
-        .get("task_workspaces")
-        .and_then(Value::as_array)
-        .map(|names| {
-            names
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|n| !n.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// `err` with its cause chain, as `report_error` folds it.
 fn message_of(err: &CliError) -> String {
     let mut message = err.to_string();
@@ -494,53 +399,4 @@ fn message_of(err: &CliError) -> String {
         source = cause.source();
     }
     message
-}
-
-/// The input as a [`Question`], checked as `question ask` checks its flags.
-fn parse_question(input: AskInput) -> Result<Question, String> {
-    let text = question_parser(&input.question).map_err(|e| format!("question: {e}"))?;
-    let tags = input
-        .scope
-        .tags
-        .into_iter()
-        .map(|t| t.parse::<TagName>().map_err(|e| format!("scope.tags: {e}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    let topics = input
-        .scope
-        .topics
-        .into_iter()
-        .map(|t| t.parse::<Topic>().map_err(|e| format!("scope.topics: {e}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    let project = input
-        .scope
-        .project
-        .map(|p| {
-            p.parse::<Project>()
-                .map_err(|e| format!("scope.project: {e}"))
-        })
-        .transpose()?;
-    let kind = match input.scope.kind.as_deref() {
-        None => None,
-        Some("entry") => Some(RecordKind::Entry),
-        Some("session") => Some(RecordKind::Session),
-        Some(other) => {
-            return Err(format!("scope.kind: {other:?} is not entry or session"));
-        }
-    };
-    let since = input
-        .scope
-        .since
-        .map(|d| date_parser(&d).map_err(|e| format!("scope.since: {e}")))
-        .transpose()?;
-    Ok(Question {
-        text,
-        scope: Scope {
-            tags,
-            topics,
-            project,
-            kind,
-            since,
-        },
-        include_hidden: input.include_hidden,
-    })
 }

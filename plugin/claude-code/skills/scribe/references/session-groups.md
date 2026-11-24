@@ -76,12 +76,10 @@ For open, join, leave and close in Codex, put `--provider codex` before
   brief's `## Last group` names the project's newest group. Read a handoff
   with `scribe entry show <id>`.
 - **Scoped reads.** Limit reads to member sessions with `--group <id>` on
-  `search`, `ask` (also `question ask`), `entry list` and `session list`.
-  Group-scoped asks use matching stored turns and skip Orbit tasks.
+  `search`, `entry list` and `session list`.
 
   ```sh
   scribe search "<words>" --kind message --group <id> --json
-  scribe --provider <provider> ask "<question>" --group <id> --json
   ```
 - **Citing.** Cite a group as `g-<n>`. Its closing summary is an account the
   model wrote at close, not the human's words. Quote the human only from a

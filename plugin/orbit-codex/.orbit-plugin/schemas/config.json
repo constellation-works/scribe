@@ -11,14 +11,6 @@
       "type": "string",
       "description": "Claude Code's projects directory, an absolute path (~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects). scribe.session-pass reads the transcripts of sessions switched on with /scribe on there; until it is set (the default is empty), it answers not_configured."
     },
-    "task_workspaces": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Workspaces whose Orbit tasks ask reads (orbit.search's workspaces), such as the one holding orchestration tasks. Empty: the workspace the call is bound to. Orbit refuses a federated search inside a managed run."
-    },
     "codex_home": {
       "type": "string",
       "description": "Absolute existing Codex state directory, read-only for existing auth/config/transcripts. Required by this package; use the default Orbit package for Claude-only installations.",

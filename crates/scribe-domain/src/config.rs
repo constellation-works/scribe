@@ -60,7 +60,7 @@
 //! name = "Sam"
 //!
 //! [instructions]
-//! ask = "You answer a question about what {user} decided, prefers or did."
+//! session = "You write the record of a coding session {user} ran."
 //!
 //! [projects.scribe]
 //! paths = ["codebases/scribe"]
@@ -127,7 +127,8 @@ pub struct ConfigError {
 pub struct ModelIds {
     /// Executable transport; independent of the transcript provider.
     pub provider: crate::Provider,
-    /// Answers `ask`.
+    /// Summarizes a group on close; named for the removed `ask`, whose
+    /// model it was (ORB-27911 step 2 decides its future).
     pub ask: String,
     /// Writes session records.
     pub session: String,
@@ -459,6 +460,7 @@ struct RawInstructions {
     annotation: Option<String>,
     session: Option<String>,
     session_header: Option<String>,
+    /// Accepted, checked and ignored: `ask` is removed (ORB-27911); the key goes with the model config in step 2.
     ask: Option<String>,
     consistency: Option<String>,
     /// Deprecated: read only to warn that it is unused.
@@ -471,19 +473,19 @@ impl RawInstructions {
     fn resolve(self) -> Result<crate::voice::Instructions, String> {
         use crate::voice::ModelUse;
         let mut out = crate::voice::Instructions::default();
-        for (model_use, text) in [
-            (ModelUse::Annotation, self.annotation),
-            (ModelUse::Session, self.session),
-            (ModelUse::SessionHeader, self.session_header),
-            (ModelUse::Ask, self.ask),
-            (ModelUse::Consistency, self.consistency),
-            (ModelUse::Profile, self.profile),
-            (ModelUse::Removal, self.removal),
-        ] {
-            if let Some(text) = text {
-                out.set(model_use, &text)?;
-            }
+        let mut set = |model_use: ModelUse, text: Option<String>| match text {
+            Some(text) => out.set(model_use, &text),
+            None => Ok(()),
+        };
+        set(ModelUse::Annotation, self.annotation)?;
+        set(ModelUse::Session, self.session)?;
+        set(ModelUse::SessionHeader, self.session_header)?;
+        if let Some(text) = &self.ask {
+            crate::voice::check_instruction("ask", text)?;
         }
+        set(ModelUse::Consistency, self.consistency)?;
+        set(ModelUse::Profile, self.profile)?;
+        set(ModelUse::Removal, self.removal)?;
         Ok(out)
     }
 }
@@ -916,6 +918,7 @@ fn merge_with_shipped(declared: Vec<DeclaredTag>) -> Result<(TagTable, Vec<Strin
 #[serde(deny_unknown_fields)]
 struct RawModels {
     provider: Option<crate::Provider>,
+    /// Picks the group-close summary model (the removed `ask`'s key).
     ask: Option<String>,
     session: Option<String>,
     consistency: Option<String>,

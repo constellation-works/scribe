@@ -8,7 +8,7 @@
 //! [`Author`]) in `record`; `config.toml` ([`Config`]) in `config`; the
 //! [`Models`] port and every model request shape in [`models`]; the rules
 //! that select and judge records (capture, claims, consistency, the pass,
-//! ask, instructions, the brief) in their modules; and the typed [`Error`].
+//! search, instructions, the brief) in their modules; and the typed [`Error`].
 //!
 //! The modules sit in four rings, each importing only its own and the ones
 //! before it: base, records, transcript, rules (ARCHITECTURE.md;
@@ -22,7 +22,6 @@
 pub mod action;
 pub mod activity;
 pub mod annotation;
-pub mod ask;
 pub mod brief;
 pub mod capture;
 pub mod checks;

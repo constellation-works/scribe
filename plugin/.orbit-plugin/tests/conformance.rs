@@ -1,7 +1,7 @@
 //! The plugin manifest's surface contract (2_design.md §1), compiled into
-//! `crates/scribe/tests/plugin.rs` and run by `cargo test`: `scribe.ask` is
-//! the only tool agents see over MCP, and the routine tools are mutating
-//! and not agent-callable. `orbit plugin test` runs the YAML goldens beside
+//! `crates/scribe/tests/plugin.rs` and run by `cargo test`: no tool is
+//! advertised to agents over MCP, and the routine tools are mutating and
+//! not agent-callable. `orbit plugin test` runs the YAML goldens beside
 //! this file.
 
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ fn field<'a>(tool: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 #[test]
-fn ask_is_the_only_tool_with_an_mcp_scope_other_than_none() {
+fn no_tool_has_an_mcp_scope_other_than_none() {
     let manifest = manifest();
     let advertised: Vec<&str> = tools(&manifest)
         .into_iter()
@@ -35,26 +35,21 @@ fn ask_is_the_only_tool_with_an_mcp_scope_other_than_none() {
         .filter(|t| field(t, "mcp_scope").unwrap_or("workspace") != "none")
         .map(|t| field(t, "name").expect("a tool has a name"))
         .collect();
-    assert_eq!(advertised, vec!["ask"]);
+    assert_eq!(advertised, Vec::<&str>::new());
 }
 
 #[test]
-fn ask_is_read_only_and_global_and_the_routine_tools_are_not_agent_callable() {
+fn the_routine_tools_are_not_agent_callable() {
     let manifest = manifest();
     assert_eq!(manifest["metadata"]["name"].as_str(), Some("scribe"));
     for tool in tools(&manifest) {
         let name = field(tool, "name").expect("a tool has a name");
-        if name == "ask" {
-            assert_eq!(field(tool, "execution_kind"), Some("read_only"));
-            assert_eq!(field(tool, "mcp_scope"), Some("global"));
-        } else {
-            assert_eq!(field(tool, "execution_kind"), Some("mutating"), "{name}");
-            assert_eq!(
-                tool.get("agent_callable").and_then(Value::as_bool),
-                Some(false),
-                "{name}"
-            );
-        }
+        assert_eq!(field(tool, "execution_kind"), Some("mutating"), "{name}");
+        assert_eq!(
+            tool.get("agent_callable").and_then(Value::as_bool),
+            Some(false),
+            "{name}"
+        );
     }
 }
 
@@ -112,7 +107,7 @@ fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
 #[test]
 fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
     // Settling is Daniel's, typed in a prompt (#scribe approve|reject|
-    // retire|forget): the tools are exactly ask and the three routine jobs,
+    // retire|forget): the tools are exactly the three routine jobs,
     // and the routine tools take no input.
     let manifest = manifest();
     let names: Vec<&str> = tools(&manifest)
@@ -121,7 +116,7 @@ fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
         .collect();
     assert_eq!(
         names,
-        ["ask", "session-pass", "consistency-scan", "memory-refresh"]
+        ["session-pass", "consistency-scan", "memory-refresh"]
     );
     let empty = yaml("schemas/empty.input.json");
     assert_eq!(empty["additionalProperties"].as_bool(), Some(false));

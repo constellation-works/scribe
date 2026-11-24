@@ -26,7 +26,7 @@ orbit config set plugins.scribe.codex_home /home/<user>/.codex
 orbit config set plugins.scribe.codex_runtime_tmp /home/<user>/.codex/tmp
 orbit config set plugins.scribe.codex_installation_id /home/<user>/.codex/installation_id
 orbit plugin validate plugin/orbit-codex/.orbit-plugin --render
-orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
+orbit plugin enable scribe --grant fs,network,env_pass
 ```
 
 On a fresh setup, copy the tree as above and run `orbit plugin add "$CODEX_SRC"`
@@ -53,7 +53,7 @@ settings:
 ```sh
 SCRIBE_SRC="$(mktemp -d)/.orbit-plugin"   # a copy outside the repository, same name
 cp -R plugin/.orbit-plugin "$SCRIBE_SRC"
-orbit plugin upgrade scribe "$SCRIBE_SRC" --grant fs,network,env_pass,orbit_tools
+orbit plugin upgrade scribe "$SCRIBE_SRC" --grant fs,network,env_pass
 ```
 
 Existing routine enablement, pause state and schedules are preserved during an

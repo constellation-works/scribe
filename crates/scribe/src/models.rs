@@ -29,11 +29,10 @@
 mod codex;
 
 use scribe_core::models::{
-    ANNOTATION_SCHEMA, ASK_SCHEMA, AnnotationAnswer, AnnotationRequest, AskAnswer, AskRequest,
-    CONSISTENCY_SCHEMA, ClaimAnswer, ConflictAnswer, ConsistencyAnswer, ConsistencyRequest,
-    JudgementAnswer, ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest, REMOVAL_SCHEMA,
-    RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA, SessionAnswer,
-    SessionHeader, SessionHeaderRequest, SessionRequest,
+    ANNOTATION_SCHEMA, AnnotationAnswer, AnnotationRequest, CONSISTENCY_SCHEMA, ConsistencyAnswer,
+    ConsistencyRequest, JudgementAnswer, ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest,
+    REMOVAL_SCHEMA, RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA,
+    SessionAnswer, SessionHeader, SessionHeaderRequest, SessionRequest,
 };
 use scribe_core::{Models, Provider, Redactor};
 use serde::Deserialize;
@@ -301,51 +300,6 @@ impl Models for ClaudeCliModels {
         )?;
         serde_json::from_value(value)
             .map_err(|e| malformed(&self.redactor, "not a session header", &e))
-    }
-
-    fn ask(&self, request: &AskRequest) -> Result<AskAnswer, ModelError> {
-        #[derive(Deserialize)]
-        struct Claim {
-            text: String,
-            quote: String,
-            cite: String,
-        }
-        #[derive(Deserialize)]
-        struct Conflict {
-            cites: Vec<String>,
-            note: String,
-        }
-        #[derive(Deserialize)]
-        struct Answer {
-            status: String,
-            answer: String,
-            claims: Vec<Claim>,
-            conflicts: Vec<Conflict>,
-        }
-        let value = self.call(&request.model, ASK_SCHEMA, request.prompt(), request.budget)?;
-        let a: Answer = serde_json::from_value(value)
-            .map_err(|e| malformed(&self.redactor, "not an answer", &e))?;
-        Ok(AskAnswer {
-            status: a.status,
-            answer: a.answer,
-            claims: a
-                .claims
-                .into_iter()
-                .map(|c| ClaimAnswer {
-                    text: c.text,
-                    quote: c.quote,
-                    cite: c.cite,
-                })
-                .collect(),
-            conflicts: a
-                .conflicts
-                .into_iter()
-                .map(|c| ConflictAnswer {
-                    cites: c.cites,
-                    note: c.note,
-                })
-                .collect(),
-        })
     }
 
     fn consistency(&self, request: &ConsistencyRequest) -> Result<ConsistencyAnswer, ModelError> {

@@ -20,8 +20,8 @@ related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-2
 
 scribe is a small, standalone Orbit plugin. It records only what Daniel
 explicitly asks it to record, catalogs only the sessions he turns on, and
-lets any agent ask what Daniel said or decided, answering with verbatim
-citations. Agents on the Mac also search and write scribe through its CLI,
+lets any agent find what Daniel said or decided, with verbatim
+citations: agents on the Mac search and write scribe through its CLI,
 taught by one skill; Daniel browses it in a tmux popup. It replaces the scribe built inside orbit-office, without the
 Library, to-dos or calendar around it.
 
@@ -160,14 +160,14 @@ Two things the principle asks for that no task covers yet:
 |---|---|---|
 | `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#preference` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
 | `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
-| `ask` | The one MCP tool exposed to main agents. Retrieval is model-free (lexical ranking over entries, session records and Orbit tasks); a decision model answers only from the retrieved evidence, every quote is verbatim-checked, it says "no record" rather than infer, and reports conflicts instead of picking a side. | Decision model (Sonnet by default) |
 | Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later entry Daniel wrote says was removed (only Daniel-authored entries count as removal evidence), and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
 | CLI agent surface (S11–S13) | Agents on the Mac search (`scribe search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
 | tmux popup (S13) | `scribe tmux` lists sessions, entries, proposals and backfill candidates in fzf, with session logs and full entry detail in the preview. | None |
 | Backfill by name (S14) | `scribe transcript list --since 2026-10-01` lists long uncataloged sessions; Daniel picks and runs `scribe session catalog <id>`. | Haiku (the session pass) |
 
 Daniel's own entries and settlements come only from his typed `#scribe`
-turns. Agents see only `ask` over MCP; from S12 they also write through
+turns. No tool is advertised to agents over MCP: `ask`, the one that
+was, is removed ([ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); from S12 agents read and write through
 the CLI, each write recording its author. A session record becomes a
 rewritable header over an append-only log of segments (S8, S9), and a
 session can be inactive: hidden, not removed (S8, S10).
@@ -186,8 +186,6 @@ session can be inactive: hidden, not removed (S8, S10).
   (the CLI) or scribe's routine.
 - **Proposal** — a consistency finding ("B supersedes A", "A is stale")
   waiting for Daniel's approval.
-- **Evidence** — what `ask` retrieved and handed to the decision model; an
-  answer may only quote evidence.
 
 Full definitions: [references/glossary.md](./references/glossary.md).
 
@@ -199,7 +197,7 @@ can override.
 | Question | Decision |
 |---|---|
 | Whether superseded entries are ever removed, or only hidden (the directions say "outdated record removal") | [Superseded and stale entries are hidden, not removed](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed) |
-| Storage layout and the search index for `ask` | [One Markdown file per record, metadata in YAML frontmatter](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [`ask` ranks in memory with no persisted index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
+| Storage layout and the search index | [One Markdown file per record, metadata in YAML frontmatter](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [`ask` ranks in memory with no persisted index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
 | The migration from the orbit-office scribe (its v1 and v2 records) | [No migration of orbit-office scribe records](./4_decisions.md#no-migration-of-orbit-office-scribe-records) |
 | Which tags ship by default beyond `preferences` and `decisions` | [Only decisions and preferences ship by default](./4_decisions.md#only-decisions-and-preferences-ship-by-default) |
 
@@ -211,7 +209,6 @@ can override.
 | `#scribe` parsing and capture | `crates/scribe-core/src/capture.rs`, `crates/scribe/src/commands/hook/` | S2, S3 |
 | `/scribe on` and session passes | `crates/scribe-core/src/{session,transcript}.rs`, `commands/hook/`, `commands/session.rs` | S4 |
 | Session links (`spawned_from`, `continues`) | `crates/scribe-core/src/{session,control}.rs`, `store/`, `commands/hook/scribe_command.rs`, `commands/session/` | ORB-23849 |
-| `ask` | `crates/scribe-core/src/ask/`, `commands/question.rs` | S5 |
 | Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |

@@ -8,7 +8,7 @@ mark any other tag (an `idea` tag, for example).
 
 Leave action entries out of the
 session brief and of preference reads, and out of answers unless asked
-about them; `question ask` skips them unless its scope names their tag.
+about them.
 
 - **Only in an interactive session the human is in.** There, when the work
   surfaces an idea or a correction to a standard, write the

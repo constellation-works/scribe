@@ -1,12 +1,6 @@
 # Looking up evidence
 
-For a synthesized answer, use the current chat's provider:
-
-```sh
-scribe --provider <provider> question ask "<question>" --json
-```
-
-For focused lookup, use `scribe search "<words>" --json`,
+To look something up, use `scribe search "<words>" --json`,
 `scribe entry list --json`, `scribe session list --json`, and
 `scribe proposal list --json`. Read full evidence with
 `scribe entry show <id> --json` or `scribe session show <id> --log --json`.

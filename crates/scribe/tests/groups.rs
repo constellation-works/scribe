@@ -375,46 +375,6 @@ fn group_filters_apply_before_limits_ranking_and_lookups() {
             .iter()
             .all(|hit| hit["cite"] != "decisions-1")
     );
-    let model = f.fake_program(
-        "claude",
-        "#!/bin/sh\ncat > \"$HOME/ask-prompt\"\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"status\":\"no_record\",\"answer\":\"\",\"claims\":[],\"conflicts\":[]}}'\n",
-    );
-    for prefix in [vec!["ask"], vec!["question", "ask"]] {
-        let args = [
-            prefix.as_slice(),
-            &[
-                "squash merge",
-                "--kind",
-                "entry",
-                "--group",
-                "g-1",
-                "--json",
-            ],
-        ]
-        .concat();
-        let out = f
-            .cmd(&args)
-            .env("CLAUDE_CODE_SESSION_ID", A)
-            .env("PATH", &model)
-            .output()
-            .unwrap();
-        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-        let result: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(result["evidence_considered"], 1);
-        let prompt = std::fs::read_to_string(f.home().join("ask-prompt")).unwrap();
-        assert!(prompt.contains("cite=\"decisions-2\""), "{prompt}");
-        assert!(!prompt.contains("cite=\"decisions-1\""), "{prompt}");
-    }
-    for args in [vec!["ask"], vec!["question", "ask"]] {
-        let result = invoke(
-            &f,
-            A,
-            &[args.as_slice(), &["last session", "--group", "g-1"]].concat(),
-            0,
-        );
-        assert_eq!(result["status"], "record");
-        assert_eq!(result["records"][0]["cite"], format!("session:{MEMBER}"));
-    }
     assert_eq!(
         invoke(&f, A, &["search", "merge", "--group", "g-99"], 1)["code"],
         "group_not_found"
@@ -1395,29 +1355,6 @@ fn codex_group_capture_uses_host_typed_blocks_and_ask_cites_the_stored_turn() {
         &[],
     );
     assert_eq!(support::audit_lines(&f.root()), after_first);
-    let model = f.fake_program("claude", &format!(
-        "#!/bin/sh\ncat > \"$HOME/ask-prompt\"\nprintf '%s\\n' '{{\"type\":\"result\",\"is_error\":false,\"structured_output\":{{\"status\":\"answered\",\"answer\":\"Label the queue.\",\"claims\":[{{\"text\":\"label it\",\"quote\":\"Always label the saffronqueue.\",\"cite\":\"session:{B}#message:codex-typed\"}}],\"conflicts\":[]}}}}'\n"
-    ));
-    let out = f
-        .cmd(&[
-            "ask",
-            "how should we handle saffronqueue?",
-            "--group",
-            "g-1",
-            "--json",
-        ])
-        .env("PATH", &model)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(result["status"], "answered", "{result}");
-    assert_eq!(
-        result["claims"][0]["quote"],
-        "Always label the saffronqueue."
-    );
-    let prompt = std::fs::read_to_string(f.home().join("ask-prompt")).unwrap();
-    assert!(!prompt.contains("Exclude skill"));
 }
 
 #[test]
@@ -1983,8 +1920,6 @@ fn desktop_clear_with_continue_handoff_prepends_handoff_and_inherits_seat() {
             .pending_links
             .is_empty()
     );
-    let ask = invoke(&f, B, &["ask", "last session", "--group", "g-1"], 0);
-    assert!(!ask.to_string().contains("Carry on."), "{ask}");
     let brief = invoke(&f, B, &["brief", "--project", "scribe"], 0);
     assert!(!brief.to_string().contains("Carry on."), "{brief}");
 }

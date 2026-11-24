@@ -105,7 +105,7 @@ fn a_window_keeps_typed_user_turns_and_only_the_assistant_turns_a_claim_cites() 
 fn query(terms: &str) -> SearchQuery {
     SearchQuery {
         terms: terms.to_owned(),
-        kind: Some(crate::ask::RecordKind::Message),
+        kind: Some(crate::search::RecordKind::Message),
         tag: None,
         project: None,
         topics: Vec::new(),

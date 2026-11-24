@@ -17,13 +17,13 @@ mod table;
 #[cfg(test)]
 pub(crate) use payload::PassPayload;
 pub(crate) use payload::{
-    AskPayload, BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload,
-    DeactivationFailure, EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember,
-    HitPayload, Kin, MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload,
-    MigratePayload, Output, PassFailure, PassReport, PluginError, PluginReply, PopupRows,
-    ProposalPayload, ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload,
-    ScanReport, SessionHandoffsPayload, SessionPayload, SessionsContext, TagPayload,
-    TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload, DeactivationFailure,
+    EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin,
+    MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload,
+    Output, PassFailure, PassReport, PluginError, PluginReply, PopupRows, ProposalPayload,
+    ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload, ScanReport,
+    SessionHandoffsPayload, SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow,
+    WarningPayload,
 };
 #[cfg(test)]
 pub(crate) use payload::{HookOutcome, HookReply};
@@ -89,7 +89,6 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>)
             | Output::GroupBackfill(_)
             | Output::Hook(_)
             | Output::Scan(_)
-            | Output::Ask(_)
             | Output::Plugin(_)
             | Output::Popup
             | Output::PopupRows(_)
@@ -163,12 +162,6 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
             let _ = writeln!(err, "{notice}");
         }
     }
-    if let Output::Ask(payload) = output {
-        let mut err = stderr();
-        for warning in &payload.warnings {
-            let _ = writeln!(err, "warning: skipped {}", warning.error);
-        }
-    }
     if let Output::Pass(report) = output {
         let mut err = stderr();
         for pass in &report.passes {
@@ -223,7 +216,6 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         | Output::Pass(_)
         | Output::GroupBackfill(_)
         | Output::Scan(_)
-        | Output::Ask(_)
         | Output::Popup
         | Output::PopupPreview(_) => Some(sink.color),
     };
@@ -257,7 +249,6 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         Output::Hook(reply) => render::hook(&mut out, reply)?,
         Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
         Output::Scan(report) => render::scan(&mut out, sink, shorts, report)?,
-        Output::Ask(payload) => render::ask(&mut out, sink, shorts, payload)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
         Output::Popup => {}
         Output::PopupRows(rows) => {

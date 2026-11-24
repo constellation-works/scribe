@@ -46,4 +46,4 @@ scribe entry add --tag handoff --author <name> --project <project> \
   header. After writing one, echo its id and how to drop it:
   `scribe: wrote <id> (drop: #scribe retire <id>)`.
 - **Attribution.** A handoff is an agent note, never the human's words;
-  `ask` and `search` treat it as your account.
+  `search` and `entry show` treat it as your account.

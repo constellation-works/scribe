@@ -4,10 +4,10 @@
 use crate::config::Config;
 use crate::entry::Speaker;
 use crate::models::{
-    ANNOTATION_INSTRUCTIONS, ASK_INSTRUCTIONS, AskRequest, Budgets, CONSISTENCY_INSTRUCTIONS,
-    ConsistencyRequest, EvidenceItem, FiringTurn, PROFILE_INSTRUCTIONS, PassMessage,
-    ProfileRequest, REMOVAL_INSTRUCTIONS, RemovalRequest, SESSION_HEADER_INSTRUCTIONS,
-    SESSION_INSTRUCTIONS, SessionHeader, SessionHeaderRequest, TagCriteria,
+    ANNOTATION_INSTRUCTIONS, Budgets, CONSISTENCY_INSTRUCTIONS, ConsistencyRequest, FiringTurn,
+    PROFILE_INSTRUCTIONS, PassMessage, ProfileRequest, REMOVAL_INSTRUCTIONS, RemovalRequest,
+    SESSION_HEADER_INSTRUCTIONS, SESSION_INSTRUCTIONS, SessionHeader, SessionHeaderRequest,
+    TagCriteria,
 };
 use crate::tag::TagTable;
 use crate::voice::{ModelUse, UserName, Voice};
@@ -20,7 +20,6 @@ fn shipped(model_use: ModelUse) -> &'static str {
         ModelUse::Annotation => ANNOTATION_INSTRUCTIONS,
         ModelUse::Session => SESSION_INSTRUCTIONS,
         ModelUse::SessionHeader => SESSION_HEADER_INSTRUCTIONS,
-        ModelUse::Ask => ASK_INSTRUCTIONS,
         ModelUse::Consistency => CONSISTENCY_INSTRUCTIONS,
         ModelUse::Profile => PROFILE_INSTRUCTIONS,
         ModelUse::Removal => REMOVAL_INSTRUCTIONS,
@@ -110,23 +109,6 @@ fn prompt(model_use: ModelUse, voice: Voice, shipped_tags: bool) -> String {
                 next: 1000,
             },
             correction: String::from("summary too long"),
-            voice,
-        }
-        .prompt(),
-        ModelUse::Ask => AskRequest {
-            model: String::from("m"),
-            budget,
-            question: String::from("how are replies kept short?"),
-            evidence: vec![EvidenceItem {
-                cite: String::from("preferences-1"),
-                kind: "entry",
-                whose: voice.user.title().to_owned(),
-                status: String::from("active"),
-                date: String::from("2026-11-01"),
-                text: String::from("short replies"),
-                quote: None,
-                approval: None,
-            }],
             voice,
         }
         .prompt(),
@@ -250,9 +232,6 @@ fn config_reads_the_user_name_and_per_use_instructions() {
     )
     .unwrap();
     assert_eq!(config.user.name(), Some("Sam"));
-    let ask = config.voice(ModelUse::Ask);
-    assert_eq!(ask.instructions.as_deref(), Some("Answer for {user}."));
-    assert_eq!(ask.instructions(ASK_INSTRUCTIONS), "Answer for Sam.");
     assert_eq!(
         config.voice(ModelUse::Session).instructions.as_deref(),
         Some("Keep the record.\nBriefly.")
@@ -266,7 +245,6 @@ fn config_reads_the_user_name_and_per_use_instructions() {
     );
     let defaults = Config::parse("").unwrap();
     assert_eq!(defaults.user, UserName::default());
-    assert_eq!(defaults.voice(ModelUse::Ask), Voice::default());
 }
 
 #[test]

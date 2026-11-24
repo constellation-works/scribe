@@ -42,7 +42,6 @@
 pub use scribe_domain::action;
 pub use scribe_domain::activity;
 pub use scribe_domain::annotation;
-pub use scribe_domain::ask;
 pub use scribe_domain::brief;
 pub use scribe_domain::capture;
 pub mod cases;

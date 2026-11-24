@@ -1,18 +1,13 @@
 //! Action entries: the cancel window, pickups, the stuck count, the
-//! per-tag counts, the quote check and `ask`'s exclusion
+//! per-tag counts and the quote check
 //! (2_design.md §4.6).
 
 use super::{T0, entry};
 use crate::action::{self, CANCEL_WINDOW, Pickup, STUCK_AFTER};
-use crate::ask::{self, Corpus, Question, Scope};
-use crate::entry::{Entry, EntryStatus, Speaker, TagName};
+use crate::entry::{Entry, EntryStatus, Speaker};
 use crate::record::{Author, AuthorName};
 use crate::transcript::Message;
 use time::Duration;
-
-fn name(s: &str) -> TagName {
-    s.parse().unwrap()
-}
 
 fn agent(id: &str) -> Entry {
     let mut e = entry(id, T0);
@@ -137,36 +132,4 @@ fn a_quote_is_found_only_in_daniels_own_typed_words() {
         &messages,
         "every size needs its unit, never"
     ));
-}
-
-#[test]
-fn ask_leaves_action_entries_out_unless_the_scope_names_their_tag() {
-    let tags = crate::tests::tags_with_idea();
-    let entries = [entry("preferences-1", T0), entry("idea-1", T0)];
-    let corpus = Corpus {
-        entries: &entries,
-        sessions: &[],
-        messages: &[],
-        tags: &tags,
-        user: &crate::voice::UserName::default(),
-    };
-    let mut question = Question {
-        text: String::from("what next"),
-        scope: Scope::default(),
-        include_hidden: false,
-    };
-    let ids = |kept: Vec<Entry>| {
-        kept.into_iter()
-            .map(|e| e.id.to_string())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        ids(ask::without_actions(&question, corpus)),
-        ["preferences-1"]
-    );
-    question.scope.tags = vec![name("idea")];
-    assert_eq!(
-        ids(ask::without_actions(&question, corpus)),
-        ["preferences-1", "idea-1"]
-    );
 }

@@ -3,10 +3,10 @@
 
 use super::color::{self, Role};
 use super::payload::{
-    AskPayload, EntryPayload, FoundPayload, HandoffPayload, HitPayload, HookJson, HookReply,
-    HookSpecificJson, OriginPayload, PassPayload, PassReport, PluginReply, ProposalPayload, Record,
-    Records, ScanReport, SessionHandoffsPayload, SessionPayload, TagPayload, TagShowPayload,
-    TaskPayload, TranscriptPayload, TreeRow, WarningPayload,
+    EntryPayload, HandoffPayload, HitPayload, HookJson, HookReply, HookSpecificJson, OriginPayload,
+    PassPayload, PassReport, PluginReply, ProposalPayload, Record, Records, ScanReport,
+    SessionHandoffsPayload, SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow,
+    WarningPayload,
 };
 use super::sink::{OutputMode, Sink};
 use super::table::{self, Align, Cell, Column};
@@ -824,114 +824,6 @@ pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
     writeln!(out)
 }
 
-/// An answer: the JSON payload, one tab-separated line per part, or a
-/// detail view with each record a lookup returned shown in full.
-pub(crate) fn ask(
-    out: &mut dyn Write,
-    sink: &Sink,
-    shorts: &ShortIds,
-    a: &AskPayload,
-) -> io::Result<()> {
-    match sink.mode {
-        OutputMode::Json => write_json(out, a),
-        OutputMode::Plain => {
-            writeln!(out, "{}\t{}", a.status, one_line(&a.answer))?;
-            for c in &a.claims {
-                writeln!(
-                    out,
-                    "claim\t{}\t{}\t{}",
-                    shown_cite(&c.cite, shorts),
-                    one_line(&c.quote),
-                    one_line(&c.text)
-                )?;
-            }
-            for c in &a.conflicts {
-                writeln!(
-                    out,
-                    "conflict\t{}\t{}",
-                    c.cites
-                        .iter()
-                        .map(|cite| shown_cite(cite, shorts))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    one_line(&c.note)
-                )?;
-            }
-            for r in &a.records {
-                writeln!(out, "record\t{}\t{}", r.kind, shown_cite(&r.cite, shorts))?;
-            }
-            Ok(())
-        }
-        OutputMode::Table => {
-            field(out, "status", a.status)?;
-            field(out, "answer", or_dash(&a.answer))?;
-            field(out, "lookup", a.lookup.unwrap_or("-"))?;
-            field(
-                out,
-                "evidence",
-                &format!(
-                    "{} considered, {} quotes dropped, {} hidden matches",
-                    a.evidence_considered, a.dropped_quotes, a.hidden_matches
-                ),
-            )?;
-            let claims: Vec<String> = a
-                .claims
-                .iter()
-                .map(|c| format!("{} \"{}\" [{}]", c.text, c.quote, c.cite))
-                .collect();
-            field(out, "claims", &joined_lines(&claims))?;
-            let conflicts: Vec<String> = a
-                .conflicts
-                .iter()
-                .map(|c| format!("{}: {}", c.cites.join(", "), c.note))
-                .collect();
-            field(out, "conflicts", &joined_lines(&conflicts))?;
-            for r in &a.records {
-                writeln!(out)?;
-                found_detail(out, sink, r)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-fn found_detail(out: &mut dyn Write, sink: &Sink, r: &FoundPayload) -> io::Result<()> {
-    if let Some(entry) = &r.entry {
-        entry_detail(out, sink, entry)?;
-    }
-    if let Some(session) = &r.session {
-        session_detail(out, sink, session)?;
-    }
-    if let Some(task) = &r.task {
-        task_detail(out, task)?;
-    }
-    if !r.terms.is_empty() {
-        let terms: Vec<String> = r
-            .terms
-            .iter()
-            .map(|t| format!("{}: \"{}\" (message {})", t.term, t.said, t.message))
-            .collect();
-        writeln!(out)?;
-        field(out, "matched", &joined_lines(&terms))?;
-    }
-    Ok(())
-}
-
-fn task_detail(out: &mut dyn Write, t: &TaskPayload) -> io::Result<()> {
-    field(out, "task", &t.id)?;
-    field(out, "title", or_dash(&t.title))?;
-    field(out, "status", or_dash(&t.status))?;
-    field(out, "tags", &joined(&t.tags))?;
-    field(
-        out,
-        "updated",
-        &t.updated.map_or_else(|| String::from("-"), timestamp),
-    )?;
-    writeln!(out)?;
-    writeln!(out, "## Execution summary")?;
-    writeln!(out, "{}", or_dash(&t.execution_summary))
-}
-
 /// A plugin call's envelope: one JSON line, whatever the mode, since the
 /// Orbit host reads it.
 pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()> {
@@ -946,13 +838,6 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
         error: &'a super::payload::PluginError,
     }
     match reply {
-        PluginReply::Ask(payload) => serde_json::to_writer(
-            &mut *out,
-            &Ok {
-                ok: true,
-                output: payload.as_ref(),
-            },
-        ),
         PluginReply::Pass(report) => serde_json::to_writer(
             &mut *out,
             &Ok {
@@ -1113,11 +998,11 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
             scribe_core::Speaker::User
         };
         let whose = if e.outcome.is_some() {
-            scribe_core::ask::captured_whose(&user, speaker)
+            scribe_core::voice::captured_whose(&user, speaker)
         } else if by.kind == "agent" {
-            scribe_core::ask::agent_stated_whose(&user, &by.name)
+            scribe_core::voice::agent_stated_whose(&user, &by.name)
         } else {
-            scribe_core::ask::stated_whose_for(&user, speaker)
+            scribe_core::voice::stated_whose_for(&user, speaker)
         };
         field(
             out,
@@ -1135,7 +1020,7 @@ pub(super) fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool)
         field(
             out,
             "outcome",
-            &scribe_core::ask::outcome_text(outcome, &scribe_core::voice::UserName::default()),
+            &scribe_core::voice::outcome_text(outcome, &scribe_core::voice::UserName::default()),
         )?;
     }
     if let Some(a) = &e.admitted {
@@ -1921,10 +1806,10 @@ fn session_row(
 fn approved_line(e: &EntryPayload, shorts: Option<&ShortIds>) -> Option<String> {
     let by = e.approved_by.as_ref()?;
     let inst = e.instruction.as_ref()?;
-    Some(scribe_core::ask::instructed_line(
+    Some(scribe_core::voice::instructed_line(
         "approved",
         &by.name,
-        scribe_core::ask::INSTRUCTION_YOURS,
+        scribe_core::voice::INSTRUCTION_YOURS,
         inst.quote.as_deref(),
         &shown_id(&inst.session, shorts),
         inst.at,
@@ -1937,10 +1822,10 @@ fn approved_line(e: &EntryPayload, shorts: Option<&ShortIds>) -> Option<String> 
 fn settled_line(p: &ProposalPayload, shorts: Option<&ShortIds>) -> Option<String> {
     let inst = p.instruction.as_ref()?;
     let by = p.settled_author.as_ref()?;
-    Some(scribe_core::ask::instructed_line(
+    Some(scribe_core::voice::instructed_line(
         p.state,
         &by.name,
-        scribe_core::ask::INSTRUCTION_YOURS,
+        scribe_core::voice::INSTRUCTION_YOURS,
         inst.quote.as_deref(),
         &shown_id(&inst.session, shorts),
         inst.at,
@@ -1995,7 +1880,7 @@ fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
     candidate.stated()?;
     Some(format!(
         "{} \"{}\"",
-        scribe_core::ask::words_label(&scribe_core::voice::UserName::default(), candidate.role),
+        scribe_core::voice::words_label(&scribe_core::voice::UserName::default(), candidate.role),
         one_line(&candidate.quote)
     ))
 }

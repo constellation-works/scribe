@@ -98,7 +98,7 @@ pub(crate) enum CliError {
         /// The transcripts directory that was searched.
         dir: std::path::PathBuf,
     },
-    /// A model call failed (`question ask`).
+    /// A model call failed.
     #[error(transparent)]
     Model(#[from] scribe_core::models::ModelError),
     /// `tmux` needs `fzf` and it is not on `PATH`.
@@ -261,16 +261,6 @@ impl From<scribe_core::cases::consistency_scan::ScanError<CliError>> for CliErro
 }
 
 /// `ask`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::ask::AskError> for CliError {
-    fn from(err: scribe_core::cases::ask::AskError) -> Self {
-        use scribe_core::cases::ask::AskError;
-        match err {
-            AskError::Core(e) => Self::Core(e),
-            AskError::Model(e) => Self::Model(e),
-        }
-    }
-}
-
 /// The record writes' errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::write_error::WriteError<CliError>> for CliError {
     fn from(err: scribe_core::cases::write_error::WriteError<CliError>) -> Self {

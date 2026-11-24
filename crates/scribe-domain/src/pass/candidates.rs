@@ -452,8 +452,8 @@ pub fn write_exclusions(
                 && written.contains(&entry.tag.as_str())
         })
         .map(|entry| {
-            let text = match crate::ask::stated_quote(entry) {
-                Some(quote) => match crate::ask::speaker_of(entry) {
+            let text = match crate::voice::stated_quote(entry) {
+                Some(quote) => match crate::voice::speaker_of(entry) {
                     Speaker::User => format!("{} (the user's words: {quote:?})", entry.content),
                     Speaker::Assistant => {
                         format!("{} (the assistant's words: {quote:?})", entry.content)

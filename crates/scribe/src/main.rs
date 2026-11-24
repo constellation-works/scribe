@@ -20,7 +20,6 @@ mod help;
 mod models;
 mod output;
 mod popup;
-mod tasks;
 
 use std::process::ExitCode;
 

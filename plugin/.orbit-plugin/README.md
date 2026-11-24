@@ -1,16 +1,14 @@
 # scribe — Orbit plugin
 
 The Orbit side of scribe ([design](../../docs/design/scribe/2_design.md#1-boundary-and-surfaces)):
-one MCP tool, `scribe.ask`, answering from the user's `#scribe` entries, their
-session records and Orbit tasks, with every quote checked verbatim. The
-backend is the installed `scribe` binary (`bin/scribe-plugin` execs
+three routine tools that keep the user's store current, none of them
+advertised to agents. The backend is the installed `scribe` binary (`bin/scribe-plugin` execs
 `scribe plugin call`); this tree holds only the manifest, schemas and tests.
 The Claude Code hooks that write entries are a separate package,
 `plugin/claude-code/`.
 
 | Tool | Kind | MCP | State |
 |---|---|---|---|
-| `scribe.ask` | read-only | `global` | live |
 | `scribe.session-pass` | mutating, not agent-callable | none | live; routine ships disabled, runs every 5 minutes once enabled; also runs by hand |
 | `scribe.consistency-scan` | mutating, not agent-callable | none | live; the `scribe-consistency` routine runs it |
 | `scribe.memory-refresh` | mutating, not agent-callable | none | live; the `scribe-memory-refresh` routine runs it |
@@ -41,12 +39,12 @@ after the command.
 
 ```sh
 make install                      # puts scribe on PATH
-scribe question ask "can you fetch me last session summary?"   # the CLI works first
+scribe brief                      # the CLI works first
 orbit plugin validate plugin/.orbit-plugin --render
 PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # outside the repository, same name
 cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
 orbit plugin add "$PLUGIN_SRC"
-orbit plugin enable scribe --grant fs,network,env_pass,orbit_tools
+orbit plugin enable scribe --grant fs,network,env_pass
 ```
 
 `orbit plugin enable` also seeds the routines into the workspace repository's
@@ -59,7 +57,7 @@ claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
 PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a fresh copy of the current tree
 cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
-orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass,orbit_tools
+orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass
 ```
 
 `claude plugin update` applies on the next Claude Code restart.
@@ -72,11 +70,10 @@ Orbit config and check one call:
 root = "/home/<user>/.scribe"     # absolute; every tool answers not_configured until set
 transcripts = "/home/<user>/.claude/projects"   # optional when codex_home is set
 codex_home = "/home/<user>/.codex"             # optional Codex active/archive transcripts + existing auth
-# task_workspaces = ["ws_constellation"]   # optional: where orchestration tasks live
 ```
 
 ```sh
-orbit tool run scribe.ask --input '{"question":"can you fetch me last session summary?"}'
+orbit tool run scribe.session-pass --input '{}'   # passes the sessions that are due, if any
 ```
 
 (`orbit config set plugins.scribe.root <path>` sets a key the same way.)
@@ -104,7 +101,7 @@ claude plugin marketplace update scribe-local
 claude plugin update scribe@scribe-local
 PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a fresh copy of the current tree
 cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
-orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass,orbit_tools
+orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass
 ```
 
 `claude plugin update` applies on the next Claude Code restart. On a fresh
@@ -112,9 +109,8 @@ install, `claude plugin install scribe --marketplace ./plugin` registers the
 package and its `SessionStart` hook instead.
 
 The grants are: `fs` (read and write the store root, read the transcripts
-directory), `network` (the `claude` CLI), `env_pass`
-(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`), and `orbit_tools`
-(`orbit.search`, `orbit.task.show`, read-only). The `root` default,
+directory), `network` (the `claude` CLI) and `env_pass`
+(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`). The `root` default,
 `/var/tmp`, means unset: Orbit grants writes only to a directory that
 exists, and scribe never opens a store there. If the store's
 `config.toml` names extra variables under `[redact] env`, add those
@@ -127,7 +123,7 @@ than write text it was told to mask.
 ```sh
 cargo test -p scribe --test plugin        # envelope behaviour and the manifest contract
 PATH="$PWD/target/debug:$PATH" orbit plugin test plugin/.orbit-plugin \
-  --grant fs,network,env_pass,orbit_tools  # the YAML goldens
+  --grant fs,network,env_pass  # the YAML goldens
 ```
 
 This default package preserves Claude-only installations. Its optional

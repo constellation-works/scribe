@@ -1155,70 +1155,16 @@ how many.
 
 ## Ask
 
-`scribe question ask "<question>" --json` and the Orbit tool `scribe.ask`
-return the same object (2_design.md §6.1, §6.6):
-
-```json
-{
-  "status": "answered | no_record | conflict | record",
-  "answer": "…",
-  "claims": [{"text": "…", "quote": "…", "cite": "preferences-2"}],
-  "conflicts": [{"cites": ["preferences-1", "preferences-2"], "note": "…"}],
-  "evidence_considered": 3,
-  "dropped_quotes": 0,
-  "hidden_matches": 1,
-  "lookup": null,
-  "records": [],
-  "warnings": []
-}
-```
-
-`cite` is an entry id, `session:<id>` (a session's header: title,
-summary, goals and next), `session:<id>#<n>` (one log segment: heading and
-text) or `task:<id>`; every `quote` was found verbatim in the item it
-cites. Inactive sessions are left out of evidence and lookups unless
-`include_hidden`; `hidden_matches` also counts inactive sessions that
-retrieval matched and left out. A `session` record carries `log` with
-every segment and its text; the table view prints the header and the
-log's table of contents. `evidence_considered` is the number of
-items the model read, or of records a lookup returned; `dropped_quotes`
-counts claims dropped by the check (format 14: an entry with `stated_by` is
-read as scribe's statement of Daniel's turn followed by his labelled words; a
-claim whose `quote` lies in his words has `text` `Daniel`, one whose quote
-lies only in the statement has `text` `scribe's statement of Daniel's turn`
-(format 16: for an idea the pass wrote itself, `Daniel (captured by the
-session pass)` and `scribe's statement of Daniel's turn, captured by the
-session pass (not typed by Daniel)`, and the item the model reads also
-carries its outcome; phase 2: for one caught from an assistant turn,
-`assistant (captured by the session pass)` and `scribe's statement of the
-assistant's turn, captured by the session pass (not the user's words)`), and the answer is built from those labels as it is with agent evidence); `hidden_matches` counts superseded or
-retired entries that matched and were left out (0 with `include_hidden`).
-`lookup` is `null` when retrieval ran, else `last_session`,
-`named_session`, `next_steps`, `tag_period`, `term` or
-`orchestrator_session`, and then `status` is `record` and `records` holds
-the stored records, each `{"kind": "entry" | "session" | "task", "cite",
-"entry", "session", "task", "terms"}` with exactly the one named by `kind`
-set: `entry` is `entry show --json`'s object, `session` is `session show
---json`'s (with `on` and `due`), `task` is `{"id", "title", "status",
-"tags", "updated", "execution_summary"}` with the summary verbatim, and
-`terms` holds the terms a term lookup matched. `warnings` lists record
-files skipped because they did not parse, as a list's do.
-
-Plain prints `<status>\t<answer>`, then `claim\t<cite>\t<quote>\t<text>`,
-`conflict\t<cites>\t<note>` and `record\t<kind>\t<cite>` lines; the table
-is a detail view followed by each record in full. A model failure exits 1
-with its code; nothing found is `no_record` and exits 0. `question ask`
-reads only and writes no audit line. Handoff evidence is labelled `agent
-note (<author>)`; when it has a mode, ` [handoff mode: <continue|new>]` is
-appended in the model context and claim text.
+Removed with `scribe question ask` and the Orbit tool `scribe.ask`
+([ORB-27911](../4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 
 ## Plugin envelope
 
 `scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
 "tool": "scribe.<verb>", "input", "context": {"config": {"root",
-"transcripts", "task_workspaces"}, …}}`) on stdin and prints exactly one
+"transcripts"}, …}}`) on stdin and prints exactly one
 compact line, in every mode, then exits 0: `{"ok": true, "output":
-<output>}`, where `<output>` is the ask object for `scribe.ask`, the
+<output>}`, where `<output>` is the
 session pass report for `scribe.session-pass` and the consistency scan
 report for `scribe.consistency-scan`; or `{"ok": false, "error": {"code",
 "message", "retryable"}}` with `code` `invalid_envelope`, `unknown_tool`,
@@ -1230,8 +1176,7 @@ code (`retryable` for `store_locked` from a routine tool). For
 `scribe.session-pass`, `session_pass_failed` when any pass in the report
 failed (not `retryable`: each failed session stays due for the next run);
 its message is the CLI's, naming each failed session with its code and short
-reason, and the report is not returned. `scribe.ask`
-writes no audit line; the routine tools write the lines their CLI commands
+reason, and the report is not returned. The routine tools write the lines their CLI commands
 do, in the store `root` names.
 
 ## Session groups

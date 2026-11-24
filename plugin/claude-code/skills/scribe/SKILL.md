@@ -97,7 +97,7 @@ Don't act on an item unless the human asks.
 
 ## References
 
-- Read [lookups](references/lookups.md) when searching records, reading source evidence or asking for a synthesized answer.
+- Read [lookups](references/lookups.md) when searching records, or reading source evidence.
 - Read [handoffs](references/handoffs.md) before writing a requested handoff.
 - Read [session refresh](references/session-refresh.md) before replacing the current context or resuming after a clear.
 - Read [session groups](references/session-groups.md) before managing groups, seats or group-scoped reads.

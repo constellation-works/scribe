@@ -1,5 +1,5 @@
 //! `search`: every stored record ranked for a few
-//! words as `question ask` ranks them, with no model and no Orbit call
+//! words with BM25, with no model and no Orbit call
 //! (docs/design/scribe/2_design.md §6.8). It reads only: no lock, no audit
 //! line (STD-01 R31), and one load of the entries and the sessions.
 //! `--kind message` searches the messages in `scribe.db` instead, ranked by
@@ -11,15 +11,14 @@ use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
-use scribe_core::ask::RecordKind;
-use scribe_core::search::{DEFAULT_LIMIT, SearchQuery};
+use scribe_core::search::{DEFAULT_LIMIT, RecordKind, SearchQuery};
 use scribe_core::{Project, TagName, Topic};
 use std::num::NonZeroUsize;
 
 pub(super) const SEARCH_EXAMPLES: &str = "\
 Ranks each entry, each session header and each segment of a session's log
-with BM25, as question ask does, and prints the best first; the user's own
-entries weigh 1.5 times. The CITE column is what question ask would cite:
+with BM25 and prints the best first; the user's own
+entries weigh 1.5 times. The CITE column is the record's cite:
 pass it to entry show or session show. Superseded and retired entries and
 inactive sessions are left out unless --include-hidden.
 

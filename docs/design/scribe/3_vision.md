@@ -29,10 +29,10 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
 2. **Two hosts.** Sessions run on the Mac and on dk-server-1, each with its
    own `~/.scribe`. Should one host own the store and the other forward
    `#scribe` writes to it (over the SSH transport Daniel already uses), or
-   should `ask` read both? Either changes the provenance story.
+   should `scribe search` read both? Either changes the provenance story.
 3. **Retrieval beyond BM25.** When paraphrase misses start to show up in
-   `no_record` answers, is a query-expansion step by the decision model
-   (which keeps the store index-free) enough, or does the store need
+   `scribe search`, is a query-expansion step (which keeps the store
+   index-free) enough, or does the store need
    embeddings and a persisted index after all
    ([4_decisions.md](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index))?
 4. **Importing orbit-office decisions.** An opt-in, one-shot importer could
@@ -43,8 +43,8 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    settled with `#scribe approve`. If the queue grows, does it want a
    digest (an Orbit notice, a mail through orbit-decision-mail) rather than
    a session-start line?
-6. **Session records as evidence.** They are model summaries, so `ask`
-   labels them and never quotes them as Daniel's words. Should `ask` quote
+6. **Session records as evidence.** They are model summaries, so search
+   labels them and never quotes them as Daniel's words. Should search show
    the underlying transcript lines instead, which would mean keeping a
    parsed copy of each opted-in transcript?
 

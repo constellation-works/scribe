@@ -4,7 +4,7 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`, `question.rs`,
+//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`,
 //! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`, `tmux.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
@@ -22,7 +22,6 @@ pub(in crate::commands) mod memory;
 mod plugin;
 mod ports;
 mod proposal;
-mod question;
 mod search;
 mod session;
 mod store;
@@ -45,7 +44,6 @@ pub(crate) use hook::HookCommand;
 pub(crate) use memory::MemoryCommand;
 pub(crate) use plugin::PluginCommand;
 pub(crate) use proposal::ProposalCommand;
-pub(crate) use question::QuestionCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use store::StoreCommand;
 pub(crate) use tag::TagCommand;
@@ -87,12 +85,9 @@ pub(crate) enum Command {
     Memory(MemoryCommand),
     /// Search every stored record by words, with no model call
     ///
-    /// Ranks entries, session headers and segments for words, best first, as question ask ranks them, with no model call.
+    /// Ranks entries, session headers and segments for words, best first, with no model call.
     #[command(after_help = search::SEARCH_EXAMPLES)]
     Search(search::SearchArgs),
-    /// Answer a question from stored records with verbatim quotes
-    #[command(after_help = question::ASK_EXAMPLES)]
-    Ask(question::AskArgs),
     /// Propose superseding or retiring entries via scan
     ///
     /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
@@ -116,11 +111,6 @@ pub(crate) enum Command {
     /// Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
     #[command(after_help = brief::EXAMPLES)]
     Brief(brief::BriefArgs),
-    /// Answer a question from the records with verbatim quotes
-    ///
-    /// Answers a question from the records, citing a verbatim quote for every claim.
-    #[command(subcommand, after_help = question::QUESTION_EXAMPLES)]
-    Question(QuestionCommand),
     /// Run a provider hook for session and prompt events
     ///
     /// Runs a provider hook to record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, and report open proposals.
@@ -150,11 +140,9 @@ impl Command {
             Self::Init(_)
             | Self::Transcript(_)
             | Self::Search(_)
-            | Self::Ask(_)
             | Self::Consistency(_)
             | Self::Tag(_)
             | Self::Hook(_)
-            | Self::Question(_)
             | Self::Brief(_)
             | Self::Store(_)
             | Self::Export(_)
@@ -186,10 +174,9 @@ impl Command {
             Self::Store(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
-            Self::Question(command) => command.audit(),
             // Read-only: the popup only lists and shows, the brief only
             // reads, and an export writes nothing to the store (STD-01 R31).
-            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) | Self::Ask(_) => None,
+            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -211,7 +198,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
                 | Records::Hits(_)
                 | Records::Proposals(_)
         ),
-        Output::Pass(_) | Output::Scan(_) | Output::GroupBackfill(_) | Output::Ask(_) => true,
+        Output::Pass(_) | Output::Scan(_) | Output::GroupBackfill(_) => true,
         Output::Show { record } | Output::Written { record, .. } => {
             matches!(
                 record,
@@ -330,13 +317,11 @@ fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Proposal(command) => proposal::run(command, ctx),
         Command::Memory(command) => memory::run(command, ctx),
         Command::Search(args) => search::run(args, ctx),
-        Command::Ask(args) => question::run(QuestionCommand::Ask(args), ctx),
         Command::Consistency(command) => consistency::run(command, ctx),
         Command::Store(command) => store::run(command, ctx),
         Command::Export(args) => export::run(&args, ctx),
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
-        Command::Question(command) => question::run(command, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
         Command::Tmux(args) => tmux::run(args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),

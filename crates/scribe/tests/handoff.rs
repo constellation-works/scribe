@@ -2,8 +2,8 @@
 //! (docs/design/scribe/2_design.md §16): the shipped `handoff` tag,
 //! verbatim quote check against a human-typed turn in the target session,
 //! fixed six headings in order and size limit, off/unrecorded sessions,
-//! `session show` and `brief` rendering, `#scribe retire`, `search` and
-//! `question ask` agent-note attribution, and pass isolation (no memory
+//! `session show` and `brief` rendering, `#scribe retire`, `search`
+//! agent-note attribution, and pass isolation (no memory
 //! item or proposed claim from handoff text).
 //!
 //! Every run is the built binary with a temp `HOME` and data root.
@@ -749,61 +749,6 @@ fn search_and_ask_treat_handoff_as_agent_note_never_users_words() {
             .as_str()
             .unwrap()
             .contains("handoff mode: new")
-    );
-
-    // `scribe question ask` includes `handoff` by default (non-action tag) and attributes it as an agent note.
-    let answer = json!({
-        "status": "answered",
-        "answer": "Widget migration phase one is complete on branch widget-v2.",
-        "claims": [{
-            "text": "phase one is on widget-v2",
-            "quote": "Widget migration phase one is complete on branch widget-v2.",
-            "cite": "handoff-1"
-        }],
-        "conflicts": []
-    });
-    let claude = fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\ncat > \"$HOME/ask-stdin\"\nprintf '{{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}}\\n' '{}'\n",
-            answer
-        ),
-    );
-    let mut cmd = fx.cmd(&[
-        "question",
-        "ask",
-        "what is the state of widget migration?",
-        "--json",
-    ]);
-    cmd.env("PATH", &claude);
-    let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    let asked = json_of(&out);
-    assert_eq!(asked["status"], "answered", "{asked}");
-    assert_eq!(asked["claims"][0]["cite"], "handoff-1");
-    assert_eq!(
-        asked["claims"][0]["text"],
-        "agent note (opus) [handoff mode: new]"
-    );
-    assert!(
-        asked["answer"]
-            .as_str()
-            .unwrap()
-            .starts_with("agent note (opus) [handoff mode: new]: "),
-        "{asked}"
-    );
-    let ask_prompt = std::fs::read_to_string(fx.home().join("ask-stdin")).unwrap();
-    assert!(
-        ask_prompt.contains("words=\"agent note (opus) [handoff mode: new]\""),
-        "{ask_prompt}"
-    );
-    // Plain rendering also marks it as an agent note, never the user's words.
-    let mut plain_cmd = fx.cmd(&["question", "ask", "what is the state of widget migration?"]);
-    plain_cmd.env("PATH", &claude);
-    let plain = text(&plain_cmd.output().unwrap().stdout);
-    assert!(
-        plain.contains("agent note (opus) [handoff mode: new]"),
-        "{plain}"
     );
 }
 
