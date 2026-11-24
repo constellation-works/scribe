@@ -100,6 +100,7 @@ pub use session::{
     SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
     SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
 };
+pub use store::repo;
 pub use store::{
     AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, COVERED, ClaudeCapturePosition,
     ClaudeGroupCapture, CloseGroupOutcome, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList,
@@ -113,12 +114,6 @@ pub use store::{
     check_unsettled_item, init_project, init_project_with_skill_files, integration_hooks,
     resolve_prefix, unresolved_redact_env,
 };
-/// The store's repositories, one per record kind ([`Snapshot`], [`Tx`]).
-pub mod repo {
-    pub use crate::store::{
-        Audit, Entries, Groups, Marks, Memory, Messages, Pickups, Proposals, Sessions, Tags,
-    };
-}
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
     MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,

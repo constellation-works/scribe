@@ -74,11 +74,8 @@ pub use init::{
 };
 mod rebuild;
 mod redact;
-mod repo;
-pub use repo::{
-    Audit, Entries, Groups, Marks, Memory, Messages, Pickups, Proposals, Sessions, Snapshot, Tags,
-    Tx,
-};
+pub mod repo;
+pub use repo::{Snapshot, Tx};
 #[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
