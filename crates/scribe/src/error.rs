@@ -189,3 +189,60 @@ impl CliError {
         }
     }
 }
+
+/// `session pass`'s errors, each the variant it was before the flow moved to
+/// `scribe_core::cases::pass` (ORB-27707 step 3).
+impl From<scribe_core::cases::pass::PassRunError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::pass::PassRunError<CliError>) -> Self {
+        use scribe_core::cases::pass::PassRunError;
+        match err {
+            PassRunError::Core(e) => Self::Core(e),
+            PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
+            PassRunError::Port(e) => e,
+        }
+    }
+}
+
+/// `session catalog`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::catalog::CatalogError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::catalog::CatalogError<CliError>) -> Self {
+        use scribe_core::cases::catalog::CatalogError;
+        match err {
+            CatalogError::Core(e) => Self::Core(e),
+            CatalogError::Port(e) => e,
+            CatalogError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            CatalogError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            CatalogError::Read { what, source } => Self::Read { what, source },
+            CatalogError::SessionCataloged(id) => Self::SessionCataloged(id),
+            CatalogError::Usage(message) => Self::Usage(message),
+        }
+    }
+}
+
+/// `session rebuild`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::rebuild::RebuildError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::rebuild::RebuildError<CliError>) -> Self {
+        use scribe_core::cases::rebuild::RebuildError;
+        match err {
+            RebuildError::Core(e) => Self::Core(e),
+            RebuildError::Port(e) => e,
+            RebuildError::Usage(message) => Self::Usage(message),
+            RebuildError::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            } => Self::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            },
+            RebuildError::TranscriptMissing(id) => Self::TranscriptMissing(id),
+            RebuildError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            RebuildError::Read { what, source } => Self::Read { what, source },
+        }
+    }
+}

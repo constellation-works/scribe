@@ -1,6 +1,14 @@
 //! Pass verbs: the session pass's and catalog's window writes, and the
 //! candidates a window opens (2_design.md §11, §15).
 
+mod run;
+
+pub use run::{
+    CATALOG_COMMAND, PASS_COMMAND, PassInput, PassPayload, PassReport, PassRunError,
+    attributed_project, run, short_reason,
+};
+pub(crate) use run::{CatalogJob, RunFailure, distill, run_catalog, window_warnings};
+
 use crate::checks::candidates::{
     checked_outcome, has_context_and_subject, open_under, pass_entry, written_from,
 };

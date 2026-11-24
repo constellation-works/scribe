@@ -20,6 +20,7 @@ mod instruction;
 mod mark;
 pub(in crate::commands) mod memory;
 mod plugin;
+mod ports;
 mod proposal;
 mod question;
 mod search;
@@ -34,8 +35,10 @@ use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
-use scribe_core::{AuditEvent, AuditStatus, DateRange, Skipped, Store};
-use time::{Date, OffsetDateTime};
+pub(crate) use scribe_core::cases::RunLimits;
+pub(in crate::commands) use scribe_core::cases::audit::PersistedAudit;
+use scribe_core::{DateRange, Skipped};
+use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
@@ -403,50 +406,6 @@ fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
     }
 }
 
-/// How much one run of a routine command may do: at most `max` units
-/// (sessions passed, batches judged), and none started after `start_by`
-/// except the first, so a plugin call that may run a 240-second unit ends
-/// inside Orbit's 300-second backend timeout.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RunLimits {
-    max: usize,
-    start_by: Option<std::time::Instant>,
-}
-
-impl RunLimits {
-    /// At most `max` units, with no time limit (the CLI).
-    pub(crate) fn new(max: usize) -> Self {
-        Self {
-            max,
-            start_by: None,
-        }
-    }
-
-    /// No unit but the first starts after `start_by`.
-    pub(crate) fn start_by(self, start_by: std::time::Instant) -> Self {
-        Self {
-            start_by: Some(start_by),
-            ..self
-        }
-    }
-
-    /// Whether unit `n` (from 0) may start now.
-    pub(crate) fn may_start(&self, n: usize) -> bool {
-        n < self.max
-            && (n == 0
-                || self
-                    .start_by
-                    .is_none_or(|by| std::time::Instant::now() < by))
-    }
-
-    /// A started session may process another window only before the plugin
-    /// deadline. The CLI has no deadline and finishes every window.
-    pub(crate) fn may_continue(&self) -> bool {
-        self.start_by
-            .is_none_or(|by| std::time::Instant::now() < by)
-    }
-}
-
 /// `--since` and `--until`, shared by every list and the search.
 #[derive(Debug, Args)]
 pub(crate) struct DateArgs {
@@ -542,84 +501,6 @@ pub(super) fn list_output(
         total,
         warnings: skipped.iter().map(WarningPayload::from).collect(),
         message_matches: None,
-    }
-}
-
-/// Durable writes already on disk when a multi-step command returns `Err`
-/// before reaching `AuditGuard::mark_result`. Disarm right before returning
-/// `Ok` so the middleware writes those lines with the command's real duration;
-/// on an early `?` return or unwind, `Drop` writes one success line per target
-/// (`duration_ms: 0`) and fails open (STD-02 R31, STD-03 R4).
-pub(in crate::commands) struct PersistedAudit<'a> {
-    store: &'a Store,
-    command: &'static str,
-    author: Option<String>,
-    at: OffsetDateTime,
-    targets: Vec<String>,
-    armed: bool,
-}
-
-impl<'a> PersistedAudit<'a> {
-    pub(in crate::commands) fn new(
-        store: &'a Store,
-        command: &'static str,
-        at: OffsetDateTime,
-    ) -> Self {
-        Self {
-            store,
-            command,
-            author: None,
-            at,
-            targets: Vec::new(),
-            armed: true,
-        }
-    }
-
-    pub(in crate::commands) fn with_author(mut self, author: &str) -> Self {
-        self.author = Some(author.to_owned());
-        self
-    }
-
-    pub(in crate::commands) fn record(&mut self, target: impl Into<String>) {
-        self.targets.push(target.into());
-    }
-
-    pub(in crate::commands) fn extend(&mut self, targets: impl IntoIterator<Item = String>) {
-        self.targets.extend(targets);
-    }
-
-    pub(in crate::commands) fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for PersistedAudit<'_> {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        for target in &self.targets {
-            let event = AuditEvent {
-                at: self.at,
-                command: self.command.to_owned(),
-                status: AuditStatus::Success,
-                target: Some(target.clone()),
-                error_code: None,
-                author: self.author.clone(),
-                instruction_session: None,
-                instruction_message: None,
-                issue: None,
-                duration_ms: 0,
-            };
-            if let Err(err) = self.store.read().audit().record(&event) {
-                tracing::warn!(
-                    command = self.command,
-                    %err,
-                    target = %target,
-                    "cannot audit a write already persisted"
-                );
-            }
-        }
     }
 }
 

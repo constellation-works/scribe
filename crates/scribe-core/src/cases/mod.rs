@@ -13,6 +13,9 @@
 //! neither the business modules nor `store/` may name it
 //! (scripts/check-dependency-direction.sh).
 
+pub mod audit;
+pub mod catalog;
+mod ctx;
 pub mod entry;
 pub mod group;
 pub mod mark;
@@ -23,3 +26,7 @@ pub mod proposal;
 pub mod rebuild;
 pub mod session;
 pub mod tag;
+
+pub use ctx::{
+    Clock, Ctx, PortError, Redaction, RunLimits, TranscriptState, Transcripts, Unreadable,
+};

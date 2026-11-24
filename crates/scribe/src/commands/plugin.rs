@@ -38,7 +38,7 @@ use super::{RunLimits, consistency, session};
 use crate::app::Context;
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
-use crate::output::{Output, PassReport, PluginError, PluginReply, Record};
+use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
 use scribe_core::ask::{Question, RecordKind, Scope};
 use scribe_core::models::ModelError;
