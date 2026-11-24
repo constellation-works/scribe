@@ -151,7 +151,8 @@ fn list_skips_a_transcript_whose_mtime_is_before_since() {
 fn exact_provider_id_reads_transcript_when_an_unrelated_group_roster_is_corrupt() {
     const ID: &str = "d00d0000-1111-4222-8333-444455556666";
     let fx = Fixture::new();
-    fx.ok(&["store", "migrate"]);
+    // An empty scribe.db: a read does not create one.
+    support::seed_records(&fx.root(), &[]);
     support::sql(
         &fx.root(),
         r#"INSERT INTO groups (title, kind, project, opened, opener, related)

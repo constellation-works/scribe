@@ -1,0 +1,31 @@
+{
+  "format": 31,
+  "proposals": [
+    {
+      "id": "p-1",
+      "kind": "supersedes",
+      "older": "preferences-1",
+      "candidate": null,
+      "newer": "preferences-2",
+      "reason": "the newer entry replaces it",
+      "quotes": [
+        {
+          "entry": "preferences-1",
+          "text": "the release train leaves on Tuesdays"
+        }
+      ],
+      "state": "open",
+      "opened_at": "2026-10-01T09:00:00Z",
+      "settled_at": null,
+      "settled_by": null,
+      "author": {
+        "kind": "scribe",
+        "name": "consistency"
+      },
+      "updated_by": null,
+      "settled_author": null,
+      "closed_reason": null,
+      "instruction": null
+    }
+  ]
+}

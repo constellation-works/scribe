@@ -364,7 +364,7 @@ fn output_matches_goldens() {
 #[test]
 fn group_roster_matches_goldens() {
     let fx = Fixture::new();
-    fx.ok(&["store", "migrate"]);
+    support::seed_records(&fx.root(), &[]);
     support::sql(
         &fx.root(),
         r#"INSERT INTO groups (id, title, kind, project, opened, closed, opener, related, summary)
@@ -408,7 +408,7 @@ fn group_roster_matches_goldens() {
 fn mark_list_matches_goldens() {
     // One given-up marker, one pending, and one settled that is not listed.
     let fx = Fixture::new();
-    fx.ok(&["store", "migrate"]);
+    support::seed_records(&fx.root(), &[]);
     support::sql(
         &fx.root(),
         r#"INSERT INTO marks (position, session, message, prompt_sha256, marker, outcome, entry, code, attempts, at) VALUES
@@ -829,13 +829,15 @@ fn consistency_scan_closed_retired_tag_matches_goldens() {
             "cite": {"session":"s-1", "message":"user-choice", "at":"2026-11-15T00:00:00Z",
                 "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"},
             "project":"scribe", "provider":"claude-code", "host":"host",
-            "role":"user", "evidence":null, "admitted":null
+            "role":"user", "evidence":null, "admitted":null,
+            "context":null, "statement":null, "subject":null
         },
         "reason":"Unmarked decisions statement: I always keep the store format named.",
         "quotes":[],
         "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
         "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
-        "settled_author":null, "updated_by":null, "closed_reason":null
+        "settled_author":null, "updated_by":null, "closed_reason":null,
+        "instruction":null
     });
     let mut failures = Vec::new();
     for (suffix, mode) in [
@@ -843,16 +845,8 @@ fn consistency_scan_closed_retired_tag_matches_goldens() {
         ("table.txt", &["--format", "table"][..]),
     ] {
         let fx = Fixture::new();
-        let root = fx.root();
-        std::fs::create_dir_all(&root).unwrap();
-        support::make_private(&root);
-        let path = root.join("proposals.json");
-        std::fs::write(
-            &path,
-            json!({"format":11, "proposals":[proposal]}).to_string(),
-        )
-        .unwrap();
-        support::make_private(&path);
+        let body = json!({"format":31, "proposals":[proposal]}).to_string();
+        support::seed_records(&fx.root(), &[&body]);
         let out = fx.ok(&[&["consistency", "scan"][..], mode].concat());
         failures.extend(check(
             &format!("output/consistency-scan-closed.{suffix}"),
@@ -875,20 +869,19 @@ fn candidate_proposal_list_matches_goldens() {
             "project":"scribe", "provider":"claude-code", "host":"host",
             "role":"user", "evidence":null,
             "admitted": {"trigger":"I prefer", "matched":"I prefer",
-                "criteria":"A standing rule from the user that applies beyond the work at hand."}
+                "criteria":"A standing rule from the user that applies beyond the work at hand."},
+            "context":null, "statement":null, "subject":null
         },
         "reason":"Unmarked preference: I prefer concise progress updates.", "quotes":[],
         "state":"open", "opened_at":"2026-11-15T00:01:00Z", "settled_at":null,
         "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
-        "settled_author":null, "updated_by":null, "closed_reason":null
+        "settled_author":null, "updated_by":null, "closed_reason":null,
+        "instruction":null
     });
-    let path = fx.root().join("proposals.json");
-    std::fs::write(
-        &path,
-        json!({"format":11, "proposals":[proposal]}).to_string(),
-    )
-    .unwrap();
-    support::make_private(&path);
+    // Seeding adds claims: drop the fixture's two so only `p-3` is listed.
+    support::sql(&fx.root(), "DELETE FROM claims;");
+    let body = json!({"format":31, "proposals":[proposal]}).to_string();
+    support::seed_records(&fx.root(), &[&body]);
     let mut failures = Vec::new();
     for (suffix, mode) in MODES {
         let out = fx.ok(&[&["proposal", "list"][..], *mode].concat());
@@ -905,17 +898,46 @@ const STATED_QUOTE: &str = "ok that makes sense. then let's keep the whole histo
 /// Scribe's statement of it, the approved entry's content.
 const STATED: &str = "The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
 
-/// A store holding one approved pass claim with scribe's statement
-/// (`preferences-2`, from `p-5`) and one open one (`p-6`), at format 14
-/// (2_design.md §11.1).
-fn stated_fixture() -> Fixture {
-    let fx = Fixture::new();
-    fx.seed();
-    let root = fx.root();
+/// Which of the three stated-claim stores [`stated_records`] builds.
+#[derive(Clone, Copy, PartialEq)]
+enum Stated {
+    /// `p-5` approved by Daniel, `p-6` open.
+    Plain,
+    /// [`Stated::Plain`] plus an open claim `p-7` carrying a context paragraph.
+    Context,
+    /// [`Stated::Plain`], with both claims settled by an agent on Daniel's
+    /// checked instruction.
+    Instructed,
+}
+
+/// The Markdown of the approved entry `preferences-2` and the JSON of the
+/// proposals `variant` holds, ready for `support::seed_records`.
+fn stated_records(variant: Stated) -> (String, String) {
     let sha = "0".repeat(64);
+    let instructed = variant == Stated::Instructed;
+    let instruction = format!(
+        "{{session: {INSTRUCTED_SESSION}, message: user-instruct, at: 2026-11-15T00:04:30Z, quote: \"{INSTRUCTED_WORDS}\"}}"
+    );
+    let (said, approved_by, entry_instruction, author) = if instructed {
+        (
+            format!(
+                "scribe proposal settle p-5 --approve --author opus --session {INSTRUCTED_SESSION} --instruction '{INSTRUCTED_WORDS}'"
+            ),
+            "{kind: agent, name: opus}".to_owned(),
+            instruction,
+            r#"{"kind":"agent", "name":"opus"}"#,
+        )
+    } else {
+        (
+            "#scribe approve p-5".to_owned(),
+            "null".to_owned(),
+            "null".to_owned(),
+            r#"{"kind":"user", "name":"user"}"#,
+        )
+    };
     let entry = format!(
         "---
-format: 14
+format: 31
 kind: entry
 id: preferences-2
 tag: preferences
@@ -925,12 +947,12 @@ topics: []
 related: []
 provider: claude-code
 host: dk-server-1
-author: {{kind: daniel, name: daniel}}
+author: {{kind: user, name: user}}
 updated_by: null
 created: 2026-11-15T00:05:00Z
 updated: 2026-11-15T00:05:00Z
 inactive_since: null
-said: \"#scribe approve p-5\"
+said: \"{said}\"
 content_from: {{kind: message, role: user, message: user-history, at: 2026-11-15T00:00:00Z}}
 cite: {{session: 7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02, message: user-history, at: 2026-11-15T00:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /home/user/workspace/scribe}}
 retirement_reason: null
@@ -940,16 +962,15 @@ quote: \"{STATED_QUOTE}\"
 window: null
 evidence: null
 as_of: null
-approved_by: null
-instruction: null
+approved_by: {approved_by}
+instruction: {entry_instruction}
+removal_instruction: null
 stated_by: {{kind: scribe, name: session-pass}}
+outcome: null
 ---
 {STATED}
 "
     );
-    let path = root.join("entries/preferences/preferences-2.md");
-    std::fs::write(&path, entry).unwrap();
-    support::make_private(&path);
     let cite = |message: &str| {
         json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02", "message":message,
             "at":"2026-11-15T00:00:00Z", "prompt_sha256":sha, "line":1,
@@ -957,11 +978,12 @@ stated_by: {{kind: scribe, name: session-pass}}
     };
     let admitted = json!({"trigger":"let's keep", "matched":"let's keep",
         "criteria":"A standing rule from the user that applies beyond the work at hand."});
-    let approved = json!({
+    let author: Value = serde_json::from_str(author).unwrap();
+    let mut approved = json!({
         "id":"p-5", "kind":"candidate", "older":"preferences-2", "newer":null,
         "candidate": {
             "tag":"preferences", "role":"user", "quote":STATED_QUOTE,
-            "statement":STATED, "subject":"session records",
+            "statement":STATED, "subject":"session records", "context":null,
             "evidence":null, "cite":cite("user-history"),
             "project":"constellation-works/scribe", "provider":"claude-code",
             "host":"dk-server-1", "admitted":admitted
@@ -970,16 +992,16 @@ stated_by: {{kind: scribe, name: session-pass}}
         "state":"approved", "opened_at":"2026-11-15T00:01:00Z",
         "settled_at":"2026-11-15T00:05:00Z", "settled_by":cite("user-approve"),
         "author":{"kind":"scribe", "name":"session-pass"},
-        "settled_author":{"kind":"daniel", "name":"daniel"}, "updated_by":null,
+        "settled_author":{"kind":"user", "name":"user"}, "updated_by":null,
         "closed_reason":null, "instruction":null
     });
     let open_quote = "yeah, for the popup just show the newest five, nothing older.";
-    let open = json!({
+    let mut open = json!({
         "id":"p-6", "kind":"candidate", "older":"preferences-3", "newer":null,
         "candidate": {
             "tag":"preferences", "role":"user", "quote":open_quote,
             "statement":"The user prefers that the scribe tmux popup lists only the five newest records.",
-            "subject":"the scribe tmux popup",
+            "subject":"the scribe tmux popup", "context":null,
             "evidence":null, "cite":cite("user-popup"),
             "project":"constellation-works/scribe", "provider":"claude-code",
             "host":"dk-server-1", "admitted":admitted
@@ -989,14 +1011,62 @@ stated_by: {{kind: scribe, name: session-pass}}
         "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
         "settled_author":null, "updated_by":null, "closed_reason":null, "instruction":null
     });
-    let path = root.join("proposals.json");
-    std::fs::write(
-        &path,
-        json!({"format":14, "proposals":[approved, open]}).to_string(),
-    )
-    .unwrap();
-    support::make_private(&path);
+    let mut proposals = Vec::new();
+    if variant == Stated::Context {
+        let mut claim = open.clone();
+        claim["id"] = json!("p-7");
+        claim["older"] = json!("preferences-4");
+        claim["opened_at"] = json!("2026-11-15T00:08:00Z");
+        claim["reason"] = json!(format!("Unmarked preferences statement: {CONTEXT_QUOTE}"));
+        claim["candidate"]["quote"] = json!(CONTEXT_QUOTE);
+        claim["candidate"]["context"] = json!(CONTEXT);
+        claim["candidate"]["statement"] = Value::Null;
+        claim["candidate"]["subject"] = json!("session records");
+        claim["candidate"]["cite"]["message"] = json!("user-segments");
+        proposals.push(claim);
+    }
+    if instructed {
+        let inst = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+            "at":"2026-11-15T00:04:30Z", "quote":INSTRUCTED_WORDS});
+        let settled_by = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
+            "at":"2026-11-15T00:04:30Z", "prompt_sha256":sha, "line":1,
+            "cwd":"/home/user/workspace/scribe"});
+        for p in [&mut approved, &mut open] {
+            p["settled_author"] = author.clone();
+            p["settled_by"] = settled_by.clone();
+            p["instruction"] = inst.clone();
+        }
+        open["instruction"]["message"] = json!("user-reject");
+        open["instruction"]["at"] = json!("2026-11-15T00:06:30Z");
+        open["instruction"]["quote"] = json!(REJECTED_WORDS);
+        open["settled_by"]["message"] = json!("user-reject");
+        open["settled_by"]["at"] = json!("2026-11-15T00:06:30Z");
+        open["state"] = json!("rejected");
+        open["settled_at"] = json!("2026-11-15T00:07:00Z");
+        open["closed_reason"] = json!("instructed");
+    }
+    proposals.insert(0, open);
+    proposals.insert(0, approved);
+    let body = json!({"format":31, "proposals":proposals}).to_string();
+    (entry, body)
+}
+
+/// A fixture store seeded with [`stated_records`] of `variant`.
+fn stated_store(variant: Stated) -> Fixture {
+    let fx = Fixture::new();
+    fx.seed();
+    let (entry, proposals) = stated_records(variant);
+    // Seeding adds claims: drop the fixture's two so only the stated ones remain.
+    support::sql(&fx.root(), "DELETE FROM claims;");
+    support::seed_records(&fx.root(), &[&entry, &proposals]);
     fx
+}
+
+/// A store holding one approved pass claim with scribe's statement
+/// (`preferences-2`, from `p-5`) and one open one (`p-6`)
+/// (2_design.md §11.1).
+fn stated_fixture() -> Fixture {
+    stated_store(Stated::Plain)
 }
 
 /// The context paragraph of [`context_fixture`]'s open claim `p-7`
@@ -1006,32 +1076,11 @@ const CONTEXT: &str = "The user and the agent were choosing how scribe stores se
 const CONTEXT_QUOTE: &str =
     "no, keep every window as its own segment so the start of the session is never rewritten.";
 
-/// [`stated_fixture`] at format 24: its claims `p-5` and `p-6` kept as
-/// older claims (a statement, no context), and an open claim `p-7` with a
-/// context paragraph.
+/// [`stated_fixture`] with its claims `p-5` and `p-6` kept as older claims
+/// (a statement, no context), and an open claim `p-7` with a context
+/// paragraph.
 fn context_fixture() -> Fixture {
-    let fx = stated_fixture();
-    let path = fx.root().join("proposals.json");
-    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    doc["format"] = json!(24);
-    let proposals = doc["proposals"].as_array_mut().unwrap();
-    for p in proposals.iter_mut() {
-        p["candidate"]["context"] = Value::Null;
-    }
-    let mut claim = proposals[1].clone();
-    claim["id"] = json!("p-7");
-    claim["older"] = json!("preferences-4");
-    claim["opened_at"] = json!("2026-11-15T00:08:00Z");
-    claim["reason"] = json!(format!("Unmarked preferences statement: {CONTEXT_QUOTE}"));
-    claim["candidate"]["quote"] = json!(CONTEXT_QUOTE);
-    claim["candidate"]["context"] = json!(CONTEXT);
-    claim["candidate"]["statement"] = Value::Null;
-    claim["candidate"]["subject"] = json!("session records");
-    claim["candidate"]["cite"]["message"] = json!("user-segments");
-    proposals.push(claim);
-    std::fs::write(&path, doc.to_string()).unwrap();
-    support::make_private(&path);
-    fx
+    stated_store(Stated::Context)
 }
 
 /// `proposal show` of a claim with context (`p-7`) and of an older claim
@@ -1150,51 +1199,7 @@ const INSTRUCTED_SESSION: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03";
 /// checked instruction rather than by him typing it, and `p-6` rejected on
 /// the same instruction (2_design.md §12.3).
 fn instructed_fixture() -> Fixture {
-    let fx = stated_fixture();
-    let root = fx.root();
-    let instruction = format!(
-        "{{session: {INSTRUCTED_SESSION}, message: user-instruct, at: 2026-11-15T00:04:30Z, quote: \"{INSTRUCTED_WORDS}\"}}"
-    );
-    let path = root.join("entries/preferences/preferences-2.md");
-    let entry = std::fs::read_to_string(&path)
-        .unwrap()
-        // Format 15 first carried an approval made on his instruction.
-        .replace("format: 14\n", "format: 15\n")
-        .replace(
-            "said: \"#scribe approve p-5\"",
-            &format!(
-                "said: \"scribe proposal settle p-5 --approve --author opus --session {INSTRUCTED_SESSION} --instruction '{INSTRUCTED_WORDS}'\""
-            ),
-        )
-        .replace(
-            "approved_by: null\ninstruction: null",
-            &format!("approved_by: {{kind: agent, name: opus}}\ninstruction: {instruction}"),
-        );
-    std::fs::write(&path, entry).unwrap();
-    let path = root.join("proposals.json");
-    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    let inst = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
-        "at":"2026-11-15T00:04:30Z", "quote":INSTRUCTED_WORDS});
-    let settled_by = json!({"session":INSTRUCTED_SESSION, "message":"user-instruct",
-        "at":"2026-11-15T00:04:30Z", "prompt_sha256":"0".repeat(64), "line":1,
-        "cwd":"/home/user/workspace/scribe"});
-    for p in doc["proposals"].as_array_mut().unwrap() {
-        p["settled_author"] = json!({"kind":"agent", "name":"opus"});
-        p["settled_by"] = settled_by.clone();
-        p["instruction"] = inst.clone();
-        if p["id"] == "p-6" {
-            p["instruction"]["message"] = json!("user-reject");
-            p["instruction"]["at"] = json!("2026-11-15T00:06:30Z");
-            p["instruction"]["quote"] = json!(REJECTED_WORDS);
-            p["settled_by"]["message"] = json!("user-reject");
-            p["settled_by"]["at"] = json!("2026-11-15T00:06:30Z");
-            p["state"] = json!("rejected");
-            p["settled_at"] = json!("2026-11-15T00:07:00Z");
-            p["closed_reason"] = json!("instructed");
-        }
-    }
-    std::fs::write(&path, doc.to_string()).unwrap();
-    fx
+    stated_store(Stated::Instructed)
 }
 
 #[test]
@@ -1303,7 +1308,7 @@ const CAPTURED: &str =
 /// His words parking it.
 const PARKED: &str = "let's park it until the drains are quiet";
 
-/// One idea entry at format 16, the format that first carried `outcome`.
+/// One idea entry as a complete Markdown record, with its `outcome` line.
 #[allow(clippy::too_many_arguments)]
 fn idea_entry(
     id: &str,
@@ -1318,7 +1323,7 @@ fn idea_entry(
     let sha = "0".repeat(64);
     format!(
         "---
-format: 16
+format: 31
 kind: entry
 id: {id}
 tag: idea
@@ -1345,6 +1350,7 @@ evidence: null
 as_of: null
 approved_by: null
 instruction: null
+removal_instruction: null
 stated_by: {stated_by}
 outcome: {outcome}
 ---
@@ -1355,7 +1361,7 @@ outcome: {outcome}
 
 /// A store holding an idea the session pass captured itself (`idea-1`,
 /// parked in Daniel's words) and one he typed with `#scribe idea:`
-/// (`idea-2`), at format 16 (2_design.md §11.6).
+/// (`idea-2`) (2_design.md §11.6).
 fn captured_fixture() -> Fixture {
     let fx = Fixture::new();
     fx.seed();
@@ -1363,9 +1369,6 @@ fn captured_fixture() -> Fixture {
     let config = fx.root().join("config.toml");
     let seeded = std::fs::read_to_string(&config).unwrap_or_default();
     fx.config(&format!("{seeded}\n{}", support::IDEA_CATCHER));
-    let dir = fx.root().join("entries/idea");
-    std::fs::create_dir(&dir).unwrap();
-    support::make_private(&dir);
     let pass = "{kind: scribe, name: session-pass}";
     let captured = idea_entry(
         "idea-1",
@@ -1379,7 +1382,7 @@ fn captured_fixture() -> Fixture {
     );
     let typed = idea_entry(
         "idea-2",
-        "{kind: daniel, name: daniel}",
+        "{kind: user, name: user}",
         "#scribe idea: a dry-run flag for the session pass",
         "{kind: instruction}",
         "null",
@@ -1387,11 +1390,7 @@ fn captured_fixture() -> Fixture {
         "null",
         "a dry-run flag for the session pass",
     );
-    for (id, text) in [("idea-1", captured), ("idea-2", typed)] {
-        let path = dir.join(format!("{id}.md"));
-        std::fs::write(&path, text).unwrap();
-        support::make_private(&path);
-    }
+    support::seed_records(&fx.root(), &[&captured, &typed]);
     fx
 }
 

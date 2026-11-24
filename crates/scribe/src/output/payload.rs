@@ -1219,7 +1219,7 @@ pub(crate) enum Record {
     MemoryRevision(Box<RevisionPayload>),
     /// `memory refresh`.
     MemoryRefresh(Box<RefreshPayload>),
-    /// `store migrate`: what the move into `scribe.db` did.
+    /// `store migrate`: the archives imported into `scribe.db`.
     StoreMigrate(Box<MigratePayload>),
     /// `export`: what was written where.
     Export(Box<ExportPayload>),
@@ -1380,7 +1380,7 @@ impl MemoryBlockPayload {
         }
         if view.unmigrated > 0 {
             warnings.push(format!(
-                "warning: {} format-24 memory item(s) not yet migrated; the next memory write migrates them",
+                "warning: {} format-24 memory item(s) not read; the next store write archives them",
                 view.unmigrated
             ));
         }
@@ -1503,8 +1503,11 @@ pub(crate) struct RefreshPayload {
     pub(crate) removed: Vec<String>,
 }
 
-/// `store migrate`: the sessions moved into `scribe.db`. Field names are a
-/// contract.
+/// `store migrate`: the archives imported into `scribe.db`. Field names
+/// are a contract. Since phase 8 nothing moves from files, so the counts
+/// of moved records (`sessions` through `pickups`, and `audit_torn`) are 0
+/// and `moved_to` is `null`; they stay for the contract (STD-01 R10).
+/// `audit_lines` still counts the spooled lines the write drained.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MigratePayload {
     /// Session records imported.
@@ -1514,7 +1517,7 @@ pub(crate) struct MigratePayload {
     /// Codex cursors imported.
     pub(crate) cursors: usize,
     /// Where the files went, under the data directory; `null` when there
-    /// were none.
+    /// were none (always since phase 8).
     pub(crate) moved_to: Option<String>,
     /// Entries imported.
     pub(crate) entries: usize,
@@ -1526,10 +1529,15 @@ pub(crate) struct MigratePayload {
     pub(crate) marks: usize,
     /// Pickups imported.
     pub(crate) pickups: usize,
-    /// Audit lines imported.
+    /// Spooled audit lines drained into the table.
     pub(crate) audit_lines: usize,
-    /// Audit lines that did not parse, so stay only in the moved file.
+    /// Audit lines that did not parse (always 0 since phase 8).
     pub(crate) audit_torn: usize,
+    /// `pre-sqlite-*` and `pre-issue-*` directories imported into the
+    /// archive tables, then removed.
+    pub(crate) archives: usize,
+    /// Archived records imported: one per file, one per audit line.
+    pub(crate) archived: usize,
 }
 
 /// `export`: the files written. Field names are a contract.

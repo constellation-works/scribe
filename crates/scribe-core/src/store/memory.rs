@@ -6,21 +6,22 @@
 //!   crash they print the profile's committed revision from the database
 //!   instead of the file and warn `memory_pending`.
 //! - **Writes** run inside a store write's transaction and follow one
-//!   order: read the files as the open journals leave them; migrate
-//!   format-24 `m-<n>` items on the first write (§15.11); stage the rows
+//!   order: read the files as the open journals leave them; stage the rows
 //!   and a journal listing every file operation with its content. Once the
 //!   transaction commits, every open journal's operations are applied and
 //!   the journal closed, in a write of its own. A rollback leaves no file
 //!   written; a crash after the commit leaves an open journal the next
 //!   write applies.
+//! - Format-24 `m-<n>.md` items are not read: the first store write
+//!   archives them with the other files the file store left (§15.7,
+//!   phase 8), and a read only counts them.
 
 use super::agent::{check_agent_author, refusal};
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Writer};
-use super::{RECORD_EXT, Redactor, Skipped, Store, format, fsio};
+use super::{RECORD_EXT, Redactor, Skipped, Store, codec, fsio};
 use crate::entry::EntryStatus;
-use crate::memory::legacy::MemoryItem;
 use crate::memory::{
-    self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem, migrate, profile,
+    self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem, profile,
 };
 use crate::models::{MemoryContext, PendingContext, ProfileAnswer, ProfileRequest, ProfileSession};
 use crate::{AuthorName, Error, Result, SessionId, WriteRefusal};
@@ -62,7 +63,7 @@ pub struct MemoryView {
     pub pending: bool,
     /// The database was opened as a read-only copy.
     pub read_only_copy: bool,
-    /// Format-24 `m-<n>` items the first memory write migrates.
+    /// Format-24 `m-<n>` items the next store write archives.
     pub unmigrated: usize,
 }
 
@@ -220,7 +221,6 @@ struct Files {
     now: Vec<NowItem>,
     milestones: Vec<Milestone>,
     profile: Option<String>,
-    legacy: Vec<MemoryItem>,
 }
 
 #[cfg(test)]
@@ -246,14 +246,14 @@ fn sha256(text: &str) -> String {
 fn now_op(path: &Path, item: &NowItem) -> Result<FileOp> {
     Ok(FileOp {
         path: format!("{NOW_DIR}/{}{RECORD_EXT}", item.stem),
-        content: Some(format::encode_now(path, item)?),
+        content: Some(codec::encode_now(path, item)?),
     })
 }
 
 fn milestone_op(path: &Path, item: &Milestone) -> Result<FileOp> {
     Ok(FileOp {
         path: format!("{MILESTONES_DIR}/{}{RECORD_EXT}", item.stem),
-        content: Some(format::encode_milestone(path, item)?),
+        content: Some(codec::encode_milestone(path, item)?),
     })
 }
 
@@ -321,8 +321,10 @@ impl Store {
                 .is_some_and(|stem| stem.parse::<Stem>().is_ok())
             || rel
                 .strip_suffix(RECORD_EXT)
-                .and_then(|stem| stem.parse::<memory::legacy::MemoryId>().ok())
-                .is_some_and(|id| !rel.contains('/') && id.as_str().starts_with("m-"));
+                .and_then(|stem| stem.strip_prefix("m-"))
+                .is_some_and(|n| {
+                    !n.is_empty() && !n.starts_with('0') && n.bytes().all(|b| b.is_ascii_digit())
+                });
         if valid {
             Ok(self.memory_dir().join(rel))
         } else {
@@ -463,33 +465,19 @@ impl Store {
         Ok((items, skipped))
     }
 
-    /// The format-24 `memory/m-<n>.md` items, in id order. Reads only.
-    fn legacy_items(&self) -> Result<(Vec<MemoryItem>, Vec<Skipped>)> {
-        let mut items = Vec::new();
-        let mut skipped = Vec::new();
+    /// How many format-24 `memory/m-<n>.md` items the next store write
+    /// archives. Reads only.
+    fn legacy_count(&self) -> Result<usize> {
         let dir = self.memory_dir();
         if !fsio::inspect_subdir(&dir)? {
-            return Ok((items, skipped));
+            return Ok(0);
         }
-        for name in super::visible(fsio::list_dir(&dir)?) {
-            let Some(stem) = name.strip_suffix(RECORD_EXT) else {
-                continue;
-            };
-            if !stem.starts_with("m-") {
-                continue;
-            }
-            let path = dir.join(&name);
-            if !fsio::inspect_file(&path)? {
-                continue;
-            }
-            match format::decode_memory(&path, &fsio::read(&path)?, stem) {
-                Ok(item) => items.push(item),
-                Err(error @ Error::Corrupt { .. }) => skipped.push(Skipped { path, error }),
-                Err(other) => return Err(other),
-            }
-        }
-        items.sort_by_key(|i| i.id.number());
-        Ok((items, skipped))
+        Ok(super::visible(fsio::list_dir(&dir)?)
+            .filter(|name| {
+                name.strip_suffix(RECORD_EXT)
+                    .is_some_and(|stem| stem.starts_with("m-"))
+            })
+            .count())
     }
 
     fn profile_text(&self) -> Result<Option<String>> {
@@ -505,17 +493,15 @@ impl Store {
     /// Every memory file a write needs, refusing one that does not parse:
     /// without every item, an update could open a second file for one event.
     fn files_for_write(&self) -> Result<Files> {
-        let (now, a) = self.read_items(NOW_DIR, format::decode_now)?;
-        let (milestones, b) = self.read_items(MILESTONES_DIR, format::decode_milestone)?;
-        let (legacy, c) = self.legacy_items()?;
-        if let Some(bad) = a.into_iter().chain(b).chain(c).next() {
+        let (now, a) = self.read_items(NOW_DIR, codec::decode_now)?;
+        let (milestones, b) = self.read_items(MILESTONES_DIR, codec::decode_milestone)?;
+        if let Some(bad) = a.into_iter().chain(b).next() {
             return Err(bad.error);
         }
         Ok(Files {
             now,
             milestones,
             profile: self.profile_text()?,
-            legacy,
         })
     }
 
@@ -530,11 +516,10 @@ impl Store {
         if !self.root_exists()? {
             return Ok(MemoryView::default());
         }
-        let (mut now, mut skipped) = self.read_items(NOW_DIR, format::decode_now)?;
-        let (mut milestones, more) = self.read_items(MILESTONES_DIR, format::decode_milestone)?;
+        let (mut now, mut skipped) = self.read_items(NOW_DIR, codec::decode_now)?;
+        let (mut milestones, more) = self.read_items(MILESTONES_DIR, codec::decode_milestone)?;
         skipped.extend(more);
-        let (legacy, more) = self.legacy_items()?;
-        skipped.extend(more);
+        let legacy = self.legacy_count()?;
         if let Some(forgotten) = super::db::sessions::read_forgotten(&self.root)? {
             let live = |id: &SessionId| !forgotten.contains_key(id);
             now.retain_mut(|item| {
@@ -575,7 +560,7 @@ impl Store {
             skipped,
             pending: dbv.open_journal,
             read_only_copy: dbv.read_only_copy,
-            unmigrated: legacy.len(),
+            unmigrated: legacy,
         })
     }
 
@@ -648,7 +633,7 @@ impl Store {
         if !self.root_exists()? {
             return Ok((Vec::new(), Vec::new()));
         }
-        let (now, _) = self.read_items(NOW_DIR, format::decode_now)?;
+        let (now, _) = self.read_items(NOW_DIR, codec::decode_now)?;
         let forgotten = super::db::sessions::read_forgotten(&self.root)?.unwrap_or_default();
         let pending = db::pending_read(&self.root, session)?;
         Ok((
@@ -674,18 +659,17 @@ impl Store {
     }
 
     /// One memory write inside the write the caller runs: replay any open
-    /// journal, migrate `m-<n>` items, then `f`'s commit, its files applied
+    /// journal, then `f`'s commit, its files applied
     /// and its journal closed once the write commits.
     fn memory_write<T>(
         &self,
-        redactor: &Redactor,
         now: OffsetDateTime,
         f: impl FnOnce(&mut Writer<'_>, &Files) -> Result<(MemoryCommit, T)>,
     ) -> Result<(T, Option<Journal>)> {
         self.prepare_subdir(&self.memory_dir())?;
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let mut writer = Writer::new(&conn, &self.root);
-        let files = self.prepare_memory(&mut writer, redactor, now)?;
+        let files = self.prepare_memory(&mut writer)?;
         let (commit, out) = f(&mut writer, &files)?;
         let journal = self.commit_memory(&mut writer, &commit, now)?;
         drop(writer);
@@ -696,21 +680,11 @@ impl Store {
 
     /// The start of every memory write, inside the caller's write: replay
     /// any open journal (one an earlier step of the same command left is
-    /// applied here, so this step reads the files it wrote) and migrate `m-<n>` items, then read the
+    /// applied here, so this step reads the files it wrote), then read the
     /// files as they now stand.
-    fn prepare_memory(
-        &self,
-        writer: &mut Writer<'_>,
-        redactor: &Redactor,
-        now: OffsetDateTime,
-    ) -> Result<Files> {
+    fn prepare_memory(&self, writer: &mut Writer<'_>) -> Result<Files> {
         self.prepare_subdir(&self.memory_dir())?;
-        let mut files = self.files_after_journals(writer)?;
-        if !files.legacy.is_empty() {
-            self.migrate_memory(writer, &files, redactor, now)?;
-            files = self.files_after_journals(writer)?;
-        }
-        Ok(files)
+        self.files_after_journals(writer)
     }
 
     /// The memory files as the open journals leave them: inside a write,
@@ -744,7 +718,7 @@ impl Store {
             if let Some(content) = &op.content {
                 files
                     .now
-                    .push(format::decode_now(&path, content.as_bytes(), stem)?);
+                    .push(codec::decode_now(&path, content.as_bytes(), stem)?);
                 files
                     .now
                     .sort_by(|a, b| a.stem.as_str().cmp(b.stem.as_str()));
@@ -754,71 +728,20 @@ impl Store {
             if let Some(content) = &op.content {
                 files
                     .milestones
-                    .push(format::decode_milestone(&path, content.as_bytes(), stem)?);
+                    .push(codec::decode_milestone(&path, content.as_bytes(), stem)?);
                 files
                     .milestones
                     .sort_by(|a, b| a.stem.as_str().cmp(b.stem.as_str()));
             }
-        } else {
-            files.legacy.retain(|i| i.id.as_str() != stem);
-            if let Some(content) = &op.content {
-                files
-                    .legacy
-                    .push(format::decode_memory(&path, content.as_bytes(), stem)?);
-                files.legacy.sort_by_key(|i| i.id.number());
-            }
         }
-        Ok(())
-    }
-
-    /// Migrate format-24 items (§15.11) through one journal: `now` and
-    /// milestone files written, every item's text to history, the `m-<n>`
-    /// files removed. An active `working` item whose quote fires the
-    /// `preferences` capture trigger opens a claim first.
-    fn migrate_memory(
-        &self,
-        writer: &mut Writer<'_>,
-        files: &Files,
-        redactor: &Redactor,
-        now: OffsetDateTime,
-    ) -> Result<()> {
-        let plan = migrate::plan(&files.legacy, now.date());
-        self.open_migrated_claims(&plan.working, redactor, now)?;
-        let path = self.memory_dir();
-        let mut commit = MemoryCommit::default();
-        for item in &plan.now {
-            if !files.now.iter().any(|n| n.stem == item.stem) {
-                commit.ops.push(now_op(&path, item)?);
-            }
-        }
-        for item in &plan.milestones {
-            if !files.milestones.iter().any(|m| m.stem == item.stem) {
-                commit.ops.push(milestone_op(&path, item)?);
-            }
-        }
-        for (item, kind, text, sources) in &plan.history {
-            commit.history.push(HistoryRow {
-                item: item.clone(),
-                kind: (*kind).to_owned(),
-                text: redactor.mask(text),
-                sources: sources.clone(),
-                removed_at: now,
-            });
-        }
-        commit.links.clone_from(&plan.links);
-        for id in &plan.remove {
-            commit.ops.push(FileOp {
-                path: format!("{id}{RECORD_EXT}"),
-                content: None,
-            });
-        }
-        self.commit_memory(writer, &commit, now)?;
+        // A format-24 `m-<n>.md` operation a journal from before phase 8
+        // left is applied but not read: the next store write archives the file.
         Ok(())
     }
 
     /// Plan a pass window's memory under the lock the caller holds, for
-    /// the session `record` (§15.5), after any open journal is replayed and
-    /// `m-<n>` items migrated: each draft's quote checked again
+    /// the session `record` (§15.5), after any open journal is replayed:
+    /// each draft's quote checked again
     /// against its turn and its texts against the redactor, then planned
     /// against the current files and this session's pending candidates
     /// ([`memory::plan`]). A file whose content would not change is not
@@ -843,7 +766,7 @@ impl Store {
         }
         let session = record.id.clone();
         let path = self.memory_dir();
-        let files = self.prepare_memory(writer, redactor, record.updated)?;
+        let files = self.prepare_memory(writer)?;
         let files = &files;
         let planned = (|| -> Result<(MemoryCommit, MemoryWritten)> {
             let mut written = MemoryWritten::default();
@@ -951,7 +874,6 @@ impl Store {
         id: &str,
         session: SessionId,
         author: AuthorName,
-        redactor: &Redactor,
         now: OffsetDateTime,
     ) -> Result<(NowItem, bool)> {
         check_agent_author(&author)?;
@@ -959,7 +881,7 @@ impl Store {
         self.write(|| {
             let path = self.memory_dir();
             let stem = bare(id).to_owned();
-            let ((item, changed), _) = self.memory_write(redactor, now, |_, files| {
+            let ((item, changed), _) = self.memory_write(now, |_, files| {
                 let Some(mut item) = files.now.iter().find(|n| n.stem.as_str() == stem).cloned()
                 else {
                     if files.milestones.iter().any(|m| m.stem.as_str() == stem) {
@@ -1026,33 +948,6 @@ impl Store {
                 });
             }
         }
-        for item in &mut files.legacy {
-            let before = item.occurrences.len();
-            item.occurrences.retain(|o| &o.session != session);
-            let source_removed = item.occurrences.len() != before;
-            let acknowledged = item
-                .acknowledged
-                .as_ref()
-                .is_some_and(|a| &a.session == session);
-            if source_removed || acknowledged {
-                if acknowledged {
-                    item.acknowledged = None;
-                }
-                if source_removed && item.occurrences.is_empty() {
-                    item.status = crate::memory::legacy::MemoryStatus::Retired;
-                    item.statement.clear();
-                    item.retirement_reason = None;
-                }
-                let rel = format!("{}.md", item.id);
-                let path = dir.join(&rel);
-                let bytes = format::encode_memory(&path, item)?;
-                let content = String::from_utf8(bytes).map_err(|e| Error::corrupt(&path, e))?;
-                commit.ops.push(FileOp {
-                    path: rel,
-                    content: Some(content),
-                });
-            }
-        }
         let changed = writer.forget_session(session)?;
         let journal = self.commit_memory(&mut writer, &commit, now)?;
         let scrubbed = writer.scrub_journal(journal.as_ref(), |op| {
@@ -1062,22 +957,17 @@ impl Store {
             };
             let path = self.op_path(&op.path)?;
             if let Some(stem) = stem.strip_prefix("now/") {
-                let item = format::decode_now(&path, content.as_bytes(), stem)?;
+                let item = codec::decode_now(&path, content.as_bytes(), stem)?;
                 return Ok(item.sources.contains(session)
                     || item.raised.as_ref().is_some_and(|r| &r.session == session));
             }
             if let Some(stem) = stem.strip_prefix("milestones/") {
-                return Ok(format::decode_milestone(&path, content.as_bytes(), stem)?
+                return Ok(codec::decode_milestone(&path, content.as_bytes(), stem)?
                     .sources
                     .contains(session));
             }
             if stem.starts_with("m-") {
-                let item = format::decode_memory(&path, content.as_bytes(), stem)?;
-                return Ok(item.occurrences.iter().any(|o| &o.session == session)
-                    || item
-                        .acknowledged
-                        .as_ref()
-                        .is_some_and(|a| &a.session == session));
+                return Ok(content.contains(session.as_str()));
             }
             Ok(false)
         })?;
@@ -1096,7 +986,6 @@ impl Store {
         &self,
         id: &str,
         author: AuthorName,
-        redactor: &Redactor,
         now: OffsetDateTime,
     ) -> Result<MemoryShown> {
         check_agent_author(&author)?;
@@ -1109,7 +998,7 @@ impl Store {
         self.prepare_dir(&self.root)?;
         self.write(|| {
             let stem = bare(id).to_owned();
-            let (shown, journal) = self.memory_write(redactor, now, |_, files| {
+            let (shown, journal) = self.memory_write(now, |_, files| {
                 let (shown, op) = if let Some(item) =
                     files.now.iter().find(|n| n.stem.as_str() == stem)
                 {
@@ -1151,15 +1040,10 @@ impl Store {
     /// # Errors
     ///
     /// `revision_not_found`, and store failures.
-    pub fn restore_profile(
-        &self,
-        n: i64,
-        redactor: &Redactor,
-        now: OffsetDateTime,
-    ) -> Result<Option<i64>> {
+    pub fn restore_profile(&self, n: i64, now: OffsetDateTime) -> Result<Option<i64>> {
         self.prepare_dir(&self.root)?;
         self.write(|| {
-            let (_, journal) = self.memory_write(redactor, now, |writer, files| {
+            let (_, journal) = self.memory_write(now, |writer, files| {
                 let revision = writer.revision(n)?.ok_or_else(|| {
                     refusal(
                         WriteRefusal::RevisionNotFound,
@@ -1192,11 +1076,7 @@ impl Store {
     /// # Errors
     ///
     /// A session or entry file that does not parse, and store failures.
-    pub fn profile_inputs(
-        &self,
-        redactor: &Redactor,
-        now: OffsetDateTime,
-    ) -> Result<ProfileInputs> {
+    pub fn profile_inputs(&self, now: OffsetDateTime) -> Result<ProfileInputs> {
         self.prepare_dir(&self.root)?;
         self.write(|| {
             let config = self.config()?;
@@ -1210,7 +1090,7 @@ impl Store {
             }
             let records = loaded.records;
             let today = now.date();
-            let (inputs, _) = self.memory_write(redactor, now, |writer, files| {
+            let (inputs, _) = self.memory_write(now, |writer, files| {
                 let (latest, closed) = writer.revisions()?;
                 let cursor = writer.cursor()?;
                 let file_sha = files.profile.as_deref().map(sha256);
@@ -1361,7 +1241,7 @@ impl Store {
 
         let path = self.memory_dir();
         let masks = |text: &str| redactor.mask(text) != text;
-        let (written, journal) = self.memory_write(redactor, now, |writer, files| {
+        let (written, journal) = self.memory_write(now, |writer, files| {
             let (latest, closed) = writer.revisions()?;
             let basis = Basis {
                 latest: latest.as_ref().map(|r| r.n),
@@ -1496,46 +1376,5 @@ impl Store {
         written.revision = journal.and_then(|j| j.revision);
         Ok(written)
             })
-    }
-
-    /// Open the `preferences` claims migrated `working` items earn
-    /// (§15.11): an active item whose quote fires that tag's capture
-    /// trigger is a standing rule, offered with its quote for the user to
-    /// settle. A claim already opened for the item (a crash before its
-    /// files were removed) is not opened again.
-    fn open_migrated_claims(
-        &self,
-        working: &[MemoryItem],
-        redactor: &Redactor,
-        now: OffsetDateTime,
-    ) -> Result<()> {
-        let config = self.config()?;
-        let Some(tag) = config
-            .tags
-            .tags()
-            .iter()
-            .find(|t| t.name.as_str() == "preferences")
-        else {
-            return Ok(());
-        };
-        let mut candidates = Vec::new();
-        for item in working {
-            let Some(occurrence) = item.latest_occurrence() else {
-                continue;
-            };
-            let Some(fired) = crate::pass::fire(tag, &occurrence.quote) else {
-                continue;
-            };
-            candidates.push((
-                item.id.to_string(),
-                occurrence.clone(),
-                item.statement.clone(),
-                fired,
-            ));
-        }
-        if candidates.is_empty() {
-            return Ok(());
-        }
-        self.open_memory_claims(&tag.name, &candidates, redactor, now)
     }
 }

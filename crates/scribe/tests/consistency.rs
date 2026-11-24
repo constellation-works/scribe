@@ -45,7 +45,7 @@ fn entry_file(
     let tag = id.rsplit_once('-').unwrap().0;
     format!(
         "---
-format: 1
+format: 31
 kind: entry
 id: {id}
 tag: {tag}
@@ -55,13 +55,26 @@ topics: []
 related: []
 provider: claude-code
 host: host
+author: {{kind: user, name: user}}
+updated_by: null
 created: {created}
 updated: {created}
+inactive_since: null
 said: \"#scribe {tag}: {content}\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: {created}, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
 superseded_by: null
 review_after: {review}
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+removal_instruction: null
+stated_by: null
+outcome: null
 ---
 {content}
 ",
@@ -119,15 +132,10 @@ impl Setup {
     }
 
     fn entry(&self, id: &str, created: &str, content: &str, status: &str, review: Option<&str>) {
-        let tag = id.rsplit_once('-').unwrap().0;
-        let dir = self.fx.root().join("entries").join(tag);
-        std::fs::create_dir_all(&dir).unwrap();
-        for d in [self.fx.root(), self.fx.root().join("entries"), dir.clone()] {
-            make_private(&d);
-        }
-        let file = dir.join(format!("{id}.md"));
-        std::fs::write(&file, entry_file(id, created, content, status, review)).unwrap();
-        make_private(&file);
+        support::seed_records(
+            &self.fx.root(),
+            &[&entry_file(id, created, content, status, review)],
+        );
     }
 
     /// The fake `claude`: counts its calls and answers `body` as
@@ -243,18 +251,37 @@ impl Setup {
     }
 
     fn write_proposals(&self, proposals: &Value) {
-        let file = self.fx.root().join("proposals.json");
-        let body = json!({"format": 1, "proposals": proposals});
-        std::fs::write(&file, format!("{body:#}\n")).unwrap();
-        make_private(&file);
+        seed_proposals(&self.fx.root(), proposals);
     }
 }
 
-/// Moves the seeded files into `scribe.db`, then renames its `segments`
-/// table away so any later read of the sessions fails (`store_database`).
+/// Add `proposals` (format-31 shape; a candidate's `context` defaults to
+/// null) to the store at `root`.
+fn seed_proposals(root: &Path, proposals: &Value) {
+    let mut proposals = proposals.clone();
+    for p in proposals.as_array_mut().unwrap() {
+        if let Some(c) = p.get_mut("candidate").and_then(Value::as_object_mut) {
+            c.entry("context").or_insert(Value::Null);
+            c.entry("statement").or_insert(Value::Null);
+            c.entry("subject").or_insert(Value::Null);
+        }
+        let o = p.as_object_mut().unwrap();
+        o.entry("candidate").or_insert(Value::Null);
+        o.entry("instruction").or_insert(Value::Null);
+        o.entry("author")
+            .or_insert(json!({"kind": "scribe", "name": "consistency"}));
+        for field in ["updated_by", "settled_author", "closed_reason"] {
+            o.entry(field).or_insert(Value::Null);
+        }
+    }
+    let body = json!({"format": 31, "proposals": proposals}).to_string();
+    support::seed_records(root, &[&body]);
+}
+
+/// Renames the `segments` table of `scribe.db` away so any later read of
+/// the sessions fails (`store_database`).
 /// [`mend_sessions`] puts it back so the records can be read.
 fn break_sessions(s: &Setup) {
-    s.fx.ok(&["store", "migrate"]);
     support::sql(
         &s.fx.root(),
         "ALTER TABLE segments RENAME TO segments_gone;",
@@ -563,7 +590,7 @@ fn rfc3339(at: time::OffsetDateTime) -> String {
         .unwrap()
 }
 
-/// One format-4 session record: started `days_ago`, its one segment's last
+/// One format-31 session record: started `days_ago`, its one segment's last
 /// message an hour later, `updated` `updated_ago` days ago.
 struct SessionFile<'a> {
     id: &'a str,
@@ -582,7 +609,7 @@ impl Setup {
         let last = rfc3339(started + time::Duration::hours(1));
         let text = format!(
             "---
-format: 4
+format: 31
 kind: session
 id: {id}
 status: final
@@ -590,6 +617,7 @@ active: true
 keep_active: {keep}
 active_change: null
 cataloged_by: null
+rebuilt_by: null
 project: scribe
 topics: [{topics}]
 related: []
@@ -628,24 +656,7 @@ Ship it.
             updated = rfc3339(days_ago(s.updated_ago)),
             segment = s.segment,
         );
-        let dir = self
-            .fx
-            .root()
-            .join("sessions")
-            .join(format!("{:04}", started.year()))
-            .join(format!("{:02}", u8::from(started.month())));
-        std::fs::create_dir_all(&dir).unwrap();
-        for d in [
-            self.fx.root(),
-            self.fx.root().join("sessions"),
-            dir.parent().unwrap().to_path_buf(),
-            dir.clone(),
-        ] {
-            make_private(&d);
-        }
-        let file = dir.join(format!("{}.md", s.id));
-        std::fs::write(&file, text).unwrap();
-        make_private(&file);
+        support::seed_records(&self.fx.root(), &[&text]);
     }
 
     fn session_json(&self, id: &str) -> Value {
@@ -680,8 +691,6 @@ Ship it.
             json!({"type": "result", "subtype": "success", "is_error": false,
                    "result": "", "structured_output": body})
         };
-        // The sessions move into scribe.db first, so the row exists to damage.
-        self.fx.ok(&["store", "migrate"]);
         let root = self.fx.root();
         let hold = support::Hold::new(&self.fx.home(), move || {
             support::sql(
@@ -851,7 +860,8 @@ fn a_scan_deactivates_old_sessions_and_removed_features_but_never_a_pinned_one()
         .filter(|l| l.starts_with("deactivated"))
         .map(str::to_owned)
         .collect();
-    assert_eq!(rows, ["deactivated\ts-3\tremoved\tpreferences-9\t-"]);
+    // `s-<n>` is the row number, so s-b-digest, seeded fourth, is `s-4`.
+    assert_eq!(rows, ["deactivated\ts-4\tremoved\tpreferences-9\t-"]);
 }
 
 #[test]
@@ -1011,21 +1021,15 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
             }));
         }
     }
-    std::fs::create_dir_all(s.fx.root()).unwrap();
-    make_private(&s.fx.root());
     s.write_proposals(&json!(initial));
-    // Write format 11 directly for the candidate fixtures.
-    let proposals_file = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals_file,
-        json!({"format": 11, "proposals": initial}).to_string(),
-    )
-    .unwrap();
-    make_private(&proposals_file);
 
     let report = s.scan();
     assert_eq!(s.calls(), 0, "retired-tag cleanup needs no model call");
-    assert!(!s.fx.root().join("entries").exists(), "no entry is written");
+    let entries = s.json(&["entry", "list", "--json"]);
+    assert!(
+        entries["entries"].as_array().unwrap().is_empty(),
+        "no entry is written"
+    );
     assert_eq!(report["closed"].as_array().unwrap().len(), 16, "{report}");
     for p in report["closed"].as_array().unwrap() {
         assert_eq!(p["state"], "rejected");
@@ -1093,8 +1097,6 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
         fx,
         path,
     };
-    std::fs::create_dir_all(s.fx.root()).unwrap();
-    make_private(&s.fx.root());
     let proposal = json!({
         "id": "p-1",
         "kind": "candidate",
@@ -1129,13 +1131,7 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
         "settled_author": null,
         "closed_reason": null
     });
-    let proposals_file = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals_file,
-        json!({"format": 11, "proposals": [proposal]}).to_string(),
-    )
-    .unwrap();
-    make_private(&proposals_file);
+    s.write_proposals(&json!([proposal]));
 
     // The seeded files move into scribe.db first, then a missing sessions
     // table is invisible to the close (that reads proposals only) and fails
@@ -1229,14 +1225,10 @@ fn consistency_scan_with_custom_tag_config_keeps_open_preferences_candidates() {
             "closed_reason": null
         })
     };
-    let proposals_file = s.fx.root().join("proposals.json");
-    std::fs::write(
-        &proposals_file,
-        json!({"format": 11, "proposals": [candidate(1, "preferences"), candidate(2, "decisions")]})
-            .to_string(),
-    )
-    .unwrap();
-    make_private(&proposals_file);
+    s.write_proposals(&json!([
+        candidate(1, "preferences"),
+        candidate(2, "decisions")
+    ]));
 
     let report = s.scan();
     assert_eq!(s.calls(), 0);
@@ -1267,8 +1259,6 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
         fx,
         path,
     };
-    std::fs::create_dir_all(s.fx.root()).unwrap();
-    make_private(&s.fx.root());
     // Active entries:
     // - preferences-1 will be superseded when p-1 is reapplied
     // - preferences-2 covers approved candidate p-2 (closed as covered)
@@ -1304,9 +1294,7 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
             "cwd": "/work/scribe"
         })
     };
-    let proposals_file = s.fx.root().join("proposals.json");
     let doc = json!({
-        "format": 11,
         "proposals": [
             {
                 "id": "p-1",
@@ -1381,8 +1369,7 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
             }
         ]
     });
-    std::fs::write(&proposals_file, doc.to_string()).unwrap();
-    make_private(&proposals_file);
+    s.write_proposals(&doc["proposals"]);
 
     // A missing segments table fails deactivate_sessions AFTER
     // reapply_approved, close_retired_candidates, and open_proposals have all

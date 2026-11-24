@@ -86,6 +86,8 @@ impl Setup {
 #[test]
 fn last_session_summary_is_the_newest_record_verbatim_without_a_model_call() {
     let s = Setup::new();
+    // The first open of scribe.db creates its empty -wal; snapshot after it.
+    s.stored_session(NEWEST);
     let before = snapshot(&s.fx.root());
     let v = s.json(&["can you fetch me last session summary?"], &[]);
     assert_eq!(v["status"], "record");
@@ -103,6 +105,8 @@ fn last_session_summary_is_the_newest_record_verbatim_without_a_model_call() {
 #[test]
 fn a_question_that_is_not_a_lookup_is_answered_from_checked_evidence() {
     let s = Setup::new();
+    // The first open of scribe.db creates its empty -wal; snapshot after it.
+    s.stored_session(NEWEST);
     let before = snapshot(&s.fx.root());
     let v = s.json(&["how do we merge agent PRs?"], &[]);
     assert_eq!(s.model_calls(), 1);
@@ -161,14 +165,16 @@ fn nothing_matching_is_no_record_without_a_model_call() {
 #[test]
 fn a_term_returns_the_sessions_that_define_it_without_a_model_call() {
     let s = Setup::new();
-    let path = s.fx.root().join(format!("sessions/2026/11/{NEWEST}.md"));
-    let stored = std::fs::read_to_string(&path).unwrap();
+    let out = s.fx.home().join("export");
+    s.fx.ok(&["export", out.to_str().unwrap(), "--as", "markdown"]);
+    let stored =
+        std::fs::read_to_string(out.join(format!("sessions/2026/11/{NEWEST}.md"))).unwrap();
     let with_term = stored.replace(
         "terms:\n",
-        "terms:\n  - {term: graduate to level 4, said: \"graduate to level 4 means a crew merges without review\", message: 9a1b2c3d-0000-4000-8000-000000000003}\n",
+        "terms:\n- {term: graduate to level 4, said: \"graduate to level 4 means a crew merges without review\", message: 9a1b2c3d-0000-4000-8000-000000000003}\n",
     );
     assert_ne!(stored, with_term);
-    std::fs::write(&path, with_term).unwrap();
+    support::seed_records(&s.fx.root(), &[&with_term]);
     let v = s.json(&["graduate to level 4"], &[]);
     assert_eq!(v["status"], "record");
     assert_eq!(v["lookup"], "term");

@@ -30,6 +30,9 @@ unicode-width = { workspace = true }
 rustix = { workspace = true, features = ["fs", "system", "termios"] }
 
 [dev-dependencies]
+# Tests stage entries and session records in `scribe.db` with
+# `Store::seed_records`.
+scribe-core = { workspace = true, features = ["test-support"] }
 # Tests edit `scribe.db` by hand to stage states no command writes.
 rusqlite = { workspace = true }
 serde_json = { workspace = true }

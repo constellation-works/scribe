@@ -939,9 +939,6 @@ fn store_with_candidates() -> Fixture {
 /// [`store_with_candidates`], both claims opened at `opened_at`.
 fn store_with_candidates_opened_at(opened_at: &str) -> Fixture {
     let fx = Fixture::new();
-    let root = fx.root();
-    std::fs::create_dir_all(&root).unwrap();
-    make_private(&root);
     let cite = |message: &str| {
         json!({"session": "s-1", "message": message, "at": "2026-11-15T00:00:00Z",
             "prompt_sha256": "0".repeat(64), "line": 1, "cwd": "/work/scribe"})
@@ -951,7 +948,7 @@ fn store_with_candidates_opened_at(opened_at: &str) -> Fixture {
             "id": id, "kind": "candidate", "older": older, "newer": null,
             "candidate": {
                 "tag": "preferences", "role": role, "quote": quote,
-                "statement": statement,
+                "context": null, "statement": statement,
                 "subject": statement.map(|_| "code reviews"),
                 "evidence": null, "cite": cite(&format!("turn-{id}")),
                 "project": "scribe", "provider": "claude-code", "host": "host",
@@ -964,17 +961,12 @@ fn store_with_candidates_opened_at(opened_at: &str) -> Fixture {
             "instruction": null
         })
     };
-    let path = root.join("proposals.json");
-    std::fs::write(
-        &path,
-        json!({"format": 14, "proposals": [
-            candidate("p-1", "preferences-1", "user", CLAIM_QUOTE, Some(CLAIM_STATEMENT)),
-            candidate("p-2", "preferences-2", "assistant", ASSISTANT_QUOTE, None),
-        ]})
-        .to_string(),
-    )
-    .unwrap();
-    make_private(&path);
+    let proposals = json!({"format": 31, "proposals": [
+        candidate("p-1", "preferences-1", "user", CLAIM_QUOTE, Some(CLAIM_STATEMENT)),
+        candidate("p-2", "preferences-2", "assistant", ASSISTANT_QUOTE, None),
+    ]})
+    .to_string();
+    support::seed_records(&fx.root(), &[&proposals]);
     fx
 }
 
@@ -1119,7 +1111,12 @@ fn an_instructed_rejection_writes_no_entry_and_closes_the_claim_instructed() {
         assert_eq!(p["instruction"]["message"], "u-1");
         assert_eq!(p["instruction"]["quote"], words);
     }
-    assert!(!fx.root().join("entries").exists(), "no entry is written");
+    let entries: Value =
+        serde_json::from_slice(&ok(&fx, &["entry", "list", "--json"]).stdout).unwrap();
+    assert!(
+        entries["entries"].as_array().unwrap().is_empty(),
+        "no entry is written"
+    );
     // An approval after it is refused: the rejection stands.
     let approve = "approve p-1 after all";
     claude(

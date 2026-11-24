@@ -6,8 +6,10 @@
 //! Pure values with validating constructors (STD-02 R14) and no I/O
 //! (STD-02 R5): `scripts/check-dependency-direction.sh` rejects `std::fs`,
 //! `std::net`, `std::process` and `crate::store` here. The serde shapes are
-//! read from the persisted frontmatter, so a field is never renamed or
-//! retyped without a store format bump (`store/format.rs::UPGRADES`).
+//! what `scribe.db` rows hold and exports write as frontmatter, so a field
+//! is never renamed or retyped without a database migration
+//! (`store/db.rs::MIGRATIONS`) and, for an exported shape, a `FORMAT` bump
+//! (`store/codec.rs`).
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;

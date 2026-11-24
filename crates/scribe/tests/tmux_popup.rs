@@ -330,6 +330,8 @@ fn the_popups_commands_run_the_started_binary_not_the_one_on_path() {
 fn tmux_writes_nothing() {
     let fx = Fixture::new();
     fx.seed();
+    // The first open of scribe.db leaves an empty `scribe.db-wal`.
+    fx.ok(&["session", "list", "--json"]);
     let before = support::snapshot(&fx.root());
     let (mut cmd, _cap) = popup(&fx);
     let out = cmd
@@ -728,10 +730,10 @@ const STATED_QUOTE: &str = "yeah, for the popup just show the newest five, nothi
 /// Scribe's context paragraph of the candidate (2_design.md §15.3).
 const CONTEXT: &str = "The user and the agent were trimming the scribe tmux popup. The user wants it to list only the five newest records.";
 
-/// Replace the fixture's proposals with one open pass candidate carrying
-/// scribe's context beside Daniel's raw quote (format 24).
+/// Add to the fixture's proposals one open pass candidate carrying scribe's
+/// context beside Daniel's raw quote, as a format-31 proposals document in
+/// `scribe.db`.
 fn seed_stated_candidate(fx: &Fixture) {
-    let path = fx.root().join("proposals.json");
     let cite = serde_json::json!({"session":"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02",
         "message":"user-popup", "at":"2026-11-02T00:00:00Z",
         "prompt_sha256":"0".repeat(64), "line":1, "cwd":"/work/scribe"});
@@ -750,12 +752,10 @@ fn seed_stated_candidate(fx: &Fixture) {
         "settled_by":null, "author":{"kind":"scribe", "name":"session-pass"},
         "settled_author":null, "updated_by":null, "closed_reason":null, "instruction":null
     });
-    std::fs::write(
-        &path,
-        serde_json::json!({"format":24, "proposals":[proposal]}).to_string(),
-    )
-    .unwrap();
-    support::make_private(&path);
+    support::seed_records(
+        &fx.root(),
+        &[&serde_json::json!({"format":31, "proposals":[proposal]}).to_string()],
+    );
 }
 
 #[test]
@@ -764,8 +764,12 @@ fn a_candidate_shows_scribes_context_in_its_row_and_preview() {
     fx.seed();
     seed_stated_candidate(&fx);
     let proposals = fields(&rows(&fx, &["proposals", "--year", "2026"], &[]));
-    assert_eq!(proposals[0].1, "p-6");
-    let shown = visible(&proposals[0].2);
+    // The fixture's own open proposal stays beside the seeded candidate.
+    let candidate = proposals
+        .iter()
+        .find(|row| row.1 == "p-6")
+        .expect("the candidate's row");
+    let shown = visible(&candidate.2);
     assert!(
         shown.contains(
             "record preferences-3 after approval: The user and the agent were trimming the scribe tmux popup."

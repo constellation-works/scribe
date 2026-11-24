@@ -1,28 +1,27 @@
 //! Entries, claims, store tags, marks, pickups and the audit log in
-//! `scribe.db` (docs/design/scribe/2_design.md §15.7, §15.11, phase 7):
-//! where they are read from, how their files move in, and their part of
-//! `scribe export`.
+//! `scribe.db` (docs/design/scribe/2_design.md §15.7, phase 7), where they
+//! are read from, the first write's import of the file store's archives,
+//! and their part of `scribe export`.
 //!
-//! - **Reads.** Once `record_kinds` holds the document kinds, every read
-//!   comes from the database; before that, from the format-26 files, with
-//!   today's decoders (kept for the 30-day window). Reads take no lock and
-//!   write nothing (STD-01 R31).
-//! - **The move.** [`Store::import_at_write`] runs at the start of the first
-//!   write's transaction: the sessions (phase 6), then these kinds, every
-//!   file checked before any row is written, each kind's row count checked
-//!   against its files. Audit lines are imported with their own format; a
-//!   torn line is counted and reported, as a read of the log does.
-//! - **Stamps.** After the move, `control.json`, `proposals.json`,
-//!   `tags.json`, `marks.json` and `pickups.json` are empty documents at
-//!   the current format, so an older build refuses the store.
+//! - **Reads.** Every read comes from the database. A root that still holds
+//!   a file store (records in `sessions/`, `entries/`, the JSON documents or
+//!   `audit.jsonl`, and no `scribe.db` they moved into) is refused: this
+//!   build has no file decoder (phase 8). Reads take no lock and write
+//!   nothing (STD-01 R31).
+//! - **The first write.** [`Store::import_at_write`] runs at the start of the
+//!   first write's transaction: it records a new store's kinds as moved,
+//!   imports the `pre-sqlite-*` and `pre-issue-*` archives into the archive
+//!   tables (`archive`), and drains the spooled audit lines.
+//! - **Stamps.** `control.json`, `proposals.json`, `tags.json`, `marks.json`
+//!   and `pickups.json` are empty documents at the current format, so an
+//!   older build refuses the store.
 
 use super::audit::{self, AuditEvent};
 use super::db::{self, Conn as Connection, DB_FILE, docs};
-use super::issue_import;
 use super::write::Move;
 use super::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Skipped, Store, format, fsio, visible,
+    SESSIONS_DIR, Skipped, Store, codec, fsio,
 };
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
@@ -33,108 +32,49 @@ use crate::session::{ControlState, SessionId};
 use crate::tag::StoreTag;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use time::OffsetDateTime;
 
-/// The store tags' file, before the move.
+/// The store tags' stamp file.
 pub(super) const TAGS_FILE: &str = "tags.json";
 
-/// Advisory lock under `locks/` serializing post-commit archive moves and
-/// erasures, including read-modify-writes of proposals and audit files
-/// (STD-03 R6).
-pub(super) const ARCHIVE_FORGET_LOCK: &str = "archive-forget.lock";
+/// The legacy memory items' directory entries (`memory/m-<n>.md`).
+const LEGACY_MEMORY_PREFIX: &str = "m-";
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ForgetMovedStep {
-    /// At entry to `forget_moved_entry`, after the SQLite transaction commits
-    /// and before taking the archive-forget lock.
-    BeforeLock,
-    /// Inside `forget_moved_proposals`, after reading the archived file and
-    /// before writing the updated file.
-    AfterProposalsRead,
-    /// Inside `forget_moved_audit`, after reading the archived file and before
-    /// writing the updated file.
-    AfterAuditRead,
-}
-
-#[cfg(test)]
-type ForgetMovedHook = Box<dyn FnMut(ForgetMovedStep)>;
-
-#[cfg(test)]
-thread_local! {
-    /// Tests: observe or pause steps inside `forget_moved_entry` to drive a
-    /// deterministic interleaving between two independently committed forgets.
-    static FORGET_MOVED_HOOK: std::cell::RefCell<Option<ForgetMovedHook>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(super) struct ForgetMovedHookGuard;
-
-#[cfg(test)]
-impl Drop for ForgetMovedHookGuard {
-    fn drop(&mut self) {
-        FORGET_MOVED_HOOK.with(|h| {
-            h.borrow_mut().take();
-        });
-    }
-}
-
-#[cfg(test)]
-pub(super) fn install_forget_moved_hook(
-    hook: impl FnMut(ForgetMovedStep) + 'static,
-) -> ForgetMovedHookGuard {
-    FORGET_MOVED_HOOK.with(|h| {
-        *h.borrow_mut() = Some(Box::new(hook));
-    });
-    ForgetMovedHookGuard
-}
-
-#[cfg(test)]
-fn notify_forget_moved(step: ForgetMovedStep) {
-    let mut hook = FORGET_MOVED_HOOK.with(|h| h.borrow_mut().take());
-    if let Some(f) = hook.as_mut() {
-        f(step);
-    }
-    FORGET_MOVED_HOOK.with(|h| {
-        if h.borrow().is_none() {
-            *h.borrow_mut() = hook;
-        }
-    });
-}
-
-/// What `scribe store migrate`, or a write's own move, moved into
-/// `scribe.db`.
+/// What `scribe store migrate`, or a write's own import, did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Moved {
-    /// Session records imported.
+    /// Session records imported (always 0 since phase 8: only archives are
+    /// imported).
     pub sessions: usize,
-    /// Switches imported, those of sessions with a record included.
+    /// Switches imported (always 0 since phase 8).
     pub switches: usize,
-    /// Codex cursors imported.
+    /// Codex cursors imported (always 0 since phase 8).
     pub cursors: usize,
-    /// Rebuild checkpoints imported (only a write's own move imports one;
-    /// `store migrate` refuses while one waits).
+    /// Rebuild checkpoints imported (always 0 since phase 8).
     pub checkpoints: usize,
-    /// Entries imported.
+    /// Entries imported (always 0 since phase 8).
     pub entries: usize,
-    /// Claims imported.
+    /// Claims imported (always 0 since phase 8).
     pub claims: usize,
-    /// Store tags imported.
+    /// Store tags imported (always 0 since phase 8).
     pub tags: usize,
-    /// Annotation marks imported.
+    /// Annotation marks imported (always 0 since phase 8).
     pub marks: usize,
-    /// Pickups imported.
+    /// Pickups imported (always 0 since phase 8).
     pub pickups: usize,
-    /// Audit lines imported, spooled ones included.
+    /// Spooled audit lines drained into the table.
     pub audit_lines: usize,
-    /// Audit lines that did not parse, so were not imported.
+    /// Audit lines that did not parse (always 0 since phase 8).
     pub audit_torn: usize,
-    /// Where the files went, relative to the root; `None` until they move,
-    /// or when there were none.
+    /// Where files went (always `None` since phase 8: archives are
+    /// imported, then removed).
     pub moved_to: Option<String>,
+    /// `pre-sqlite-*` and `pre-issue-*` directories imported into the
+    /// archive tables.
+    pub archives: usize,
+    /// Archived records imported.
+    pub archived: usize,
 }
 
 impl Store {
@@ -168,7 +108,8 @@ impl Store {
     /// refuses the whole load.
     pub(super) fn load_entries(&self) -> Result<(Vec<Entry>, Vec<Skipped>)> {
         let Some(rows) = self.read_db(docs::entries)? else {
-            return self.load_entry_files();
+            self.refuse_file_store()?;
+            return Ok((Vec::new(), Vec::new()));
         };
         let mut entries = Vec::new();
         let mut skipped = Vec::new();
@@ -226,8 +167,8 @@ impl Store {
 
     /// The entry with this id.
     pub fn entry(&self, id: &EntryId) -> Result<Entry> {
+        let path = self.root.join(DB_FILE);
         if let Some(rows) = self.read_db(docs::entries)? {
-            let path = self.root.join(DB_FILE);
             for row in rows {
                 match row {
                     Ok(entry) if &entry.id == id => return Ok(entry),
@@ -235,121 +176,49 @@ impl Store {
                     Ok(_) | Err(_) => {}
                 }
             }
-            return Err(Error::EntryNotFound {
-                id: id.clone(),
-                path,
-            });
+        } else {
+            self.refuse_file_store()?;
         }
-        let path = self.entry_path(id);
-        let not_found = || Error::EntryNotFound {
+        Err(Error::EntryNotFound {
             id: id.clone(),
-            path: path.clone(),
-        };
-        let tag_dir = self.root.join(ENTRIES_DIR).join(id.tag().as_str());
-        if !self.root_exists()?
-            || !fsio::inspect_subdir(&self.root.join(ENTRIES_DIR))?
-            || !fsio::inspect_subdir(&tag_dir)?
-            || !fsio::inspect_file(&path)?
-        {
-            return Err(not_found());
-        }
-        format::decode_entry(
-            &path,
-            &fsio::read(&path)?,
-            &id.to_string(),
-            id.tag().as_str(),
-        )
-    }
-
-    /// Every entry file of a file store, plus the files that did not parse.
-    fn load_entry_files(&self) -> Result<(Vec<Entry>, Vec<Skipped>)> {
-        let mut entries = Vec::new();
-        let mut skipped = Vec::new();
-        let dir = self.root.join(ENTRIES_DIR);
-        if !self.root_exists()? || !fsio::inspect_subdir(&dir)? {
-            return Ok((entries, skipped));
-        }
-        for tag in visible(fsio::list_dir(&dir)?) {
-            let tag_dir = dir.join(&tag);
-            if !fsio::inspect_subdir(&tag_dir)? {
-                continue;
-            }
-            for name in visible(fsio::list_dir(&tag_dir)?) {
-                let Some(stem) = name.strip_suffix(RECORD_EXT) else {
-                    continue;
-                };
-                let path = tag_dir.join(&name);
-                if !fsio::inspect_file(&path)? {
-                    continue;
-                }
-                match format::decode_entry(&path, &fsio::read(&path)?, stem, &tag) {
-                    Ok(entry) => entries.push(entry),
-                    Err(error @ Error::Corrupt { .. }) => skipped.push(Skipped { path, error }),
-                    Err(other) => return Err(other),
-                }
-            }
-        }
-        Ok((entries, skipped))
+            path,
+        })
     }
 
     /// Every proposal, by id; none when there are none.
     pub fn proposals(&self) -> Result<Vec<Proposal>> {
-        let mut proposals = match self.read_db(docs::claims)? {
-            Some(claims) => claims,
-            None => self.proposal_file()?,
-        };
+        let mut proposals = self.read_or_empty(docs::claims)?;
         proposals.sort_by_key(|p| p.id);
         Ok(proposals)
     }
 
-    fn proposal_file(&self) -> Result<Vec<Proposal>> {
-        let path = self.root.join(PROPOSALS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_proposals(&path, &fsio::read(&path)?)
-    }
-
     /// The store tags (`scribe tag add`), without writing.
     pub fn store_tags(&self) -> Result<Vec<StoreTag>> {
-        let mut tags = match self.read_db(docs::tags)? {
-            Some(tags) => tags,
-            None => self.store_tag_file()?,
-        };
+        let mut tags = self.read_or_empty(docs::tags)?;
         tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
         Ok(tags)
     }
 
-    fn store_tag_file(&self) -> Result<Vec<StoreTag>> {
-        let path = self.root.join(TAGS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_tags(&path, &fsio::read(&path)?)
-    }
-
     /// Every pickup, oldest first; none for a missing store. Reads only.
     pub fn pickups(&self) -> Result<Vec<Pickup>> {
-        if let Some(pickups) = self.read_db(docs::pickups)? {
-            return Ok(pickups);
-        }
-        let path = self.root.join(PICKUPS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_pickups(&path, &fsio::read(&path)?)
+        self.read_or_empty(docs::pickups)
     }
 
     /// Every marker outcome, in order.
     pub(super) fn all_marks(&self) -> Result<Vec<MarkRecord>> {
-        if let Some(marks) = self.read_db(docs::marks)? {
-            return Ok(marks);
+        self.read_or_empty(docs::marks)
+    }
+
+    /// `f` on the document tables, or nothing for a store with no
+    /// database yet; a file store is refused.
+    fn read_or_empty<T>(&self, f: impl Fn(&Connection, &Path) -> Result<Vec<T>>) -> Result<Vec<T>> {
+        match self.read_db(f)? {
+            Some(found) => Ok(found),
+            None => {
+                self.refuse_file_store()?;
+                Ok(Vec::new())
+            }
         }
-        let path = self.root.join(MARKS_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(Vec::new());
-        }
-        format::decode_marks(&path, &fsio::read(&path)?)
     }
 
     /// The audit log's events, oldest first, the spooled ones last, and how
@@ -370,18 +239,17 @@ impl Store {
         if !self.root_exists()? {
             return Ok((Vec::new(), 0));
         }
-        let (mut lines, mut torn, drained) = match self.read_db(|conn, path| {
+        let (mut lines, drained) = match self.read_db(|conn, path| {
             let drained = docs::spooled_names(conn, path)?;
             Ok((docs::audit(conn, path)?, drained))
         })? {
-            Some((lines, drained)) => (lines, 0, drained),
+            Some(found) => found,
             None => {
-                let (lines, torn) = self.audit_file()?;
-                (lines, torn, Vec::new())
+                self.refuse_file_store()?;
+                (Vec::new(), Vec::new())
             }
         };
-        let (spooled, spool_torn) = self.spooled_audit()?;
-        torn += spool_torn;
+        let (spooled, torn) = self.spooled_audit()?;
         lines.extend(
             spooled
                 .into_iter()
@@ -389,25 +257,6 @@ impl Store {
                 .map(|(_, format, event)| (format, event)),
         );
         Ok((lines, torn))
-    }
-
-    /// `audit.jsonl`'s lines with their formats, and how many did not parse.
-    fn audit_file(&self) -> Result<(Vec<(u32, AuditEvent)>, usize)> {
-        let (lines, torn) = self.audit_file_for_import()?;
-        Ok((
-            lines.into_iter().map(|l| (l.format, l.event)).collect(),
-            torn,
-        ))
-    }
-
-    /// `audit.jsonl`'s lines with their formats and idempotency keys, and
-    /// how many did not parse.
-    fn audit_file_for_import(&self) -> Result<(Vec<audit::ImportedLine>, usize)> {
-        let path = self.root.join(AUDIT_FILE);
-        if !fsio::inspect_file(&path)? {
-            return Ok((Vec::new(), 0));
-        }
-        audit::decode_for_import(&path, &fsio::read(&path)?)
     }
 
     /// Write `entry` in the write under way. A new entry never replaces
@@ -456,157 +305,111 @@ impl Store {
         })
     }
 
-    /// At the start of a write's transaction: move every kind still in
-    /// files into the database, convert any issue records, and drain the
-    /// spooled audit lines. `store migrate` (`mode`) is refused first when
-    /// there is nothing to move or the move is unsafe.
+    /// At the start of a write's transaction: record a new store's kinds as
+    /// in the database, import the file store's archives (and any files an
+    /// interrupted move left in the root), and drain the spooled audit
+    /// lines. A file store is refused: its records never moved. `store
+    /// migrate` (`mode`) is refused first when there is nothing to import
+    /// or the import is unsafe.
     pub(super) fn import_at_write(&self, mode: Move, now: OffsetDateTime) -> Result<Moved> {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let path = self.root.join(DB_FILE);
-        if mode == Move::ByHand {
-            self.refuse_migrate(&conn)?;
-        }
-        let mut moved = self.import_sessions(mode, now)?;
         let fail = |e| db::db_error("move documents into", &path, e);
-        if !docs::moved(&conn).map_err(fail)? {
-            self.import_documents(&conn, &path, &mut moved)?;
-            // Each kind records the directory its files move to, or none
-            // when it has no files (`record_kinds.moved_to`).
-            let with_files = self.document_files_to_move_aside()?;
-            let archive = super::sessions::moved_dir_name(now);
-            docs::mark_moved(&conn, now, |kind| {
-                with_files
-                    .iter()
-                    .any(|(k, _)| *k == kind)
-                    .then(|| archive.clone())
-            })
-            .map_err(fail)?;
-            self.after(|a| a.aside = true);
-        } else if self.audit_file_present()? {
-            // A line an older build appended after the move, or the
-            // original log left by an interruption before `move_files_aside`:
-            // keyed so already-imported lines are not added twice.
-            let (lines, torn) = self.audit_file_for_import()?;
-            for line in &lines {
-                if docs::put_audit(
-                    &conn,
-                    &path,
-                    line.format,
-                    &line.event,
-                    Some(&line.key),
-                    fail,
-                )? {
-                    moved.audit_lines += 1;
-                }
-            }
-            moved.audit_torn += torn;
-            self.after(|a| a.aside = true);
+        let sessions_moved = db::sessions::moved(&conn).map_err(fail)?;
+        let documents_moved = docs::moved(&conn).map_err(fail)?;
+        let leftovers = self.file_store_items()?;
+        if !(leftovers.is_empty() || sessions_moved && documents_moved) {
+            return Err(self.file_store_error());
         }
-        if self.has_files_to_move_aside()? {
-            self.after(|a| a.aside = true);
+        if mode == Move::ByHand {
+            self.refuse_migrate(&conn, &leftovers)?;
         }
-        if docs::has_pending_archive_forgets(&conn).map_err(fail)? {
-            self.after(|a| a.archive_forgets = true);
-            db::scope::Scope::truncate_later(&self.root);
+        if !sessions_moved {
+            db::sessions::mark_moved(&conn, now, None).map_err(fail)?;
+        }
+        if !documents_moved {
+            docs::mark_moved(&conn, now, |_| None).map_err(fail)?;
+            self.after(|a| a.stamp = true);
+        }
+        let mut moved = Moved::default();
+        let archived = self.import_archives(&conn, now)?;
+        let left = self.import_leftovers(&conn, &leftovers, now)?;
+        moved.archives = archived.archives + left.archives;
+        moved.archived = archived.records + left.records;
+        if !leftovers.is_empty() {
+            self.after(|a| a.stamp = true);
         }
         moved.audit_lines += self.drain_spool(&conn, &path)?;
-        self.convert_issues(&conn, now)?;
         Ok(moved)
     }
 
-    /// Import entries, claims, tags, marks, pickups and audit lines from
-    /// their files, each kind's rows counted against its files. Every file
-    /// must read first: one that does not is the user's to fix or remove.
-    fn import_documents(&self, conn: &Connection, path: &Path, moved: &mut Moved) -> Result<()> {
-        let fail = |e| db::db_error("move documents into", path, e);
-        let (mut entries, skipped) = self.load_entry_files()?;
-        if let Some(bad) = skipped.into_iter().next() {
-            return Err(bad.error);
+    /// Items in the root that only a file store holds: `sessions/`,
+    /// `entries/`, `issues/`, `audit.jsonl`, a JSON document with records
+    /// in it (an empty one is a stamp), the root's Codex lock files and
+    /// legacy `memory/m-<n>.md` items. Read by name and as plain JSON, never
+    /// decoded as records.
+    pub(super) fn file_store_items(&self) -> Result<Vec<String>> {
+        let mut items = Vec::new();
+        if !self.root_exists()? {
+            return Ok(items);
         }
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        for entry in &entries {
-            docs::put_entry(conn, path, entry, true, fail)?;
-        }
-        let claims = self.proposal_file()?;
-        docs::put_claims(conn, path, &[], &claims, fail)?;
-        let mut tags = self.store_tag_file()?;
-        tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
-        docs::put_tags(conn, path, &tags, fail)?;
-        let marks = {
-            let file = self.root.join(MARKS_FILE);
-            if fsio::inspect_file(&file)? {
-                format::decode_marks(&file, &fsio::read(&file)?)?
-            } else {
-                Vec::new()
-            }
-        };
-        docs::put_marks(conn, path, &marks, fail)?;
-        let pickups = {
-            let file = self.root.join(PICKUPS_FILE);
-            if fsio::inspect_file(&file)? {
-                format::decode_pickups(&file, &fsio::read(&file)?)?
-            } else {
-                Vec::new()
-            }
-        };
-        docs::put_pickups(conn, path, &pickups, fail)?;
-        let (lines, torn) = self.audit_file_for_import()?;
-        if torn > 0 {
-            tracing::warn!(
-                torn,
-                "audit.jsonl lines that do not parse were not moved into scribe.db"
-            );
-        }
-        for line in &lines {
-            docs::put_audit(conn, path, line.format, &line.event, Some(&line.key), fail)?;
-        }
-        let counts = [
-            ("entries", entries.len()),
-            ("claims", claims.len()),
-            ("agent_tags", tags.len()),
-            ("marks", marks.len()),
-            ("pickups", pickups.len()),
-            ("audit", lines.len()),
-        ];
-        for (table, files) in counts {
-            if docs::count(conn, table).map_err(fail)? != files {
-                return Err(Error::corrupt(
-                    path,
-                    format!(
-                        "the move found {files} {table} in files but scribe.db holds a different count"
-                    ),
-                ));
+        for dir in [SESSIONS_DIR, ENTRIES_DIR, super::ISSUES_DIR] {
+            if fsio::inspect_subdir(&self.root.join(dir))? {
+                items.push(dir.to_owned());
             }
         }
-        moved.entries = entries.len();
-        moved.claims = claims.len();
-        moved.tags = tags.len();
-        moved.marks = marks.len();
-        moved.pickups = pickups.len();
-        moved.audit_lines += lines.len();
-        moved.audit_torn += torn;
-        Ok(())
-    }
-
-    fn audit_file_present(&self) -> Result<bool> {
-        fsio::inspect_file(&self.root.join(AUDIT_FILE))
-    }
-
-    /// Whether files that now live in the database are still in the root:
-    /// an interrupted move left them.
-    pub(super) fn has_files_to_move_aside(&self) -> Result<bool> {
-        if fsio::inspect_subdir(&self.root.join(SESSIONS_DIR))?
-            || fsio::inspect_subdir(&self.root.join(ENTRIES_DIR))?
-            || self.audit_file_present()?
-        {
-            return Ok(true);
+        if fsio::inspect_file(&self.root.join(AUDIT_FILE))? {
+            items.push(AUDIT_FILE.to_owned());
         }
-        for name in [PROPOSALS_FILE, TAGS_FILE, MARKS_FILE, PICKUPS_FILE] {
+        for name in [
+            CONTROL_FILE,
+            PROPOSALS_FILE,
+            TAGS_FILE,
+            MARKS_FILE,
+            PICKUPS_FILE,
+        ] {
             if self.document_has_content(name)? {
-                return Ok(true);
+                items.push(name.to_owned());
             }
         }
-        self.control_has_content()
+        items.extend(
+            fsio::list_dir(&self.root)?
+                .into_iter()
+                .filter(|n| n.starts_with(".codex-") && n.ends_with(".lock")),
+        );
+        let memory = self.root.join(super::MEMORY_DIR);
+        if fsio::inspect_subdir(&memory)? {
+            for name in fsio::list_dir(&memory)? {
+                if name.starts_with(LEGACY_MEMORY_PREFIX)
+                    && name.ends_with(RECORD_EXT)
+                    && fsio::inspect_file(&memory.join(&name))?
+                {
+                    items.push(format!("{}/{name}", super::MEMORY_DIR));
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    /// Refuse a file store whose records never moved into `scribe.db`.
+    pub(super) fn refuse_file_store(&self) -> Result<()> {
+        if self.file_store_items()?.is_empty() {
+            return Ok(());
+        }
+        let sessions = db::sessions::read_moved(&self.root)?;
+        if sessions && self.documents_moved()? {
+            // Files an interrupted move left beside the database; the next
+            // write archives them.
+            return Ok(());
+        }
+        Err(self.file_store_error())
+    }
+
+    fn file_store_error(&self) -> Error {
+        Error::corrupt(
+            &self.root,
+            "this is a file store whose records never moved into scribe.db, and this build no longer reads one; run `scribe store migrate` with an earlier scribe build, then use this one",
+        )
     }
 
     /// Whether a JSON document holds anything: an empty one is a stamp.
@@ -621,101 +424,6 @@ impl Store {
         Ok(value
             .as_object()
             .is_some_and(|o| o.iter().any(|(k, v)| k != "format" && !is_empty(v))))
-    }
-
-    fn control_has_content(&self) -> Result<bool> {
-        let path = self.root.join(CONTROL_FILE);
-        if !fsio::inspect_file(&path)? {
-            return Ok(false);
-        }
-        let state = self.control_file()?;
-        Ok(!state.sessions.is_empty() || !state.codex_cursors.is_empty())
-    }
-
-    /// Files and directories under the root that `move_files_aside` will
-    /// rename into `pre-sqlite-<date>/`: the session files, then the
-    /// document files.
-    fn files_to_move_aside(&self) -> Result<Vec<String>> {
-        let mut moves = self.session_files_to_move_aside()?;
-        moves.extend(
-            self.document_files_to_move_aside()?
-                .into_iter()
-                .map(|(_, name)| name),
-        );
-        Ok(moves)
-    }
-
-    /// The session files `move_files_aside` renames: `sessions/`,
-    /// `control.json` while it holds a switch or a Codex cursor, and the
-    /// root's `.codex-<id>.lock` files. Empty when the `sessions` record
-    /// kind had no files, so its `moved_to` is `None`.
-    pub(super) fn session_files_to_move_aside(&self) -> Result<Vec<String>> {
-        let mut moves = Vec::new();
-        if fsio::inspect_subdir(&self.root.join(SESSIONS_DIR))? {
-            moves.push(SESSIONS_DIR.to_owned());
-        }
-        if self.control_has_content()? {
-            moves.push(CONTROL_FILE.to_owned());
-        }
-        moves.extend(
-            fsio::list_dir(&self.root)?
-                .into_iter()
-                .filter(|n| n.starts_with(".codex-") && n.ends_with(".lock")),
-        );
-        Ok(moves)
-    }
-
-    /// The document files `move_files_aside` renames, each with the record
-    /// kind its rows came from: `entries/`, and each JSON document or the
-    /// audit log that holds anything.
-    fn document_files_to_move_aside(&self) -> Result<Vec<(&'static str, String)>> {
-        let mut moves = Vec::new();
-        if fsio::inspect_subdir(&self.root.join(ENTRIES_DIR))? {
-            moves.push(("entries", ENTRIES_DIR.to_owned()));
-        }
-        for (kind, name) in [
-            ("claims", PROPOSALS_FILE),
-            ("agent_tags", TAGS_FILE),
-            ("marks", MARKS_FILE),
-            ("pickups", PICKUPS_FILE),
-        ] {
-            if self.document_has_content(name)? {
-                moves.push((kind, name.to_owned()));
-            }
-        }
-        if self.audit_file_present()? {
-            moves.push(("audit", AUDIT_FILE.to_owned()));
-        }
-        Ok(moves)
-    }
-
-    /// Whether the pending write will create `pre-sqlite-<date>/` when its
-    /// post-commit cleanup runs.
-    pub(super) fn will_move_aside(&self) -> Result<bool> {
-        Ok(self.aside_pending() && !self.files_to_move_aside()?.is_empty())
-    }
-
-    /// Move every file that now lives in the database to
-    /// `pre-sqlite-<date>/` (sessions, entries, the JSON documents, the
-    /// audit log, the root's Codex lock files), then write the stamps.
-    /// Moves nothing that is not there, so it finishes an interrupted move.
-    pub(super) fn move_files_aside(&self, now: OffsetDateTime) -> Result<Option<String>> {
-        let moves = self.files_to_move_aside()?;
-        let mut moved_to = None;
-        if !moves.is_empty() {
-            let name = super::sessions::moved_dir_name(now);
-            let dir = self.root.join(&name);
-            self.prepare_subdir(&dir)?;
-            for item in moves {
-                fsio::rename(
-                    &self.root.join(&item),
-                    &super::sessions::unused(&dir.join(&item)),
-                )?;
-            }
-            moved_to = Some(name);
-        }
-        self.write_stamps()?;
-        Ok(moved_to)
     }
 
     /// Rewrite the format stamps, or note it for after the write under way.
@@ -734,22 +442,22 @@ impl Store {
         let control = self.root.join(CONTROL_FILE);
         fsio::write_atomic(
             &control,
-            &format::encode_control(&control, &ControlState::default())?,
+            &codec::encode_control(&control, &ControlState::default())?,
         )?;
         let proposals = self.root.join(PROPOSALS_FILE);
-        fsio::write_atomic(&proposals, &format::encode_proposals(&proposals, &[])?)?;
+        fsio::write_atomic(&proposals, &codec::encode_proposals(&proposals, &[])?)?;
         let tags = self.root.join(TAGS_FILE);
-        fsio::write_atomic(&tags, &format::encode_tags(&tags, &[])?)?;
+        fsio::write_atomic(&tags, &codec::encode_tags(&tags, &[])?)?;
         let marks = self.root.join(MARKS_FILE);
-        fsio::write_atomic(&marks, &format::encode_marks(&marks, &[])?)?;
+        fsio::write_atomic(&marks, &codec::encode_marks(&marks, &[])?)?;
         let pickups = self.root.join(PICKUPS_FILE);
-        fsio::write_atomic(&pickups, &format::encode_pickups(&pickups, &[])?)
+        fsio::write_atomic(&pickups, &codec::encode_pickups(&pickups, &[])?)
     }
 
     /// `scribe export --as markdown` of the documents: one file per entry,
     /// `proposals.json`, `tags.json`, `marks.json`, `pickups.json` and
-    /// `audit.jsonl`, the shapes of today's files, so the export is a file
-    /// store this build reads and `store migrate` moves back in.
+    /// `audit.jsonl`, at the current format: a copy to read and keep, which
+    /// no build reads back as a store.
     pub(super) fn export_documents(
         &self,
         target: &Path,
@@ -764,7 +472,7 @@ impl Store {
                 entry.tag.as_str(),
                 entry.id
             );
-            let bytes = format::encode_entry(&target.join(&rel), entry)?;
+            let bytes = codec::encode_entry(&target.join(&rel), entry)?;
             write(rel, &bytes)?;
         }
         out.entries = entries.len();
@@ -773,23 +481,23 @@ impl Store {
         let path = target.join(PROPOSALS_FILE);
         write(
             PROPOSALS_FILE.to_owned(),
-            &format::encode_proposals(&path, &proposals)?,
+            &codec::encode_proposals(&path, &proposals)?,
         )?;
         out.claims = proposals.len();
         let path = target.join(TAGS_FILE);
         write(
             TAGS_FILE.to_owned(),
-            &format::encode_tags(&path, &self.store_tags()?)?,
+            &codec::encode_tags(&path, &self.store_tags()?)?,
         )?;
         let path = target.join(MARKS_FILE);
         write(
             MARKS_FILE.to_owned(),
-            &format::encode_marks(&path, &self.all_marks()?)?,
+            &codec::encode_marks(&path, &self.all_marks()?)?,
         )?;
         let path = target.join(PICKUPS_FILE);
         write(
             PICKUPS_FILE.to_owned(),
-            &format::encode_pickups(&path, &self.pickups()?)?,
+            &codec::encode_pickups(&path, &self.pickups()?)?,
         )?;
         let (lines, _) = self.audit_lines()?;
         let mut log = Vec::new();
@@ -806,343 +514,20 @@ impl Store {
         Ok(())
     }
 
-    /// Whether any `pre-sqlite-*` moved-aside archive directory exists under
-    /// the store root.
-    fn has_moved_archives(&self) -> Result<bool> {
-        if !self.root_exists()? {
-            return Ok(false);
-        }
-        Ok(fsio::list_dir(&self.root)?
-            .into_iter()
-            .any(|name| name.starts_with(super::sessions::MOVED_PREFIX)))
-    }
-
-    /// Delete the stored messages cited by `entry` and durably record the
-    /// archive-erasure obligation inside the forget's transaction so
-    /// post-commit cleanup (or a restarted write after a crash) finishes
-    /// erasing `pre-sqlite-*` files without persisting cleartext (STD-03 R8).
+    /// Erase `entry` from the stored messages it cites and from the archive
+    /// tables, in the forget's own write (`proposals`: the claims before
+    /// the forget).
     pub(super) fn forget_entry_residue(
         &self,
         entry: &Entry,
         proposals: &[Proposal],
-        now: OffsetDateTime,
+        _now: OffsetDateTime,
     ) -> Result<()> {
         // The cited turns' stored messages go first: they hold the words
         // the forget removes, and deleting them again is a no-op.
         self.forget_cited_messages(entry, proposals)?;
-        let issue_sources = self.issue_forget_tokens(entry)?;
-        if !self.has_moved_archives()? && !self.aside_pending() && issue_sources.is_empty() {
-            return Ok(());
-        }
-        let mut texts = erased_texts(entry, proposals);
-        texts.extend(issue_sources);
-        let salt = forget_salt(&entry.id, &self.root);
-        let digests = digest_texts(&salt, &texts);
-        self.with_conn(|conn, path| {
-            docs::put_pending_archive_forget(conn, path, &entry.id, &salt, &digests, now, |e| {
-                db::db_error("record pending archive forget in", path, e)
-            })
-        })?;
-        let queued = self.after(|after| {
-            after.archive_forgets = true;
-        });
-        if !queued {
-            self.apply_pending_archive_forgets()?;
-        }
-        Ok(())
-    }
-
-    /// Drain every committed entry-forget archive erasure from
-    /// `pending_archive_forgets` (STD-03 R8–R9). Runs after the transaction
-    /// commits, serialized across processes by `locks/archive-forget.lock`,
-    /// and deletes the obligation rows only after every matching archive
-    /// is cleaned. Never holds the archive lock and a SQLite write transaction
-    /// at the same time (STD-03 R3).
-    pub(super) fn apply_pending_archive_forgets(&self) -> Result<()> {
-        #[cfg(test)]
-        if super::write::CRASH_BEFORE_ARCHIVE_FORGET.with(|c| c.replace(false)) {
-            return Err(Error::io(
-                "clean moved archive in",
-                self.root.join(DB_FILE),
-                std::io::Error::other(
-                    "a crash injected by a test before apply_pending_archive_forgets",
-                ),
-            ));
-        }
-        if !self.root_exists()? {
-            return Ok(());
-        }
-        let path = self.root.join(DB_FILE);
-        let conn = db::open_new_writer(&self.root, self.lock_wait)?;
-        let pending = docs::pending_archive_forgets(&conn, &path)?;
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let issue_pending = pending
-            .iter()
-            .any(|item| item.entry.tag().as_str() == issue_import::ISSUE_TAG);
-        if self.has_moved_archives()? || (issue_pending && self.has_issue_sources()?) {
-            #[cfg(test)]
-            notify_forget_moved(ForgetMovedStep::BeforeLock);
-            let lock_path = self.lock_path(ARCHIVE_FORGET_LOCK)?;
-            let lock = fsio::LockGuard::acquire(&lock_path, "forget moved entry", self.lock_wait)?;
-            for item in &pending {
-                self.forget_moved_entry(item, &lock)?;
-            }
-            drop(lock);
-        }
-        let ids: Vec<i64> = pending.iter().map(|p| p.id).collect();
-        let tx = db::scope::Tx::begin(&conn, &path, "clear pending archive forgets in")?;
-        docs::delete_pending_archive_forgets(&tx, &ids, |e| tx.fail(e))?;
-        tx.commit()
-    }
-
-    /// Plan erasure of an archived session's structured references. The
-    /// caller recomputes the plan under the archive lock before writing.
-    pub(super) fn moved_session_documents(
-        &self,
-        id: &SessionId,
-        number: Option<std::num::NonZeroU64>,
-        now: OffsetDateTime,
-    ) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
-        let number = number.map(|n| format!("s-{n}"));
-        let matches = |value: &str| value == id.as_str() || number.as_deref() == Some(value);
-        let mut entry_changes = Vec::new();
-        let mut removed = Vec::new();
-        let mut archives = Vec::new();
-        for name in fsio::list_dir(&self.root)? {
-            let archive = self.root.join(&name);
-            if !name.starts_with(super::sessions::MOVED_PREFIX) || !fsio::inspect_subdir(&archive)?
-            {
-                continue;
-            }
-            let names = fsio::list_dir(&archive)?;
-            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
-                let dir = archive.join(name);
-                if !fsio::inspect_subdir(&dir)? {
-                    continue;
-                }
-                for tag in fsio::list_dir(&dir)? {
-                    let tag_dir = dir.join(&tag);
-                    if !fsio::inspect_subdir(&tag_dir)? {
-                        continue;
-                    }
-                    for name in super::visible(fsio::list_dir(&tag_dir)?) {
-                        let Some(stem) = name.strip_suffix(RECORD_EXT) else {
-                            continue;
-                        };
-                        let path = tag_dir.join(&name);
-                        if !fsio::inspect_file(&path)? {
-                            continue;
-                        }
-                        let before = format::decode_entry(&path, &fsio::read(&path)?, stem, &tag)?;
-                        let mut entry = before.clone();
-                        if handoff_names(&entry, matches) {
-                            removed.push(entry.id);
-                            entry_changes.push((path, None));
-                        } else {
-                            detach_entry(&mut entry, matches, now);
-                            if before != entry {
-                                if entry.author.kind == crate::AuthorKind::Scribe {
-                                    removed.push(entry.id.clone());
-                                }
-                                let bytes = format::encode_entry(&path, &entry)?;
-                                entry_changes.push((path, Some(bytes)));
-                            }
-                        }
-                    }
-                }
-            }
-            archives.push((archive, names));
-        }
-        let mut changes = Vec::new();
-        for (archive, names) in archives {
-            for name in names {
-                let path = archive.join(&name);
-                if is_moved_variant(&name, PROPOSALS_FILE) && fsio::inspect_file(&path)? {
-                    let before = format::decode_proposals(&path, &fsio::read(&path)?)?;
-                    let mut after = before.clone();
-                    detach_claims(&mut after, matches, &removed, now);
-                    if before != after {
-                        let bytes = format::encode_proposals(&path, &after)?;
-                        changes.push((path, Some(bytes)));
-                    }
-                } else if is_moved_variant(&name, CONTROL_FILE) && fsio::inspect_file(&path)? {
-                    let mut state = format::decode_control(&path, &fsio::read(&path)?)?;
-                    let before = state.clone();
-                    state.sessions.retain(|sid, _| !matches(sid.as_str()));
-                    state.codex_cursors.retain(|sid, _| !matches(sid.as_str()));
-                    for switch in state.sessions.values_mut() {
-                        switch.pending_links.retain(|link| {
-                            link.kind != crate::LinkType::Continues
-                                || !matches(link.session.as_str())
-                        });
-                    }
-                    if before != state {
-                        let bytes = format::encode_control(&path, &state)?;
-                        changes.push((path, Some(bytes)));
-                    }
-                } else if is_moved_variant(&name, MARKS_FILE) && fsio::inspect_file(&path)? {
-                    let mut marks = format::decode_marks(&path, &fsio::read(&path)?)?;
-                    let before = marks.len();
-                    marks.retain(|mark| !matches(mark.session.as_str()));
-                    if before != marks.len() {
-                        let bytes = format::encode_marks(&path, &marks)?;
-                        changes.push((path, Some(bytes)));
-                    }
-                } else if is_moved_variant(&name, PICKUPS_FILE) && fsio::inspect_file(&path)? {
-                    let mut pickups = format::decode_pickups(&path, &fsio::read(&path)?)?;
-                    let before = pickups.len();
-                    pickups.retain(|pickup| !removed.contains(&pickup.entry));
-                    if before != pickups.len() {
-                        let bytes = format::encode_pickups(&path, &pickups)?;
-                        changes.push((path, Some(bytes)));
-                    }
-                } else if is_moved_variant(&name, AUDIT_FILE)
-                    && fsio::inspect_file(&path)?
-                    && let Some(bytes) = scrub_moved_session_audit(&path, matches)?
-                {
-                    changes.push((path, Some(bytes)));
-                }
-            }
-        }
-        // Keep the entries that identify archived claim quotes and pickups
-        // until the documents that refer to them are clean.
-        changes.extend(entry_changes);
-        Ok(changes)
-    }
-
-    /// Drop `audit.jsonl*` lines matching `item`'s digests (plus extra
-    /// pre-move proposal texts and the moved entry's archived text), rewrite
-    /// or drop matching proposals in `proposals.json*`, and delete
-    /// `item.entry`'s moved-aside entry file across every `pre-sqlite-*` dir
-    /// and its matching legacy issue source.
-    ///
-    /// Runs under `locks/archive-forget.lock` (`_lock` witness) so concurrent
-    /// forgets cannot restore one another's erased text (STD-03 R6). Cleaning
-    /// `audit.jsonl*` before rewriting `proposals.json*` ensures a crash
-    /// between the two cannot drop a pre-move-only proposal's text from audit
-    /// scrubbing.
-    pub(super) fn forget_moved_entry(
-        &self,
-        item: &docs::PendingArchiveForget,
-        lock: &fsio::LockGuard,
-    ) -> Result<()> {
-        let id = &item.entry;
-        let db_path = self.root.join(DB_FILE);
-        let entry_file = format!("{id}{RECORD_EXT}");
-        let moved_issues = if id.tag().as_str() == issue_import::ISSUE_TAG {
-            self.issue_sources()?
-                .into_iter()
-                .filter(|source| matches_issue_source(item, &source.token))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        // One entry's words can sit in several `pre-sqlite-*` directories: an
-        // interrupted move followed by a recovery on another date puts the
-        // entries in one and `audit.jsonl` in another. So first read every
-        // directory's proposal and entry texts, then scrub every audit log
-        // with the union, and only then rewrite proposals and delete entry
-        // files. A replay after an interruption reads whatever the earlier
-        // run left, and an entry file is deleted only after every audit log
-        // is clean, so the texts it holds are never lost before then.
-        struct Moved {
-            dir: PathBuf,
-            names: Vec<String>,
-            proposals: Vec<(PathBuf, Vec<Proposal>)>,
-        }
-        let mut dirs = Vec::new();
-        let mut extra_texts: Vec<String> = moved_issues
-            .iter()
-            .flat_map(|source| erased_texts(&source.entry, &[]))
-            .collect();
-        for moved_name in fsio::list_dir(&self.root)? {
-            if !moved_name.starts_with(super::sessions::MOVED_PREFIX) {
-                continue;
-            }
-            let moved = self.root.join(&moved_name);
-            if !fsio::inspect_subdir(&moved)? {
-                continue;
-            }
-            let names = fsio::list_dir(&moved)?;
-            let mut proposals_files: Vec<(PathBuf, Vec<Proposal>)> = Vec::new();
-            for name in names.iter().filter(|n| is_moved_variant(n, PROPOSALS_FILE)) {
-                let path = moved.join(name);
-                if fsio::inspect_file(&path)? {
-                    let proposals = format::decode_proposals(&path, &fsio::read(&path)?)?;
-                    #[cfg(test)]
-                    notify_forget_moved(ForgetMovedStep::AfterProposalsRead);
-                    collect_proposal_texts(id, &proposals, &mut extra_texts);
-                    proposals_files.push((path, proposals));
-                }
-            }
-            for name in names.iter().filter(|n| is_moved_variant(n, ENTRIES_DIR)) {
-                let entries_dir = moved.join(name);
-                if !fsio::inspect_subdir(&entries_dir)? {
-                    continue;
-                }
-                let tag_dir = entries_dir.join(id.tag().as_str());
-                if !fsio::inspect_subdir(&tag_dir)? {
-                    continue;
-                }
-                let path = tag_dir.join(&entry_file);
-                if fsio::inspect_file(&path)? {
-                    let archived = format::decode_entry(
-                        &path,
-                        &fsio::read(&path)?,
-                        &id.to_string(),
-                        id.tag().as_str(),
-                    )?;
-                    extra_texts.extend(erased_texts(&archived, &[]));
-                }
-            }
-            dirs.push(Moved {
-                dir: moved,
-                names,
-                proposals: proposals_files,
-            });
-        }
-        extra_texts.sort();
-        extra_texts.dedup();
-        let matcher = AuditMatcher::new(&item.salt, &item.digests, &extra_texts, &db_path)?;
-        for moved in &dirs {
-            for name in moved
-                .names
-                .iter()
-                .filter(|n| is_moved_variant(n, AUDIT_FILE))
-            {
-                let path = moved.dir.join(name);
-                if fsio::inspect_file(&path)? {
-                    forget_moved_audit(&path, &matcher, lock)?;
-                }
-            }
-        }
-        for moved in &mut dirs {
-            for (path, proposals) in std::mem::take(&mut moved.proposals) {
-                rewrite_moved_proposals(id, &path, proposals, lock)?;
-            }
-        }
-        for moved in &dirs {
-            for name in moved
-                .names
-                .iter()
-                .filter(|n| is_moved_variant(n, ENTRIES_DIR))
-            {
-                let entries_dir = moved.dir.join(name);
-                if !fsio::inspect_subdir(&entries_dir)? {
-                    continue;
-                }
-                let tag_dir = entries_dir.join(id.tag().as_str());
-                if fsio::inspect_subdir(&tag_dir)? {
-                    fsio::remove_private(&tag_dir.join(&entry_file))?;
-                }
-            }
-        }
-        for source in moved_issues {
-            fsio::remove_private(&source.path)?;
-        }
-        Ok(())
+        self.with_conn(|conn, path| super::archive::scrub_entry(conn, path, entry, proposals))
+            .map(drop)
     }
 }
 
@@ -1270,74 +655,9 @@ pub(super) fn is_moved_variant(name: &str, base: &str) -> bool {
             .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn rewrite_moved_proposals(
-    id: &EntryId,
-    path: &Path,
-    mut proposals: Vec<Proposal>,
-    _lock: &fsio::LockGuard,
-) -> Result<()> {
-    let mut changed = crate::consistency::forget_proposals(id, &mut proposals);
-    // An open pre-move candidate approved later cannot keep an empty quote
-    // under `check_proposals`; drop it so `proposals.json` stays valid.
-    let before_len = proposals.len();
-    proposals.retain(|p| {
-        !(p.kind == crate::ProposalKind::Candidate
-            && p.state != crate::ProposalState::Approved
-            && p.older == *id)
-    });
-    if proposals.len() != before_len {
-        changed = true;
-    }
-    if changed {
-        let encoded = format::encode_proposals(path, &proposals)?;
-        fsio::write_atomic(path, &encoded)?;
-    }
-    Ok(())
-}
-
-fn forget_moved_audit(
-    path: &Path,
-    matcher: &AuditMatcher<'_>,
-    _lock: &fsio::LockGuard,
-) -> Result<()> {
-    if matcher.is_empty() {
-        return Ok(());
-    }
-    let bytes = fsio::read(path)?;
-    #[cfg(test)]
-    notify_forget_moved(ForgetMovedStep::AfterAuditRead);
-    let mut kept = Vec::with_capacity(bytes.len());
-    let mut dropped = false;
-    for raw_with_nl in bytes.split_inclusive(|&b| b == b'\n') {
-        let raw = raw_with_nl.strip_suffix(b"\n").unwrap_or(raw_with_nl);
-        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-        if !raw.iter().all(u8::is_ascii_whitespace) && audit_line_carries_text(raw, matcher) {
-            dropped = true;
-            continue;
-        }
-        kept.extend_from_slice(raw_with_nl);
-    }
-    if dropped {
-        fsio::write_atomic(path, &kept)?;
-    }
-    Ok(())
-}
-
 /// Domain separation prefix for salted SHA-256 digests stored in
-/// `pending_archive_forgets`.
+/// `pending_archive_forgets` before phase 8.
 const ARCHIVE_FORGET_DOMAIN: &[u8] = b"scribe-archive-forget-v1\0";
-
-fn forget_salt(id: &EntryId, root: &Path) -> String {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seed = format!(
-        "archive-forget|{id}|{}|{}|{}|{}",
-        std::process::id(),
-        OffsetDateTime::now_utc().unix_timestamp_nanos(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        root.display(),
-    );
-    crate::capture::prompt_sha256(&seed)
-}
 
 fn salted_prefix(salt: &str) -> Sha256 {
     let mut hasher = Sha256::new();
@@ -1345,43 +665,6 @@ fn salted_prefix(salt: &str) -> Sha256 {
     hasher.update(salt.as_bytes());
     hasher.update(b"\0");
     hasher
-}
-
-fn digest_texts(salt: &str, texts: &[String]) -> Vec<docs::TextDigest> {
-    let prefix = salted_prefix(salt);
-    let mut out: Vec<docs::TextDigest> = texts
-        .iter()
-        .filter(|t| !t.is_empty())
-        .map(|text| digest_text(&prefix, text))
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn digest_text(prefix: &Sha256, text: &str) -> docs::TextDigest {
-    let mut hasher = prefix.clone();
-    hasher.update(text.as_bytes());
-    docs::TextDigest {
-        len: text.len(),
-        sha256: encode_hex_32(&hasher.finalize().into()),
-    }
-}
-
-/// Check an exact legacy source token against a committed archive erasure.
-pub(super) fn matches_issue_source(item: &docs::PendingArchiveForget, token: &str) -> bool {
-    item.entry.tag().as_str() == issue_import::ISSUE_TAG
-        && item
-            .digests
-            .contains(&digest_text(&salted_prefix(&item.salt), token))
-}
-
-pub(super) fn encode_hex_32(bytes: &[u8; 32]) -> String {
-    let mut out = String::with_capacity(64);
-    for byte in bytes {
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
 }
 
 fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
@@ -1402,22 +685,16 @@ fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// Matches free-text values in archived `audit.jsonl*` lines against durable
-/// salted SHA-256 digests (without cleartext) plus any extra proposal texts
-/// freshly read from `proposals.json*` before it is rewritten.
-struct AuditMatcher<'a> {
+/// Matches text against the salted SHA-256 digests (`{len, sha256}`) a
+/// forget recorded, before phase 8, for archives it had not cleaned yet:
+/// the archive import replays them on the imported records.
+pub(super) struct DigestMatcher {
     prefix: Sha256,
     digests_by_len: BTreeMap<usize, Vec<[u8; 32]>>,
-    extra_texts: &'a [String],
 }
 
-impl<'a> AuditMatcher<'a> {
-    fn new(
-        salt: &str,
-        digests: &[docs::TextDigest],
-        extra_texts: &'a [String],
-        db_path: &Path,
-    ) -> Result<Self> {
+impl DigestMatcher {
+    pub(super) fn new(salt: &str, digests: &[docs::TextDigest], db_path: &Path) -> Result<Self> {
         let mut digests_by_len: BTreeMap<usize, Vec<[u8; 32]>> = BTreeMap::new();
         for d in digests {
             let bytes = decode_hex_32(&d.sha256).ok_or_else(|| {
@@ -1432,22 +709,10 @@ impl<'a> AuditMatcher<'a> {
         Ok(Self {
             prefix: salted_prefix(salt),
             digests_by_len,
-            extra_texts,
         })
     }
 
-    fn is_empty(&self) -> bool {
-        self.digests_by_len.is_empty() && self.extra_texts.is_empty()
-    }
-
-    fn matches_str(&self, haystack: &str) -> bool {
-        if self
-            .extra_texts
-            .iter()
-            .any(|t| haystack.contains(t.as_str()))
-        {
-            return true;
-        }
+    pub(super) fn matches_str(&self, haystack: &str) -> bool {
         for (&len, targets) in &self.digests_by_len {
             if len == 0 || haystack.len() < len {
                 continue;
@@ -1471,97 +736,6 @@ impl<'a> AuditMatcher<'a> {
             }
         }
         false
-    }
-}
-
-/// The keys of an audit line's structural fields (`AuditEvent`): timestamps,
-/// command paths, statuses, record ids, codes, agent names, counts and the
-/// `issue` record's ids, config trigger and hash. They never hold free text,
-/// so no entry's words are matched under them, however common the word: an
-/// entry whose body is `success`, an agent's name or `hook stop` leaves every
-/// unrelated line alone.
-const AUDIT_STANDARD_KEYS: &[&str] = &[
-    "format",
-    "at",
-    "command",
-    "status",
-    "target",
-    "error_code",
-    "author",
-    "instruction_session",
-    "instruction_message",
-    "issue",
-    "duration_ms",
-];
-
-/// Legacy audit lines can have extra fields that the import discarded.
-/// When an event names the forgotten session, retain just its audit fields.
-fn scrub_moved_session_audit(
-    path: &Path,
-    matches: impl Fn(&str) -> bool,
-) -> Result<Option<Vec<u8>>> {
-    let bytes = fsio::read(path)?;
-    let mut kept = Vec::with_capacity(bytes.len());
-    let mut changed = false;
-    for raw in bytes.split_inclusive(|&b| b == b'\n') {
-        if let Ok(serde_json::Value::Object(mut line)) = serde_json::from_slice(raw) {
-            let target = line.get("target").and_then(serde_json::Value::as_str);
-            let instruction = line
-                .get("instruction_session")
-                .and_then(serde_json::Value::as_str);
-            let issue = line
-                .get("issue")
-                .and_then(|issue| issue.get("session"))
-                .and_then(serde_json::Value::as_str);
-            let related = target
-                .map(|id| id.strip_prefix("session:").unwrap_or(id))
-                .into_iter()
-                .chain(instruction)
-                .chain(issue)
-                .any(&matches);
-            if related {
-                let fields = line.len();
-                line.retain(|key, _| AUDIT_STANDARD_KEYS.contains(&key.as_str()));
-                if line.len() != fields {
-                    serde_json::to_writer(&mut kept, &line).map_err(|e| Error::corrupt(path, e))?;
-                    if raw.ends_with(b"\n") {
-                        kept.push(b'\n');
-                    }
-                    changed = true;
-                    continue;
-                }
-            }
-        }
-        kept.extend_from_slice(raw);
-    }
-    Ok(changed.then_some(kept))
-}
-
-fn audit_line_carries_text(raw: &[u8], matcher: &AuditMatcher<'_>) -> bool {
-    match serde_json::from_slice::<serde_json::Value>(raw) {
-        Ok(serde_json::Value::Object(map)) => map.iter().any(|(k, v)| {
-            !AUDIT_STANDARD_KEYS.contains(&k.as_str()) && value_carries_text(v, matcher)
-        }),
-        Ok(other) => value_carries_text(&other, matcher),
-        // A torn or hand-edited line has no structure to read, and the reader
-        // skips it, so any copy of the words in it is erased.
-        Err(_) => {
-            let line = String::from_utf8_lossy(raw);
-            matcher.matches_str(&line)
-        }
-    }
-}
-
-/// Whether a free-text value (a key outside `AUDIT_STANDARD_KEYS`, or any
-/// unrecognised line shape) contains one of the erased texts.
-fn value_carries_text(value: &serde_json::Value, matcher: &AuditMatcher<'_>) -> bool {
-    match value {
-        serde_json::Value::String(s) => matcher.matches_str(s),
-        serde_json::Value::Array(items) => items.iter().any(|v| value_carries_text(v, matcher)),
-        serde_json::Value::Object(map) => map.values().any(|v| value_carries_text(v, matcher)),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
-            false
-        }
     }
 }
 
@@ -1600,7 +774,7 @@ fn collect_proposal_texts(id: &EntryId, proposals: &[Proposal], out: &mut Vec<St
     }
 }
 
-fn erased_texts(entry: &Entry, proposals: &[Proposal]) -> Vec<String> {
+pub(super) fn erased_texts(entry: &Entry, proposals: &[Proposal]) -> Vec<String> {
     let mut out = Vec::new();
     push_non_empty(&mut out, &entry.content);
     push_non_empty(&mut out, &entry.said);

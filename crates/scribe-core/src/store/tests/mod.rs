@@ -2,12 +2,13 @@
 //! of `store` this module also reaches its private submodules, which nothing
 //! outside `store` can.
 
+mod archive;
 mod audit;
 mod db;
 mod documents;
-mod format;
 mod fsio;
 mod memory;
+mod migrated;
 mod rebuild;
 mod redact;
 mod sessions;
@@ -25,8 +26,8 @@ fn private_tempdir() -> tempfile::TempDir {
     dir
 }
 
-/// Whether any file under `root` (`scribe.db`, its WAL, and `pre-sqlite-*`
-/// included) holds `needle`: what a forget or a redaction must leave nowhere.
+/// Whether any file under `root` (`scribe.db` and its WAL included) holds
+/// `needle`: what a forget or a redaction must leave nowhere.
 fn on_disk(root: &std::path::Path, needle: &str) -> bool {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -44,6 +45,58 @@ fn on_disk(root: &std::path::Path, needle: &str) -> bool {
         }
     }
     false
+}
+
+/// The records [`seed`] writes.
+#[derive(Default)]
+struct Seed {
+    sessions: Vec<crate::SessionRecord>,
+    control: crate::session::ControlState,
+    entries: Vec<crate::Entry>,
+    claims: Vec<crate::proposal::Proposal>,
+    tags: Vec<crate::StoreTag>,
+    marks: Vec<crate::annotation::MarkRecord>,
+    pickups: Vec<crate::action::Pickup>,
+    audit: Vec<(u32, super::audit::AuditEvent)>,
+}
+
+/// A store at `root` (created owner-only if missing) holding `seed`'s
+/// records as `scribe.db` rows, written through a store write as the
+/// commands write them: every kind lives in the database, as in a store
+/// any write since phase 8 left.
+fn seed(root: &std::path::Path, seed: &Seed) -> super::Store {
+    use super::db;
+    if !root.exists() {
+        std::fs::create_dir(root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    let store = super::Store::open(root);
+    store
+        .with_conn(|conn, path| {
+            let fail = |e| db::db_error("seed", path, e);
+            for record in &seed.sessions {
+                db::sessions::put_record(conn, path, record)?;
+            }
+            let before = crate::session::ControlState::default();
+            db::sessions::put_control(conn, path, &before, &seed.control)?;
+            for entry in &seed.entries {
+                db::docs::put_entry(conn, path, entry, true, fail)?;
+            }
+            db::docs::put_claims(conn, path, &[], &seed.claims, fail)?;
+            db::docs::put_tags(conn, path, &seed.tags, fail)?;
+            db::docs::put_marks(conn, path, &seed.marks, fail)?;
+            db::docs::put_pickups(conn, path, &seed.pickups, fail)?;
+            for (format, event) in &seed.audit {
+                db::docs::put_audit(conn, path, *format, event, None, fail)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    store
 }
 
 /// A valid entry file for `preferences-1`, with `extra` frontmatter lines

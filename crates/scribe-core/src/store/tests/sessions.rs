@@ -1,7 +1,7 @@
-//! Sessions in `scribe.db` (§15.7): the move, `store migrate`, `export`,
-//! `s-<n>` numbers and the pass as one transaction.
+//! Sessions in `scribe.db` (§15.7): `store migrate`, `export`, `s-<n>`
+//! numbers and the pass as one transaction.
 
-use super::{SESSION_BODY, on_disk, private_tempdir, session_text};
+use super::{SESSION_BODY, Seed, on_disk, private_tempdir, seed, session_text};
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Speaker};
@@ -10,7 +10,7 @@ use crate::memory::{Checked, Draft, ElementKind, NowKind};
 use crate::message::NewMessage;
 use crate::session::{SessionFilter, SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
-use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, db, format};
+use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, codec, db};
 use crate::tests::{T0, session};
 use std::fs;
 use std::path::Path;
@@ -45,16 +45,18 @@ fn put(root: &Path, rel: &str, text: &str) {
     }
 }
 
-/// A file store holding the record `s-1` and no switch.
+/// A store holding the record `s-1` and no switch in `scribe.db`.
 fn file_store() -> (tempfile::TempDir, Store) {
     let dir = private_tempdir();
     let root = dir.path().join("store");
-    put(
+    let store = seed(
         &root,
-        "sessions/2026/11/s-1.md",
-        &session_text("", SESSION_BODY),
+        &Seed {
+            sessions: vec![session("s-1", T0)],
+            ..Seed::default()
+        },
     );
-    (dir, Store::open(root))
+    (dir, store)
 }
 
 fn s1() -> SessionId {
@@ -62,26 +64,18 @@ fn s1() -> SessionId {
 }
 
 #[test]
-fn migrate_moves_the_files_aside_and_the_records_read_the_same() {
+fn migrate_with_no_archive_left_is_refused_and_changes_nothing() {
     let (_dir, store) = file_store();
     let before = store.session(&s1()).unwrap().record;
-    let moved = store.migrate_store(T0).unwrap();
-    assert_eq!(moved.sessions, 1);
-    assert_eq!(moved.moved_to.as_deref(), Some("pre-sqlite-2026-11-01"));
-    let root = store.root();
-    assert!(!root.join("sessions").exists());
-    assert!(
-        root.join("pre-sqlite-2026-11-01/sessions/2026/11/s-1.md")
-            .is_file()
-    );
-    assert_eq!(store.session(&s1()).unwrap().record, before);
-    // Once moved, a second migrate is refused and changes nothing.
     let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
+    assert_eq!(store.session(&s1()).unwrap().record, before);
 }
 
+/// A store whose records never moved into `scribe.db` is refused by
+/// reads and writes alike, with the way out (§15.9 phase 8).
 #[test]
-fn migrate_is_refused_while_a_session_is_on() {
+fn a_file_store_that_never_moved_is_refused() {
     let dir = private_tempdir();
     let root = dir.path().join("store");
     put(
@@ -89,16 +83,33 @@ fn migrate_is_refused_while_a_session_is_on() {
         "sessions/2026/11/s-1.md",
         &session_text("", SESSION_BODY),
     );
-    put(
-        &root,
-        "control.json",
-        r#"{"format": 1, "sessions": {"s-1": {"on": true, "since": "2026-11-01T09:00:00Z", "due": true, "final": false}}}"#,
-    );
     let store = Store::open(&root);
+    let read = store.load_sessions().unwrap_err();
+    assert_eq!(code(&read), "store_corrupt", "{read}");
+    assert!(
+        format!("{read:?}").contains("earlier scribe build"),
+        "{read:?}"
+    );
+    let write = store
+        .update_control(|s| control::switch(s, &s1(), &Switch::On, T0))
+        .unwrap_err();
+    assert_eq!(code(&write), "store_corrupt", "{write}");
+    let migrate = store.migrate_store(T0).unwrap_err();
+    assert_eq!(code(&migrate), "store_corrupt", "{migrate}");
+    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+}
+
+#[test]
+fn migrate_is_refused_while_a_session_is_on() {
+    let (_dir, store) = file_store();
+    let root = store.root().to_path_buf();
+    store
+        .update_control(|s| control::switch(s, &s1(), &Switch::On, T0))
+        .unwrap();
+    put(&root, "pre-sqlite-2026-11-01/control.json", "{}\n");
     let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
-    assert!(root.join("sessions/2026/11/s-1.md").is_file());
-    assert_eq!(store.session(&s1()).unwrap().record.title, "a session");
+    assert!(root.join("pre-sqlite-2026-11-01/control.json").is_file());
 }
 
 #[test]
@@ -113,13 +124,14 @@ fn migrate_is_refused_while_a_rebuild_checkpoint_exists() {
     let err = store.migrate_store(T0).unwrap_err();
     assert_eq!(code(&err), "migrate_blocked", "{err}");
     assert!(err.to_string().contains("checkpoint"), "{err}");
-    assert!(root.join("sessions/2026/11/s-1.md").is_file());
     assert!(root.join("sessions/2026/11/.s-1.rebuild.md").is_file());
     assert_eq!(store.session(&s1()).unwrap().record.title, "a session");
 }
 
+/// Files an interrupted move left beside a moved store are archived by the
+/// next write, as an archive, and removed; the records stay as they were.
 #[test]
-fn a_write_moves_the_files_and_keeps_a_checkpoint_as_a_row() {
+fn a_write_archives_files_an_interrupted_move_left() {
     let (_dir, store) = file_store();
     let root = store.root().to_path_buf();
     put(
@@ -127,35 +139,30 @@ fn a_write_moves_the_files_and_keeps_a_checkpoint_as_a_row() {
         "sessions/2026/11/.s-1.rebuild.md",
         &session_text("", SESSION_BODY),
     );
-    // A session write is never refused for the move.
+    let before = store.session(&s1()).unwrap().record;
     let other: SessionId = "s-2".parse().unwrap();
     store
         .update_control(|s| control::switch(s, &other, &Switch::On, T0))
         .unwrap();
     assert!(!root.join("sessions").exists());
-    let moved = fs::read_dir(&root)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("pre-sqlite-"))
-        .expect("the files moved aside");
     assert!(
-        moved
-            .path()
-            .join("sessions/2026/11/.s-1.rebuild.md")
-            .is_file()
+        !fs::read_dir(&root).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("pre-sqlite-")),
+        "the archive is imported, not left as files"
     );
-    let record = store.session(&s1()).unwrap().record;
-    assert!(store.checkpoint_of(&record).unwrap().is_some());
-}
-
-#[test]
-fn a_record_that_does_not_read_refuses_the_move() {
-    let (_dir, store) = file_store();
-    let root = store.root().to_path_buf();
-    put(&root, "sessions/2026/11/s-9.md", "not a session\n");
-    let err = store.migrate_store(T0).unwrap_err();
-    assert_eq!(code(&err), "store_corrupt", "{err}");
-    assert!(root.join("sessions/2026/11/s-1.md").is_file());
+    let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
+    let paths: Vec<String> = conn
+        .prepare("SELECT path FROM archive_records WHERE kind = 'checkpoint'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(paths, ["sessions/2026/11/.s-1.rebuild.md"]);
+    assert_eq!(store.session(&s1()).unwrap().record, before);
 }
 
 #[test]
@@ -163,8 +170,6 @@ fn records_number_by_creation_and_a_new_session_numbers_after_them() {
     let (_dir, store) = file_store();
     let before = store.session_numbers().unwrap();
     assert_eq!(before[&s1()].get(), 1);
-    store.migrate_store(T0).unwrap();
-    assert_eq!(store.session_numbers().unwrap(), before);
     let new: SessionId = "0b8ef4a6-0c6a-4d77-9c41-000000000001".parse().unwrap();
     store
         .update_control(|s| control::switch(s, &new, &Switch::On, T0))
@@ -200,14 +205,13 @@ fn records_number_by_creation_and_a_new_session_numbers_after_them() {
 #[test]
 fn markdown_export_writes_every_session_in_its_file_shape() {
     let (dir, store) = file_store();
-    store.migrate_store(T0).unwrap();
     let record = store.session(&s1()).unwrap().record;
     let target = dir.path().join("export");
     let out = store.export(&target, ExportFormat::Markdown).unwrap();
     assert_eq!(out.sessions, 1);
     assert_eq!(
         fs::read(target.join("sessions/2026/11/s-1.md")).unwrap(),
-        format::encode_session(Path::new("record"), &record).unwrap()
+        codec::encode_session(Path::new("record"), &record).unwrap()
     );
     assert!(target.join("control.json").is_file());
     // A directory with anything in it is refused.
@@ -216,13 +220,8 @@ fn markdown_export_writes_every_session_in_its_file_shape() {
 }
 
 #[test]
-fn jsonl_export_writes_one_line_per_row_and_needs_moved_sessions() {
+fn jsonl_export_writes_one_line_per_row() {
     let (dir, store) = file_store();
-    let err = store
-        .export(&dir.path().join("early"), ExportFormat::Jsonl)
-        .unwrap_err();
-    assert_eq!(code(&err), "export_needs_migrate", "{err}");
-    store.migrate_store(T0).unwrap();
     let target = dir.path().join("export");
     let out = store.export(&target, ExportFormat::Jsonl).unwrap();
     assert_eq!(out.sessions, 1);
@@ -235,7 +234,6 @@ fn jsonl_export_writes_one_line_per_row_and_needs_moved_sessions() {
 #[test]
 fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
     let (dir, store) = file_store();
-    store.migrate_store(T0).unwrap();
     let root = store.root();
     let conn = rusqlite::Connection::open(root.join(db::DB_FILE)).unwrap();
     conn.execute_batch(db::REMOVE_GROUP_CAPTURE_SCHEMA).unwrap();
@@ -248,6 +246,8 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
          DROP TABLE pickups;
          DROP TABLE audit;
          DROP TABLE pending_archive_forgets;
+         DROP TABLE archive_records;
+         DROP TABLE archives;
          DELETE FROM record_kinds WHERE kind <> 'sessions';
          CREATE TABLE record_kinds_v3 (
              kind TEXT NOT NULL PRIMARY KEY CHECK (kind IN ('sessions')),
@@ -282,7 +282,8 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
     let row: serde_json::Value = serde_json::from_str(sessions.lines().next().unwrap()).unwrap();
     assert_eq!(row["provider_session"], "s-1");
 
-    // A live document file beside the phase-six DB still requires migration.
+    // A live document file beside the phase-six DB is a file store this
+    // build does not read.
     put(
         root,
         "entries/preferences/preferences-1.md",
@@ -290,7 +291,7 @@ fn jsonl_export_reads_phase_six_sessions_when_no_live_files_remain() {
     );
     let blocked = dir.path().join("blocked");
     let err = store.export(&blocked, ExportFormat::Jsonl).unwrap_err();
-    assert_eq!(code(&err), "export_needs_migrate", "{err}");
+    assert_eq!(code(&err), "store_corrupt", "{err}");
     assert!(!blocked.exists());
 }
 
@@ -656,7 +657,7 @@ fn jsonl_export_omits_a_preexisting_forgotten_checkpoint_until_upgrade_erases_it
             &Redactor::default(),
         )
         .unwrap();
-    assert_eq!(user_version(&root), 19);
+    assert_eq!(user_version(&root), 20);
     assert_eq!(checkpoint_record(&root, "s-1"), None);
     assert!(
         checkpoint_record(&root, "s-2")
@@ -802,7 +803,7 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     reader.execute_batch("ROLLBACK").unwrap();
     drop(reader);
     write().unwrap();
-    assert_eq!(user_version(&root), 19);
+    assert_eq!(user_version(&root), 20);
     assert!(!on_disk(&root, STALE_CHECKPOINT));
     assert!(
         checkpoint_record(&root, "s-2")
@@ -811,23 +812,9 @@ fn schema_nine_retries_cleanup_left_by_an_older_writer() {
     );
 }
 
-fn unrelated_write(store: &Store) -> crate::error::Result<()> {
-    let other = session("s-3", T0 + time::Duration::hours(2));
-    store
-        .settle_pass(
-            &other.id,
-            Some(other.clone()),
-            false,
-            None,
-            &Redactor::default(),
-        )
-        .map(|_| ())
-}
-
 #[test]
 fn unrelated_write_without_forgets_does_not_read_session_payloads() {
     let (_dir, store) = file_store();
-    store.migrate_store(T0).unwrap();
     let conn = rusqlite::Connection::open(store.root().join(db::DB_FILE)).unwrap();
     // Invalid UTF-8 makes fetching segment text fail, while SQLite can still
     // store it as TEXT. This detects a payload read without timing assumptions.
@@ -847,114 +834,6 @@ fn unrelated_write_without_forgets_does_not_read_session_payloads() {
             Ok(())
         })
         .unwrap();
-}
-
-#[test]
-fn an_unrelated_write_ignores_the_archive_lock_when_no_archive_file_is_left() {
-    use crate::store::{LOCKS_DIR, fsio};
-    use std::time::Duration;
-
-    let pair = forgotten_pair();
-    let root = pair.store.root().to_path_buf();
-    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
-    let lock_path = store.lock_path("archive-forget.lock").unwrap();
-    assert!(lock_path.starts_with(root.join(LOCKS_DIR)));
-    let _held =
-        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
-    unrelated_write(&store).unwrap();
-    let ids = store.load_sessions().unwrap().numbers;
-    assert!(
-        ids.contains_key(&"s-3".parse().unwrap()),
-        "the write committed"
-    );
-}
-
-#[test]
-fn archive_erasure_stays_serialized_and_retries_after_the_lock_is_released() {
-    use crate::store::fsio;
-    use std::time::Duration;
-
-    let pair = forgotten_pair();
-    let second: SessionId = "s-2".parse().unwrap();
-    let cite = Cite {
-        session: second.clone(),
-        message: None,
-        at: T0,
-        prompt_sha256: "0".repeat(64),
-        line: 1,
-        cwd: String::from("/work"),
-    };
-    pair.store
-        .settle(&Settle::ForgetSession(second), &cite, T0)
-        .unwrap();
-    let root = pair.store.root().to_path_buf();
-    let archived = "pre-sqlite-2026-11-01/sessions/2026/11/s-1.md";
-    put(&root, archived, "forgotten plaintext");
-    let checkpoint = "pre-sqlite-2026-11-02/sessions.2/2025/12/.s-1.rebuild.md";
-    let second = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-2.md";
-    let live = "pre-sqlite-2026-11-02/sessions.2/2025/12/s-4.md";
-    put(&root, checkpoint, "forgotten checkpoint");
-    put(&root, second, "another forgotten session");
-    put(&root, live, "live session");
-    let store = Store::open(&root).with_lock_wait(Duration::from_millis(50));
-    let lock_path = store.lock_path("archive-forget.lock").unwrap();
-    let held =
-        fsio::LockGuard::acquire(&lock_path, "other forget", Duration::from_secs(1)).unwrap();
-    let err = unrelated_write(&store).unwrap_err();
-    assert_eq!(code(&err), "store_locked");
-    assert!(root.join(archived).exists(), "no erasure under a held lock");
-    drop(held);
-    store.clean_forgotten_session_files().unwrap();
-    assert!(!root.join(archived).exists());
-    assert!(!root.join(checkpoint).exists());
-    assert!(!root.join(second).exists());
-    assert!(root.join(live).exists());
-}
-
-#[test]
-fn a_first_write_forget_counts_the_legacy_files_it_deletes() {
-    let dir = private_tempdir();
-    let root = dir.path().join("store");
-    let record = session_text("", SESSION_BODY);
-    let other = record.replace("id: s-1", "id: s-2");
-    put(&root, "sessions/2026/11/s-1.md", &record);
-    put(&root, "sessions/2026/11/.s-1.rebuild.md", &record);
-    put(&root, "sessions/2026/11/s-2.md", &other);
-    let store = Store::open(&root);
-    let cite = Cite {
-        session: s1(),
-        message: None,
-        at: T0,
-        prompt_sha256: "0".repeat(64),
-        line: 1,
-        cwd: String::from("/work"),
-    };
-
-    let settled = store
-        .settle(&Settle::ForgetSession(s1()), &cite, T0)
-        .unwrap();
-
-    let Settled::SessionForgotten(forgot) = settled else {
-        panic!("expected a forgotten session, got {settled:?}");
-    };
-    assert_eq!(forgot.id, s1());
-    assert_eq!(
-        forgot.files, 2,
-        "the record and the checkpoint the cleanup deleted"
-    );
-    let archive = fs::read_dir(&root)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("pre-sqlite-"))
-        })
-        .expect("the first write moved the files aside");
-    let moved = archive.join("sessions/2026/11");
-    assert!(!moved.join("s-1.md").exists());
-    assert!(!moved.join(".s-1.rebuild.md").exists());
-    assert!(moved.join("s-2.md").is_file(), "the other session is kept");
-    assert!(store.session(&"s-2".parse().unwrap()).is_ok());
 }
 
 #[test]
@@ -1073,23 +952,28 @@ fn answered_item(id: &str, session: &str, words: &str) -> crate::Entry {
 fn forgetting_a_session_erases_its_open_item_answers_live_and_archived() {
     let dir = private_tempdir();
     let root = dir.path().join("store");
-    let record = session_text("", SESSION_BODY);
-    put(&root, "sessions/2026/11/s-1.md", &record);
-    put(
-        &root,
-        "sessions/2026/11/s-2.md",
-        &record.replace("id: s-1", "id: s-2"),
-    );
     let gone = "restart it after the freeze lifts";
     let kept = "leave the dashboard alone for now";
+    let mut other = session("s-2", T0);
+    other.title = String::from("another session");
+    seed(
+        &root,
+        &Seed {
+            sessions: vec![session("s-1", T0), other],
+            entries: vec![
+                answered_item("open-item-1", "s-1", gone),
+                answered_item("open-item-2", "s-2", kept),
+            ],
+            ..Seed::default()
+        },
+    );
+    // The same items as a phase-7 move archived them, imported by the next
+    // write.
     for (id, session, words) in [("open-item-1", "s-1", gone), ("open-item-2", "s-2", kept)] {
-        let path = root.join(format!("entries/open-item/{id}.md"));
-        let bytes = format::encode_entry(&path, &answered_item(id, session, words)).unwrap();
-        put(
-            &root,
-            &format!("entries/open-item/{id}.md"),
-            std::str::from_utf8(&bytes).unwrap(),
-        );
+        let rel = format!("pre-sqlite-2026-11-01/entries/open-item/{id}.md");
+        let bytes =
+            codec::encode_entry(&root.join(&rel), &answered_item(id, session, words)).unwrap();
+        put(&root, &rel, std::str::from_utf8(&bytes).unwrap());
     }
     let store = Store::open(&root);
     let cite = Cite {

@@ -769,8 +769,8 @@ impl Store {
                 quote: None,
             });
             // The cited turns' stored messages go first: they hold the words
-            // the forget removes, and deleting them again is a no-op; legacy
-            // archive copies follow the commit via a durable obligation.
+            // the forget removes, and deleting them again is a no-op; the
+            // archived copies are erased in the same transaction.
             self.forget_entry_residue(&target, &before, now)?;
             if proposals != before {
                 self.write_proposals(&proposals)?;

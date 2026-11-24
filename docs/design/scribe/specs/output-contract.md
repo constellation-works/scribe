@@ -415,16 +415,24 @@ adds the notice `read-only copy: <path> has no -wal or -shm file and its
 directory is read-only, so it was opened immutable; …` on stderr.
 
 **Store migrate** (phase 6, `store migrate`): `{"sessions", "switches",
-"cursors", "moved_to"}`, the counts imported and the `pre-sqlite-<date>`
-directory the files went to (or `null`). Plain is one line
-`<sessions>\t<switches>\t<cursors>\t<moved_to or ->`; the table prints one
-field per line. It is a write: audited as `store migrate`.
+"cursors", "moved_to", "entries", "claims", "tags", "marks", "pickups",
+"audit_lines", "audit_torn", "archives", "archived"}`. Phase 8 adds
+`archives`, the `pre-sqlite-*` and `pre-issue-*` directories (and any group
+of files an interrupted move left) imported into the archive tables, and
+`archived`, the records imported (one per file, one per audit line).
+Nothing moves from files since phase 8, so the moved counts are 0 and
+`moved_to` is `null`; `audit_lines` counts the spooled audit lines the
+write drained. The old fields stay for the contract. Plain is one line
+`<sessions>\t<switches>\t<cursors>\t<moved_to or ->\t<entries>\t<claims>\t<tags>\t<marks>\t<pickups>\t<audit_lines>\t<archives>\t<archived>`;
+the table prints one field per line (`audit torn` only when not 0). It is
+a write: audited as `store migrate`.
 
 **Export** (phase 6, `export <dir>`): `{"dir", "format", "sessions",
 "files", "skipped"}`, `format` `markdown` or `jsonl`, `files` the paths
 written relative to `dir`, `skipped` the records that did not read. Plain
 prints one path per line; the table prints `dir`, `format`, `sessions`,
-`files` (a count) and `skipped`. It reads only and is not audited.
+`files` (a count) and `skipped`. It reads only and is not audited. Neither
+format writes the archive tables (phase 8).
 
 **Issue** (format 17) is removed in phase 2 (2_design.md §15.9) with the
 `issue` noun: `issue list|show|add|occur|update|move|search|stats` exit 2
@@ -582,8 +590,8 @@ the message lists up to ten candidates, sorted, and how many more), `user_only`,
 `memory_not_now`, (format 25) `memory_changed`, `revision_not_found`,
 `profile_shape`, `profile_pinned`, `profile_too_long`,
 `profile_unknown_link`, `profile_sensitive`, `profile_milestone`, (phase 6)
-`migrate_blocked`, `export_target_exists`, `export_needs_migrate`,
-`session_forgotten` (a record write to a forgotten session, or switching it
+`migrate_blocked`, `export_target_exists` (phases 6–7 also had
+`export_needs_migrate`, removed in phase 8), `session_forgotten` (a record write to a forgotten session, or switching it
 on), `handoff_shape` and `handoff_too_long` (a `handoff` entry whose body
 violates the six fixed headings in order or exceeds 3,000 characters),
 `handoff_session` (a `handoff` entry with an invalid or multiple distinct
@@ -978,8 +986,8 @@ part prints `(none)`), JSON `{"profile": {"text", "as_of"} or null, "now":
 [{"id", "date", "title"}], "milestones": [{"id", "date", "title"}]}`.
 Warnings go to stderr: `memory_pending` (a write was cut short; the profile
 shown is its latest committed revision until the next memory write), a
-skipped file that does not parse, a `read-only copy`, and format-24 items
-not yet migrated.
+skipped file that does not parse, a `read-only copy`, and `N format-24
+memory item(s) not read; the next store write archives them` (phase 8).
 
 `memory show <id>` prints one file: `profile`, or a `now` or milestone
 stem. JSON is `{"id", "kind", "date", "now_kind", "title", "text",

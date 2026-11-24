@@ -1,0 +1,18 @@
+{
+  "format": 31,
+  "tags": [
+    {
+      "name": "toolchain",
+      "aliases": [],
+      "description": "the build toolchain",
+      "stale_after_days": null,
+      "author": {
+        "kind": "agent",
+        "name": "opus"
+      },
+      "updated_by": null,
+      "created": "2026-10-01T09:00:00Z",
+      "updated": "2026-10-01T09:00:00Z"
+    }
+  ]
+}

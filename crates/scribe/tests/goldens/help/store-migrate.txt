@@ -1,6 +1,6 @@
-Move the store's files into scribe.db now, keeping the old files aside
+Import the file store's archives into scribe.db now, then remove them
 
-Imports sessions/, entries/, control.json's switches and Codex cursors, proposals.json, tags.json, marks.json, pickups.json and audit.jsonl into scribe.db in one transaction that checks the record count of each kind, then moves the files to pre-sqlite-<date>/ in the data directory, which scribe never deletes. Every write makes this move on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and once every kind moved.
+Imports every pre-sqlite-<date>/ and pre-issue-<date>/ directory in the data directory, and any file an interrupted move left, into scribe.db's archive tables in one transaction that checks the record count of each kind, then removes the files. Every write makes this import on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and when there is nothing to import. A store whose records never moved into scribe.db is refused: migrate it with an earlier scribe build first.
 
 Usage: scribe store migrate [OPTIONS]
 
@@ -28,4 +28,4 @@ Global options:
 
 Examples:
   scribe store migrate
-  scribe store migrate --json | jq .moved_to
+  scribe store migrate --json | jq .archived

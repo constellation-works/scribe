@@ -1,0 +1,15 @@
+{
+  "format": 31,
+  "pickups": [
+    {
+      "entry": "preferences-2",
+      "author": {
+        "kind": "agent",
+        "name": "opus"
+      },
+      "at": "2026-10-01T09:00:00Z",
+      "result": null,
+      "rejected": false
+    }
+  ]
+}

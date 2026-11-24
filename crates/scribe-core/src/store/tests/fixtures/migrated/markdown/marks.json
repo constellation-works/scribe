@@ -1,0 +1,16 @@
+{
+  "format": 31,
+  "marks": [
+    {
+      "session": "s-1",
+      "message": "m-1",
+      "prompt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "marker": 1,
+      "outcome": "entry",
+      "entry": "preferences-2",
+      "code": null,
+      "attempts": 1,
+      "at": "2026-10-01T09:00:00Z"
+    }
+  ]
+}

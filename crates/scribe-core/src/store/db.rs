@@ -24,6 +24,7 @@
 //!   A database newer than this build is refused (STD-03 R10).
 //!   `specs/store.md` gives every table's types and constraints.
 
+pub(super) mod archive;
 pub(super) mod docs;
 
 /// A `scribe.db` connection, as the store's writers hold it.
@@ -89,6 +90,7 @@ const MIGRATIONS: &[&str] = &[
     V17,
     groups::V18,
     groups::V19,
+    archive::V20,
 ];
 
 /// Version 17 ships typed records and replaces the trial's tag registrations.

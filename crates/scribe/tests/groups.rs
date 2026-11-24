@@ -303,14 +303,13 @@ fn group_filters_apply_before_limits_ranking_and_lookups() {
     let f = Fixture::new();
     f.seed();
     f.config("");
-    let entry_path = f.root().join("entries/decisions/decisions-2.md");
-    let entry = std::fs::read_to_string(&entry_path).unwrap();
+    let entry = support::exported(&f.root(), "entries/decisions/decisions-2.md").unwrap();
     let entry = entry.replace(
-        &format!("session: {MEMBER}, message: null"),
-        &format!("session: {C}, message: null"),
+        &format!("  session: {MEMBER}\n  message: null"),
+        &format!("  session: {C}\n  message: null"),
     );
-    assert!(entry.contains(&format!("session: {C}, message: null")));
-    std::fs::write(&entry_path, entry).unwrap();
+    assert!(entry.contains(&format!("  session: {C}\n  message: null")));
+    support::seed_records(&f.root(), &[&entry]);
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
     open(&f);
     join(&f, MEMBER, "g-1", &[], 0);
@@ -1156,7 +1155,7 @@ fn opening_flags_only_other_open_groups_in_the_same_project() {
 }
 
 #[test]
-fn close_reports_archive_cleanup_failure_with_only_the_committed_success_audit() {
+fn close_imports_forgotten_residue_erased_and_keeps_only_the_success_audit() {
     let f = Fixture::new();
     let opener = transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
     open(&f);
@@ -1176,19 +1175,39 @@ fn close_reports_archive_cleanup_failure_with_only_the_committed_success_audit()
     let archive = f.root().join("pre-sqlite-stale/sessions/2026/11");
     f.create_private_dir_all(&archive);
     let residue = archive.join(format!("{B}.md"));
-    std::fs::write(&residue, "forgotten session residue").unwrap();
+    std::fs::write(
+        &residue,
+        format!("---\nid: {B}\n---\nforgotten session residue\n"),
+    )
+    .unwrap();
     support::make_private(&residue);
-    let locks = f.root().join(scribe_core::LOCKS_DIR);
-    f.create_private_dir_all(&locks);
-    let lock_path = locks.join("archive-forget.lock");
-    let lock = std::fs::File::create(&lock_path).unwrap();
-    support::make_private(&lock_path);
-    lock.try_lock().unwrap();
 
-    let error = close_with_summary_error(&f);
-    assert_eq!(error["code"], "store_locked", "{error}");
-    assert!(error.to_string().contains("archive-forget.lock"), "{error}");
-    assert!(residue.is_file());
+    let path = f.fake_program(
+        "claude",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"result","is_error":false,"structured_output":{"summary":"Review complete."}}'
+"#,
+    );
+    let out = f
+        .cmd(&["group", "close", "g-1", "--json"])
+        .env("CLAUDE_CODE_SESSION_ID", A)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    // The close's write imported the residue, erased as it was imported.
+    assert!(!residue.exists());
+    assert!(!f.root().join("pre-sqlite-stale").exists());
+    let leftover: i64 = rusqlite::Connection::open(f.root().join(scribe_core::DB_FILE))
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM archive_records WHERE instr(record, 'forgotten session residue') > 0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(leftover, 0);
 
     let record = invoke(&f, A, &["group", "show", "g-1"], 0);
     assert!(record["closed"].is_string(), "{record}");
@@ -1745,7 +1764,7 @@ fn joins_after_an_ended_transcript_and_keeps_unverifiable_seats_occupied() {
 fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
-    f.ok(&["store", "migrate"]);
+    open(&f); // creates scribe.db
     support::remove_group_capture_schema(&f.root());
     support::sql(
         &f.root(),
@@ -1759,7 +1778,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 19);
+    assert_eq!(version(), 20);
 }
 
 #[test]

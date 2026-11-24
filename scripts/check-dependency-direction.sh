@@ -149,10 +149,10 @@ if [[ -n "$port_grouped" ]]; then
 fi
 
 # Inside store/: fsio is mechanism with no knowledge of records, and the
-# format, redaction and audit record shapes do no I/O of their own (R4, R5).
+# codec, redaction and audit record shapes do no I/O of their own (R4, R5).
 ban "$CORE/store/fsio.rs"   'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
                                                                  "store/fsio.rs is mechanism only; it must not know records or the store"
-for shape in format:"converts bytes" redact:"masks text it is handed" audit:"is a record shape"; do
+for shape in codec:"converts bytes" redact:"masks text it is handed" audit:"is a record shape"; do
   file="$CORE/store/${shape%%:*}.rs"
   ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   ban "$file" 'super::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"

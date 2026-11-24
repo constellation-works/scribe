@@ -7,7 +7,7 @@
 //!   column, named as the field, as the session tables store theirs; a
 //!   claim's candidate fields are `c_<field>` beside `has_candidate`. A row
 //!   is read back through the same serde shape and the same checks a file
-//!   gets ([`super::super::format`]), so a hand-edited row is refused as a
+//!   gets ([`super::super::codec`]), so a hand-edited row is refused as a
 //!   hand-edited file was.
 //! - **Writes.** An entry or a claim is written by its id (UPDATE, then
 //!   INSERT for a new one); tags, marks and pickups are small lists,
@@ -26,7 +26,7 @@ use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};
 use crate::store::audit::{AUDIT_FORMAT, AuditEvent};
-use crate::store::format;
+use crate::store::codec;
 use crate::tag::StoreTag;
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, params_from_iter};
@@ -387,9 +387,7 @@ pub(in crate::store) fn entries(
         };
         let decoded = serde_json::from_value::<Entry>(Value::Object(obj))
             .map_err(|e| Error::corrupt(&path, e))
-            .and_then(|entry| {
-                format::checked_entry(&path, entry, format::FORMAT, &content, &id, &tag)
-            });
+            .and_then(|entry| codec::checked_entry(&path, entry, &content, &id, &tag));
         // A row that does not read is skipped and reported, as a file was;
         // any other failure fails the read.
         match decoded {
@@ -415,10 +413,9 @@ pub(in crate::store) fn put_entry(
     fail: impl Fn(rusqlite::Error) -> Error,
 ) -> Result<()> {
     let id = entry.id.to_string();
-    format::validate_entry(
+    codec::validate_entry(
         &row_path(db, "entries", &id),
         entry,
-        format::FORMAT,
         &entry.content,
         &id,
         entry.tag.as_str(),
@@ -536,7 +533,7 @@ pub(in crate::store) fn claims(conn: &Connection, db: &Path) -> Result<Vec<Propo
         );
         let proposal: Proposal =
             serde_json::from_value(Value::Object(obj)).map_err(|e| Error::corrupt(&path, e))?;
-        format::check_proposals(&path, std::slice::from_ref(&proposal))?;
+        codec::check_proposals(&path, std::slice::from_ref(&proposal))?;
         out.push(proposal);
     }
     Ok(out)
@@ -630,7 +627,7 @@ pub(in crate::store) fn tags(conn: &Connection, db: &Path) -> Result<Vec<StoreTa
                 .map_err(|e| Error::corrupt(row_path(db, "agent_tags", &name), e))?,
         );
     }
-    format::check_tags(&row_path(db, "agent_tags", "*"), &out)?;
+    codec::check_tags(&row_path(db, "agent_tags", "*"), &out)?;
     Ok(out)
 }
 
@@ -701,7 +698,7 @@ fn put_list<T: serde::Serialize>(
 /// Every mark, in order.
 pub(in crate::store) fn marks(conn: &Connection, db: &Path) -> Result<Vec<MarkRecord>> {
     let marks = list(conn, db, "marks", MARK)?;
-    format::check_marks(&row_path(db, "marks", "*"), &marks)?;
+    codec::check_marks(&row_path(db, "marks", "*"), &marks)?;
     Ok(marks)
 }
 
@@ -718,7 +715,7 @@ pub(in crate::store) fn put_marks(
 /// Every pickup, in order.
 pub(in crate::store) fn pickups(conn: &Connection, db: &Path) -> Result<Vec<Pickup>> {
     let pickups = list(conn, db, "pickups", PICKUP)?;
-    format::check_pickups(&row_path(db, "pickups", "*"), &pickups)?;
+    codec::check_pickups(&row_path(db, "pickups", "*"), &pickups)?;
     Ok(pickups)
 }
 
@@ -820,14 +817,6 @@ pub(in crate::store) fn audit_export_row(
     Ok(Value::Object(out))
 }
 
-/// How many rows `table` holds, for a move's count check.
-pub(in crate::store) fn count(conn: &Connection, table: &str) -> rusqlite::Result<usize> {
-    let n: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-        row.get(0)
-    })?;
-    Ok(usize::try_from(n).unwrap_or(usize::MAX))
-}
-
 /// The spool files already drained into `audit`, by name (excluding
 /// `audit.jsonl:<offset>:<sha256>` idempotency keys).
 pub(in crate::store) fn spooled_names(conn: &Connection, db: &Path) -> Result<Vec<String>> {
@@ -860,39 +849,6 @@ pub(in crate::store) struct PendingArchiveForget {
 
 fn is_hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-/// Whether any committed entry forget still waits for post-commit archive
-/// cleanup.
-pub(in crate::store) fn has_pending_archive_forgets(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM pending_archive_forgets)",
-        [],
-        |row| row.get(0),
-    )
-}
-
-/// Record one durable archive-erasure obligation inside the forget's own
-/// transaction (STD-03 R8). Stores only `entry`, `salt` and salted SHA-256
-/// `digests` — never cleartext.
-pub(in crate::store) fn put_pending_archive_forget(
-    conn: &Connection,
-    db: &Path,
-    entry: &EntryId,
-    salt: &str,
-    digests: &[TextDigest],
-    now: OffsetDateTime,
-    fail: impl Fn(rusqlite::Error) -> Error,
-) -> Result<()> {
-    let encoded = serde_json::to_string(digests)
-        .map_err(|e| Error::corrupt(db, format!("pending archive forget digests: {e}")))?;
-    conn.execute(
-        "INSERT INTO pending_archive_forgets (entry, salt, digests, created)
-         VALUES (?1, ?2, ?3, ?4)",
-        (entry.to_string(), salt, &encoded, stamp(now)),
-    )
-    .map_err(fail)?;
-    Ok(())
 }
 
 /// Every pending archive-erasure obligation, oldest first.

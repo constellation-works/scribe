@@ -1,8 +1,8 @@
-//! `scribe store migrate`: move a file store's records into `scribe.db`
-//! now (docs/design/scribe/2_design.md §15.7, §15.11). Every write makes
-//! the same move on its own; this verb lets the user choose the moment and
-//! is refused while a session is switched on, while a rebuild checkpoint
-//! waits, or once every kind moved.
+//! `scribe store migrate`: import the archives a file store left into
+//! `scribe.db` now (docs/design/scribe/2_design.md §15.7, §15.9 phase 8).
+//! Every write makes the same import on its own; this verb lets the user
+//! choose the moment and is refused while a session is switched on, while
+//! a rebuild checkpoint waits, or when there is nothing to import.
 
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
@@ -18,14 +18,14 @@ Examples:
 const MIGRATE_EXAMPLES: &str = "\
 Examples:
   scribe store migrate
-  scribe store migrate --json | jq .moved_to";
+  scribe store migrate --json | jq .archived";
 
 /// `store` verbs.
 #[derive(Debug, Subcommand)]
 pub(crate) enum StoreCommand {
-    /// Move the store's files into scribe.db now, keeping the old files aside
+    /// Import the file store's archives into scribe.db now, then remove them
     ///
-    /// Imports sessions/, entries/, control.json's switches and Codex cursors, proposals.json, tags.json, marks.json, pickups.json and audit.jsonl into scribe.db in one transaction that checks the record count of each kind, then moves the files to pre-sqlite-<date>/ in the data directory, which scribe never deletes. Every write makes this move on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and once every kind moved.
+    /// Imports every pre-sqlite-<date>/ and pre-issue-<date>/ directory in the data directory, and any file an interrupted move left, into scribe.db's archive tables in one transaction that checks the record count of each kind, then removes the files. Every write makes this import on its own. Refused while a session is switched on, while a rebuild checkpoint waits, and when there is nothing to import. A store whose records never moved into scribe.db is refused: migrate it with an earlier scribe build first.
     #[command(after_help = MIGRATE_EXAMPLES)]
     Migrate(MigrateArgs),
 }
@@ -65,6 +65,8 @@ pub(super) fn run(command: StoreCommand, ctx: &Context) -> Result<Output, CliErr
                     pickups: moved.pickups,
                     audit_lines: moved.audit_lines,
                     audit_torn: moved.audit_torn,
+                    archives: moved.archives,
+                    archived: moved.archived,
                 })),
                 true,
             ))

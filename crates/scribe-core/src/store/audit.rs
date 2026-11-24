@@ -13,8 +13,6 @@
 //! a crash can leave a torn last line, which a reader skips.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
 use time::OffsetDateTime;
 
 /// The audit log's file under the data directory, before it moved into
@@ -133,30 +131,18 @@ pub(super) struct AuditLine {
     pub(super) event: AuditEvent,
 }
 
-/// One parsed line of `audit.jsonl` with its byte-offset/content key
-/// (`audit.jsonl:<offset>:<sha256>`) for idempotent import into `scribe.db`.
-pub(super) struct ImportedLine {
-    pub(super) format: u32,
-    pub(super) event: AuditEvent,
-    pub(super) key: String,
-}
-
-/// The events of an audit log, oldest first, each with its own format and
-/// a deterministic key (`audit.jsonl:<offset>:<sha256>`) derived from its
-/// byte offset and raw line bytes. A line that does not parse (a torn last
-/// line, a hand edit) is skipped and counted; a line of a newer format
-/// refuses the whole read, so no count is made from a log this build cannot
-/// read.
-pub(super) fn decode_for_import(
+/// The events of an audit log or a spool file, oldest first, each with its
+/// own format, which the `audit` table keeps. A line that does not parse (a
+/// torn last line, a hand edit) is skipped and counted; a line of a newer
+/// format refuses the whole read, so no count is made from a log this build
+/// cannot read.
+pub(super) fn decode_formatted(
     path: &std::path::Path,
     bytes: &[u8],
-) -> crate::Result<(Vec<ImportedLine>, usize)> {
+) -> crate::Result<(Vec<(u32, AuditEvent)>, usize)> {
     let mut events = Vec::new();
     let mut skipped = 0usize;
-    let mut offset = 0usize;
     for raw in bytes.split(|b| *b == b'\n') {
-        let line_offset = offset;
-        offset = offset.saturating_add(raw.len()).saturating_add(1);
         if raw.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
@@ -171,38 +157,9 @@ pub(super) fn decode_for_import(
                 supported: AUDIT_FORMAT,
             });
         }
-        events.push(ImportedLine {
-            format: line.format,
-            event: line.event,
-            key: import_key(line_offset, raw),
-        });
+        events.push((line.format, line.event));
     }
     Ok((events, skipped))
-}
-
-fn import_key(offset: usize, raw: &[u8]) -> String {
-    let digest = Sha256::digest(raw);
-    let mut key = format!("{AUDIT_FILE}:{offset}:");
-    for byte in digest {
-        let _ = write!(key, "{byte:02x}");
-    }
-    key
-}
-
-/// The events of an audit log, oldest first, each with its own format,
-/// which a move into `scribe.db` keeps. A line that does not parse (a torn
-/// last line, a hand edit) is skipped and counted; a line of a newer format
-/// refuses the whole read, so no count is made from a log this build cannot
-/// read.
-pub(super) fn decode_formatted(
-    path: &std::path::Path,
-    bytes: &[u8],
-) -> crate::Result<(Vec<(u32, AuditEvent)>, usize)> {
-    let (lines, skipped) = decode_for_import(path, bytes)?;
-    Ok((
-        lines.into_iter().map(|l| (l.format, l.event)).collect(),
-        skipped,
-    ))
 }
 
 /// The event as one newline-terminated JSON line with its format.
