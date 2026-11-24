@@ -27,7 +27,7 @@ clap = { version = "4", default-features = false, features = ["std", "derive", "
 # SQLite from source with FTS5 on, so every platform gets the same engine and
 # the BM25 message search, with no system library. Used by
 # scribe-core::store::db only (scripts/check-dependency-direction.sh).
-rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
 # Unix only: the process's effective uid, for the store ownership check
 # (STD-05 R9). std has no safe `geteuid`; tempfile already builds rustix.
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
