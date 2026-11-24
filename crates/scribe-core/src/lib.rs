@@ -92,6 +92,11 @@ mod store {
     pub(crate) use crate::tests::store as tests;
     pub(crate) use scribe_store::testing::{audit, codec, db, memory, write};
     pub use scribe_store::*;
+    // Use-case types that left the store (ORB-27921 step 4), at the paths
+    // the store tests name them by.
+    pub(crate) use crate::annotation::AGENT_HANDOFF;
+    pub(crate) use crate::apps::mark::{MarkChange, MarkKey};
+    pub(crate) use crate::apps::session::PassWrite;
 }
 pub(crate) use scribe_domain::tag;
 pub use scribe_domain::text;
@@ -151,15 +156,13 @@ pub use session::{
 };
 pub use store::repo;
 pub use store::{
-    AGENT_HANDOFF, AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE,
-    ClaudeCapturePosition, ClaudeGroupCapture, CloseGroupOutcome, DB_FILE, DEFAULT_LOCK_WAIT,
-    ENTRIES_DIR, EntryList, ExportFormat, Exported, InitFile, InitReport, IssueAudit, LOCKS_DIR,
-    MARKS_FILE, MEMORY_DIR, MILESTONES_DIR, MIN_SECRET_CHARS, MODEL_FAILED, MarkChange, MarkKey,
-    MarkResult, MemoryShown, MemoryView, MemoryWritten, Moved, NOW_DIR, PROFILE_FILE,
-    PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs, ProfileRevision,
-    REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR, SessionForget,
-    SessionList, SessionView, Skipped, Snapshot, Store, TagList, Tx, init_project,
-    init_project_with_skill_files, integration_hooks, resolve_prefix, unresolved_redact_env,
+    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, ClaudeCapturePosition,
+    ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportCounts,
+    ExportFormat, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR, MILESTONES_DIR,
+    MIN_SECRET_CHARS, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
+    PROPOSALS_FILE, PassMemory, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
+    SessionForget, SessionList, SessionLock, SessionView, Skipped, Snapshot, Store, TagList, Tx,
+    resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

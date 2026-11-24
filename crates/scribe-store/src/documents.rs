@@ -43,7 +43,7 @@ const LEGACY_MEMORY_PREFIX: &str = "m-";
 
 /// What `scribe store migrate`, or a write's own import, did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Moved {
+pub struct Imported {
     /// Session records imported (always 0 since phase 8: only archives are
     /// imported).
     pub sessions: usize,
@@ -311,7 +311,7 @@ impl Store {
     /// lines. A file store is refused: its records never moved. `store
     /// migrate` (`mode`) is refused first when there is nothing to import
     /// or the import is unsafe.
-    pub(super) fn import_at_write(&self, mode: Move, now: OffsetDateTime) -> Result<Moved> {
+    pub(super) fn import_at_write(&self, mode: Move, now: OffsetDateTime) -> Result<Imported> {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let path = self.root.join(DB_FILE);
         let fail = |e| db::db_error("move documents into", &path, e);
@@ -331,7 +331,7 @@ impl Store {
             docs::mark_moved(&conn, now, |_| None).map_err(fail)?;
             self.after(|a| a.stamp = true);
         }
-        let mut moved = Moved::default();
+        let mut moved = Imported::default();
         let archived = self.import_archives(&conn, now)?;
         let left = self.import_leftovers(&conn, &leftovers, now)?;
         moved.archives = archived.archives + left.archives;
@@ -462,7 +462,7 @@ impl Store {
         &self,
         target: &Path,
         write: &mut dyn FnMut(String, &[u8]) -> Result<()>,
-        out: &mut super::Exported,
+        out: &mut super::ExportCounts,
     ) -> Result<()> {
         let (mut entries, skipped) = self.load_entries()?;
         entries.sort_by(|a, b| a.id.cmp(&b.id));

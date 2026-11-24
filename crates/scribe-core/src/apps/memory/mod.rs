@@ -13,7 +13,10 @@ mod show;
 mod verbs;
 
 pub use block::{is_empty, text, warnings};
-pub use refresh::REFRESH_BUDGET;
+pub use refresh::{
+    Basis, ProfileInputs, REFRESH_BUDGET, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS,
+    REFRESH_VERBATIM_CHARS, REFRESH_VERBATIM_SESSIONS, RefreshWritten,
+};
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::MemoryVerbs;
@@ -24,7 +27,7 @@ use crate::models::ModelError;
 use crate::runtime::audit::{Audit, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::{Ctx, PortError};
-use crate::{AuthorName, MemoryShown, Models, Provider, RefreshWritten, SessionId};
+use crate::{AuthorName, MemoryShown, Models, Provider, SessionId};
 
 /// The model adapter `memory refresh` builds for the config.
 pub type ModelsFor<'m> = Box<dyn FnOnce(&crate::Config) -> Box<dyn Models + 'm> + 'm>;

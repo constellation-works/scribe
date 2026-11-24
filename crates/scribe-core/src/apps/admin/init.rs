@@ -2,7 +2,7 @@
 //! preserve unrelated hook groups and configuration, and reconcile only artifacts
 //! whose content still matches the previous installation receipt.
 
-use super::fsio;
+use crate::store::fsio::{self, Owned};
 use crate::{Error, Provider, Result, capture::prompt_sha256};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -110,8 +110,7 @@ pub fn init_project_with_skill_files(
     skill_files: &[(&str, &str)],
 ) -> Result<InitReport> {
     check_path(target, true)?;
-    let target =
-        std::fs::canonicalize(target).map_err(|e| Error::io("resolve project", target, e))?;
+    let target = fsio::canonicalize(target).map_err(|e| Error::io("resolve project", target, e))?;
     let config_dir = target.join(match provider {
         Provider::Codex => ".codex",
         Provider::ClaudeCode => ".claude",
@@ -306,28 +305,14 @@ fn read_optional(root: &Path, path: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 fn check_path(path: &Path, directory: bool) -> Result<()> {
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(Error::io("inspect scaffold", path, e)),
-    };
-    if meta.file_type().is_symlink()
-        || (directory && !meta.is_dir())
-        || (!directory && !meta.is_file())
-    {
-        return Err(conflict(path, "path is a link or has the wrong type"));
+    match fsio::inspect_owned(path, directory)? {
+        Owned::Missing | Owned::Fits => Ok(()),
+        Owned::WrongType => Err(conflict(path, "path is a link or has the wrong type")),
+        Owned::Foreign => Err(conflict(
+            path,
+            "path is foreign-owned or writable by another user",
+        )),
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if meta.uid() != rustix::process::geteuid().as_raw() || meta.mode() & 0o022 != 0 {
-            return Err(conflict(
-                path,
-                "path is foreign-owned or writable by another user",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn check_descendants(root: &Path, path: &Path) -> Result<()> {

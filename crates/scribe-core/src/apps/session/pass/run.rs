@@ -822,13 +822,13 @@ impl<E: PortError> Job<'_, E> {
             let candidates =
                 pass::candidate_drafts(&candidate_answers, &messages, &record, &self.config.tags);
             let mode = if !last {
-                crate::PassWrite::Checkpoint
+                super::PassWrite::Checkpoint
             } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
-                crate::PassWrite::CatalogFinal
+                super::PassWrite::CatalogFinal
             } else if self.catalog.is_some() {
-                crate::PassWrite::CatalogLive
+                super::PassWrite::CatalogLive
             } else {
-                crate::PassWrite::Settle(self.switch.final_pass)
+                super::PassWrite::Settle(self.switch.final_pass)
             };
             let pass_memory = crate::PassMemory {
                 drafts: memory_drafts,

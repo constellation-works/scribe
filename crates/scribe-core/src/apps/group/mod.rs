@@ -20,7 +20,7 @@ pub use join::{GroupJoinInput, GroupJoined};
 pub use open::{GroupOpenInput, GroupOpened};
 pub use turns::{claude as claude_turns, codex as codex_turns, past as past_turns};
 #[cfg(any(test, feature = "test-support"))]
-pub use verbs::GroupVerbs;
+pub use verbs::{CloseGroupOutcome, GroupVerbs};
 
 use crate::apps::session::{self, ModelsOnce};
 use crate::composition::Context;

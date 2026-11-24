@@ -2146,7 +2146,7 @@ fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Resu
 pub(super) fn init(
     out: &mut dyn Write,
     sink: &Sink,
-    report: &scribe_core::InitReport,
+    report: &scribe_core::apps::admin::InitReport,
 ) -> io::Result<()> {
     if sink.mode == OutputMode::Json {
         return write_json(out, report);

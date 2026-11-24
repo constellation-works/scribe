@@ -16,7 +16,7 @@ pub use add::ProposalAddInput;
 pub use list::ListInput;
 pub use settle::ProposalSettleInput;
 #[cfg(any(test, feature = "test-support"))]
-pub use verbs::ProposalVerbs;
+pub use verbs::{ProposalVerbs, SessionForgetOutcome};
 
 use crate::composition::Context;
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};

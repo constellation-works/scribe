@@ -6,6 +6,8 @@
 mod capture;
 mod close;
 
+pub use close::CloseGroupOutcome;
+
 use crate::checks::group::{check_additions, check_join, check_new_group, check_project_slug};
 use crate::checks::refusal;
 use crate::group::{
@@ -16,8 +18,8 @@ use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::{
-    AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, CloseGroupOutcome, Error, Project,
-    Redactor, Result, SessionId, Store, WriteRefusal,
+    AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, Error, Project, Redactor, Result,
+    SessionId, Store, WriteRefusal,
 };
 use time::OffsetDateTime;
 

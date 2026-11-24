@@ -431,6 +431,7 @@ for retired in \
   crates/scribe/src/commands/hook/stop.rs \
   crates/scribe/src/commands/hook/session_end.rs \
   crates/scribe/src/commands/hook/codex.rs \
+  crates/scribe-store/src/init.rs \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done

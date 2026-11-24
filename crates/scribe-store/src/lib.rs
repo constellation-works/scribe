@@ -57,24 +57,17 @@ mod codec;
 mod db;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
-pub use documents::Moved;
-mod fsio;
+pub use documents::Imported;
+pub mod fsio;
 mod ids;
-mod init;
 mod memory;
 pub use memory::{
-    Basis, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
-    REFRESH_VERBATIM_SESSIONS, bare, not_found,
-};
-pub use memory::{
     MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
-    PassMemory, ProfileInputs, ProfileRevision, RefreshWritten,
+    PassMemory, ProfileRevision,
 };
+pub use memory::{bare, not_found};
 mod marks;
 mod pickups;
-pub use init::{
-    InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
-};
 mod rebuild;
 pub mod repo;
 pub use repo::{Snapshot, Tx};
@@ -83,15 +76,13 @@ mod seed;
 mod sessions;
 mod tags;
 mod write;
-pub use rebuild::RebuildGuard;
+pub use rebuild::SessionLock;
 pub use sessions::{
-    ExportFormat, Exported, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
-    SessionForgetOutcome,
+    ExportCounts, ExportFormat, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
 };
 
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
-pub use marks::{AGENT_HANDOFF, MODEL_FAILED, MarkChange, MarkKey, MarkResult};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 
 // The domain at the paths this code had as scribe-core's `store` module.
@@ -108,12 +99,12 @@ use crate::session::{
 use scribe_domain::tag::{self, TagSummary};
 use scribe_domain::{
     Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
-    Project, ProposalId, ProposalKind, ProposalState, Provider, Related, RelatedKind, SessionError,
+    Project, ProposalId, ProposalKind, ProposalState, Related, RelatedKind, SessionError,
     SessionStatus, Speaker, StoreTag, TagDef, TagName, TagTable, WriteRefusal,
 };
 use scribe_domain::{
     action, annotation, brief, capture, checks, config, consistency, entry, error, group, handoff,
-    instruction, message, models, proposal, record, redact, session, voice,
+    instruction, message, models, proposal, record, redact, session,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
@@ -223,64 +214,6 @@ pub struct TagList {
 pub struct Store {
     root: PathBuf,
     lock_wait: Duration,
-}
-
-/// Whether a group close committed and how its post-commit cleanup ended.
-#[derive(Debug)]
-pub enum CloseGroupOutcome {
-    /// The group was already closed when this attempt ran.
-    AlreadyClosed {
-        /// The resolved group id.
-        id: String,
-    },
-    /// The close and its success audit committed.
-    Closed {
-        /// The resolved group id.
-        id: String,
-        /// The result of store cleanup after the commit.
-        cleanup: Result<()>,
-    },
-}
-
-impl CloseGroupOutcome {
-    /// Return the group id and whether it changed, propagating any cleanup error.
-    pub fn into_result(self) -> Result<(String, bool)> {
-        match self {
-            Self::AlreadyClosed { id } => Ok((id, false)),
-            Self::Closed { id, cleanup } => {
-                cleanup?;
-                Ok((id, true))
-            }
-        }
-    }
-}
-
-/// How `PassVerbs::write_pass_window` (scribe-core) leaves the switch.
-#[derive(Clone, Copy, Debug)]
-pub enum PassWrite {
-    /// An intermediate window. Force the session due.
-    Checkpoint,
-    /// The last window of an ordinary pass. `bool` is `ran_final`.
-    Settle(bool),
-    /// The last window of a live catalog: stay on and due, clear backoff.
-    CatalogLive,
-    /// The last window of an ended catalog: settle as final and switch off.
-    CatalogFinal,
-}
-
-/// What `PassVerbs::write_pass_window` (scribe-core) wrote under the store lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PassWritten {
-    /// The updated session record, when one was written.
-    pub record: Option<SessionRecord>,
-    /// Open candidate proposals closed because their tag is absent from the
-    /// tag table, in id order.
-    pub closed_candidates: Vec<Proposal>,
-    /// Entries the pass wrote itself under `write` tags (2_design.md
-    /// §11.6), in write order.
-    pub written_entries: Vec<EntryId>,
-    /// The window's memory write (2_design.md §13.3).
-    pub memory: MemoryWritten,
 }
 
 impl Store {

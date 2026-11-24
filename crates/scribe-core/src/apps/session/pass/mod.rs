@@ -18,7 +18,7 @@ use crate::pass::{
     covering_claim, entry_says, own_span,
 };
 use crate::{
-    Author, EntryId, Error, PassMemory, PassWrite, PassWritten, Proposal, ProposalId, ProposalKind,
+    Author, EntryId, Error, MemoryWritten, PassMemory, Proposal, ProposalId, ProposalKind,
     ProposalState, Redactor, Result, SessionId, SessionLink, SessionRecord, Store, Tx, control,
 };
 
@@ -624,4 +624,32 @@ fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
             links.push(link.clone());
         }
     }
+}
+
+/// How `PassVerbs::write_pass_window` (scribe-core) leaves the switch.
+#[derive(Clone, Copy, Debug)]
+pub enum PassWrite {
+    /// An intermediate window. Force the session due.
+    Checkpoint,
+    /// The last window of an ordinary pass. `bool` is `ran_final`.
+    Settle(bool),
+    /// The last window of a live catalog: stay on and due, clear backoff.
+    CatalogLive,
+    /// The last window of an ended catalog: settle as final and switch off.
+    CatalogFinal,
+}
+
+/// What `PassVerbs::write_pass_window` (scribe-core) wrote under the store lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassWritten {
+    /// The updated session record, when one was written.
+    pub record: Option<SessionRecord>,
+    /// Open candidate proposals closed because their tag is absent from the
+    /// tag table, in id order.
+    pub closed_candidates: Vec<Proposal>,
+    /// Entries the pass wrote itself under `write` tags (2_design.md
+    /// §11.6), in write order.
+    pub written_entries: Vec<EntryId>,
+    /// The window's memory write (2_design.md §13.3).
+    pub memory: MemoryWritten,
 }

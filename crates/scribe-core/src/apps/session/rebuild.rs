@@ -9,14 +9,14 @@ use crate::{
     Author, AuthorName, Config, Models, Provider, SegmentOrigin, SegmentState, SessionId,
     SessionStatus, check_agent_author, pass, transcript,
 };
-use crate::{Error, RebuildGuard, Redactor, Result, SessionRecord, Store};
+use crate::{Error, Redactor, Result, SessionLock, SessionRecord, Store};
 use std::collections::BTreeSet;
 use time::OffsetDateTime;
 
 /// The rebuild verbs, implemented for [`Store`].
 pub trait RebuildVerbs {
     /// Acquire the session's rebuild lock, with the store's bounded wait.
-    fn lock_rebuild(&self, record: &SessionRecord) -> Result<RebuildGuard>;
+    fn lock_rebuild(&self, record: &SessionRecord) -> Result<SessionLock>;
 
     /// The partial rebuilt record, if present. This read never locks or writes.
     fn rebuild_checkpoint(&self, original: &SessionRecord) -> Result<Option<SessionRecord>>;
@@ -41,7 +41,7 @@ pub trait RebuildVerbs {
 }
 
 impl RebuildVerbs for Store {
-    fn lock_rebuild(&self, record: &SessionRecord) -> Result<RebuildGuard> {
+    fn lock_rebuild(&self, record: &SessionRecord) -> Result<SessionLock> {
         let view = self.read().sessions().get(&record.id)?;
         if view.forgotten.is_some() {
             return Err(forgotten_refusal(&record.id, "nothing is written to it"));
