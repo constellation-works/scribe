@@ -34,8 +34,11 @@ holds a finance or sensitive-event word. Each hit's `title` ends with its
 speaker, `(user)` or `(assistant)`; its `message` is the provider's message id.
 Attribute each assistant hit to the assistant.
 
-Group consent captures eligible typed turns after joining an open group even when
-cataloging is off. Search finds them with or without `--group <id>`. Group
+Group consent captures eligible typed turns even when cataloging is off. An
+explicit `group open`, `group join` or `/scribe group add` also captures the
+session's earlier typed turns; the typed `/scribe group <slug>` join and
+clear-time inheritance capture from the time the session joined. Search finds
+them with or without `--group <id>`. Group
 turns are always the human's. Leaving removes turns held only on group consent.
 They feed no memory and make no catalog entry.
 

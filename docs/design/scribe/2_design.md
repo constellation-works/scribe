@@ -4116,8 +4116,11 @@ updates the record returns a `memory` array beside `candidates`.
   the pass stop reading assistant turns at all; that is not built.) While the
   base is parked, a session neither switched on nor explicitly named for
   catalog gets no personal-memory pass. Group consent can still store its
-  eligible typed turns from the time it joins an open group, as group-only
-  turns: no memory pass reads them and they make no catalog entry (§17).
+  eligible typed turns as group-only turns: an explicit `group open`, `group
+  join` or `/scribe group add` also stores the session's earlier ones, while
+  the typed `/scribe group <slug>` join and clear-time inheritance store from
+  the time the session joined. No memory pass reads them and they make no
+  catalog entry (§17).
 - **Bound.** At most **3 memory items per session per pass invocation**,
   shared across its windows and separate from the 3 candidate slots;
   refused items consume a slot. Each array element is `{section,
@@ -4546,8 +4549,10 @@ keep 1, 6, 7". (a), (b) and (c) are kept. [ORB-26240]'s steps (a1)–(a4)
   switched on with `/scribe on` or explicitly named with `session catalog`
   (§5.8) get personal-memory passes and catalog records while the base is
   parked. An off session outside those paths gets neither; group consent can
-  separately store eligible turns from the time it joins an open group,
-  without a catalog entry (§17). A user whose conversations are elsewhere
+  separately store eligible turns, without a catalog entry: from the first
+  line of the transcript on an explicit `group open`, `group join` or `/scribe
+  group add`, and from the join time otherwise (§17).
+  A user whose conversations are elsewhere
   (Daniel's example of a user in ChatGPT) has no memory, by his decision of
   2026-11-21 ("claude code and codex support only then. so be it",
   [4_decisions.md](./4_decisions.md#scribe-reads-claude-code-and-codex-sessions-only)).
@@ -4851,8 +4856,9 @@ another surface and are not built until seen.
 > `session catalog` gets no personal-memory pass or catalog record:
 > `depth: light` is not added to session headers, and the page's
 > recent-sessions list remains the plain list of §13.6. Group consent can
-> still store eligible turns from the time it joins an open group, without a
-> catalog entry (§17).
+> still store eligible turns, without a catalog entry: from the first line of
+> the transcript on an explicit `group open`, `group join` or `/scribe group
+> add`, and from the join time otherwise (§17).
 
 **Decided by Daniel**, chief's chat, 2026-11-21, to "Should a session you
 do not switch on still leave a light catalog entry (title and summary)?":
@@ -6060,9 +6066,10 @@ with phase 4):
 
 - **What is stored.** A session pass stores the user's typed turns of a
   session switched on with `/scribe on` or named with `session catalog`
-  (§5.8); group consent also permits capture from the time a session joins an
-  open group, even with cataloging off (§17); those group-only turns feed no
-  memory pass and make no catalog entry. Both use
+  (§5.8); group consent also permits capture, even with cataloging off: from
+  the first line of the transcript on an explicit `group open`, `group join` or
+  `/scribe group add`, and from the join time otherwise (§17); those group-only
+  turns feed no memory pass and make no catalog entry. Both use
   §5.3's exclusions (pasted blocks, fenced code, synthetic and meta
   turns). The text passes the redactor before it is written (STD-05). The
   only assistant turns stored are those a claim or a collected entry cites
@@ -6825,7 +6832,7 @@ Codex rollouts, regardless of the caller’s provider. When its transcript is st
 on disk, its typed turns are stored with the selection a member's own turns get (a typed turn, not an agent
 or harness turn, nor a copied history) whatever their age, and its capture
 cursor is set after the last of them, so a later capture neither repeats them
-nor skips newer ones. The join time is taken before any transcript is read, and once a cursor is set every turn after it is stored whatever its timestamp, so a turn appended while the snapshots were being read, though dated before the membership committed, is kept exactly once; an ordinary join, which has no cursor, keeps its join-time cutoff. The reply says `transcript on disk, <n> typed turns
+nor skips newer ones. The join time is taken before any transcript is read, and once a cursor is set every turn after it is stored whatever its timestamp, so a turn appended while the snapshots were being read, though dated before the membership committed, is kept exactly once; a join that stores no earlier turns (the typed `/scribe group <slug>` join, which reads no transcript, or a session with no transcript on disk or no eligible turn in it) has no cursor and keeps its join-time cutoff. The reply says `transcript on disk, <n> typed turns
 stored`. When it is not, only membership is added and the reply says
 `membership only, no transcript on disk`. A transcript on disk that fails the
 provenance check refuses the whole line, including an entry named for the session
@@ -6915,10 +6922,11 @@ and also recommends running `scribe group join`.
 **Stored turns.** `scribe group backfill <id>` stores each current seat holder’s eligible typed turns from the first line of its checked transcript, including for seats joined before join-time backfill. It skips and names unavailable or refused transcripts, reports stored and already-stored counts per seat and in total, refuses closed groups, and never changes capture cursors. Repeating it stores no turn twice and makes no model call. This explicit operation includes a current holder’s earlier turns even across a prior displacement.
 
 Joining starts no catalog pass and creates no session record.
-A session's typed turns are stored from the first line of its own transcript,
-not from its join time: `group open` stores the opener's earlier turns and
-`group join` the joining session's, by the rules below (a typed turn of the
-session itself, not an agent or harness turn, a copied history, a peer message
+An explicit `group open`, `group join` or `/scribe group add` stores a session's
+own typed turns from the first line of its transcript, not from its join time:
+`group open` stores the opener's earlier turns, and `group join` and `/scribe
+group add` the joining or named session's, by the rules below (a typed turn of
+the session itself, not an agent or harness turn, a copied history, a peer message
 or a scheduled prompt), and the capture cursor starts after the last of them, so
 a later capture stores no turn twice. The typed `/scribe group <slug>` join and
 clear-time seat inheritance do not backfill; they store from the time the
