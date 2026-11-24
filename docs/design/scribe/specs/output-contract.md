@@ -745,12 +745,15 @@ oldest first: `pending` ones and given-up ones (`refused`, `model_failed`).
 shape (store.md): `session`, `message`, `prompt_sha256`, `marker`,
 `outcome`, `entry`, `code`, `attempts`, `at`. The table columns are
 `SESSION MESSAGE MARKER OUTCOME CODE ATTEMPTS AT`; piped lines are
-tab-separated with full ids and timestamps. An empty list prints nothing on
+tab-separated with timestamps. `SESSION` in both forms is the session's `s-<n>`
+alias when it is cataloged, otherwise its shortest unique prefix (`ShortIds`,
+at least eight characters); either form is accepted back as a session id.
+`--json` keeps the provider id in `session`. An empty list prints nothing on
 stdout and `no uncataloged #scribe markers: every marker has an entry or an
 answer` on stderr. It is read-only and not audited.
-`scribe mark retry <session>` resolves the session (a cataloged id, a
-transcript's id or a unique prefix), turns its given-up markers back to
-`pending` with no attempts, and catalogs every unsettled marker of the
+`scribe mark retry <session>` resolves the session (a cataloged id, its
+`s-<n>` alias, a transcript's id or a unique prefix), turns its given-up
+markers back to `pending` with no attempts, and catalogs every unsettled marker of the
 session's transcript as `Stop` does, with no per-run turn bound. It prints
 the markers it wrote, in `mark list`'s forms, and the `Stop` echoes on
 stderr. When a call fails again it exits 1 with `model_failed` (`<n> #scribe
@@ -1228,6 +1231,7 @@ seats summary`, with `seats` as `<name> (<role>): <session> -> <session>
 [handoff: <id or ->]` joined by `; `, and `-` for an empty `related`, `seats`
 or `summary`. Piped output, the brief and `group show` print `s-<n>` for
 cataloged session ids, otherwise their shortest unique prefix (at least eight
-characters). `--json` and stored references retain full provider ids. This
-supersedes the earlier STD-01@2 §R15 reading for piped session ids; Daniel chose
+characters); a terminal `group show` table does the same, while a terminal
+`session list` table prints prefixes only. `--json` and stored references
+retain full provider ids. This supersedes the earlier STD-01@2 §R15 reading for piped session ids; Daniel chose
 “Yes, s-<n> alias for open-item-7” (2_design.md, Ids).
