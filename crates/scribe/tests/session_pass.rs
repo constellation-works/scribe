@@ -670,6 +670,74 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
 }
 
 #[test]
+fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessions() {
+    let s = Setup::new();
+    // The word is in a turn he typed, and in a retired entry: the default
+    // search finds no visible entry or session, so the hint names the message.
+    let quote = "Keep the quartzlark rollout note out of the release.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+    let added: Value = serde_json::from_slice(
+        &s.fx
+            .ok(&[
+                "entry",
+                "add",
+                "--tag",
+                "preferences",
+                "--author",
+                "opus",
+                "Quartzlark was the old rollout code name.",
+                "--json",
+            ])
+            .stdout,
+    )
+    .unwrap();
+    let id = added["id"].as_str().unwrap();
+    s.fx.ok(&[
+        "entry",
+        "retire",
+        id,
+        "--author",
+        "opus",
+        "--reason",
+        "the code name changed",
+    ]);
+
+    let found = s.fx.ok(&["search", "quartzlark"]);
+    assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
+    let stderr = text(&found.stderr);
+    let default_root = s.fx.root().display().to_string();
+    let hidden = "1 hidden record(s) also match: superseded or retired entries, or inactive sessions; --include-hidden shows them";
+    let hint = format!(
+        "1 stored message(s) match, and no visible entry or session does: scribe --root {default_root} search --kind message -- quartzlark lists them"
+    );
+    assert!(stderr.lines().any(|l| l == hidden), "{stderr}");
+    assert_eq!(stderr.lines().last(), Some(hint.as_str()), "{stderr}");
+    assert!(!stderr.contains("and no entry or session does"), "{stderr}");
+
+    // The count is the same JSON key, and it names the visible message.
+    let json: Value =
+        serde_json::from_slice(&s.fx.ok(&["search", "quartzlark", "--json"]).stdout).unwrap();
+    assert_eq!(json["total"], 0, "{json}");
+    assert_eq!(json["hits"], json!([]), "{json}");
+    assert_eq!(json["message_matches"], 1, "{json}");
+
+    // Showing the hidden entry answers the search, so the hint goes.
+    let shown =
+        s.fx.ok(&["search", "quartzlark", "--include-hidden", "--json"]);
+    let shown_json: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown_json["total"], 1, "{shown_json}");
+    assert!(shown_json.get("message_matches").is_none(), "{shown_json}");
+    assert!(
+        !text(&shown.stderr).contains("stored message"),
+        "{}",
+        text(&shown.stderr)
+    );
+}
+
+#[test]
 fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
     let s = Setup::new();
     let quote = "Keep the quartzlark rollout note out of the release.";
