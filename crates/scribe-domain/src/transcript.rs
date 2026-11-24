@@ -143,7 +143,8 @@ pub fn parse(bytes: &[u8]) -> Vec<Message> {
 /// Also returns the uuids of the refused typed forms in the batch, first
 /// copies only: they are not messages, but group capture still needs their
 /// verdict to survive into the next batch.
-pub(crate) fn parse_claude(bytes: &[u8]) -> (Vec<Message>, Vec<String>) {
+#[must_use]
+pub fn parse_claude(bytes: &[u8]) -> (Vec<Message>, Vec<String>) {
     let analysis = analyze(bytes, false, false);
     (analysis.messages, analysis.refused)
 }
@@ -322,7 +323,8 @@ struct RawAttachment<'a> {
 /// `origin.kind` `human`, and neither meta nor sidechain. Its words are the
 /// attachment's `prompt`. Claude Code keeps no `user` line for it. The origin
 /// guard still reads the line's claims before a check accepts the message.
-pub(crate) fn queued_message(line: &[u8]) -> Option<Message> {
+#[must_use]
+pub fn queued_message(line: &[u8]) -> Option<Message> {
     let queued: RawQueued<'_> = serde_json::from_slice(line).ok()?;
     let attachment = queued.attachment.as_ref()?;
     let human = attachment

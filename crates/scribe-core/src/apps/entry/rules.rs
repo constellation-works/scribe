@@ -17,6 +17,11 @@
 //!   proposal, session and group apps share; the entry app is their lowest
 //!   user), an agent entry's tag, quote, evidence and handoff fields, and
 //!   decision and open-item records (2_design.md §18).
+//! - The instruction check ([`instruction`]): whether a write an agent runs
+//!   on Daniel's word is backed by a turn he typed (§12.2, §12.5). The
+//!   entry, proposal and group apps use it; entry is the lowest.
+
+pub mod instruction;
 
 use crate::apps::tag::check_agent_author;
 use crate::entry::{Entry, EntryId, EntryStatus, TagName, is_decision_or_item};

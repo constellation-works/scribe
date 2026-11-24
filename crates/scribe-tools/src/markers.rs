@@ -22,13 +22,12 @@
 //!
 //! Pure functions over text: no I/O (STD-02 R5).
 
-use crate::entry::{Cite, EntryId, TagName};
-use crate::proposal::ProposalId;
-use crate::record::{Label, Project, Topic, Topics};
-use crate::session::SessionId;
-use crate::tag::TagTable;
+use scribe_domain::entry::{EntryId, TagName};
+use scribe_domain::proposal::ProposalId;
+use scribe_domain::record::{Topic, Topics};
+use scribe_domain::session::SessionId;
+use scribe_domain::tag::TagTable;
 use std::fmt;
-use time::OffsetDateTime;
 
 /// The marker that opens a `#scribe` line, or marks a turn anywhere in a
 /// sentence (§14.1).
@@ -335,25 +334,6 @@ fn is_uuid_prefix(id: &str) -> bool {
         && hex(last)
 }
 
-/// The hashes a transcript turn's text can match a typed prompt by: of the
-/// whole text and of each text block, as the `Stop` hook matches cites.
-#[must_use]
-pub fn prompt_hashes(message: &crate::transcript::Message) -> Vec<String> {
-    let mut hashes = vec![prompt_sha256(&message.text())];
-    for block in &message.blocks {
-        let hash = prompt_sha256(block);
-        if !hashes.contains(&hash) {
-            hashes.push(hash);
-        }
-    }
-    hashes
-}
-
-pub use crate::origin::{
-    OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
-};
-pub use crate::text::{bytes_sha256, prompt_sha256};
-
 // --- markers (§14.1) ---------------------------------------------------------
 
 /// A settling instruction (form 4): `#scribe approve|reject <p-id>` or
@@ -536,7 +516,7 @@ pub fn marks(text: &str) -> Vec<Mark> {
 /// in.
 #[must_use]
 pub fn turn_marks(text: &str) -> Vec<Mark> {
-    let Some(args) = crate::transcript::slash_command_args(text) else {
+    let Some(args) = scribe_domain::transcript::slash_command_args(text) else {
         return marks(text);
     };
     // `args` is a slice of `text`; its first line is the line it starts on.
@@ -665,42 +645,5 @@ fn parse_mark(number: u32, line: u32, said: &str, start: usize) -> Mark {
         tail: if opens_line { tail(rest) } else { None },
         topics: Topics::try_from(topics).unwrap_or_default(),
         problem,
-    }
-}
-
-/// Where and when a prompt was typed: everything an entry records about its
-/// turn besides what it says.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Turn {
-    /// The Claude Code session.
-    pub session: SessionId,
-    /// When the hook received the prompt, or the transcript timestamp for
-    /// a prompt recovered after its hook was missed.
-    pub at: OffsetDateTime,
-    /// [`prompt_sha256`] of the whole prompt.
-    pub prompt_sha256: String,
-    /// The session's working directory.
-    pub cwd: String,
-    /// The repository the cwd belongs to.
-    pub project: Project,
-    /// The tool it was typed in, such as `claude-code`.
-    pub provider: Label,
-    /// The host it was typed on.
-    pub host: Label,
-}
-
-impl Turn {
-    /// The cite of `#scribe` line `line` of this turn; its message uuid is
-    /// `None` until the next `Stop` hook finds it.
-    #[must_use]
-    pub fn cite(&self, line: u32) -> Cite {
-        Cite {
-            session: self.session.clone(),
-            message: None,
-            at: self.at,
-            prompt_sha256: self.prompt_sha256.clone(),
-            line,
-            cwd: self.cwd.clone(),
-        }
     }
 }

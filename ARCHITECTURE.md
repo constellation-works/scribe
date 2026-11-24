@@ -28,7 +28,7 @@ PR 2 until PR 4, when composition is in the core.
 |-------|------|-----------------------|--------|
 | `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, and the redactor every persisted free-text field passes (`redact.rs`). The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
-| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots and read under the provenance checks (`transcript/`), a working directory's project from git's own files (`project.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
+| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots and read under the provenance checks (`transcript/`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers and settling lines of a typed turn (`markers.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe` (binary) | Arguments, dispatch, the audit guard and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `capture`, `instruction`, `models`, `config`, `error`, `memory`, `message` |
+| 4. rules | `trigger`, `voice`, `claim`, `models`, `config`, `error`, `memory`, `message` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -175,7 +175,25 @@ PR 5-8 moved `annotation` and `group`:
   uses it.
 
 The core's root re-exports them as `crate::annotation` and `crate::group`,
-with the marker scanning the domain's `capture` still holds.
+with the marker scanning from `scribe_tools::markers` (PR 5-9).
+
+PR 5-9 moved `capture` and `instruction`:
+
+- `capture`'s marker scanning goes to `scribe-tools/src/markers.rs`, and its
+  settling-line parser goes with it, because `marks` skips a settling line
+  by parsing it.
+- A typed turn (`Turn`) and its prompt hashes go to `apps/hook/rules.rs`.
+- `capture`'s re-exports of the origin guard and the text hashes are
+  dropped. Their users name `origin` and `text`.
+- `instruction` goes to `apps/entry/rules/instruction.rs`, because the entry
+  app is its lowest user. `ClaudeSeen`, what a member's Claude capture has
+  seen of a message id, goes to the store's `contracts/group.rs`.
+- The group app now resolves a Claude batch against the seen ids, read
+  through the store's `GroupRows::seen`. The store no longer runs that rule.
+
+The core's root re-exports them as `crate::capture` and `crate::instruction`.
+`verbatim` stays in the domain's base ring, because `claim` imports it. It
+goes to `tools/text` with `claim` and `text` in PR 5-13.
 
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
 re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
@@ -193,8 +211,7 @@ ORB-27707 where an import forces it:
   - `message` imports `claim::PassClaim`, `models::PassMessage` and
     `memory::{finance_word, sensitive_word}`;
 - **`transcript` comes before rules, not after.** The rules read
-  transcripts: `capture` imports `transcript::Message`, and `instruction`,
-  `memory` and `message` import from it too. In turn,
+  transcripts: `memory` and `message` import from it. In turn,
   `transcript` imports only the records ring (`control::parse`, `entry`,
   `session`) and base (`origin`, `text`, `record`).
 - **`config` is in rules, not a ring of its own after transcript.** It imports
@@ -223,7 +240,7 @@ includes any file added later.
 
 - `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
 - `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
-- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
+- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `db/fsio.rs` imports nothing of the store but its error type, and `contracts/` imports nothing from `db/` or `repository/` and has no `check_*` function.

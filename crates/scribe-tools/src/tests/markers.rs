@@ -1,9 +1,9 @@
-use crate::capture::Settle;
-use crate::capture::{self, Parsed, Refusal};
-use crate::entry::EntryId;
-use crate::proposal::ProposalId;
-use crate::tag::TagTable;
-use crate::{capture as annotation, capture::MarkProblem};
+use crate::markers::Settle;
+use crate::markers::{self as capture, Parsed, Refusal};
+use crate::{markers as annotation, markers::MarkProblem};
+use scribe_domain::entry::EntryId;
+use scribe_domain::proposal::ProposalId;
+use scribe_domain::tag::TagTable;
 
 /// `(line, code)` of each settling line of `prompt`: `settle`,
 /// or the refusal's code.
@@ -141,14 +141,6 @@ fn the_global_opener_on_a_settling_line_is_refused_and_teaches_the_opener() {
     };
     assert_eq!(settle.reason, Refusal::MarkerNotOnEntry);
     assert!(settle.message().contains(capture::GLOBAL_OPENER));
-}
-
-#[test]
-fn the_prompt_hash_is_lowercase_sha256_hex() {
-    assert_eq!(
-        capture::prompt_sha256("abc"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! and each write rechecks the membership the hook read.
 
 use crate::apps::group::rules::{check_capture_turns, check_own_user_turns};
-use crate::instruction::ClaudeGroupTurns;
+use crate::instruction::{ClaudeGroupTurns, ClaudeSeen};
 use crate::message::NewMessage;
 use crate::repository::CaptureState;
 use crate::store::refusal;
@@ -160,7 +160,16 @@ pub(super) fn capture_claude_group_turns(
                 return Ok(None);
             }
             let member = before.member();
-            let resolved = rows.resolve_seen(member.position, batch, resumed)?;
+            // Resolve the batch against the ids the member has seen, reading
+            // them only when `resumed`.
+            let mut seen = rows.seen(member.position)?;
+            let resolved = batch.resolve(|id| {
+                if resumed {
+                    seen.get(id)
+                } else {
+                    Ok(ClaudeSeen::default())
+                }
+            })?;
 
             let after = if resumed {
                 Some(resolved.turns.as_slice())

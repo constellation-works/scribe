@@ -29,6 +29,7 @@ serde_json = { workspace = true }
 rustix = { workspace = true, features = ["fs", "system"] }
 
 [dev-dependencies]
+scribe-domain = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 
 [lints]

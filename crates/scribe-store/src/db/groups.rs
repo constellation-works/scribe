@@ -5,7 +5,7 @@ mod claude;
 mod rows;
 
 pub(super) use claude::V15;
-pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
+pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture, ClaudeSeenIds};
 pub use rows::CloseHeader;
 
 use super::{

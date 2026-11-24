@@ -1,7 +1,7 @@
 //! Read only new Claude JSONL records from a provenance-checked handle.
 
 use crate::fs::Metadata;
-use scribe_domain::capture::bytes_sha256;
+use scribe_domain::text::bytes_sha256;
 use scribe_store::ClaudeCapturePosition;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;

@@ -13,6 +13,7 @@ mod continuation;
 mod group_add;
 mod proposal_command;
 mod reply;
+pub mod rules;
 mod scribe_command;
 mod session_end;
 mod session_start;

@@ -73,7 +73,7 @@ pub use db::write::ImportFacts;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
 pub use contracts::action::Pickup;
-pub use contracts::group::{Group, LastGroup, NewGroup, Seat, SeatHold};
+pub use contracts::group::{ClaudeSeen, Group, LastGroup, NewGroup, Seat, SeatHold};
 pub use contracts::mark::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
 pub use error::{forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
@@ -111,9 +111,7 @@ use scribe_domain::{
     Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
     StoreTag, TagDef, TagTable, WriteRefusal,
 };
-use scribe_domain::{
-    capture, config, entry, handoff, instruction, message, models, proposal, record, session,
-};
+use scribe_domain::{config, entry, handoff, message, models, proposal, record, session, text};
 // The domain names the redaction tests (`tests/redact.rs`) reach at the
 // crate root, as they did in the domain.
 #[cfg(test)]

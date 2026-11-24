@@ -1,5 +1,6 @@
 //! The group shapes the store keeps and hands its callers: a group with its
-//! named seats, a new group's draft, and the seat a session holds.
+//! named seats, a new group's draft, the seat a session holds, and what a
+//! member's Claude capture has seen of a message id.
 
 use crate::{Project, Related, SessionId};
 use serde::Serialize;
@@ -92,4 +93,15 @@ pub struct SeatHold {
     pub seat: String,
     /// Seat role label.
     pub role: String,
+}
+
+/// The first origin claim and whether a parseable message has already been
+/// seen for an id. These are separate because a metadata line can supply
+/// claims even when it does not produce a message.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClaudeSeen {
+    /// The first origin claim for the id: whether it permits the turn.
+    pub permitted: Option<bool>,
+    /// Whether a parseable message has been seen for the id.
+    pub message: bool,
 }
