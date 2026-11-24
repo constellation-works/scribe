@@ -32,6 +32,7 @@ pub use list::{ListInput, Listed};
 pub use pickup::PickupInput;
 #[cfg(any(test, feature = "test-support"))]
 pub use pickup::PickupVerbs;
+pub use rules::message::{keeps, typed_turn};
 pub use rules::{
     SettleRefusal, Settled, check_content, check_handoff, forget, required_message, required_reason,
 };

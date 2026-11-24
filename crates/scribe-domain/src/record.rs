@@ -775,20 +775,17 @@ pub mod nullable_date {
     }
 
     /// A calendar date whose key must hold one: `YYYY-MM-DD`, never `null`.
-    pub(crate) mod required {
+    pub mod required {
         use serde::{Deserialize, Deserializer, Serializer};
         use time::Date;
 
-        pub(crate) fn serialize<S: Serializer>(
-            date: &Date,
-            serializer: S,
-        ) -> Result<S::Ok, S::Error> {
+        /// Write `date` as `YYYY-MM-DD`.
+        pub fn serialize<S: Serializer>(date: &Date, serializer: S) -> Result<S::Ok, S::Error> {
             serializer.serialize_str(&super::format(*date))
         }
 
-        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Date, D::Error> {
+        /// Read a `YYYY-MM-DD` date.
+        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
             let text = String::deserialize(deserializer)?;
             Date::parse(&text, super::FORMAT).map_err(serde::de::Error::custom)
         }

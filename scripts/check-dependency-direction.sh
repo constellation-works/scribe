@@ -173,7 +173,7 @@ DOMAIN_RINGS='
 base:       record text verbatim provider origin
 records:    session control entry handoff tag proposal
 transcript: transcript
-rules:      trigger voice claim models config memory message
+rules:      trigger voice claim models config
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -324,7 +324,7 @@ ban "$TOOLS" 'Store::write|\.write\([[:space:]]*\|' "scribe-tools must not write
 
 # Pass is an orchestrator; its lower-level callers in the rules ring cannot
 # depend on it.
-for path in config.rs memory message.rs; do
+for path in config.rs; do
   ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "domain/$path must not depend on pass"
 done
 # The model shapes must not import their callers.
@@ -496,7 +496,9 @@ for retired in \
   crates/scribe-domain/src/group.rs \
   crates/scribe-domain/src/capture.rs \
   crates/scribe-domain/src/instruction.rs \
-  crates/scribe-domain/src/error.rs; do
+  crates/scribe-domain/src/error.rs \
+  crates/scribe-domain/src/message.rs \
+  crates/scribe-domain/src/memory; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

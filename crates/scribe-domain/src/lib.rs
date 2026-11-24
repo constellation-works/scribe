@@ -25,8 +25,6 @@ pub mod config;
 pub mod control;
 pub mod entry;
 pub mod handoff;
-pub mod memory;
-pub mod message;
 pub mod models;
 pub mod origin;
 pub mod proposal;

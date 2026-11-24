@@ -17,103 +17,13 @@
 //! - **Keyed** on (session, provider message id), so writing a window again
 //!   rewrites the same rows.
 //!
-//! No I/O (STD-02 R5): the store redacts and writes what [`window`] selects.
+//! No I/O (STD-02 R5): the store redacts and writes what the session app's
+//! `window` selects.
 
-use crate::claim::PassClaim;
 use crate::entry::Speaker;
-use crate::models::PassMessage;
 use crate::session::SessionId;
+use crate::store::NewMessage;
 use crate::transcript;
-use time::OffsetDateTime;
-
-/// One message to keep, before redaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NewMessage {
-    /// The session it belongs to.
-    pub session: SessionId,
-    /// The provider's message id (the transcript line's `uuid`).
-    pub message: String,
-    /// Whose words they are.
-    pub role: Speaker,
-    /// When the provider wrote it.
-    pub at: OffsetDateTime,
-    /// Its text: a user turn's own typed words, or a cited assistant turn.
-    pub text: String,
-}
-
-/// One message a full-text search matched, as the store holds it (redacted).
-#[derive(Clone, Debug, PartialEq)]
-pub struct MessageMatch {
-    /// The session it belongs to.
-    pub session: SessionId,
-    /// The provider's message id.
-    pub message: String,
-    /// Whose words they are.
-    pub role: Speaker,
-    /// When the provider wrote it.
-    pub at: OffsetDateTime,
-    /// Its stored text.
-    pub text: String,
-    /// FTS5's `bm25()` score, negated so that higher is better.
-    pub score: f64,
-    /// Project of the group that authorized a turn without a session pass.
-    pub group_project: Option<crate::Project>,
-}
-
-/// What a message search read: the matches, best first, and whether they
-/// came from a read-only copy of the database opened `immutable=1`.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MessageSearch {
-    /// Every match, best first.
-    pub matches: Vec<MessageMatch>,
-    /// The database was opened as a read-only copy (§15.7): a read-only
-    /// root without its `-wal` and `-shm` files.
-    pub read_only_copy: bool,
-}
-
-/// The messages to keep from one pass window: each user turn of `window`
-/// with its own typed words left after fenced code is removed, and each
-/// assistant turn a claim in `claims` cites. `transcript` gives each
-/// message's time and an assistant turn's whole text; a message it does not
-/// hold is skipped.
-#[must_use]
-pub fn window(
-    session: &SessionId,
-    window: &[PassMessage],
-    transcript: &[transcript::Message],
-    claims: &[PassClaim],
-) -> Vec<NewMessage> {
-    let line = |uuid: &str| transcript.iter().find(|m| m.uuid == uuid);
-    let mut kept: Vec<NewMessage> = window
-        .iter()
-        .filter(|m| m.role == Speaker::User)
-        .filter_map(|m| typed_turn(session, line(&m.uuid)?, &m.text))
-        .collect();
-    for claim in claims {
-        let candidate = &claim.candidate;
-        if candidate.role != Speaker::Assistant {
-            continue;
-        }
-        let Some(uuid) = candidate.cite.message.as_deref() else {
-            continue;
-        };
-        if kept.iter().any(|k| k.message == uuid) {
-            continue;
-        }
-        let Some(m) = line(uuid) else { continue };
-        let text = m.text().trim().to_owned();
-        if keeps(&text) {
-            kept.push(NewMessage {
-                session: session.clone(),
-                message: uuid.to_owned(),
-                role: Speaker::Assistant,
-                at: m.at,
-                text,
-            });
-        }
-    }
-    kept
-}
 
 /// Select a verified user's turn for storage, applying the same content
 /// exclusions as a session pass. `own` has already had pasted blocks removed.

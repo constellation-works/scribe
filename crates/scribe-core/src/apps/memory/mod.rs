@@ -11,6 +11,8 @@ mod refresh;
 mod restore;
 pub mod rules;
 mod show;
+#[cfg(test)]
+mod tests;
 mod verbs;
 mod window;
 

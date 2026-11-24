@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `models`, `config`, `memory`, `message` |
+| 4. rules | `trigger`, `voice`, `claim`, `models`, `config` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -193,7 +193,7 @@ PR 5-9 moved `capture` and `instruction`:
 
 The core's root re-exports them as `crate::capture` and `crate::instruction`.
 `verbatim` stays in the domain's base ring, because `claim` imports it. It
-goes to `tools/text` with `claim` and `text` in PR 5-13.
+goes to `tools/text` with `claim` and `text` in PR 5-14.
 
 PR 5-10 moved `error` whole to the store's `error.rs`, beside `refusal` and
 `forgotten_refusal`. Every store call returns that `Error`, and the store
@@ -202,23 +202,41 @@ cannot name the core. The store root exports `Error`, `Result` and
 `runtime/errors.rs` maps the same type to codes and the core's paths are
 unchanged.
 
+PR 5-11 moved `message` and `memory`, each split into store shapes and app
+rules:
+
+- `message`:
+  - `NewMessage`, `MessageMatch` and `MessageSearch` go to the store's
+    `contracts/message.rs`.
+  - Which typed turns are kept (`typed_turn`, `keeps`, `typed_text`) goes
+    to `apps/entry/rules/message.rs`. The entry app is the lowest user,
+    through the instruction check's group capture.
+  - A pass window's messages (`window`) go to
+    `apps/session/rules/message.rs`.
+- `memory`:
+  - The files and rows the store reads and writes go to the store's
+    `contracts/memory.rs`: `Stem`, `NowKind`, `NowItem`, `Milestone`, their
+    front matter, `Raised`, `Pending`, `ProfileView`, the `Refusal` codes
+    and the title, text and slug bounds.
+  - The checks, drafts, plan, block and profile join `apps/memory/rules.rs`,
+    with `profile` under it.
+
+The core's root re-exports both as `crate::message` and `crate::memory`. With
+`memory` gone, `transcript`, `codex`, `origin` and `control`'s parser can
+leave in PR 5-12, and `config` follows in PR 5-13.
+
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
 re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
 `unresolved_redact_env` as before. `Redactor::from_config` and
 `unresolved_redact_env` read the domain's `Config`, and they stay in the store
-until `config` leaves the domain (PR 5-12). Then they go to `core/config.rs`
+until `config` leaves the domain (PR 5-13). Then they go to `core/config.rs`
 and build a `Redactor` from plain names.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
-- **`memory` and `message` are in rules, not records.** Each imports a rule
-  or a model shape:
-  - `memory` imports `claim::own_span` and `models::{MemoryAnswer, PassMessage}`;
-  - `message` imports `claim::PassClaim`, `models::PassMessage` and
-    `memory::{finance_word, sensitive_word}`;
 - **`transcript` comes before rules, not after.** The rules read
-  transcripts: `memory` and `message` import from it. In turn,
+  transcripts, though since PR 5-11 none left in the domain imports it.
   `transcript` imports only the records ring (`control::parse`, `entry`,
   `session`) and base (`origin`, `text`, `record`).
 - **`config` is in rules, not a ring of its own after transcript.** It imports

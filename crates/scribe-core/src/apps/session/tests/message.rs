@@ -58,24 +58,6 @@ fn claim(role: Speaker, message: &str) -> PassClaim {
 }
 
 #[test]
-fn typed_text_drops_fenced_code_and_the_blank_lines_it_leaves() {
-    assert_eq!(
-        message::typed_text("Keep this.\n\n```rust\nfn x() {}\n```\n\nAnd this."),
-        "Keep this.\n\nAnd this."
-    );
-    assert_eq!(
-        message::typed_text("~~~~\ncode\n~~~\nstill code\n~~~~\nafter"),
-        "after"
-    );
-    assert_eq!(message::typed_text("before\n```\nnever closed"), "before");
-    assert_eq!(message::typed_text("```\nonly code\n```"), "");
-    assert_eq!(
-        message::typed_text("inline `code` stays"),
-        "inline `code` stays"
-    );
-}
-
-#[test]
 fn a_window_keeps_typed_user_turns_and_only_the_assistant_turns_a_claim_cites() {
     let (u1, t1) = said("u-1", Speaker::User, "Keep the merge queue.");
     let (a1, ta1) = said("a-1", Speaker::Assistant, "TODO: drop the release train.");
@@ -98,12 +80,4 @@ fn a_window_keeps_typed_user_turns_and_only_the_assistant_turns_a_claim_cites() 
     assert_eq!(ids, [("u-1", Speaker::User), ("a-1", Speaker::Assistant)]);
     assert_eq!(kept[1].text, "TODO: drop the release train.");
     assert_eq!(kept[0].at, T0 + Duration::minutes(1));
-}
-
-#[test]
-fn a_turn_with_a_finance_or_sensitive_event_word_is_not_kept() {
-    assert!(message::keeps("keep the merge queue"));
-    assert!(!message::keeps(""));
-    assert!(!message::keeps("my salary went up"));
-    assert!(!message::keeps("my grandmother died last week"));
 }

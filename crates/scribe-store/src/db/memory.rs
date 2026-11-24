@@ -13,10 +13,10 @@ use super::{
     DB_FILE, Fallible, db_error, inspect, open_reader, optimize_fts, refuse_newer, stamp,
     write_error,
 };
+use crate::Pending;
 use crate::error::{Error, Result};
 use crate::session::SessionId;
 use rusqlite::{Connection, OptionalExtension};
-use scribe_domain::memory::Pending;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;

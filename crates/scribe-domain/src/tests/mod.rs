@@ -8,8 +8,6 @@ mod config;
 mod control;
 mod entry;
 mod handoff;
-mod memory;
-mod message;
 mod proposal;
 mod record;
 mod session;

@@ -2,6 +2,7 @@
 //! (STD-02 R19).
 
 mod instruction;
+mod message;
 mod rules;
 
 pub(crate) use scribe_domain::fixtures::{T0, entry};
