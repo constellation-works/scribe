@@ -18,6 +18,7 @@ use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
 use clap::Args;
+use scribe_core::EntryVerbs;
 use scribe_core::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
 use scribe_core::{Author, AuthorName, SessionId};
 

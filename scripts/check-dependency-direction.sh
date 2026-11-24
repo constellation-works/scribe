@@ -117,16 +117,27 @@ ban_std() {
 CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
-# Core is business logic plus one persistence module (R5). Every core module
-# but store/ is I/O-free and knows nothing of how records are stored; a new
-# business module is covered as soon as it exists.
+# Core is business logic plus one persistence module (R5) and the use cases
+# over it. Every core module but store/ is I/O-free; every one but store/ and
+# cases/ knows nothing of how records are stored; a new business module is
+# covered as soon as it exists. cases/ (ORB-27707) is the use-case layer: it
+# alone may name the store, and neither the business modules nor store/ may
+# name it, by path or by a `*Verbs` trait the crate root re-exports. At the
+# crate cut it becomes scribe-core over scribe-store, and these lines become
+# crate edges.
+USE_CASES='crate::cases|[^[:alnum:]_][A-Z][[:alnum:]]*Verbs([^[:alnum:]_]|$)'
 for path in "$CORE"/*; do
   name=$(basename "$path")
   case "$name" in store | tests) continue ;; esac
   ban_std "$path" 'fs|net|process' "core/$name is business logic: file and process access belong in store/"
   ban "$path" 'tempfile::|rustix::' "core/$name is business logic: file and process access belong in store/"
+  [[ "$name" == cases ]] && continue
   ban "$path" 'crate::store'                              "core/$name is business logic: it must not depend on persistence"
+  # lib.rs declares the modules and re-exports the traits: the crate root.
+  [[ "$name" == lib.rs ]] && continue
+  ban "$path" "$USE_CASES"                                "core/$name is business logic: it must not depend on the use cases"
 done
+ban "$CORE/store" "$USE_CASES"                            "store/ is persistence: it must not depend on the use cases"
 # Pass is an orchestrator; its lower-level callers cannot depend on it.
 for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
   ban "$CORE/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "core/$path must not depend on pass"

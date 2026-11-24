@@ -56,7 +56,7 @@ impl Loaded {
     }
 }
 
-/// What `#scribe forget s-<n>` did ([`Store::settle`]).
+/// What `#scribe forget s-<n>` did ([`crate::ProposalVerbs::settle`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionForget {
     /// The provider's session id.
@@ -75,7 +75,7 @@ pub struct SessionForget {
 }
 
 /// Result of forgetting a session, including cleanup on a replay.
-pub(super) enum SessionForgetOutcome {
+pub enum SessionForgetOutcome {
     Forgotten(SessionForget),
     Already {
         id: SessionId,
@@ -361,8 +361,14 @@ impl Store {
 
     /// Erase session data and detach dependent records in the transaction
     /// the typed hook uses for its audit. The tombstone also drives replay
-    /// of filesystem cleanup after commit.
-    pub(super) fn forget_session_locked(
+    /// of filesystem cleanup after commit. The caller holds the write
+    /// ([`crate::ProposalVerbs::settle`]); this session verb moves out of the
+    /// store with the other session verbs (ORB-27707 2c-2).
+    ///
+    /// # Errors
+    ///
+    /// The store's errors, and a session the store does not know.
+    pub fn forget_session_locked(
         &self,
         input: &SessionId,
         now: OffsetDateTime,

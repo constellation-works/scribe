@@ -10,6 +10,7 @@
 
 mod support;
 
+use scribe_core::{EntryVerbs, ProposalVerbs};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;

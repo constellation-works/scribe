@@ -6,10 +6,10 @@
 //!
 //! 1. applies again every approved proposal whose older entry is still
 //!    `active` (an approval writes two files; a crash between them leaves
-//!    the entry behind) — [`scribe_core::Store::reapply_approved`];
+//!    the entry behind) — [`scribe_core::ProposalVerbs::reapply_approved`];
 //! 2. closes open candidate proposals whose tag is no longer in the
 //!    effective tag table, without a model call or a new entry
-//!    ([`scribe_core::Store::close_retired_candidates`]);
+//!    ([`scribe_core::ProposalVerbs::close_retired_candidates`]);
 //! 3. finds the candidates ([`consistency::candidates`]): same-tag active
 //!    pairs that share a topic or whose words overlap, newest first and at
 //!    most [`consistency::MAX_PAIRS`], skipping any pair with a proposal in
@@ -52,6 +52,7 @@ use crate::output::{
     Output, ProposalPayload, ReappliedPayload, ScanReport,
 };
 use clap::{Args, Subcommand};
+use scribe_core::ProposalVerbs;
 use scribe_core::activity::{self, ActiveRoute, SetActive};
 use scribe_core::{
     Config, EntryFilter, Models, Redactor, SessionFilter, SessionId, Store, consistency,

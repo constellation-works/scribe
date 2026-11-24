@@ -9,7 +9,7 @@
 
 use super::Store;
 use crate::checks::refusal;
-use crate::{Error, Result, SessionId, WriteRefusal};
+use crate::{Entry, EntryId, Error, Proposal, ProposalId, Result, SessionId, WriteRefusal};
 
 /// The shortest prefix accepted, in characters.
 pub(crate) const MIN_PREFIX: usize = crate::session::MIN_ID_PREFIX;
@@ -319,5 +319,94 @@ impl Store {
                 .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
             None => not_found(),
         }
+    }
+}
+
+/// The entry and proposal lookups behind [`super::repo::Entries::resolve`]
+/// and [`super::repo::Proposals::resolve`].
+impl Store {
+    /// The index in `ids` of the proposal `input` names; a miss is
+    /// `proposal_not_found`, naming the id and the file searched.
+    pub(super) fn proposal_index(&self, input: &str, ids: &[String]) -> Result<usize> {
+        // A well-formed id is an exact lookup, as for entries; only other
+        // input is a prefix, which needs four characters.
+        let found = if input.parse::<ProposalId>().is_ok() {
+            ids.iter().position(|id| id == input)
+        } else {
+            resolve(input, ids)?
+        };
+        found.ok_or_else(|| {
+            refusal(
+                WriteRefusal::ProposalNotFound,
+                format!(
+                    "no proposal {input} in {}; run 'scribe proposal list' with the same --root to see existing ids",
+                    self.root.join(super::PROPOSALS_FILE).display()
+                ),
+            )
+        })
+    }
+
+    /// Resolve an exact proposal id or a unique prefix of at least four
+    /// characters, as the write verbs do, without locking or writing.
+    pub(super) fn find_proposal(&self, input: &str) -> Result<Proposal> {
+        let proposals = self.proposals()?;
+        let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
+        let i = self.proposal_index(input, &ids)?;
+        Ok(proposals[i].clone())
+    }
+
+    /// Resolve an exact entry id or a unique prefix of at least four characters.
+    pub(super) fn find_entry(&self, input: &str) -> Result<Entry> {
+        let exact = input.parse::<EntryId>().ok();
+        if let Some(id) = &exact {
+            match self.entry(id) {
+                Ok(entry) => return Ok(entry),
+                Err(Error::EntryNotFound { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        } else if input.len() < 4
+            || !input
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || input
+                .rsplit_once('-')
+                .is_some_and(|(_, n)| n.starts_with('0'))
+        {
+            return Err(refusal(
+                WriteRefusal::InvalidId,
+                "use an entry id or a lowercase unique prefix of at least four characters",
+            ));
+        }
+        let (entries, skipped) = self.load_entries()?;
+        let mut ids: Vec<String> = entries.iter().map(|e| e.id.to_string()).collect();
+        ids.extend(skipped.iter().filter_map(|s| {
+            s.path
+                .file_stem()?
+                .to_str()?
+                .parse::<EntryId>()
+                .ok()
+                .map(|id| id.to_string())
+        }));
+        ids.sort();
+        ids.dedup();
+        let Some(i) = resolve(input, &ids)? else {
+            return Err(match exact {
+                Some(id) => Error::EntryNotFound {
+                    path: self.entry_path(&id),
+                    id,
+                },
+                None => refusal(
+                    WriteRefusal::EntryNotFound,
+                    format!(
+                        "no entry matches '{input}' under {}; run 'scribe entry list' with the same --root to see existing ids",
+                        self.root.join(super::ENTRIES_DIR).display()
+                    ),
+                ),
+            });
+        };
+        let id = ids[i]
+            .parse::<EntryId>()
+            .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string()))?;
+        self.entry(&id)
     }
 }

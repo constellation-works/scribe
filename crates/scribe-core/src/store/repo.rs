@@ -60,6 +60,18 @@ pub struct Snapshot<'s> {
     store: &'s Store,
 }
 
+impl Snapshot<'_> {
+    /// Whether the data root exists yet; nothing is created.
+    ///
+    /// # Errors
+    ///
+    /// The privacy errors for a root that is a link, another user's or open
+    /// to others.
+    pub fn exists(&self) -> Result<bool> {
+        self.store.root_exists()
+    }
+}
+
 /// The reads and writes of one store transaction ([`Store::write`]). Its
 /// reads see the transaction's own pending writes.
 #[derive(Clone, Copy, Debug)]
@@ -109,6 +121,40 @@ repositories! {
 }
 
 impl Entries<'_> {
+    /// The entry an exact id or a unique prefix of at least four characters
+    /// names.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_id` for input that is no id or prefix, `id_ambiguous`,
+    /// [`Error::EntryNotFound`] or `entry_not_found` naming the place
+    /// searched, and the store's read errors.
+    pub fn resolve(&self, input: &str) -> Result<Entry> {
+        self.store.find_entry(input)
+    }
+
+    /// Where the entry `id` is kept, for an error to name.
+    #[must_use]
+    pub fn path(&self, id: &EntryId) -> std::path::PathBuf {
+        self.store.entry_path(id)
+    }
+
+    /// Erase `entry` from the stored messages it cites and from the archive
+    /// tables, in the write under way (`proposals`: the claims before the
+    /// forget).
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn forget_residue(
+        &self,
+        entry: &Entry,
+        proposals: &[Proposal],
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        self.store.forget_entry_residue(entry, proposals, now)
+    }
+
     /// Every entry, plus the rows that did not read.
     ///
     /// # Errors
@@ -225,6 +271,43 @@ impl Sessions<'_> {
 }
 
 impl Proposals<'_> {
+    /// The proposal an exact id or a unique prefix of at least four
+    /// characters names.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_id`, `id_ambiguous`, `proposal_not_found` naming the file
+    /// searched, and the store's read errors.
+    pub fn resolve(&self, input: &str) -> Result<Proposal> {
+        self.store.find_proposal(input)
+    }
+
+    /// The index in `ids` of the proposal `input` names, as
+    /// [`Proposals::resolve`] finds it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Proposals::resolve`].
+    pub fn position(&self, input: &str, ids: &[String]) -> Result<usize> {
+        self.store.proposal_index(input, ids)
+    }
+
+    /// Where the proposals are kept, for an error to name.
+    #[must_use]
+    pub fn path(&self) -> std::path::PathBuf {
+        self.store.root.join(super::PROPOSALS_FILE)
+    }
+
+    /// The entry ids a new entry may not take: those reserved by candidate
+    /// proposals and those of deleted handoffs.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn reserved_entry_ids(&self) -> Result<Vec<EntryId>> {
+        self.store.candidate_reserved_ids()
+    }
+
     /// Every proposal, by id.
     ///
     /// # Errors

@@ -421,7 +421,7 @@ pub struct CoveredCandidate {
     pub by: EntryId,
 }
 
-/// What [`crate::Store::reapply_approved`] repaired: approvals applied
+/// What [`crate::ProposalVerbs::reapply_approved`] repaired: approvals applied
 /// again, and approved candidates closed because a later entry covers them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReapplyReport {
@@ -640,7 +640,7 @@ pub fn settle(
         }
         Settle::Forget(id) => forget(id, proposals, entries, now),
         // Sessions live in the store's database, not in these lists:
-        // `Store::settle` applies it before it loads them.
+        // `ProposalVerbs::settle` applies it before it loads them.
         Settle::ForgetSession(id) => Settled::Already(format!(
             "{id} is a session; the store forgets it, not the proposal lists"
         )),

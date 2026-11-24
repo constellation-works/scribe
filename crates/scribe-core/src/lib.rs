@@ -45,6 +45,7 @@ pub mod annotation;
 pub mod ask;
 pub mod brief;
 pub mod capture;
+mod cases;
 mod checks;
 mod claim;
 pub use transcript::codex;
@@ -75,6 +76,8 @@ pub mod trigger;
 pub mod verbatim;
 pub mod voice;
 
+pub use cases::entry::EntryVerbs;
+pub use cases::proposal::ProposalVerbs;
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,

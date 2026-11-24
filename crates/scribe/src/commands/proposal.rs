@@ -7,6 +7,7 @@ use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
+use scribe_core::{EntryVerbs, ProposalVerbs};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
 Examples:

@@ -5,7 +5,7 @@
 //!
 //! `user_prompt_submit.rs` hands each such line here after the transcript
 //! check, in prompt order. One locked store call per line applies it
-//! ([`scribe_core::Store::settle`]) and the line gets one echo:
+//! ([`scribe_core::ProposalVerbs::settle`]) and the line gets one echo:
 //!
 //! - approve: the proposal is `approved` and its older entry `superseded`
 //!   by the newer (or `retired`, for a stale proposal);
@@ -27,6 +27,7 @@
 
 use crate::app::Context;
 use crate::output::HookOutcome;
+use scribe_core::ProposalVerbs;
 use scribe_core::capture::{Settling, Turn};
 use scribe_core::consistency::Settled;
 use scribe_core::{EntryStatus, SessionId};

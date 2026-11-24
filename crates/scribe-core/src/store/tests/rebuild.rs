@@ -1,4 +1,5 @@
 use super::private_tempdir;
+use crate::ProposalVerbs;
 use crate::consistency::Settle;
 use crate::entry::Cite;
 use crate::{Redactor, SegmentOrigin, SegmentState, SessionFilter, Store};
