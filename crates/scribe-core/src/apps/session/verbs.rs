@@ -337,13 +337,13 @@ fn apply_active(
 
 fn continuation_entry(store: &Store, selection: HandoffSelection<'_>) -> Result<Option<Entry>> {
     match selection {
-        HandoffSelection::Predecessor(parent) => Ok(store
-            .read()
-            .entries()
-            .handoffs_for_session(parent)?
-            .into_iter()
-            .next()
-            .filter(|e| e.handoff_mode == Some(handoff::Mode::Continue))),
+        HandoffSelection::Predecessor(parent) => Ok(crate::apps::entry::handoffs_for_session(
+            &store.read(),
+            parent,
+        )?
+        .into_iter()
+        .next()
+        .filter(|e| e.handoff_mode == Some(handoff::Mode::Continue))),
         HandoffSelection::Named(id) => {
             let entry = store.read().entries().resolve(id)?;
             if entry.status != EntryStatus::Active {

@@ -47,11 +47,12 @@ pub fn run<E>(
     let group = group.map(|id| store.read().groups().get(id)).transpose()?;
     let members = group.as_ref().map(crate::group::Group::members);
     let config = store.read().tags().config()?;
-    let entries = store
-        .read()
-        .entries()
-        .list_scoped(&EntryFilter::default(), members.as_ref())?;
-    let sessions = store.read().sessions().list_scoped(
+    let entries = store.read().entries().list_where(
+        &EntryFilter::default(),
+        crate::apps::entry::of_members(members.as_ref()),
+    )?;
+    let sessions = crate::apps::session::list_sessions(
+        &store.read(),
         &SessionFilter {
             include_inactive: true,
             ..SessionFilter::default()

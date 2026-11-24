@@ -12,6 +12,7 @@
 pub mod replay;
 
 use scribe_core::testing::StoreTestReads;
+use scribe_core::testing::ViewTestReads;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 

@@ -14,6 +14,7 @@ use scribe_core::models::{
     SessionHeaderRequest, SessionRequest, TermAnswer,
 };
 use scribe_core::testing::StoreTestReads;
+use scribe_core::testing::ViewTestReads;
 use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
 use std::cell::RefCell;

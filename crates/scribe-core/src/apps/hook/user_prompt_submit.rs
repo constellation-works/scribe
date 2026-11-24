@@ -118,10 +118,14 @@ fn apply_deferred_ancestry<E: HookPortError>(
     if !group::has_deferred_ancestry(ctx.store, session)? {
         return Ok(());
     }
-    let listed = ctx.store.read().sessions().list(&crate::SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
+    let listed = crate::apps::session::list_sessions(
+        &ctx.store.read(),
+        &crate::SessionFilter {
+            include_inactive: true,
+            ..Default::default()
+        },
+        None,
+    )?;
     let linked =
         listed.control.get(session).is_some_and(|c| {
             c.pending_links

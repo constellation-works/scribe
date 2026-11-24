@@ -38,8 +38,8 @@ pub fn show<E>(
 ) -> std::result::Result<Shown, crate::runtime::errors::ReadError<E>> {
     use crate::runtime::errors::ReadError;
     let id = ctx.store.read().sessions().resolve_or_handoff(id)?;
-    let handoffs = ctx.store.read().entries().handoffs_for_session(&id)?;
-    let view = match ctx.store.read().sessions().get(&id) {
+    let handoffs = crate::apps::entry::handoffs_for_session(&ctx.store.read(), &id)?;
+    let view = match super::session_view(&ctx.store.read(), &id) {
         Ok(view) => view,
         Err(crate::Error::SessionNotFound { .. }) if !handoffs.is_empty() => {
             if let Some(n) = segment {

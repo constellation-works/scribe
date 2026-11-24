@@ -21,11 +21,9 @@ use crate::db::sessions::{self as rows, SessionTx};
 use crate::db::{self, codec};
 use crate::error::{Error, Result};
 use crate::message::NewMessage;
-use crate::record::Listing;
-use crate::session::{self as session_mod, Child};
 use crate::{
     CONTROL_FILE, ControlState, DB_FILE, MemoryWritten, RECORD_EXT, Redactor, Related,
-    SESSIONS_DIR, SessionFilter, SessionId, SessionRecord, Skipped, Store, fsio,
+    SESSIONS_DIR, SessionId, SessionRecord, Skipped, Store, fsio,
 };
 use scribe_domain::WriteRefusal;
 use std::collections::{BTreeMap, BTreeSet};
@@ -186,22 +184,13 @@ impl Sessions<'_> {
         self.store.has_group_membership(id)
     }
 
-    /// One session's record and its log ([`Store::session`]).
+    /// One session's record, its switch and the other records that read ([`Store::session`]).
     ///
     /// # Errors
     ///
     /// The store's read errors.
-    pub fn get(&self, id: &SessionId) -> Result<SessionView> {
+    pub fn get(&self, id: &SessionId) -> Result<SessionRow> {
         self.store.session(id)
-    }
-
-    /// The sessions `filter` selects ([`Store::list_sessions`]).
-    ///
-    /// # Errors
-    ///
-    /// The store's read errors.
-    pub fn list(&self, filter: &SessionFilter) -> Result<SessionList> {
-        self.store.list_sessions(filter)
     }
 
     /// Every session's `s-<n>`.
@@ -315,16 +304,6 @@ impl Sessions<'_> {
         self.store.resolve_relateds_with(related, extra_ids)
     }
 
-    /// Session records matching `filter` among the `members` sessions, when
-    /// given. Reads only.
-    pub fn list_scoped(
-        &self,
-        filter: &SessionFilter,
-        members: Option<&BTreeSet<SessionId>>,
-    ) -> Result<SessionList> {
-        self.store.list_sessions_scoped(filter, members)
-    }
-
     /// Whether `#scribe forget` erased `id`. Reads only.
     pub fn is_forgotten(&self, id: &SessionId) -> Result<bool> {
         crate::db::sessions::read_is_forgotten(&self.store.root, id)
@@ -343,111 +322,26 @@ impl Sessions<'_> {
     }
 }
 
-/// What [`Store::list_sessions`] found.
+/// One session record with its switch, and the other records it is read
+/// beside.
 #[derive(Debug)]
-pub struct SessionList {
-    /// The matching session records, oldest first.
-    pub listing: Listing<SessionRecord>,
-    /// Every session's children, derived from all records' links (not only
-    /// the listed ones), by the id they link to.
-    pub children: BTreeMap<SessionId, Vec<Child>>,
-    /// Every record's title, by id, for naming a linked session.
-    pub titles: BTreeMap<SessionId, String>,
-    /// Every session's on/off switch, to show beside its record.
-    pub control: ControlState,
-    /// Inactive sessions the filter left out that match its other
-    /// criteria; `0` when it includes inactive ones.
-    pub inactive_hidden: usize,
-    /// Record files or rows left out because they did not parse.
-    pub skipped: Vec<Skipped>,
-    /// The session ids of the skipped records, where that much reads.
-    pub skipped_sessions: Vec<SessionId>,
-    /// Every session's `s-<n>`.
-    pub numbers: BTreeMap<SessionId, NonZeroU64>,
-    /// When each forgotten session was forgotten.
-    pub forgotten: BTreeMap<SessionId, time::OffsetDateTime>,
-}
-
-/// One session record with its switch.
-#[derive(Debug)]
-pub struct SessionView {
+pub struct SessionRow {
     /// The record.
     pub record: SessionRecord,
     /// Its switch in `control.json`, if it has one.
     pub control: Option<crate::session::SessionControl>,
-    /// The sessions that link to it, derived from their records.
-    pub children: Vec<Child>,
-    /// The titles of the sessions its links point at that have a record.
-    pub linked_titles: BTreeMap<SessionId, String>,
     /// Its `s-<n>`.
     pub number: Option<NonZeroU64>,
     /// When `#scribe forget` erased it, if it did.
     pub forgotten: Option<time::OffsetDateTime>,
+    /// Every other record that read, in no particular order.
+    pub others: Vec<SessionRecord>,
 }
 
 impl Store {
-    /// Session records matching `filter`, oldest first, with the on/off
-    /// state beside them.
-    pub(crate) fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
-        self.list_sessions_scoped(filter, None)
-    }
-
-    /// List session records, optionally restricting the records and their
-    /// derived lookup data to the group's member sessions.
-    pub(crate) fn list_sessions_scoped(
-        &self,
-        filter: &SessionFilter,
-        members: Option<&BTreeSet<SessionId>>,
-    ) -> Result<SessionList> {
-        let mut loaded = self.load_sessions()?;
-        if let Some(members) = members {
-            loaded.records.retain(|r| members.contains(&r.id));
-            loaded
-                .skipped
-                .retain(|(id, _)| id.as_ref().is_some_and(|id| members.contains(id)));
-        }
-        let control = loaded.control;
-        let records = loaded.records;
-        let skipped_sessions = loaded
-            .skipped
-            .iter()
-            .filter_map(|(id, _)| id.clone())
-            .collect();
-        let skipped: Vec<Skipped> = loaded.skipped.into_iter().map(|(_, s)| s).collect();
-        let numbers = loaded.numbers;
-        let forgotten = loaded.forgotten;
-        let inactive_hidden = if filter.include_inactive {
-            0
-        } else {
-            let any = SessionFilter {
-                include_inactive: true,
-                ..filter.clone()
-            };
-            records
-                .iter()
-                .filter(|r| !r.active && any.matches(r))
-                .count()
-        };
-        Ok(SessionList {
-            children: session_mod::children(&records),
-            titles: records
-                .iter()
-                .map(|r| (r.id.clone(), r.title.clone()))
-                .collect(),
-            listing: filter.select(records),
-            inactive_hidden,
-            control,
-            skipped,
-            skipped_sessions,
-            numbers,
-            forgotten,
-        })
-    }
-
-    /// The session record with this id, its switch, the sessions that link
-    /// to it and the titles of those it links to. Other records that do not
-    /// parse are left out of the children.
-    pub(crate) fn session(&self, id: &SessionId) -> Result<SessionView> {
+    /// The session record with this id, its switch, and the other records
+    /// that read. A forgotten session's record is its tombstone.
+    pub(crate) fn session(&self, id: &SessionId) -> Result<SessionRow> {
         let mut loaded = self.load_sessions()?;
         let record = match loaded.forgotten.get(id).copied() {
             Some(at) => forgotten_record(id, at),
@@ -464,23 +358,12 @@ impl Store {
         let control = loaded.control;
         let number = loaded.numbers.get(id).copied();
         let forgotten = loaded.forgotten.get(id).copied();
-        let mut others = loaded.records;
-        let linked_titles = others
-            .iter()
-            .filter(|r| record.links.iter().any(|l| l.session == r.id))
-            .map(|r| (r.id.clone(), r.title.clone()))
-            .collect();
-        others.push(record.clone());
-        let children = session_mod::children(&others)
-            .remove(id)
-            .unwrap_or_default();
-        Ok(SessionView {
+        Ok(SessionRow {
             record,
             control: control.get(id).cloned(),
-            children,
-            linked_titles,
             number,
             forgotten,
+            others: loaded.records,
         })
     }
 

@@ -10,6 +10,7 @@ mod update;
 mod verbs;
 
 pub use add::TagAddInput;
+pub use list::{TagList, list_tags};
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::TagVerbs;
@@ -19,7 +20,7 @@ use crate::runtime::audit::{Audit, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError};
-use crate::{AuthorName, StoreTag, TagList, TagName, TagPatch};
+use crate::{AuthorName, StoreTag, TagName, TagPatch};
 
 /// A `tag` command.
 pub enum Command {

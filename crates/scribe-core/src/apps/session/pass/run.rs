@@ -227,10 +227,14 @@ pub fn run<E: PortError, M: Models>(
         .redaction
         .redactor(&config)
         .map_err(PassRunError::Port)?;
-    let found = store.read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
+    let found = crate::apps::session::list_sessions(
+        &store.read(),
+        &SessionFilter {
+            include_inactive: true,
+            ..Default::default()
+        },
+        None,
+    )?;
     let mut topics: BTreeSet<String> = BTreeSet::new();
     let mut terms: BTreeSet<String> = BTreeSet::new();
     for record in &found.listing.items {
@@ -347,14 +351,15 @@ pub(crate) fn run_catalog<E: PortError, M: Models>(
         .map_err(RunFailure::Core)?
         .for_provider(provider);
     let redactor = ctx.redaction.redactor(&config).map_err(RunFailure::Port)?;
-    let found = store
-        .read()
-        .sessions()
-        .list(&SessionFilter {
+    let found = crate::apps::session::list_sessions(
+        &store.read(),
+        &SessionFilter {
             include_inactive: true,
             ..Default::default()
-        })
-        .map_err(RunFailure::Core)?;
+        },
+        None,
+    )
+    .map_err(RunFailure::Core)?;
     let mut topics: BTreeSet<String> = BTreeSet::new();
     let mut terms: BTreeSet<String> = BTreeSet::new();
     for record in &found.listing.items {

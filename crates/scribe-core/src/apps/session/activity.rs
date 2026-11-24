@@ -2,11 +2,11 @@
 //! manual activity change, in one locked store call (§7, S10).
 
 use super::verbs::SessionVerbs;
+use crate::SessionView;
 use crate::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
 use crate::apps::entry;
 use crate::runtime::Ctx;
 use crate::runtime::errors::{WriteError, redactor};
-use crate::store::SessionView;
 use crate::{Author, AuthorName, SessionId};
 use std::num::NonZeroU32;
 
@@ -157,7 +157,7 @@ fn write<E>(
         }
     }
     // The links, children and switch come from a read after the write.
-    let view = store.read().sessions().get(id)?;
+    let view = super::session_view(&store.read(), id)?;
     Ok(ActivityWritten {
         view,
         changed: outcome.changed(),

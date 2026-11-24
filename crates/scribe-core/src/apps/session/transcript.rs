@@ -231,10 +231,14 @@ fn since_start(since: time::Date) -> std::time::SystemTime {
 /// Session ids that already have a record (including a file that did not
 /// parse) or a switch. Those transcripts are not candidates.
 fn cataloged<E>(ctx: &Ctx<'_, E>) -> crate::Result<std::collections::BTreeSet<String>> {
-    let found = ctx.store.read().sessions().list(&crate::SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
+    let found = crate::apps::session::list_sessions(
+        &ctx.store.read(),
+        &crate::SessionFilter {
+            include_inactive: true,
+            ..Default::default()
+        },
+        None,
+    )?;
     let mut ids = std::collections::BTreeSet::new();
     for record in &found.listing.items {
         ids.insert(record.id.to_string());

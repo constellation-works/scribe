@@ -5,6 +5,7 @@ use crate::session::SessionFilter;
 use crate::store::db;
 use crate::store::{AuditEvent, AuditStatus, Store};
 use crate::testing::StoreTestInternals;
+use crate::testing::ViewTestReads;
 use crate::{EntryVerbs, ProposalVerbs};
 use crate::{PassVerbs, RebuildVerbs, SessionVerbs};
 use std::fs;

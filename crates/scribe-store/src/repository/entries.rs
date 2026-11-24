@@ -12,7 +12,6 @@ use crate::{
     ENTRIES_DIR, Entry, EntryFilter, EntryId, Proposal, RECORD_EXT, SessionId, Skipped, Store,
 };
 use scribe_domain::WriteRefusal;
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -99,20 +98,14 @@ impl Entries<'_> {
             .with_conn(|conn, db| docs::delete_handoff(conn, db, id))
     }
 
-    /// Entries matching `filter` among those of the `members` sessions, when
-    /// given. Reads only.
-    pub fn list_scoped(
+    /// Entries matching `filter` among those `keep` accepts, which it sees
+    /// before the filter's limit. Reads only.
+    pub fn list_where(
         &self,
         filter: &EntryFilter,
-        members: Option<&BTreeSet<SessionId>>,
+        keep: impl FnMut(&Entry) -> bool,
     ) -> Result<EntryList> {
-        self.store.list_entries_scoped(filter, members)
-    }
-
-    /// Active `handoff` entries referencing `session:<id>`, newest first.
-    /// Reads only.
-    pub fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
-        self.store.handoffs_for_session(id)
+        self.store.list_entries_where(filter, keep)
     }
 
     /// The entries already recorded from one prompt, by their cite's
@@ -141,33 +134,21 @@ impl Store {
             .join(format!("{id}{RECORD_EXT}"))
     }
 
-    /// Active `handoff` entries referencing `session:<id>`, newest first.
-    /// Reads only: no lock, no write.
-    pub(crate) fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
-        let (entries, _) = self.load_entries()?;
-        Ok(crate::handoff::for_session(&entries, id)
-            .into_iter()
-            .cloned()
-            .collect())
-    }
-
     /// Entries matching `filter`, oldest first, and how many matched. A
     /// missing store is an empty one.
     pub(crate) fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {
-        self.list_entries_scoped(filter, None)
+        self.list_entries_where(filter, |_| true)
     }
 
-    /// List entries, optionally restricted to the group's member sessions
-    /// before applying the filter and its limit.
-    pub(crate) fn list_entries_scoped(
+    /// List the entries `keep` accepts, before applying the filter and its
+    /// limit.
+    pub(crate) fn list_entries_where(
         &self,
         filter: &EntryFilter,
-        members: Option<&BTreeSet<SessionId>>,
+        keep: impl FnMut(&Entry) -> bool,
     ) -> Result<EntryList> {
         let (mut entries, skipped) = self.load_entries()?;
-        if let Some(members) = members {
-            entries.retain(|entry| crate::group::entry_belongs(entry, members));
-        }
+        entries.retain(keep);
         Ok(EntryList {
             listing: filter.select(entries),
             skipped,

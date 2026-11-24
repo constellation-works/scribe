@@ -15,6 +15,7 @@ mod instruction;
 mod list;
 mod pickup;
 mod retire;
+mod scope;
 mod show;
 mod update;
 mod verbs;
@@ -28,6 +29,7 @@ pub use list::{ListInput, Listed};
 pub use pickup::PickupInput;
 #[cfg(any(test, feature = "test-support"))]
 pub use pickup::PickupVerbs;
+pub use scope::{handoffs_for_session, of_members};
 pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::EntryVerbs;

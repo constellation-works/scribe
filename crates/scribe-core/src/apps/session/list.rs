@@ -46,11 +46,7 @@ pub fn list<E: crate::runtime::PortError>(
         .map(|id| ctx.store.read().groups().get(id))
         .transpose()?;
     let members = group.as_ref().map(crate::group::Group::members);
-    let found = ctx
-        .store
-        .read()
-        .sessions()
-        .list_scoped(&filter, members.as_ref())?;
+    let found = super::list_sessions(&ctx.store.read(), &filter, members.as_ref())?;
     Ok(Listed {
         found,
         filter,

@@ -78,9 +78,8 @@ pub use repository::memory::{
 pub use repository::memory::{bare, not_found};
 pub use repository::sessions::{
     ExportCounts, ExportFormat, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
-    SessionList, SessionView,
+    SessionRow,
 };
-pub use repository::tags::TagList;
 pub use repository::{Snapshot, Tx};
 #[cfg(feature = "test-support")]
 mod seed;
@@ -97,12 +96,12 @@ use crate::config::Config;
 use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
-use crate::session::{ControlState, SessionFilter, SessionId, SessionRecord};
+use crate::session::{ControlState, SessionId, SessionRecord};
 use scribe_domain::tag::{self};
 use scribe_domain::{
     Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
     Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
-    StoreTag, TagDef, TagName, TagTable, WriteRefusal,
+    StoreTag, TagDef, TagTable, WriteRefusal,
 };
 use scribe_domain::{
     action, annotation, brief, capture, checks, config, entry, error, group, handoff, instruction,

@@ -16,7 +16,7 @@ use crate::group::Group;
 use crate::message::{MessageSearch, NewMessage};
 use crate::{
     AuditEvent, Config, ControlState, Entry, EntryFilter, EntryId, EntryList, Proposal, Redactor,
-    Result, SessionFilter, SessionId, SessionList, SessionView, Store, TagList,
+    Result, SessionId, Store,
 };
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -25,14 +25,10 @@ use std::path::PathBuf;
 /// The store reads and writes the tests call by their pre-2c-4c names.
 /// Each is one delegation to a repository.
 pub trait StoreTestReads {
-    /// [`crate::repository::Sessions::get`].
-    fn session(&self, id: &SessionId) -> Result<SessionView>;
     /// [`crate::repository::Sessions::control`].
     fn control(&self) -> Result<ControlState>;
     /// [`crate::repository::Sessions::change_control`] in a [`Store::write`].
     fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T>;
-    /// [`crate::repository::Sessions::list`].
-    fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList>;
     /// [`crate::repository::Sessions::numbers`].
     fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>>;
     /// [`crate::repository::Entries::get`].
@@ -43,8 +39,6 @@ pub trait StoreTestReads {
     fn proposals(&self) -> Result<Vec<Proposal>>;
     /// [`crate::repository::Tags::config`].
     fn config(&self) -> Result<Config>;
-    /// [`crate::repository::Tags::list`].
-    fn list_tags(&self) -> Result<TagList>;
     /// [`crate::repository::Groups::all`].
     fn groups(&self) -> Result<Vec<Group>>;
     /// [`crate::repository::Groups::get`].
@@ -62,17 +56,11 @@ pub trait StoreTestReads {
 }
 
 impl StoreTestReads for Store {
-    fn session(&self, id: &SessionId) -> Result<SessionView> {
-        self.read().sessions().get(id)
-    }
     fn control(&self) -> Result<ControlState> {
         self.read().sessions().control()
     }
     fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
         self.write(|tx| tx.sessions().change_control(change))
-    }
-    fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
-        self.read().sessions().list(filter)
     }
     fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
         self.read().sessions().numbers()
@@ -88,9 +76,6 @@ impl StoreTestReads for Store {
     }
     fn config(&self) -> Result<Config> {
         self.read().tags().config()
-    }
-    fn list_tags(&self) -> Result<TagList> {
-        self.read().tags().list()
     }
     fn groups(&self) -> Result<Vec<Group>> {
         self.read().groups().all()
@@ -139,14 +124,8 @@ pub trait StoreTestInternals {
     fn config(&self) -> Result<crate::Config>;
     /// The entries `filter` selects. (`Store::list_entries`).
     fn list_entries(&self, filter: &crate::EntryFilter) -> Result<crate::EntryList>;
-    /// The sessions `filter` selects. (`Store::list_sessions`).
-    fn list_sessions(&self, filter: &crate::SessionFilter) -> Result<crate::SessionList>;
-    /// Session `id`. (`Store::session`).
-    fn session(&self, id: &crate::SessionId) -> Result<crate::SessionView>;
     /// The on/off state. (`Store::control`).
     fn control(&self) -> Result<crate::ControlState>;
-    /// The tag table. (`Store::list_tags`).
-    fn list_tags(&self) -> Result<crate::TagList>;
     /// Store typed turns. (`Store::write_messages`).
     fn write_messages(
         &self,
@@ -269,17 +248,8 @@ impl StoreTestInternals for Store {
     fn list_entries(&self, filter: &crate::EntryFilter) -> Result<crate::EntryList> {
         Store::list_entries(self, filter)
     }
-    fn list_sessions(&self, filter: &crate::SessionFilter) -> Result<crate::SessionList> {
-        Store::list_sessions(self, filter)
-    }
-    fn session(&self, id: &crate::SessionId) -> Result<crate::SessionView> {
-        Store::session(self, id)
-    }
     fn control(&self) -> Result<crate::ControlState> {
         Store::control(self)
-    }
-    fn list_tags(&self) -> Result<crate::TagList> {
-        Store::list_tags(self)
     }
     fn write_messages(
         &self,

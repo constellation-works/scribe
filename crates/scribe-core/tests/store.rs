@@ -7,6 +7,7 @@
 
 use scribe_core::TagVerbs;
 use scribe_core::testing::StoreTestReads;
+use scribe_core::testing::ViewTestReads;
 use scribe_core::{
     Author, EntryFilter, EntryStatus, Error, Redactor, SessionFilter, Store, StoreTag, TagName,
     verbatim,
