@@ -621,7 +621,7 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
     assert!(found.stdout.is_empty(), "{}", text(&found.stdout));
     let default_root = s.fx.root().display().to_string();
     let hint = format!(
-        "1 stored message(s) match, and no entry or session does: scribe --root {default_root} search --kind message -- quartzlark lists them"
+        "1 stored message(s) match, and no entry or session does: scribe --root={default_root} search --kind message -- quartzlark lists them"
     );
     assert_eq!(
         text(&found.stderr).lines().last(),
@@ -711,7 +711,7 @@ fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessi
     let default_root = s.fx.root().display().to_string();
     let hidden = "1 hidden record(s) also match: superseded or retired entries, or inactive sessions; --include-hidden shows them";
     let hint = format!(
-        "1 stored message(s) match, and no visible entry or session does: scribe --root {default_root} search --kind message -- quartzlark lists them"
+        "1 stored message(s) match, and no visible entry or session does: scribe --root={default_root} search --kind message -- quartzlark lists them"
     );
     assert!(stderr.lines().any(|l| l == hidden), "{stderr}");
     assert_eq!(stderr.lines().last(), Some(hint.as_str()), "{stderr}");
@@ -765,7 +765,7 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
         "-quartzlark",
     ]);
     let hint = format!(
-        "1 stored message(s) match, and no entry or session does: scribe --root '{}' search --kind message --project scribe --since 2026-11-03 --until 2026-11-03 -- -quartzlark lists them",
+        "1 stored message(s) match, and no entry or session does: scribe --root='{}' search --kind message --project scribe --since 2026-11-03 --until 2026-11-03 -- -quartzlark lists them",
         root.display()
     );
     assert_eq!(
@@ -830,6 +830,65 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
         let shell_listed: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(shell_listed["total"], 1, "{shell_listed}");
         assert_eq!(shell_listed["hits"][0]["message"], "u-1", "{shell_listed}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_message_search_hint_replays_unusual_roots_without_terminal_controls() {
+    for root_name in ["-selected", "control-\u{1}", "newline-\n", "c1-\u{85}"] {
+        let s = Setup::new();
+        let quote = "Keep the quartzlark rollout note out of the release.";
+        s.write(ON, &[line("user", "u-1", quote)]);
+        s.answer(&candidate_answer(quote, "u-1", "preferences"));
+        s.scribe("/scribe on");
+        s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+        let root = s.fx.elsewhere(root_name);
+        std::fs::rename(s.fx.root(), &root).unwrap();
+        let parent = root.parent().unwrap();
+        let binary_dir = std::path::Path::new(support::BIN).parent().unwrap();
+        let path = format!("{}:/usr/bin:/bin", binary_dir.display());
+        let search = Command::new(support::BIN)
+            .args([
+                &format!("--root={root_name}"),
+                "search",
+                "--",
+                "-quartzlark",
+            ])
+            .current_dir(parent)
+            .env_clear()
+            .env("HOME", s.fx.home())
+            .env("SCRIBE_ROOT", s.fx.root())
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(search.status.success(), "{}", text(&search.stderr));
+        let stderr = text(&search.stderr);
+        let hint = stderr
+            .lines()
+            .last()
+            .unwrap()
+            .strip_prefix("1 stored message(s) match, and no entry or session does: ")
+            .unwrap()
+            .strip_suffix(" lists them")
+            .unwrap();
+        assert!(!hint.chars().any(char::is_control), "{hint:?}");
+        let command = hint.replacen(" -- ", " --json -- ", 1);
+        let replay = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(parent)
+            .env_clear()
+            .env("HOME", s.fx.home())
+            .env("SCRIBE_ROOT", s.fx.root())
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(replay.status.success(), "{}", text(&replay.stderr));
+        let listed: Value = serde_json::from_slice(&replay.stdout).unwrap();
+        assert_eq!(listed["total"], 1, "{root_name:?}: {listed}");
+        assert_eq!(listed["hits"][0]["message"], "u-1", "{listed}");
     }
 }
 
