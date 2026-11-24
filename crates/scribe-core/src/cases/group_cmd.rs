@@ -3,10 +3,10 @@
 
 use crate::cases::group_turns;
 use crate::cases::hook::HookError;
-use crate::cases::{Ctx, PortError, Unreadable};
+use crate::cases::{Ctx, PortError, Unreadable, resolve};
 use crate::message::NewMessage;
 use crate::models::ModelError;
-use crate::{Provider, Related, RelatedKind, SessionId, transcript};
+use crate::{Provider, Related, SessionId, transcript};
 use std::path::PathBuf;
 
 /// Why a `scribe group` command did not run.
@@ -177,26 +177,11 @@ pub(crate) fn checked_transcript<E: PortError>(
     }
 }
 
-/// Resolve `session:<id>` references in `related` across the store and
-/// provider transcripts on disk, scanning transcripts at most once.
+/// Resolve `session:<id>` references in `related` ([`resolve::relateds`]).
 pub(crate) fn resolve_relateds<E: PortError>(
     ctx: &Ctx<'_, E>,
     provider: Provider,
     related: &[Related],
 ) -> Result<Vec<Related>, GroupError<E>> {
-    if !related.iter().any(|r| r.kind() == RelatedKind::Session) {
-        return Ok(related.to_vec());
-    }
-    let extra: Vec<String> = ctx
-        .transcripts
-        .files(provider)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(id, _)| id.to_string())
-        .collect();
-    Ok(ctx
-        .store
-        .read()
-        .sessions()
-        .resolve_relateds_with(related, &extra)?)
+    Ok(resolve::relateds(ctx, provider, related)?)
 }

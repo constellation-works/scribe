@@ -26,7 +26,7 @@ use crate::output::{
 };
 use clap::{Args, Subcommand};
 use scribe_core::{
-    Project, Related, SessionFilter, SessionId, SessionOrder, SessionRecord, SessionStatus, Topic,
+    Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus, Topic,
 };
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -169,30 +169,7 @@ pub(crate) struct ShowArgs {
     pub(crate) segment: Option<NonZeroU32>,
 }
 
-/// A session named by id (or a prefix of one) or by its cite, optionally
-/// with a segment. The id is resolved against the store by the handler
-/// ([`scribe_core::Store::resolve_session`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SessionRef {
-    pub(crate) id: SessionId,
-    pub(crate) segment: Option<NonZeroU32>,
-}
-
-/// `<id>`, `session:<id>` or `session:<id>#<n>`.
-fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
-    let rest = raw.strip_prefix("session:").unwrap_or(raw);
-    let (id, segment) = match rest.split_once('#') {
-        Some((id, n)) => {
-            let n = n.parse::<NonZeroU32>().map_err(|_| {
-                format!("invalid segment '{n}' in '{raw}': expected session:<id>#<n> with n from 1")
-            })?;
-            (id, Some(n))
-        }
-        None => (rest, None),
-    };
-    let id = id.parse::<SessionId>().map_err(|e| e.to_string())?;
-    Ok(SessionRef { id, segment })
-}
+pub(crate) use scribe_core::cases::session_activity::{SessionRef, parse_session_ref};
 
 impl SessionCommand {
     /// The session and agent a write verb names, resolved before it runs, so

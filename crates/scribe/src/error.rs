@@ -271,6 +271,20 @@ impl From<scribe_core::cases::ask::AskError> for CliError {
     }
 }
 
+/// The record writes' errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::write_error::WriteError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::write_error::WriteError<CliError>) -> Self {
+        use scribe_core::cases::write_error::WriteError;
+        match err {
+            WriteError::Core(e) => Self::Core(e),
+            WriteError::Port(e) => e,
+            WriteError::Usage(message) => Self::Usage(message),
+            WriteError::Read { what, source } => Self::Read { what, source },
+            WriteError::ConfirmRequired(id) => Self::ForgetConfirmRequired(id),
+        }
+    }
+}
+
 /// `mark retry`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
     fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {

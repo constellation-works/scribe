@@ -6,6 +6,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
+use scribe_core::cases::proposal_cmd;
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 use scribe_core::{EntryVerbs, ProposalVerbs};
 
@@ -165,85 +166,37 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             })
         }
         ProposalCommand::Add(args) => {
-            scribe_core::check_agent_author(&args.author)?;
-            let (kind, needs_newer) = match args.kind {
-                Kind::Stale => (scribe_core::ProposalKind::Stale, false),
-                Kind::Supersedes => (scribe_core::ProposalKind::Supersedes, true),
+            let kind = match args.kind {
+                Kind::Stale => scribe_core::ProposalKind::Stale,
+                Kind::Supersedes => scribe_core::ProposalKind::Supersedes,
             };
-            // Arguments first: they are refused before an unset [redact] env
-            // name is reported.
-            scribe_core::check_reason(&args.reason)?;
-            if needs_newer != args.newer.is_some() {
-                return Err(CliError::Core(scribe_core::Error::AgentWrite {
-                    kind: scribe_core::WriteRefusal::ProposalInvalid,
-                    message: String::from("supersedes requires --newer; stale forbids it"),
-                }));
-            }
-            ctx.store().resolve_entry(&args.older)?;
-            if let Some(newer) = &args.newer {
-                ctx.store().resolve_entry(newer)?;
-            }
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (proposal, changed) = ctx.store().add_agent_proposal(
-                kind,
-                &args.older,
-                args.newer.as_deref(),
-                &args.reason,
-                args.author,
-                ctx.now(),
-                &redactor,
+            let (proposal, changed) = proposal_cmd::add(
+                &ctx.core(),
+                proposal_cmd::ProposalAddInput {
+                    kind,
+                    older: &args.older,
+                    newer: args.newer.as_deref(),
+                    reason: &args.reason,
+                    author: args.author,
+                },
             )?;
             Ok(written(proposal, changed))
         }
         ProposalCommand::Update(args) => {
-            scribe_core::check_agent_author(&args.author)?;
-            scribe_core::check_reason(&args.reason)?;
-            ctx.store().resolve_proposal(&args.id)?;
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (proposal, changed) = ctx.store().change_agent_proposal(
-                &args.id,
-                scribe_core::ProposalChange::Update,
-                Some(&args.reason),
-                None,
-                args.author,
-                ctx.now(),
-                &redactor,
-            )?;
+            let (proposal, changed) =
+                proposal_cmd::update(&ctx.core(), &args.id, &args.reason, args.author)?;
             Ok(written(proposal, changed))
         }
         ProposalCommand::Settle(args) => {
-            args.instruction.note(ctx);
-            scribe_core::check_agent_author(&args.author)?;
-            if let Some(reason) = &args.reason {
-                scribe_core::check_reason(reason)?;
-            }
-            let target = ctx.store().resolve_proposal(&args.id)?;
-            // Before the store lock; a refusal changes nothing. A passing
-            // check lets settle accept a candidate (2_design.md §12.1); a
-            // proposal about Daniel's entry stays his.
-            let instructed = super::instruction::check(
-                ctx,
-                &args.instruction,
-                if args.approve {
-                    scribe_core::instruction::Act::Approve
-                } else {
-                    scribe_core::instruction::Act::Reject
+            let (proposal, changed) = proposal_cmd::settle(
+                &ctx.core(),
+                proposal_cmd::ProposalSettleInput {
+                    id: &args.id,
+                    approve: args.approve,
+                    reason: args.reason.as_deref(),
+                    author: args.author,
+                    instruction: args.instruction.case(ctx),
                 },
-                &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
-            )?;
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (proposal, changed) = ctx.store().change_agent_proposal(
-                &args.id,
-                if args.approve {
-                    scribe_core::ProposalChange::Approve
-                } else {
-                    scribe_core::ProposalChange::Reject
-                },
-                args.reason.as_deref(),
-                instructed.as_ref(),
-                args.author,
-                ctx.now(),
-                &redactor,
             )?;
             Ok(written(proposal, changed))
         }

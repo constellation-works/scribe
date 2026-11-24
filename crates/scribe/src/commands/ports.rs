@@ -53,6 +53,10 @@ impl Clock for Context {
     fn now(&self) -> OffsetDateTime {
         Context::now(self)
     }
+
+    fn now_precise(&self) -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
 }
 
 impl Redaction for Context {
@@ -94,6 +98,15 @@ impl Transcripts for Context {
         session: &SessionId,
     ) -> Result<Option<Vec<u8>>, Unreadable> {
         payload::read_checked(&self.with_provider(provider), path, session)
+    }
+
+    fn read_checked_unparsed(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+    ) -> Result<Option<Vec<u8>>, Unreadable> {
+        payload::read_checked_bytes(&self.with_provider(provider), path, session)
     }
 
     fn project_of(&self, cwd: &Path) -> Project {
