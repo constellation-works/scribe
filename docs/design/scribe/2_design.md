@@ -7212,9 +7212,15 @@ nothing, and so does a replay of the stored turn (same words, same session,
 same time); a later turn holding the same words moves the answer to its time.
 An action item (no options) may be answered too ("done", "not now"), or closed
 without an answer once the asker sees it done. An item whose `answer_in` is
-`session:<id>` can still be answered elsewhere; the answer is recorded, and
-the recording session tells him the answer must also be typed in that
-session for its auto mode to accept the action (§18.8).
+`session:<id>` can still be answered elsewhere, and an answer the store keeps
+is recorded. The reminder that the answer must also be typed in `session:<id>`
+for that session's auto mode to accept the action (§18.8) follows the answer
+the item retains after the write, not the session the command names;
+`--related` only scopes the search for the quote. So a retained answer from
+another session gives the reminder, including on a replay of it, and a
+retained answer from `session:<id>` gives none. With a newer retained answer
+from `session:<id>`, an older answer from another session is neither recorded
+nor warned about: the later answer stands unchanged.
 
 Forgetting the session he typed the answer in erases the answer (`item.answer`
 becomes empty) from the live entry and from any archived copy, since it holds
