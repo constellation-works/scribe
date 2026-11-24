@@ -308,6 +308,21 @@ impl Sessions<'_> {
         self.store.resolve_session_or_handoff(input)
     }
 
+    /// Set the session's `field` to `value`; returns how many rows changed,
+    /// 0 when the session has no record or was forgotten.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put_field(
+        &self,
+        id: &SessionId,
+        field: crate::session::SessionField,
+        value: &str,
+    ) -> Result<usize> {
+        self.store.set_session_field(id, field, value)
+    }
+
     /// Whether a group seats `id`.
     ///
     /// # Errors

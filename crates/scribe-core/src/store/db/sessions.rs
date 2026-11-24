@@ -25,8 +25,6 @@
 
 use super::memory::read;
 use super::{DB_FILE, Fallible, db_error, optimize_fts, stamp};
-use crate::WriteRefusal;
-use crate::checks::refusal;
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord, check_log};
 use rusqlite::types::Value as Sql;
@@ -1065,34 +1063,24 @@ impl<'c> SessionTx<'c> {
 }
 
 impl crate::Store {
-    /// Update one user-specified session record field in a store write.
-    pub fn update_session_metadata(
+    /// Set one session record field, `title` or `project`, to `value`, in
+    /// the write under way; returns how many rows changed (0 when the session
+    /// has no record or was forgotten).
+    pub(in crate::store) fn set_session_field(
         &self,
         id: &SessionId,
-        field: &str,
+        field: crate::session::SessionField,
         value: &str,
-        redactor: &crate::Redactor,
-    ) -> Result<()> {
-        let value = value.trim();
-        crate::check_content(value)?;
-        if field == "project" {
-            value
-                .parse::<crate::Project>()
-                .map_err(|_| refusal(WriteRefusal::InvalidText, "invalid project"))?;
-        } else if field != "title" || value.contains(['\n', '\r']) {
-            return Err(refusal(
-                WriteRefusal::InvalidText,
-                "invalid session field or title",
-            ));
-        }
-        let value = redactor.mask(value);
+    ) -> Result<usize> {
         self.write_step(|| {
             let conn = super::open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
-            let sql = if field == "project" { "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" } else { "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" };
-            let changed = conn.execute(sql, (id.as_str(), &value)).map_err(|e| db_error("update session in", &path, e))?;
-            if changed == 0 { return Err(Error::SessionNotFound { id: id.clone(), path: self.root().to_path_buf() }); }
-            Ok(())
+            let sql = match field {
+                crate::session::SessionField::Project => "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
+                crate::session::SessionField::Title => "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
+            };
+            conn.execute(sql, (id.as_str(), value))
+                .map_err(|e| db_error("update session in", &path, e))
         })
     }
 }

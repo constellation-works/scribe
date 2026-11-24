@@ -905,3 +905,13 @@ impl Cadence {
         control.due || waited || turns_since >= self.every_turns.get()
     }
 }
+
+/// A session record field a user may set by hand (`#scribe` session
+/// metadata): its title or its project.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionField {
+    /// `title`.
+    Title,
+    /// `project`.
+    Project,
+}

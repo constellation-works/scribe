@@ -6,6 +6,7 @@
 
 pub mod candidates;
 pub mod entry;
+pub mod group;
 pub mod records;
 
 use crate::{AuthorName, Error, Result, WriteRefusal};
@@ -121,4 +122,25 @@ pub(crate) fn refuse_busy(control: &crate::ControlState, id: &crate::SessionId) 
         return Err(Error::SessionBusy(id.clone()));
     }
     Ok(())
+}
+
+/// A hand-set session field: content, and either a valid project or a
+/// one-line title. `value` is already trimmed.
+pub(crate) fn check_session_field(
+    field: &str,
+    value: &str,
+) -> Result<crate::session::SessionField> {
+    check_content(value)?;
+    if field == "project" {
+        value
+            .parse::<crate::Project>()
+            .map_err(|_| refusal(WriteRefusal::InvalidText, "invalid project"))?;
+        return Ok(crate::session::SessionField::Project);
+    } else if field != "title" || value.contains(['\n', '\r']) {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "invalid session field or title",
+        ));
+    }
+    Ok(crate::session::SessionField::Title)
 }

@@ -2,7 +2,7 @@
 //! continuation's handoff, and a session's forget (2_design.md §6, §12.4).
 
 use crate::activity::{ActiveOutcome, SetActive};
-use crate::checks::{check_active_author, forgotten_refusal, refusal};
+use crate::checks::{check_active_author, check_session_field, forgotten_refusal, refusal};
 use crate::store::SessionForgetOutcome;
 use crate::{
     Entry, EntryStatus, Error, LinkType, Provider, Redactor, Result, SessionForget, SessionId,
@@ -89,6 +89,21 @@ pub trait SessionVerbs {
         selection: HandoffSelection<'_>,
         now: OffsetDateTime,
     ) -> Result<Option<(String, bool)>>;
+
+    /// Set one user-specified session record field, `title` or `project`,
+    /// in a store write, its value masked by `redactor`.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_text` for a field or value refused, `session_not_found`
+    /// for a session with no record, and the store's errors.
+    fn update_session_metadata(
+        &self,
+        id: &SessionId,
+        field: &str,
+        value: &str,
+        redactor: &Redactor,
+    ) -> Result<()>;
 }
 
 impl SessionVerbs for Store {
@@ -211,6 +226,27 @@ impl SessionVerbs for Store {
                 Provider::ClaudeCode,
             )?;
             Ok(Some((entry.content, linked.added)))
+        })
+    }
+
+    fn update_session_metadata(
+        &self,
+        id: &SessionId,
+        field: &str,
+        value: &str,
+        redactor: &Redactor,
+    ) -> Result<()> {
+        let value = value.trim();
+        let field = check_session_field(field, value)?;
+        let value = redactor.mask(value);
+        self.write(|tx| {
+            if tx.sessions().put_field(id, field, &value)? == 0 {
+                return Err(Error::SessionNotFound {
+                    id: id.clone(),
+                    path: self.root().to_path_buf(),
+                });
+            }
+            Ok(())
         })
     }
 }
