@@ -131,13 +131,13 @@ impl fmt::Display for TagName {
 /// reused within its tag.
 ///
 /// ```
-/// use scribe_core::EntryId;
+/// use scribe_domain::EntryId;
 ///
 /// let id: EntryId = "preferences-12".parse()?;
 /// assert_eq!(id.tag().as_str(), "preferences");
 /// assert_eq!(id.number(), 12);
 /// assert!("preferences-0".parse::<EntryId>().is_err(), "numbers start at 1");
-/// # Ok::<(), scribe_core::EntryError>(())
+/// # Ok::<(), scribe_domain::EntryError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

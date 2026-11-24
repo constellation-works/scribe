@@ -38,7 +38,7 @@ pub fn normalize(text: &str) -> String {
 /// and a substring of the normalized source.
 ///
 /// ```
-/// use scribe_core::verbatim;
+/// use scribe_domain::verbatim;
 ///
 /// let source = "squash-merge agent PRs;\nkeep merge commits for releases";
 /// assert!(verbatim::contains(source, "agent PRs; keep merge"));
