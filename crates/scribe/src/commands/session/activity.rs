@@ -99,7 +99,7 @@ pub(crate) struct ActivateArgs {
 pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> AuditSubject {
     let target = whole_session(id)
         .ok()
-        .and_then(|id| ctx.store().resolve_session(&id).ok())
+        .and_then(|id| ctx.store().read().sessions().resolve(&id).ok())
         .map(|id| format!("session:{id}"));
     AuditSubject {
         target,
@@ -110,7 +110,11 @@ pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> Au
 /// `session deactivate`.
 pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
     scribe_core::check_agent_author(&args.author)?;
-    let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
+    let id = ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve(&whole_session(&args.id)?)?;
     let reason = reason("--reason", &args.reason)?;
     let cite = args
         .cite
@@ -129,7 +133,11 @@ pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, 
 /// `session activate`.
 pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliError> {
     scribe_core::check_agent_author(&args.author)?;
-    let id = ctx.store().resolve_session(&whole_session(&args.id)?)?;
+    let id = ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve(&whole_session(&args.id)?)?;
     let reason = args
         .reason
         .as_deref()
@@ -151,7 +159,7 @@ pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliE
 /// Apply `request` in one locked store call and print the record.
 fn write(ctx: &Context, id: &SessionId, request: &SetActive) -> Result<Output, CliError> {
     let store = ctx.store();
-    let redactor = ctx.redactor(&store.config()?)?;
+    let redactor = ctx.redactor(&store.read().tags().config()?)?;
     let (record, outcome) = store.set_active(id, request, ctx.now(), &redactor)?;
     let mut notices = Vec::new();
     match outcome {
@@ -169,7 +177,7 @@ fn write(ctx: &Context, id: &SessionId, request: &SetActive) -> Result<Output, C
         }
     }
     // The links, children and switch come from a read after the write.
-    let view = store.session(id)?;
+    let view = store.read().sessions().get(id)?;
     let payload = SessionPayload::new(
         &view.record,
         view.control.as_ref(),
@@ -256,11 +264,15 @@ fn validated_cite(ctx: &Context, text: &str) -> Result<String, CliError> {
         let reference = parse_session_ref(text).map_err(|e| {
             CliError::Usage(format!("--cite '{text}' is not a session reference: {e}"))
         })?;
-        let id = store.resolve_session(&reference.id).map_err(not_a_record)?;
+        let id = store
+            .read()
+            .sessions()
+            .resolve(&reference.id)
+            .map_err(not_a_record)?;
         return match reference.segment {
             None => Ok(format!("session:{id}")),
             Some(n) => {
-                let view = store.session(&id)?;
+                let view = store.read().sessions().get(&id)?;
                 if view.record.log.iter().any(|segment| segment.n == n) {
                     Ok(format!("session:{id}#{n}"))
                 } else {

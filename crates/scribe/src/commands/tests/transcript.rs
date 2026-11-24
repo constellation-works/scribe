@@ -5,6 +5,7 @@ use crate::app::{AppEnv, Context};
 use crate::commands::transcript::{ListArgs, ShowArgs, TranscriptCommand};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
+use scribe_core::testing::StoreTestReads;
 use scribe_core::{Project, SessionId};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;

@@ -231,7 +231,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     if !prints_sessions {
         return scribe_core::ShortIds::default();
     }
-    let mut ids = ctx.store().session_ids().unwrap_or_default();
+    let mut ids = ctx.store().read().sessions().ids().unwrap_or_default();
     if let Ok(extra) = transcript_session_ids(ctx) {
         ids.extend(extra);
     }
@@ -259,7 +259,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         ids.extend(groups.iter().map(|g| g.opener.clone()));
     }
     let mut shorts = scribe_core::ShortIds::new(ids);
-    if let Ok(numbers) = ctx.store().session_numbers() {
+    if let Ok(numbers) = ctx.store().read().sessions().numbers() {
         shorts.set_aliases(
             numbers
                 .into_iter()
@@ -288,7 +288,11 @@ pub(in crate::commands) fn resolve_session_or_typed(
     input: &scribe_core::SessionId,
 ) -> Result<scribe_core::SessionId, CliError> {
     let extra = transcript_session_ids(ctx)?;
-    Ok(ctx.store().resolve_session_or_typed_with(input, &extra)?)
+    Ok(ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve_or_typed_with(input, &extra)?)
 }
 
 /// Resolve one `--related` or `--result` `session:<id>` reference across the
@@ -302,7 +306,11 @@ pub(in crate::commands) fn resolve_related(
         return Ok(related.clone());
     }
     let extra = transcript_session_ids(ctx)?;
-    Ok(ctx.store().resolve_related_with(related, &extra)?)
+    Ok(ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve_related_with(related, &extra)?)
 }
 
 /// Resolve `session:<id>` references in `related` across the store and
@@ -318,7 +326,11 @@ pub(in crate::commands) fn resolve_relateds(
         return Ok(related.to_vec());
     }
     let extra = transcript_session_ids(ctx)?;
-    Ok(ctx.store().resolve_relateds_with(related, &extra)?)
+    Ok(ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve_relateds_with(related, &extra)?)
 }
 
 /// Run one command, auditing it if it is audited.
@@ -599,7 +611,7 @@ impl Drop for PersistedAudit<'_> {
                 issue: None,
                 duration_ms: 0,
             };
-            if let Err(err) = self.store.record_audit(&event) {
+            if let Err(err) = self.store.read().audit().record(&event) {
                 tracing::warn!(
                     command = self.command,
                     %err,

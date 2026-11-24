@@ -14,7 +14,7 @@ impl Store {
     ///
     /// `tag_not_found` when no tag has that name or alias; a bad config or
     /// store file as when loading either.
-    pub fn tag_definition(&self, word: &str) -> Result<(TagDef, &'static str)> {
+    pub(in crate::store) fn tag_definition(&self, word: &str) -> Result<(TagDef, &'static str)> {
         let configured = self.config_only()?.tags;
         if let Some(def) = configured.resolve(word) {
             return Ok((def.clone(), "config"));
@@ -33,7 +33,7 @@ impl Store {
 
     /// The path of `config.toml`, whether or not it exists.
     #[must_use]
-    pub fn config_path(&self) -> std::path::PathBuf {
+    pub(in crate::store) fn config_path(&self) -> std::path::PathBuf {
         self.root.join(super::CONFIG_FILE)
     }
 

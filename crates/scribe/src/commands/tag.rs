@@ -102,7 +102,7 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
             // unset [redact] env name.
             scribe_core::check_agent_author(&tag.author.name)?;
             ctx.store().check_new_tag(&tag)?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let tag = ctx.store().add_agent_tag(tag, &redactor)?;
             Ok(Output::written(Record::Tag(Box::new(tag)), true))
         }
@@ -118,7 +118,7 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
                 stale_after_days: args.stale_after_days,
             };
             ctx.store().check_agent_tag_update(&args.name, &patch)?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (tag, changed) = ctx.store().update_agent_tag(
                 &args.name,
                 patch,
@@ -133,15 +133,21 @@ pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError
 
 /// Read-only: no lock, no audit, no write.
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let (def, source) = ctx.store().tag_definition(&args.tag)?;
-    let file = ctx.store().config_path().display().to_string();
+    let (def, source) = ctx.store().read().tags().definition(&args.tag)?;
+    let file = ctx
+        .store()
+        .read()
+        .tags()
+        .config_path()
+        .display()
+        .to_string();
     Ok(Output::Show {
         record: Record::TagRules(Box::new(TagShowPayload::new(&def, source, &file))),
     })
 }
 
 fn list(ctx: &Context) -> Result<Output, CliError> {
-    let found = ctx.store().list_tags()?;
+    let found = ctx.store().read().tags().list()?;
     let notice = ListNotice {
         noun: "tags",
         criteria: Vec::new(),

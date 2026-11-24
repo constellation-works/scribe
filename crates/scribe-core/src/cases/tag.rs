@@ -179,7 +179,7 @@ fn check_new_tag(store: &Store, tags: Tags<'_>, tag: &StoreTag) -> Result<()> {
             format!(
                 "tag '{}' already exists; it is configured in {}",
                 tag.name,
-                store.config_path().display()
+                tags.config_path().display()
             )
         } else {
             format!(

@@ -71,7 +71,7 @@ pub const NEEDS_REDACTION: &str = "needs_redaction";
 impl Store {
     /// Every marker outcome of `session`, in file order; none for a
     /// missing file or store. Reads only.
-    pub fn marks(&self, session: &SessionId) -> Result<Vec<MarkRecord>> {
+    pub(in crate::store) fn marks(&self, session: &SessionId) -> Result<Vec<MarkRecord>> {
         Ok(self
             .all_marks()?
             .into_iter()
@@ -82,7 +82,10 @@ impl Store {
     /// The markers no entry or answer settled yet ([`MarkRecord::uncataloged`]):
     /// pending a retry or given up after [`MAX_ATTEMPTS`], of `session` or of
     /// every session, in file order. Reads only.
-    pub fn uncataloged_marks(&self, session: Option<&SessionId>) -> Result<Vec<MarkRecord>> {
+    pub(in crate::store) fn uncataloged_marks(
+        &self,
+        session: Option<&SessionId>,
+    ) -> Result<Vec<MarkRecord>> {
         Ok(self
             .all_marks()?
             .into_iter()

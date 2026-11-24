@@ -20,11 +20,18 @@ const EVENT: &str = "SessionEnd";
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: SessionEndPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
-    let on = ctx.store().control()?.get(&session).is_some_and(|c| c.on);
+    let on = ctx
+        .store()
+        .read()
+        .sessions()
+        .control()?
+        .get(&session)
+        .is_some_and(|c| c.on);
     let marked = on
-        && ctx
-            .store()
-            .update_control(|state| control::mark_final(state, &session))?;
+        && ctx.store().write(|tx| {
+            tx.sessions()
+                .change_control(|state| control::mark_final(state, &session))
+        })?;
     let outcomes = if marked {
         vec![HookOutcome {
             target: Some(format!("session:{session}")),

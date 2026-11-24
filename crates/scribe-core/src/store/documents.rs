@@ -166,7 +166,7 @@ impl Store {
     }
 
     /// The entry with this id.
-    pub fn entry(&self, id: &EntryId) -> Result<Entry> {
+    pub(in crate::store) fn entry(&self, id: &EntryId) -> Result<Entry> {
         let path = self.root.join(DB_FILE);
         if let Some(rows) = self.read_db(docs::entries)? {
             for row in rows {
@@ -186,21 +186,21 @@ impl Store {
     }
 
     /// Every proposal, by id; none when there are none.
-    pub fn proposals(&self) -> Result<Vec<Proposal>> {
+    pub(in crate::store) fn proposals(&self) -> Result<Vec<Proposal>> {
         let mut proposals = self.read_or_empty(docs::claims)?;
         proposals.sort_by_key(|p| p.id);
         Ok(proposals)
     }
 
     /// The store tags (`scribe tag add`), without writing.
-    pub fn store_tags(&self) -> Result<Vec<StoreTag>> {
+    pub(in crate::store) fn store_tags(&self) -> Result<Vec<StoreTag>> {
         let mut tags = self.read_or_empty(docs::tags)?;
         tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
         Ok(tags)
     }
 
     /// Every pickup, oldest first; none for a missing store. Reads only.
-    pub fn pickups(&self) -> Result<Vec<Pickup>> {
+    pub(in crate::store) fn pickups(&self) -> Result<Vec<Pickup>> {
         self.read_or_empty(docs::pickups)
     }
 
@@ -229,7 +229,7 @@ impl Store {
     ///
     /// An unsafe file (a link, loose modes) as for any store read, or a
     /// line of a newer audit format (`store_too_new`).
-    pub fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)> {
+    pub(in crate::store) fn audit_events(&self) -> Result<(Vec<AuditEvent>, usize)> {
         let (lines, torn) = self.audit_lines()?;
         Ok((lines.into_iter().map(|(_, event)| event).collect(), torn))
     }

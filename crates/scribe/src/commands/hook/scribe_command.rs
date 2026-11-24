@@ -102,27 +102,36 @@ pub(super) fn run(
         | Switch::GroupRemove(_)
         | Switch::SessionUpdate { .. }
         | Switch::Status => store
+            .read()
+            .sessions()
             .control()
             .map(|state| (Change::Status(state.get(session).cloned()), false)),
         Switch::Unknown(arg) => Ok((Change::Unknown(arg.clone()), false)),
         Switch::On | Switch::Off => store.has_deferred_ancestry(session).and_then(|pending| {
-            store.update_control(|state| {
-                let change =
-                    control::switch_for_provider(state, session, switch, ctx.now(), ctx.provider());
-                // An explicit opt-out must survive a later deferred inheritance.
-                let recorded_off = pending
-                    && matches!(switch, Switch::Off)
-                    && !state.sessions.contains_key(session);
-                if recorded_off {
-                    state.sessions.insert(
-                        session.clone(),
-                        SessionControl {
-                            provider: ctx.provider(),
-                            ..SessionControl::default()
-                        },
+            store.write(|tx| {
+                tx.sessions().change_control(|state| {
+                    let change = control::switch_for_provider(
+                        state,
+                        session,
+                        switch,
+                        ctx.now(),
+                        ctx.provider(),
                     );
-                }
-                (change, recorded_off)
+                    // An explicit opt-out must survive a later deferred inheritance.
+                    let recorded_off = pending
+                        && matches!(switch, Switch::Off)
+                        && !state.sessions.contains_key(session);
+                    if recorded_off {
+                        state.sessions.insert(
+                            session.clone(),
+                            SessionControl {
+                                provider: ctx.provider(),
+                                ..SessionControl::default()
+                            },
+                        );
+                    }
+                    (change, recorded_off)
+                })
             })
         }),
     };
@@ -377,7 +386,7 @@ fn status(change: &Change, record: Option<&SessionRecord>) -> String {
 /// The session's record, if it has one that reads; a status is still
 /// given without it.
 fn record_of(ctx: &Context, session: &SessionId) -> Option<SessionRecord> {
-    match ctx.store().session(session) {
+    match ctx.store().read().sessions().get(session) {
         Ok(view) => Some(view.record),
         Err(scribe_core::Error::SessionNotFound { .. }) => None,
         Err(err) => {

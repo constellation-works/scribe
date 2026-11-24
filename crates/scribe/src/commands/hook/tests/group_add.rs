@@ -6,6 +6,7 @@ use crate::commands::hook::{group_turns, payload::PromptPayload};
 use crate::output::Output;
 use scribe_core::GroupVerbs;
 use scribe_core::SessionId;
+use scribe_core::testing::StoreTestReads;
 use serde_json::json;
 
 const A: &str = "00000000-0000-4000-8000-000000000001";

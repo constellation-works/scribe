@@ -28,7 +28,7 @@ const RECENT_SECS: i64 = 24 * 60 * 60;
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: SessionStartPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
-    let open = match ctx.store().proposals() {
+    let open = match ctx.store().read().proposals().all() {
         Ok(proposals) => proposals
             .iter()
             .filter(|p| p.state == ProposalState::Open)
@@ -47,7 +47,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             "scribe: {n} proposals to review — scribe proposal list"
         )),
     };
-    let stuck = match ctx.store().stuck_actions(ctx.now()) {
+    let stuck = match ctx.store().read().pickups().stuck_actions(ctx.now()) {
         Ok(counts) => stuck_line(&counts),
         Err(err) => {
             tracing::warn!(%err, "cannot read the action entries; not reporting them");
@@ -289,7 +289,7 @@ fn brief_text(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<S
 fn continuation_line(ctx: &Context, session: &SessionId, cwd: Option<&str>) -> Option<String> {
     let cwd = cwd.map(str::trim).filter(|cwd| !cwd.is_empty())?;
     let project = project::of(Path::new(cwd));
-    let listed = match ctx.store().list_sessions(&SessionFilter {
+    let listed = match ctx.store().read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..SessionFilter::default()
     }) {

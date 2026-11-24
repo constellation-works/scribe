@@ -214,7 +214,12 @@ impl Context {
     }
     /// Config with provider-specific model defaults resolved.
     pub(crate) fn config(&self) -> Result<Config, CliError> {
-        Ok(self.store.config()?.for_provider(self.provider))
+        Ok(self
+            .store
+            .read()
+            .tags()
+            .config()?
+            .for_provider(self.provider))
     }
 
     /// Refuse scaffolding when the selected runtime is not executable on PATH.

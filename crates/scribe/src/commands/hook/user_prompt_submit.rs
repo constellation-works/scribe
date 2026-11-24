@@ -91,10 +91,14 @@ fn apply_deferred_ancestry(
     if !ctx.store().has_deferred_ancestry(session)? {
         return Ok(());
     }
-    let listed = ctx.store().list_sessions(&scribe_core::SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
+    let listed = ctx
+        .store()
+        .read()
+        .sessions()
+        .list(&scribe_core::SessionFilter {
+            include_inactive: true,
+            ..Default::default()
+        })?;
     let linked = listed.control.get(session).is_some_and(|c| {
         c.pending_links
             .iter()
@@ -240,6 +244,8 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
     let session = payload::session(&payload.session_id)?;
     if ctx
         .store()
+        .read()
+        .sessions()
         .control()?
         .get(&session)
         .is_some_and(|c| c.provider != ctx.provider())
@@ -307,14 +313,18 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
             } => {
                 let ids: Vec<String> = ctx
                     .store()
-                    .groups()?
+                    .read()
+                    .groups()
+                    .all()?
                     .iter()
                     .flat_map(|g| g.members().into_iter().map(|id| id.to_string()))
                     .collect();
                 let redactor = ctx.redactor(&ctx.config()?)?;
                 let result = ctx
                     .store()
-                    .resolve_session_or_typed_with(&named, &ids)
+                    .read()
+                    .sessions()
+                    .resolve_or_typed_with(&named, &ids)
                     .and_then(|id| {
                         let project = project::of(std::path::Path::new(&payload.cwd));
                         ctx.store()
@@ -326,13 +336,17 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
             GroupLine::Remove(named) => {
                 let ids: Vec<String> = ctx
                     .store()
-                    .groups()?
+                    .read()
+                    .groups()
+                    .all()?
                     .iter()
                     .flat_map(|g| g.members().into_iter().map(|id| id.to_string()))
                     .collect();
                 let result = ctx
                     .store()
-                    .resolve_session_or_typed_with(&named, &ids)
+                    .read()
+                    .sessions()
+                    .resolve_or_typed_with(&named, &ids)
                     .and_then(|id| ctx.store().leave_group(&id).map(|_| id));
                 return Ok(named_reply(result, "removed", &session));
             }
@@ -342,11 +356,16 @@ fn capture_prompt(payload: &PromptPayload, ctx: &Context) -> Result<Output, CliE
                 value,
             } => {
                 let redactor = ctx.redactor(&ctx.config()?)?;
-                let result = ctx.store().resolve_session(&named).and_then(|id| {
-                    ctx.store()
-                        .update_session_metadata(&id, &field, &value, &redactor)
-                        .map(|()| id)
-                });
+                let result = ctx
+                    .store()
+                    .read()
+                    .sessions()
+                    .resolve(&named)
+                    .and_then(|id| {
+                        ctx.store()
+                            .update_session_metadata(&id, &field, &value, &redactor)
+                            .map(|()| id)
+                    });
                 return Ok(named_reply(result, "updated", &session));
             }
         };

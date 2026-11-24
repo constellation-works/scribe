@@ -90,14 +90,17 @@ impl Store {
     /// short input; an `id_ambiguous`
     /// [`Error::AgentWrite`] naming the candidates when several do; a store
     /// error otherwise.
-    pub fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
+    pub(in crate::store) fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
         self.resolve_session_with(input, false, &[])
     }
 
     /// [`Store::resolve_session`], also accepting sessions known only through
     /// an active `handoff` entry (a session that was never switched on and
     /// has no session record; 2_design.md §16). Reads only.
-    pub fn resolve_session_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+    pub(in crate::store) fn resolve_session_or_handoff(
+        &self,
+        input: &SessionId,
+    ) -> Result<SessionId> {
         self.resolve_session_with(input, true, &[])
     }
 
@@ -105,7 +108,7 @@ impl Store {
     /// accepts: records (readable or not), switches, Codex cursors and
     /// sessions named only by an active handoff, and group members. The
     /// universe display prefixes must be unique in. Reads only.
-    pub fn session_ids(&self) -> Result<Vec<String>> {
+    pub(in crate::store) fn session_ids(&self) -> Result<Vec<String>> {
         let loaded = self.load_sessions()?;
         let handoffs: Vec<SessionId> = self
             .load_entries()?
@@ -136,7 +139,10 @@ impl Store {
     /// A usage error for a target shorter than four characters that is not a
     /// known id; `id_ambiguous` naming the candidates when several ids
     /// match.
-    pub fn resolve_related(&self, related: &crate::Related) -> Result<crate::Related> {
+    pub(in crate::store) fn resolve_related(
+        &self,
+        related: &crate::Related,
+    ) -> Result<crate::Related> {
         self.resolve_related_with(related, &[])
     }
 
@@ -146,7 +152,7 @@ impl Store {
     /// # Errors
     ///
     /// As [`Store::resolve_related`].
-    pub fn resolve_related_with(
+    pub(in crate::store) fn resolve_related_with(
         &self,
         related: &crate::Related,
         extra_ids: &[String],
@@ -174,7 +180,10 @@ impl Store {
     /// # Errors
     ///
     /// As [`Store::resolve_session_or_handoff`], except not-found.
-    pub fn resolve_session_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+    pub(in crate::store) fn resolve_session_or_typed(
+        &self,
+        input: &SessionId,
+    ) -> Result<SessionId> {
         self.resolve_session_or_typed_with(input, &[])
     }
 
@@ -184,7 +193,7 @@ impl Store {
     /// # Errors
     ///
     /// As [`Store::resolve_session_or_typed`].
-    pub fn resolve_session_or_typed_with(
+    pub(in crate::store) fn resolve_session_or_typed_with(
         &self,
         input: &SessionId,
         extra_ids: &[String],
@@ -200,7 +209,10 @@ impl Store {
     /// # Errors
     ///
     /// The first error of [`Store::resolve_related`].
-    pub fn resolve_relateds(&self, related: &[crate::Related]) -> Result<Vec<crate::Related>> {
+    pub(in crate::store) fn resolve_relateds(
+        &self,
+        related: &[crate::Related],
+    ) -> Result<Vec<crate::Related>> {
         self.resolve_relateds_with(related, &[])
     }
 
@@ -209,7 +221,7 @@ impl Store {
     /// # Errors
     ///
     /// The first error of [`Store::resolve_related_with`].
-    pub fn resolve_relateds_with(
+    pub(in crate::store) fn resolve_relateds_with(
         &self,
         related: &[crate::Related],
         extra_ids: &[String],

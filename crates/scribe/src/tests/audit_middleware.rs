@@ -1,6 +1,7 @@
 use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{EntryPayload, HookOutcome, HookReply, Output, Record};
+use scribe_core::testing::StoreTestReads;
 use scribe_core::{AuditStatus, Store};
 use std::path::PathBuf;
 use time::macros::datetime;

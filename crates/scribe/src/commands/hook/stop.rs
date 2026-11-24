@@ -31,6 +31,7 @@ use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
 use scribe_core::EntryVerbs;
+use scribe_core::SessionVerbs;
 use scribe_core::annotation::MAX_TURNS_PER_STOP;
 use scribe_core::control::{self, Since};
 use scribe_core::transcript::{self, Message};
@@ -125,16 +126,16 @@ fn mark_due(
     ctx: &Context,
 ) -> Result<Vec<HookOutcome>, CliError> {
     let store = ctx.store();
-    let state = store.control()?;
+    let state = store.read().sessions().control()?;
     let Some(switch) = state
         .get(session)
         .filter(|_| control::needs_cadence(&state, session))
     else {
         return Ok(Vec::new());
     };
-    let cadence = store.config()?.catalog;
+    let cadence = store.read().tags().config()?.catalog;
     let now = ctx.now();
-    let record = match store.session(session) {
+    let record = match store.read().sessions().get(session) {
         Ok(view) => Some(view.record),
         Err(scribe_core::Error::SessionNotFound { .. }) => None,
         Err(err) => {
@@ -173,8 +174,10 @@ fn mark_due(
             return Ok(Vec::new());
         }
     }
-    let marked =
-        store.update_control(|state| control::mark_due(state, session, &cadence, since, now))?;
+    let marked = store.write(|tx| {
+        tx.sessions()
+            .change_control(|state| control::mark_due(state, session, &cadence, since, now))
+    })?;
     Ok(if marked {
         vec![HookOutcome {
             target: Some(format!("session:{session}")),

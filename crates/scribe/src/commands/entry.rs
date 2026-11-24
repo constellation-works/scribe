@@ -380,7 +380,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                     )?;
                 }
             }
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let entry = ctx
                 .store()
                 .add_agent_entry(draft, args.author, ctx.now(), &redactor)?;
@@ -400,7 +400,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 args.rejected,
                 ctx.now(),
             )?;
-            let entry = ctx.store().entry(&pickup.entry)?;
+            let entry = ctx.store().read().entries().get(&pickup.entry)?;
             written_with_action(ctx, entry, changed)
         }
         EntryCommand::Update(args) => {
@@ -417,7 +417,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 remove_related: resolve_relateds_preserving_input(ctx, &args.remove_related)?,
             };
             ctx.store().check_agent_entry_update(&args.id, &patch)?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (entry, changed) = ctx.store().update_agent_entry(
                 &args.id,
                 patch,
@@ -440,7 +440,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 scribe_core::instruction::Act::Retire,
                 &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
             )?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (entry, changed) = ctx.store().retire_agent_entry(
                 &args.id,
                 &args.reason,
@@ -458,7 +458,7 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             if let Some(note) = &args.note {
                 scribe_core::check_reason(note)?;
             }
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (entry, changed) = ctx.store().close_open_item(
                 &args.id,
                 args.decision.as_ref(),
@@ -486,7 +486,7 @@ fn answer(args: &AnswerArgs, ctx: &Context) -> Result<Output, CliError> {
         at,
         recorded_by: args.author.clone(),
     };
-    let redactor = ctx.redactor(&ctx.store().config()?)?;
+    let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
     let (entry, changed) = ctx
         .store()
         .answer_open_item(&args.id, answer, ctx.now(), &redactor)?;
@@ -565,10 +565,13 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let group = args
         .group
         .as_deref()
-        .map(|id| store.group(id))
+        .map(|id| store.read().groups().get(id))
         .transpose()?;
     let members = group.as_ref().map(|group| group.members());
-    let found = store.list_entries_scoped(&filter, members.as_ref())?;
+    let found = store
+        .read()
+        .entries()
+        .list_scoped(&filter, members.as_ref())?;
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
@@ -669,7 +672,9 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     // the approved candidate proposal that reserved its id.
     let admitted = ctx
         .store()
-        .proposals()?
+        .read()
+        .proposals()
+        .all()?
         .into_iter()
         .find(|p| {
             p.kind == scribe_core::ProposalKind::Candidate
@@ -695,8 +700,8 @@ struct Actions {
 impl Actions {
     fn load(ctx: &Context) -> Result<Self, CliError> {
         Ok(Self {
-            tags: ctx.store().config()?.tags,
-            pickups: ctx.store().pickups()?,
+            tags: ctx.store().read().tags().config()?.tags,
+            pickups: ctx.store().read().pickups().all()?,
             now: ctx.now(),
         })
     }

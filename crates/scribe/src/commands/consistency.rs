@@ -158,8 +158,13 @@ pub(in crate::commands) fn scan<M: Models>(
     persisted.extend(repaired.covered.iter().map(|c| c.proposal.to_string()));
     let closed = store.close_retired_candidates(now)?;
     persisted.extend(closed.iter().map(|proposal| proposal.id.to_string()));
-    let entries = store.list_entries(&EntryFilter::default())?.listing.items;
-    let proposals = store.proposals()?;
+    let entries = store
+        .read()
+        .entries()
+        .list(&EntryFilter::default())?
+        .listing
+        .items;
+    let proposals = store.read().proposals().all()?;
     let found = consistency::candidates(&entries, &proposals, now.date(), consistency::MAX_PAIRS);
     let mut report = ScanReport {
         reapplied: repaired
@@ -325,7 +330,7 @@ fn deactivate_sessions<M: Models>(
         include_inactive: true,
         ..SessionFilter::default()
     };
-    let mut sessions = store.list_sessions(&filter)?.listing.items;
+    let mut sessions = store.read().sessions().list(&filter)?.listing.items;
     let limit = config.sessions.inactive_after_days;
 
     let aged: Vec<(SessionId, SetActive)> = sessions
@@ -364,7 +369,12 @@ fn deactivate_sessions<M: Models>(
         }
     }
 
-    let entries = store.list_entries(&EntryFilter::default())?.listing.items;
+    let entries = store
+        .read()
+        .entries()
+        .list(&EntryFilter::default())?
+        .listing
+        .items;
     let found =
         consistency::removal_candidates(&sessions, &entries, now, consistency::MAX_REMOVAL_PAIRS);
     report.removal_pairs_left = found.over_cap;

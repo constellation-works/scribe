@@ -274,7 +274,7 @@ impl Store {
     }
 
     /// The connection of the transaction under way, if it began.
-    fn open_conn(&self) -> Option<Rc<Connection>> {
+    pub(super) fn open_conn(&self) -> Option<Rc<Connection>> {
         PENDING.with(|p| {
             p.borrow()
                 .as_ref()
@@ -393,46 +393,16 @@ impl Store {
         Ok(())
     }
 
-    /// Record one audit line. Inside a write's transaction it commits with
-    /// the write. Otherwise it is inserted without waiting, and spooled to
-    /// a file of its own when another writer holds the database or the
-    /// store is still files, so no line waits on a lock or is lost to one.
-    ///
-    /// A store too new for this build takes no line.
-    ///
-    /// # Errors
-    ///
-    /// An unsafe data directory, or a spool file that cannot be written.
-    pub fn record_audit(&self, event: &AuditEvent) -> Result<()> {
-        if self.open_conn().is_some() {
-            return self.with_conn(|conn, path| {
-                docs::put_audit(conn, path, audit::AUDIT_FORMAT, event, None, |e| {
-                    db::db_error("audit to", path, e)
-                })
-                .map(drop)
-            });
-        }
-        self.prepare_dir(&self.root)?;
-        let moved = match self.documents_moved() {
-            Ok(moved) => moved,
-            // A store a newer build migrated takes no write from this one,
-            // its log included; the command already reported the refusal.
-            Err(Error::NewerFormat { .. }) => return Ok(()),
-            Err(other) => return Err(other),
-        };
-        if moved {
-            match self.audit_without_waiting(event) {
-                Ok(()) => return Ok(()),
-                Err(Error::Locked { .. }) => {}
-                Err(other) => return Err(other),
-            }
-        }
-        self.spool_audit(event)
+    /// [`Audit::record`](super::repo::Audit::record), in the store's own
+    /// tests' call syntax. Test support: it moves with the tests.
+    #[cfg(test)]
+    pub(in crate::store) fn record_audit(&self, event: &AuditEvent) -> Result<()> {
+        self.read().audit().record(event)
     }
 
     /// Insert `event` in a transaction of its own that waits for no other
     /// writer.
-    fn audit_without_waiting(&self, event: &AuditEvent) -> Result<()> {
+    pub(super) fn audit_without_waiting(&self, event: &AuditEvent) -> Result<()> {
         let path = self.root.join(DB_FILE);
         let conn = db::open_new_writer(&self.root, Duration::ZERO)?;
         let tx = scope::Tx::begin(&conn, &path, "audit to")?;
@@ -441,7 +411,7 @@ impl Store {
     }
 
     /// Write `event` to `audit-spool/<time>-<pid>-<n>.json`.
-    fn spool_audit(&self, event: &AuditEvent) -> Result<()> {
+    pub(super) fn spool_audit(&self, event: &AuditEvent) -> Result<()> {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = self.root.join(AUDIT_SPOOL_DIR);
         self.prepare_subdir(&dir)?;

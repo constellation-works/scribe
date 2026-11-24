@@ -8,6 +8,7 @@ use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
 use scribe_core::RebuildVerbs;
+use scribe_core::SessionVerbs;
 use scribe_core::{
     Author, AuthorName, Config, Models, SegmentOrigin, SegmentState, SessionId, SessionStatus,
     pass, transcript,
@@ -47,10 +48,10 @@ pub(in crate::commands) fn run_with<M: Models>(
 ) -> Result<Output, CliError> {
     scribe_core::check_agent_author(&args.author)?;
     let store = ctx.store();
-    let id = store.resolve_session(&args.id)?;
+    let id = store.read().sessions().resolve(&args.id)?;
     // Refused before the confirm check, the transcript and any model call.
     store.refuse_forgotten(&id)?;
-    let mut original = store.session(&id)?.record;
+    let mut original = store.read().sessions().get(&id)?.record;
     let scoped = ctx.with_provider(
         original
             .provider
@@ -66,7 +67,13 @@ pub(in crate::commands) fn run_with<M: Models>(
             passes: original.passes,
         });
     }
-    if store.control()?.get(&id).is_some_and(|c| c.on && c.due) {
+    if store
+        .read()
+        .sessions()
+        .control()?
+        .get(&id)
+        .is_some_and(|c| c.on && c.due)
+    {
         return Err(scribe_core::Error::SessionBusy(id.clone()).into());
     }
     let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptMissing(id.clone()))?;
@@ -87,7 +94,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     let adapter = models(&config);
     let _rebuild = store.lock_rebuild(&original)?;
     // Re-read after taking the per-session lock: another rebuilder may have finished.
-    original = store.session(&id)?.record;
+    original = store.read().sessions().get(&id)?.record;
     let mut previous = store.rebuild_checkpoint(&original)?;
     let mut expected = previous.as_ref().map_or(original.updated, |r| r.updated);
     let mut report = PassPayload {
@@ -113,7 +120,9 @@ pub(in crate::commands) fn run_with<M: Models>(
         memory_refused: std::collections::BTreeMap::new(),
     };
     let records = store
-        .list_sessions(&scribe_core::SessionFilter {
+        .read()
+        .sessions()
+        .list(&scribe_core::SessionFilter {
             include_inactive: true,
             ..Default::default()
         })?
@@ -179,7 +188,12 @@ pub(in crate::commands) fn run_with<M: Models>(
                 .collect();
             let final_window = end == conversation.len()
                 && (original.status == SessionStatus::Final
-                    || store.control()?.get(&id).is_some_and(|s| s.final_pass));
+                    || store
+                        .read()
+                        .sessions()
+                        .control()?
+                        .get(&id)
+                        .is_some_and(|s| s.final_pass));
             let mut topics = known_topics.clone();
             let mut terms = known_terms.clone();
             if let Some(record) = &previous {
@@ -268,7 +282,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         let Some(mut finished) = previous.clone() else {
             return Err(CliError::TranscriptMissing(id.clone()));
         };
-        let switch = store.control()?;
+        let switch = store.read().sessions().control()?;
         let final_pass = original.status == SessionStatus::Final
             || switch.get(&id).is_some_and(|s| s.final_pass);
         let sealed_at_finish = final_pass && finished.open_segment().is_some();
@@ -293,7 +307,7 @@ pub(in crate::commands) fn run_with<M: Models>(
                 }));
             }
             None => {
-                original = store.session(&id)?.record;
+                original = store.read().sessions().get(&id)?.record;
                 expected = original.updated;
                 // The next iteration re-reads the transcript and folds in any newer messages.
             }

@@ -299,13 +299,13 @@ impl Store {
 
     /// The audit log, `<root>/audit.jsonl`.
     #[must_use]
-    pub fn audit_path(&self) -> PathBuf {
+    pub(in crate::store) fn audit_path(&self) -> PathBuf {
         self.root.join(AUDIT_FILE)
     }
 
     /// The file entry `id` lives in, `<root>/entries/<tag>/<id>.md`.
     #[must_use]
-    pub fn entry_path(&self, id: &EntryId) -> PathBuf {
+    pub(in crate::store) fn entry_path(&self, id: &EntryId) -> PathBuf {
         self.root
             .join(ENTRIES_DIR)
             .join(id.tag().as_str())
@@ -314,7 +314,7 @@ impl Store {
 
     /// The configuration: `config.toml` parsed, or the defaults when there
     /// is none. A bad key or value is refused, naming it.
-    pub fn config(&self) -> Result<Config> {
+    pub(in crate::store) fn config(&self) -> Result<Config> {
         let mut config = self.config_only()?;
         config.tags = self.merge_tags(&config.tags)?.0;
         Ok(config)
@@ -341,7 +341,7 @@ impl Store {
 
     /// Active `handoff` entries referencing `session:<id>`, newest first.
     /// Reads only: no lock, no write.
-    pub fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
+    pub(in crate::store) fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
         let (entries, _) = self.load_entries()?;
         Ok(crate::handoff::for_session(&entries, id)
             .into_iter()
@@ -351,13 +351,13 @@ impl Store {
 
     /// Entries matching `filter`, oldest first, and how many matched. A
     /// missing store is an empty one.
-    pub fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {
+    pub(in crate::store) fn list_entries(&self, filter: &EntryFilter) -> Result<EntryList> {
         self.list_entries_scoped(filter, None)
     }
 
     /// List entries, optionally restricted to the group's member sessions
     /// before applying the filter and its limit.
-    pub fn list_entries_scoped(
+    pub(in crate::store) fn list_entries_scoped(
         &self,
         filter: &EntryFilter,
         members: Option<&BTreeSet<SessionId>>,
@@ -374,13 +374,13 @@ impl Store {
 
     /// Session records matching `filter`, oldest first, with the on/off
     /// state beside them.
-    pub fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
+    pub(in crate::store) fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
         self.list_sessions_scoped(filter, None)
     }
 
     /// List session records, optionally restricting the records and their
     /// derived lookup data to the group's member sessions.
-    pub fn list_sessions_scoped(
+    pub(in crate::store) fn list_sessions_scoped(
         &self,
         filter: &SessionFilter,
         members: Option<&BTreeSet<SessionId>>,
@@ -430,27 +430,10 @@ impl Store {
         })
     }
 
-    /// Refuse `id` when `#scribe forget` erased it, before any model call or
-    /// write on its behalf: a forgotten session takes no write (`session_forgotten`).
-    /// Reads only.
-    ///
-    /// # Errors
-    ///
-    /// `session_forgotten` for a forgotten session, or a store read error.
-    pub fn refuse_forgotten(&self, id: &SessionId) -> Result<()> {
-        if db::sessions::read_is_forgotten(&self.root, id)? {
-            return Err(db::sessions::forgotten_refusal(
-                id,
-                "nothing is written to it",
-            ));
-        }
-        Ok(())
-    }
-
     /// The session record with this id, its switch, the sessions that link
     /// to it and the titles of those it links to. Other records that do not
     /// parse are left out of the children.
-    pub fn session(&self, id: &SessionId) -> Result<SessionView> {
+    pub(in crate::store) fn session(&self, id: &SessionId) -> Result<SessionView> {
         let mut loaded = self.load_sessions()?;
         let record = match loaded.forgotten.get(id).copied() {
             Some(at) => sessions::forgotten_record(id, at),
@@ -501,7 +484,7 @@ impl Store {
 
     /// The on/off state and Codex cursors, from `scribe.db`; empty before
     /// the first write. A file store is refused.
-    pub fn control(&self) -> Result<ControlState> {
+    pub(in crate::store) fn control(&self) -> Result<ControlState> {
         if !self.root_exists()? {
             return Ok(ControlState::default());
         }
@@ -515,7 +498,7 @@ impl Store {
     }
 
     /// Every configured tag and every tag that has entries, with counts.
-    pub fn list_tags(&self) -> Result<TagList> {
+    pub(in crate::store) fn list_tags(&self) -> Result<TagList> {
         let config = self.config_only()?;
         let stored = self.store_tags()?;
         let (table, mut warnings) = config
@@ -557,7 +540,7 @@ impl Store {
     /// The entries already recorded from one prompt: `session` and
     /// `prompt_sha256` as their cite has them. Reads only, so `Stop` can
     /// skip a `#scribe` line an entry was already written for.
-    pub fn entries_from_prompt(
+    pub(in crate::store) fn entries_from_prompt(
         &self,
         session: &SessionId,
         prompt_sha256: &str,
@@ -580,7 +563,11 @@ impl Store {
     /// owner-only when absent, so a caller that may change nothing (the
     /// `Stop` hook) reads [`Store::control`] first and calls this only when
     /// a change is likely.
-    pub fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
+    #[cfg(test)]
+    pub(in crate::store) fn update_control<T>(
+        &self,
+        change: impl FnOnce(&mut ControlState) -> T,
+    ) -> Result<T> {
         self.prepare_dir(&self.root)?;
         self.write_step(|| self.change_control(change))
     }
@@ -601,7 +588,7 @@ impl Store {
     /// The file a session record lives in,
     /// `<root>/sessions/<yyyy>/<mm>/<id>.md`, by the month it started.
     #[must_use]
-    pub fn session_path(&self, record: &SessionRecord) -> PathBuf {
+    pub(in crate::store) fn session_path(&self, record: &SessionRecord) -> PathBuf {
         self.root
             .join(SESSIONS_DIR)
             .join(format!("{:04}", record.started.year()))
@@ -666,7 +653,7 @@ impl Store {
     /// lock wait; the privacy errors when the root or the database is a
     /// link, another user's or open to others; [`Error::NewerFormat`] for a
     /// database a newer build wrote.
-    pub fn write_messages(
+    pub(in crate::store) fn write_messages(
         &self,
         messages: &[crate::message::NewMessage],
         redactor: &Redactor,
@@ -711,7 +698,10 @@ impl Store {
     ///
     /// The privacy errors for the root or the database, [`Error::NewerFormat`]
     /// and [`Error::Database`].
-    pub fn search_messages(&self, tokens: &[String]) -> Result<crate::message::MessageSearch> {
+    pub(in crate::store) fn search_messages(
+        &self,
+        tokens: &[String],
+    ) -> Result<crate::message::MessageSearch> {
         if !self.root_exists()? {
             return Ok(crate::message::MessageSearch::default());
         }

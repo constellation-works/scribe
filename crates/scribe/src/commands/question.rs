@@ -124,7 +124,7 @@ pub(super) fn run(command: QuestionCommand, ctx: &Context) -> Result<Output, Cli
             let group = args
                 .group
                 .as_deref()
-                .map(|id| ctx.store().group(id))
+                .map(|id| ctx.store().read().groups().get(id))
                 .transpose()?;
             let orbit = ctx.tasks();
             let tasks: &dyn Tasks = if group.is_some() { &NoTasks } else { &orbit };
@@ -152,7 +152,7 @@ pub(super) fn answer_with<M: Models, T: Tasks + ?Sized>(
     tasks: &T,
     now: OffsetDateTime,
 ) -> Result<AskPayload, CliError> {
-    let config = store.config()?;
+    let config = store.read().tags().config()?;
     answer_with_config(&config, store, question, models, tasks, now, None)
 }
 
@@ -166,8 +166,11 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     group: Option<&Group>,
 ) -> Result<AskPayload, CliError> {
     let members = group.map(Group::members);
-    let entries = store.list_entries_scoped(&EntryFilter::default(), members.as_ref())?;
-    let sessions = store.list_sessions_scoped(
+    let entries = store
+        .read()
+        .entries()
+        .list_scoped(&EntryFilter::default(), members.as_ref())?;
+    let sessions = store.read().sessions().list_scoped(
         &SessionFilter {
             include_inactive: group.is_some(),
             ..SessionFilter::default()
@@ -176,7 +179,9 @@ fn answer_with_config<M: Models, T: Tasks + ?Sized>(
     )?;
     let messages = if let Some(group) = group {
         store
-            .search_group_messages(&group.id, &ask::tokens(&question.text))?
+            .read()
+            .groups()
+            .search_messages(&group.id, &ask::tokens(&question.text))?
             .matches
     } else {
         Vec::new()

@@ -11,6 +11,7 @@
 mod support;
 
 use scribe_core::TagVerbs;
+use scribe_core::testing::StoreTestReads;
 use scribe_core::{EntryVerbs, ProposalVerbs};
 use serde_json::{Value, json};
 use std::io::Write;

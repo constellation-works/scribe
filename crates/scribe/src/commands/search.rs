@@ -121,12 +121,15 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     let group = args
         .group
         .as_deref()
-        .map(|id| store.group(id))
+        .map(|id| store.read().groups().get(id))
         .transpose()?;
     let members = group.as_ref().map(|group| group.members());
-    let config = store.config()?;
-    let entries = store.list_entries_scoped(&EntryFilter::default(), members.as_ref())?;
-    let sessions = store.list_sessions_scoped(
+    let config = store.read().tags().config()?;
+    let entries = store
+        .read()
+        .entries()
+        .list_scoped(&EntryFilter::default(), members.as_ref())?;
+    let sessions = store.read().sessions().list_scoped(
         &SessionFilter {
             include_inactive: true,
             ..SessionFilter::default()
@@ -138,8 +141,8 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     let stored_messages = |query: &SearchQuery| -> Result<(Found, bool), CliError> {
         let tokens = scribe_core::ask::tokens(&query.terms);
         let stored = match &group {
-            Some(group) => store.search_group_messages(&group.id, &tokens)?,
-            None => store.search_messages(&tokens)?,
+            Some(group) => store.read().groups().search_messages(&group.id, &tokens)?,
+            None => store.read().messages().search(&tokens)?,
         };
         let found = search::messages(query, &stored, &sessions.listing.items).map_err(usage)?;
         Ok((found, stored.read_only_copy))

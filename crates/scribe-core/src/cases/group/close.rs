@@ -77,7 +77,7 @@ pub(super) fn close_group_with_outcome<E: From<Error>>(
                 ));
             }
             rows.close(n, now, &summary)?;
-            store.record_audit(&audit(&group.id))?;
+            tx.audit().record(&audit(&group.id))?;
             Ok(())
         })
     })?;

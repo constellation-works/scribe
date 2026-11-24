@@ -22,6 +22,15 @@ pub enum HandoffSelection<'a> {
 
 /// The session verbs, implemented for [`Store`].
 pub trait SessionVerbs {
+    /// Refuse `id` when `#scribe forget` erased it, before any model call or
+    /// write on its behalf: a forgotten session takes no write (`session_forgotten`).
+    /// Reads only.
+    ///
+    /// # Errors
+    ///
+    /// `session_forgotten` for a forgotten session, or a store read error.
+    fn refuse_forgotten(&self, id: &SessionId) -> Result<()>;
+
     /// Link `session` to another session, under the store lock
     /// ([`control::link`]): when `on`, switch it on too. A new link is
     /// added to the session's record when it has one (its other fields,
@@ -107,6 +116,13 @@ pub trait SessionVerbs {
 }
 
 impl SessionVerbs for Store {
+    fn refuse_forgotten(&self, id: &SessionId) -> Result<()> {
+        if self.read().sessions().is_forgotten(id)? {
+            return Err(forgotten_refusal(id, "nothing is written to it"));
+        }
+        Ok(())
+    }
+
     fn link_session(
         &self,
         session: &SessionId,
@@ -337,6 +353,8 @@ fn apply_active(
 fn continuation_entry(store: &Store, selection: HandoffSelection<'_>) -> Result<Option<Entry>> {
     match selection {
         HandoffSelection::Predecessor(parent) => Ok(store
+            .read()
+            .entries()
             .handoffs_for_session(parent)?
             .into_iter()
             .next()

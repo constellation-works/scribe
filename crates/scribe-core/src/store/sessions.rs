@@ -447,7 +447,7 @@ impl Store {
     }
 
     /// The `s-<n>` of every session, read-only.
-    pub fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
+    pub(in crate::store) fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
         Ok(self.load_sessions()?.numbers)
     }
 }
