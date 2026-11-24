@@ -219,7 +219,9 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
             store.root().join(scribe_core::DB_FILE).display()
         ));
     }
-    // Last, so it ends the output: the stderr line and the JSON count.
+    // Last, so it ends the output: the stderr line and the JSON count. When
+    // hidden records also matched, the hint names only the visible entries and
+    // sessions, since the hidden-record line above already names the others.
     if let Some(count) = message_matches
         && let Output::List {
             notices,
@@ -227,8 +229,13 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
             ..
         } = &mut output
     {
+        let scope = if found.hidden_matches > 0 {
+            "visible "
+        } else {
+            ""
+        };
         notices.push(format!(
-            "{count} stored message(s) match, and no entry or session does: {} lists them",
+            "{count} stored message(s) match, and no {scope}entry or session does: {} lists them",
             message_command(store.root(), &query, args.group.as_deref(), &args.dates)
         ));
         *shown = Some(count);

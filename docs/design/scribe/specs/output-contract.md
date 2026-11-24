@@ -112,8 +112,11 @@ inactive sessions; --include-hidden shows them`.
 session, while stored messages match the same filters, ends its stderr, in
 every mode, with the last line `<n> stored message(s) match, and no entry or
 session does: scribe --root <dir> search --kind message [filters] -- <terms>
-lists them`. The command repeats the effective store root and the filters
-(`--project`, `--group`, `--topic`, the dates and `--include-hidden`), so
+lists them`. When hidden records also matched (the line above), the words
+are `and no visible entry or session does`, since that line already names the
+hidden ones the search left out. The command repeats the effective store root
+and the filters (`--project`, `--group`, `--topic`, the dates and
+`--include-hidden`), so
 `<n>` counts what it lists. Each filter value and the terms are literal shell
 words: a value a shell would read otherwise is single-quoted, and a `--project`
 or `--group` value that starts with a dash is written `--<flag>=<value>`, so
