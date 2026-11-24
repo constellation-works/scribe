@@ -92,12 +92,22 @@ ALTER TABLE group_members ADD COLUMN restarted INTEGER NOT NULL DEFAULT 0 CHECK 
 /// dated since `joined`; a miss would store a turn typed during displacement.
 pub(super) const V19: &str = "
 UPDATE group_members SET restarted = 1
-WHERE position = (
+WHERE position IN (
+    SELECT ranked.position
+    FROM (
+        SELECT position, COUNT(*) OVER (
+            ORDER BY position ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
+        ) AS later_count
+        FROM group_members
+    ) ranked
+    JOIN group_members holder ON holder.position = ranked.position
+    WHERE holder.position = (
         SELECT MAX(m2.position) FROM group_members m2
-        WHERE m2.group_id = group_members.group_id AND m2.seat = group_members.seat
+        WHERE m2.group_id = holder.group_id AND m2.seat = holder.seat
     )
-    AND (SELECT COUNT(*) FROM group_members later WHERE later.position > group_members.position)
-        < COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'group_members'), 0) - position;
+    AND ranked.later_count
+        < COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'group_members'), 0) - ranked.position
+);
 ";
 
 /// Drop a forgotten session's seat membership, clear derived summaries, and
@@ -1352,4 +1362,36 @@ fn newest_open_seat(
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )
     .optional()
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::{V9, V18, V19};
+    use rusqlite::{Connection, StatementStatus, params};
+
+    fn migration_steps(size: i64) -> i32 {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        conn.execute_batch(V9).unwrap();
+        conn.execute_batch(V18).unwrap();
+        for position in 1..=size {
+            conn.execute(
+                "INSERT INTO group_members (group_id, seat, session, author) VALUES (1, ?1, ?1, 'agent')",
+                params![format!("seat-{position}")],
+            )
+            .unwrap();
+        }
+        let mut migration = conn.prepare(V19).unwrap();
+        assert_eq!(migration.execute([]).unwrap(), 0);
+        migration.get_status(StatementStatus::VmStep)
+    }
+
+    #[test]
+    fn v19_work_grows_linearly_for_distinct_contiguous_holders() {
+        let small = migration_steps(256);
+        let large = migration_steps(512);
+        // A suffix count per holder approaches four times the VM steps on
+        // doubling; leave room for fixed costs and SQLite implementation changes.
+        assert!(large < small * 3, "256: {small}, 512: {large}");
+    }
 }
