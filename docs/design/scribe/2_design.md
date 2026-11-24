@@ -6972,7 +6972,8 @@ and a caller that is not authorized is refused even on a closed group.
 `--quote '<span>'` is the one exception: `group close <id> --quote` closes the
 group for a caller with no seat in it when `<span>` is a verbatim span of the
 user's own typed turn in the calling session and contains the group's `g-<n>`
-id as a whole word. The quote is checked as `group open` checks its consent
+id as a whole word, and is at least eight characters long after normalization.
+The quote is checked as `group open` checks its consent
 (`GroupConsent::verify`), for every caller, so a refused quote fails even for
 the opener. The verified consent is bound to the canonical group id it was
 checked for and to closing, not opening: the command resolves the id or slug

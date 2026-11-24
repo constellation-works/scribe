@@ -520,8 +520,9 @@ printf '%s\n' '{{"type":"result","is_error":false,"structured_output":{{"summary
     assert_eq!(
         refused["error"],
         "only the opening session or the current holder of its seat can close g-1; any other \
-         session can close it with --quote '<span>', where <span> is a verbatim turn the user \
-         typed in that session and contains g-1 as a whole word",
+         session can close it with --quote '<span>', where <span> is a verbatim span of a user \
+         turn typed in that session that contains the whole canonical group id g-1 and is at \
+         least eight characters long after normalization",
         "{refused}"
     );
     assert!(!f.home().join("model-calls").exists());
@@ -842,6 +843,7 @@ fn a_quoted_request_closes_the_group_for_a_session_with_no_seat() {
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
     let path = summary_model(&f);
+    // This eligible span is shorter than the typed turn that contains it.
     let quote = "please close g-1";
     // Without a quote D holds no seat, so the opener's rule still refuses it.
     assert_close_refused(&f, &path, D);
