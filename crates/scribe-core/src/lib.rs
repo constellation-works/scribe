@@ -54,7 +54,14 @@ pub mod action {
     pub use crate::store::Pickup;
 }
 pub use apps::session::rules::activity;
-pub use scribe_domain::annotation;
+/// `annotation` at its old path: the marker scanning (the domain's
+/// `capture`), the mark shapes (the store's contracts) and the refusal of a
+/// marker (`apps/mark`).
+pub mod annotation {
+    pub use crate::apps::mark::rules::{CheckRefusal, record_tag_refusal};
+    pub use scribe_domain::capture::{MAX_MARKS, Mark, MarkProblem, marks, turn_marks};
+    pub use scribe_store::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
+}
 pub mod apps;
 pub mod composition;
 pub use apps::brief::rules as brief;
@@ -80,7 +87,18 @@ pub mod control {
 }
 pub(crate) use scribe_domain::entry;
 pub(crate) use scribe_domain::error;
-pub use scribe_domain::group;
+/// `group` at its old path: the group shapes (the store's contracts), the
+/// group app's requests, outcomes and consent (`apps/group`), and the
+/// membership of an entry (`apps/entry`).
+pub mod group {
+    pub use crate::apps::entry::rules::entry_belongs;
+    pub use crate::apps::group::rules::{
+        Added, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup, OpenedGroup,
+        SeatStart, automatic_seat,
+    };
+    pub use crate::models::CloseEvidence;
+    pub use scribe_store::{Group, NewGroup, Seat, SeatHold};
+}
 pub use scribe_domain::handoff;
 pub use scribe_domain::instruction;
 pub use scribe_domain::memory;
@@ -123,7 +141,6 @@ mod store {
     pub use scribe_store::*;
     // Use-case types that left the store (ORB-27921 step 4), at the paths
     // the store tests name them by.
-    pub(crate) use crate::annotation::AGENT_HANDOFF;
     pub(crate) use crate::apps::mark::{MarkChange, MarkKey};
     pub(crate) use crate::apps::session::PassWrite;
 }

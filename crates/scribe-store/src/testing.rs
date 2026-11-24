@@ -147,7 +147,7 @@ pub trait StoreTestInternals {
     /// Every pickup. (`Store::pickups`).
     fn pickups(&self) -> Result<Vec<crate::Pickup>>;
     /// Every mark. (`Store::all_marks`).
-    fn all_marks(&self) -> Result<Vec<crate::annotation::MarkRecord>>;
+    fn all_marks(&self) -> Result<Vec<crate::MarkRecord>>;
     /// Write one entry. (`Store::write_entry`).
     fn write_entry(&self, entry: &crate::Entry, new: bool) -> Result<()>;
     /// Write the claims. (`Store::write_proposals`).
@@ -179,7 +179,7 @@ pub trait StoreTestInternals {
     /// Create `dir` owner-only, or check it is. (`Store::prepare_dir`).
     fn prepare_dir(&self, dir: &std::path::Path) -> Result<()>;
     /// The marks of `session`. (`Store::marks`).
-    fn marks(&self, session: &crate::SessionId) -> Result<Vec<crate::annotation::MarkRecord>>;
+    fn marks(&self, session: &crate::SessionId) -> Result<Vec<crate::MarkRecord>>;
     /// The memory files and their revisions. (`Store::memory_view`).
     fn memory_view(&self) -> Result<crate::MemoryView>;
     /// One memory file by name. (`Store::memory_file`).
@@ -278,7 +278,7 @@ impl StoreTestInternals for Store {
     fn pickups(&self) -> Result<Vec<crate::Pickup>> {
         Store::pickups(self)
     }
-    fn all_marks(&self) -> Result<Vec<crate::annotation::MarkRecord>> {
+    fn all_marks(&self) -> Result<Vec<crate::MarkRecord>> {
         Store::all_marks(self)
     }
     fn write_entry(&self, entry: &crate::Entry, new: bool) -> Result<()> {
@@ -320,7 +320,7 @@ impl StoreTestInternals for Store {
     fn prepare_dir(&self, dir: &std::path::Path) -> Result<()> {
         Store::prepare_dir(self, dir)
     }
-    fn marks(&self, session: &crate::SessionId) -> Result<Vec<crate::annotation::MarkRecord>> {
+    fn marks(&self, session: &crate::SessionId) -> Result<Vec<crate::MarkRecord>> {
         Store::marks(self, session)
     }
     fn memory_view(&self) -> Result<crate::MemoryView> {
@@ -450,7 +450,7 @@ pub struct Seed {
     /// The store tags.
     pub tags: Vec<crate::StoreTag>,
     /// The marks.
-    pub marks: Vec<crate::annotation::MarkRecord>,
+    pub marks: Vec<crate::MarkRecord>,
     /// The pickups.
     pub pickups: Vec<crate::Pickup>,
     /// The audit lines, each with its format.

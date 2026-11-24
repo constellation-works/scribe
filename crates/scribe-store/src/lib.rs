@@ -61,6 +61,8 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 mod contracts;
+// The group shapes at the path the store's code names them by.
+use contracts::group;
 mod db;
 mod error;
 mod redact;
@@ -71,7 +73,8 @@ pub use db::write::ImportFacts;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
 pub use contracts::action::Pickup;
-pub use contracts::group::LastGroup;
+pub use contracts::group::{Group, LastGroup, NewGroup, Seat, SeatHold};
+pub use contracts::mark::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
 pub use error::{forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
@@ -109,8 +112,7 @@ use scribe_domain::{
     StoreTag, TagDef, TagTable, WriteRefusal,
 };
 use scribe_domain::{
-    annotation, capture, config, entry, group, handoff, instruction, message, models, proposal,
-    record, session,
+    capture, config, entry, handoff, instruction, message, models, proposal, record, session,
 };
 // The domain names the redaction tests (`tests/redact.rs`) reach at the
 // crate root, as they did in the domain.

@@ -32,6 +32,7 @@ use crate::{
     RelatedKind, Result, SessionId, WriteRefusal,
 };
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use time::{Duration, OffsetDateTime};
 
@@ -842,4 +843,22 @@ pub fn item_mut(entry: &mut Entry) -> &mut OpenItem {
         answer: None,
         closed: None,
     })
+}
+
+// --- group membership ---
+
+/// Whether an entry belongs to one of these transcripts through its source
+/// cite or an explicit session reference (as used by handoffs).
+#[must_use]
+pub fn entry_belongs(entry: &crate::Entry, members: &BTreeSet<SessionId>) -> bool {
+    entry
+        .cite
+        .as_ref()
+        .is_some_and(|cite| members.contains(&cite.session))
+        || entry
+            .related
+            .iter()
+            .filter(|related| related.kind() == RelatedKind::Session)
+            .filter_map(|related| related.target().parse::<SessionId>().ok())
+            .any(|id| members.contains(&id))
 }

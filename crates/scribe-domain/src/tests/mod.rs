@@ -3,13 +3,11 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod annotation;
 mod capture;
 mod claim;
 mod config;
 mod control;
 mod entry;
-mod group;
 mod handoff;
 mod instruction;
 mod memory;
