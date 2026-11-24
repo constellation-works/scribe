@@ -6898,7 +6898,9 @@ the same join preserves its position. To take an occupied seat, pass
 `--replace`, let scribe verify that the previous holder’s transcript
 has ended (using the catalog’s 24-hour last-message rule), or match
 the caller’s own single `via: clear` predecessor against the seat’s
-newest transcript. An unreadable
+newest transcript. That check reads only the holder’s own transcript: another
+session’s duplicate id elsewhere in the transcript tree does not stop it, while
+a duplicate of the holder’s own id does. An unreadable
 or empty transcript requires explicit replacement unless the caller cleared
 from that holder. The write rechecks the
 holder under the store transaction before appending. A join also stores the

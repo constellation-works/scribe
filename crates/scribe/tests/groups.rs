@@ -4298,6 +4298,64 @@ fn the_callers_own_duplicate_transcript_still_refuses_the_join() {
 }
 
 #[test]
+fn an_idle_holder_yields_its_seat_despite_an_unrelated_duplicate() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    let other = transcript(&f, C, &[row_at(C, "c1", "user", "unrelated", OLD)]);
+    duplicate_transcript(&f, C, &other);
+    transcript(&f, B, &[row_at(B, "b1", "user", "takeoverorchid", OLD)]);
+    let group = join(&f, B, "g-1", &[], 0);
+    assert_eq!(group["seats"][0]["transcripts"], json!([A, B]));
+    assert_eq!(stored_turns(&f, B), ["b1"]);
+}
+
+#[test]
+fn a_live_holder_keeps_its_seat_despite_an_unrelated_duplicate() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    let other = transcript(&f, C, &[row_at(C, "c1", "user", "unrelated", OLD)]);
+    duplicate_transcript(&f, C, &other);
+    transcript(&f, B, &[row_at(B, "b1", "user", "refusedorchid", OLD)]);
+    assert_eq!(join(&f, B, "g-1", &[], 1)["code"], "seat_occupied");
+    assert!(stored_turns(&f, B).is_empty());
+}
+
+#[test]
+fn an_idle_holder_with_unverifiable_evidence_keeps_its_seat_despite_an_unrelated_duplicate() {
+    let f = Fixture::new();
+    let path = transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(f.home().join("elsewhere"), &path).unwrap();
+    let other = transcript(&f, C, &[row_at(C, "c1", "user", "unrelated", OLD)]);
+    duplicate_transcript(&f, C, &other);
+    transcript(&f, B, &[row_at(B, "b1", "user", "refusedorchid", OLD)]);
+    assert_eq!(join(&f, B, "g-1", &[], 1)["code"], "seat_occupied");
+    assert!(stored_turns(&f, B).is_empty());
+}
+
+#[test]
+fn an_idle_holders_own_duplicate_still_refuses_the_takeover() {
+    let f = Fixture::new();
+    let holder = transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    duplicate_transcript(&f, A, &holder);
+    transcript(&f, B, &[row_at(B, "b1", "user", "refusedorchid", OLD)]);
+    let err = join(&f, B, "g-1", &[], 2);
+    assert!(
+        err.to_string().contains("ambiguous duplicate transcript"),
+        "{err}"
+    );
+    assert!(stored_turns(&f, B).is_empty());
+}
+
+#[test]
 fn backfill_existing_holders_is_idempotent_and_keeps_capture_cursor() {
     let f = Fixture::new();
     transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);

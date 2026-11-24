@@ -148,12 +148,15 @@ fn caller(ctx: &Context) -> Result<SessionId, CliError> {
 }
 
 /// Missing or unverifiable evidence leaves the seat occupied. A predecessor
-/// can be from either provider in this host's store.
+/// can be from either provider in this host's store. Only the predecessor's
+/// own transcript is checked: another session's duplicate id elsewhere in the
+/// tree is not evidence about it, while a duplicate of the predecessor's own
+/// id still refuses.
 fn ended(ctx: &Context, session: &SessionId) -> Result<bool, CliError> {
     let mut found = false;
     for provider in [Provider::ClaudeCode, Provider::Codex] {
         let view = ctx.with_provider(provider);
-        if let Some(path) = payload::locate(&view, session)? {
+        if let Some(path) = payload::locate_own(&view, session)? {
             found = true;
             let old = payload::read_checked(&view, &path, session)
                 .ok()
