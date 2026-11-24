@@ -78,11 +78,14 @@ pub mod voice;
 
 pub use cases::entry::EntryVerbs;
 pub use cases::group::GroupVerbs;
+pub use cases::mark::MarkVerbs;
 pub use cases::memory::MemoryVerbs;
 pub use cases::pass::{ClaimsWritten, PassVerbs};
+pub use cases::pickup::PickupVerbs;
 pub use cases::proposal::ProposalVerbs;
 pub use cases::rebuild::RebuildVerbs;
 pub use cases::session::{HandoffSelection, SessionVerbs};
+pub use cases::tag::TagVerbs;
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,

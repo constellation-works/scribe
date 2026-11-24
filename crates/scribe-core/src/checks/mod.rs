@@ -7,7 +7,9 @@
 pub mod candidates;
 pub mod entry;
 pub mod group;
+pub mod memory;
 pub mod records;
+pub mod tag;
 
 use crate::{AuthorName, Error, Result, WriteRefusal};
 

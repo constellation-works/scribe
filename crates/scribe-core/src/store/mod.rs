@@ -89,12 +89,12 @@ pub use sessions::{
 
 pub use crate::checks::entry::check_handoff_related;
 pub use crate::checks::records::check_unsettled_item;
+pub use crate::checks::tag::check_description;
 pub use crate::checks::{check_agent_author, check_content, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use ids::resolve_prefix;
 pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
-pub use tags::check_description;
 
 use crate::config::Config;
 use crate::entry::{Entry, EntryFilter, EntryId};
@@ -618,6 +618,7 @@ impl Store {
         record: Option<&SessionRecord>,
         messages: &[crate::message::NewMessage],
         memory: Option<&PassMemory>,
+        sensitive: &[crate::memory::Refusal],
         redactor: &Redactor,
         change: impl FnOnce(&mut ControlState),
     ) -> Result<MemoryWritten> {
@@ -627,7 +628,7 @@ impl Store {
         let (memory_commit, memory_written) = match (memory, record) {
             (Some(memory), Some(record)) => {
                 let mut writer = db::Writer::new(&conn, &self.root);
-                self.plan_pass_memory(&mut writer, memory, redactor, record)?
+                self.plan_pass_memory(&mut writer, memory, sensitive, record)?
             }
             _ => (db::MemoryCommit::default(), MemoryWritten::default()),
         };

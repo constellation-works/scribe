@@ -15,8 +15,11 @@
 
 pub mod entry;
 pub mod group;
+pub mod mark;
 pub mod memory;
 pub mod pass;
+pub mod pickup;
 pub mod proposal;
 pub mod rebuild;
 pub mod session;
+pub mod tag;

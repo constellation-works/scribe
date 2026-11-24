@@ -6,6 +6,7 @@ use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
+use scribe_core::TagVerbs;
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:

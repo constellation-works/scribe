@@ -17,7 +17,7 @@
 //!   phase 8), and a read only counts them.
 
 use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Revision, Writer};
-use super::{RECORD_EXT, Redactor, Skipped, Store, codec, fsio};
+use super::{RECORD_EXT, Skipped, Store, codec, fsio};
 use crate::checks::refusal;
 use crate::memory::{self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem};
 use crate::models::{MemoryContext, PendingContext, ProfileRequest, ProfileSession};
@@ -740,10 +740,14 @@ impl Store {
         &self,
         writer: &mut Writer<'_>,
         pass: &PassMemory,
-        redactor: &Redactor,
+        sensitive: &[Refusal],
         record: &crate::SessionRecord,
     ) -> Result<(MemoryCommit, MemoryWritten)> {
-        if pass.drafts.is_empty() && pass.signal.is_none() && !pass.final_pass {
+        if pass.drafts.is_empty()
+            && sensitive.is_empty()
+            && pass.signal.is_none()
+            && !pass.final_pass
+        {
             // Nothing to plan, but a journal a crash left open is still
             // applied: every pass window is a write.
             if !writer.open_journals()?.is_empty() && !self.defer_journals() {
@@ -757,22 +761,14 @@ impl Store {
         let files = self.prepare_memory(writer)?;
         let files = &files;
         let planned = (|| -> Result<(MemoryCommit, MemoryWritten)> {
-            let mut written = MemoryWritten::default();
-            let mut drafts = Vec::new();
-            for draft in &pass.drafts {
-                let e = &draft.checked;
-                if redactor.mask(&e.title) != e.title
-                    || redactor.mask(&e.text) != e.text
-                    || redactor.mask(&e.quote) != e.quote
-                {
-                    written.refused.push(Refusal::Sensitive);
-                } else {
-                    drafts.push(draft.clone());
-                }
-            }
+            let mut written = MemoryWritten {
+                refused: sensitive.to_vec(),
+                ..MemoryWritten::default()
+            };
+            let drafts = &pass.drafts;
             let pending = writer.pending(&session)?;
             let (changes, refused) =
-                memory::plan(&drafts, &files.now, &files.milestones, &pending, &session);
+                memory::plan(drafts, &files.now, &files.milestones, &pending, &session);
             written.refused.extend(refused);
             let mut commit = MemoryCommit::default();
             for change in changes {
@@ -834,14 +830,20 @@ impl Store {
     pub(super) fn write_pass_memory(
         &self,
         pass: &PassMemory,
-        redactor: &Redactor,
+        redactor: &super::Redactor,
         record: &crate::SessionRecord,
     ) -> Result<MemoryWritten> {
         self.prepare_dir(&self.root)?;
         self.prepare_subdir(&self.memory_dir())?;
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let mut writer = Writer::new(&conn, &self.root);
-        let (commit, written) = self.plan_pass_memory(&mut writer, pass, redactor, record)?;
+        let (drafts, sensitive) =
+            crate::checks::memory::check_sensitive_drafts(&pass.drafts, redactor);
+        let pass = PassMemory {
+            drafts,
+            ..pass.clone()
+        };
+        let (commit, written) = self.plan_pass_memory(&mut writer, &pass, &sensitive, record)?;
         self.commit_memory(&mut writer, &commit, record.updated)?;
         drop(writer);
         drop(conn);

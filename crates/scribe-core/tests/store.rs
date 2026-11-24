@@ -5,6 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use scribe_core::TagVerbs;
 use scribe_core::{
     Author, EntryFilter, EntryStatus, Error, Redactor, SessionFilter, Store, StoreTag, TagName,
     verbatim,
