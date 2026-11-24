@@ -10,8 +10,10 @@ use crate::{AuthorName, Label, Provider, SessionId};
 
 /// What `group join` runs.
 pub struct GroupJoinInput {
-    /// The calling session.
-    pub session: SessionId,
+    /// The calling session, from the provider's session variable
+    /// ([`Context::caller`](crate::composition::Context::caller)); `None`
+    /// refuses the command as a usage error.
+    pub session: Option<SessionId>,
     /// Group id, unique prefix, or project group slug.
     pub id: String,
     /// Seat name; `None` takes the automatic seat of a project group.
@@ -56,6 +58,7 @@ pub fn run<E: PortError>(
         replace,
         provider,
     } = input;
+    let caller = super::calling(caller, provider)?;
     let store = ctx.store;
     let mut notices = Vec::new();
     let group = store.read().groups().get(&id)?;

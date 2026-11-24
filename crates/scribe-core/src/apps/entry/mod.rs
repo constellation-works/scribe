@@ -35,8 +35,11 @@ pub use written::{Actions, EntryWritten};
 
 pub(crate) use instruction::{check as check_instruction, note as note_instruction};
 
+use crate::composition::Context;
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Cite, Entry, EntryId, EntryPatch, Provider, Related, SessionId, Store};
 
 /// An `entry` command.
@@ -151,11 +154,12 @@ impl<E> From<crate::Error> for Error<E> {
 ///
 /// [`Error`]: a refusal, a usage error, a transcript read, the redactor,
 /// or a store error.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -204,11 +208,11 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The id of the entry `input` resolves to, or `None` when it does not:
-/// the audit line's target. Until migration step 3 moves the audit guard
-/// into core, the binary resolves it through this.
+/// the audit subject's target, which the binary names before the command
+/// runs.
 #[must_use]
-pub fn resolved_id<E>(runtime: &Runtime<'_, E>, input: &str) -> Option<String> {
-    resolve_entry(runtime.ctx().store, input)
+pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
+    resolve_entry(ctx.store(), input)
         .ok()
         .map(|entry| entry.id.to_string())
 }
@@ -254,6 +258,20 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
         match err {
             Error::Read(e) => e.into(),
             Error::Write(e) => e.into(),
+        }
+    }
+}
+
+/// A write names its entry when it changed it, and writes no line when it
+/// did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(written) => {
+                Line::written(Some(written.entry.id.to_string()), written.changed)
+            }
+            Self::Shown(shown) => vec![Line::success(Some(shown.entry.id.to_string()))],
+            Self::Listed(_) => vec![Line::success(None)],
         }
     }
 }

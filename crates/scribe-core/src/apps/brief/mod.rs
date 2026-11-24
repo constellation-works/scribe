@@ -9,7 +9,9 @@ pub use page::{BriefInput, BriefPage};
 
 pub(crate) use page::at_start;
 
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::composition::Context;
+use crate::runtime::errors::CommandError;
+use crate::runtime::{Ctx, PortError};
 
 /// A `brief` command.
 pub enum Command<'i> {
@@ -26,17 +28,14 @@ pub enum Outcome {
 /// Why a `brief` command did not run: a store read error.
 pub type Error = crate::Error;
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `command` against `ctx`, inside the audit guard when `audit` names
+/// one.
 ///
 /// # Errors
 ///
 /// A store read error.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
-    command: Command<'_>,
-) -> Result<Outcome, Error> {
-    run(&runtime.ctx(), command)
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    Ok(run(&ctx.core(), command)?)
 }
 
 /// Run `command` against `ctx`: dispatch only.

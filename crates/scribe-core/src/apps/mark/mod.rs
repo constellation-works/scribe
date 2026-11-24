@@ -9,7 +9,9 @@ mod verbs;
 pub use verbs::MarkVerbs;
 
 use crate::annotation::MarkRecord;
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::composition::Context;
+use crate::runtime::errors::CommandError;
+use crate::runtime::{Ctx, PortError};
 use crate::{MarkChange, MarkKey, MarkResult, Provider, SessionId, Store};
 use time::OffsetDateTime;
 
@@ -43,8 +45,8 @@ pub type Error = crate::Error;
 /// # Errors
 ///
 /// An ambiguous or too-short prefix, or a store error.
-pub fn exec<E: PortError>(runtime: &Runtime<'_, E>, command: Command) -> Result<Outcome, Error> {
-    run(&runtime.ctx(), command)
+pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError> {
+    Ok(run(&ctx.core(), command)?)
 }
 
 /// Run `command` against `ctx`: dispatch only.

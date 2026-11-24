@@ -5,13 +5,13 @@
 //! after every model call failed (`model_failed`). It reads only.
 
 use super::{ListNotice, list_output};
-use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
 use scribe_core::SessionId;
 use scribe_core::apps::mark::{Command, Outcome, exec};
 use scribe_core::composition::Context;
+use scribe_core::{AuditMeta, AuditSubject};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -69,7 +69,7 @@ pub(super) fn run(command: MarkCommand, ctx: &Context) -> Result<Output, CliErro
             provider: ctx.provider(),
         },
     };
-    Ok(match exec(&ctx.runtime(), command)? {
+    Ok(match exec(ctx, command)? {
         Outcome::List { session, marks } => list(session, marks),
     })
 }

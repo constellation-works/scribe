@@ -16,19 +16,25 @@ mod reply;
 mod scribe_command;
 mod session_end;
 mod session_start;
+mod stdin;
 mod stop;
 mod user_prompt_submit;
 
 pub use codex::{CodexInput, CodexStop, refused};
 pub use group_add::{GroupAddInput, MAX_SESSIONS};
 pub use reply::{HookPortError, HookReply, PROVENANCE_FAILED, chain, quote};
+pub use scribe_tools::payload::PromptPayload;
 pub use session_start::SessionStartInput;
+pub use stdin::{Event, Stdin};
 pub use stop::StopInput;
 pub use user_prompt_submit::{EVENT, PromptInput};
 
 use crate::apps::group::HookError;
+use crate::composition::Context;
 use crate::message::NewMessage;
-use crate::runtime::{Ctx, Runtime};
+use crate::runtime::Ctx;
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::{Provider, SessionId};
 use std::path::Path;
 
@@ -66,18 +72,19 @@ pub enum Outcome {
 /// Why a `hook` command failed. A refusal is a reply, not an error.
 pub type Error<E> = HookError<E>;
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `event` against `ctx`, inside the audit guard when `audit` names one:
+/// its stdin decoded, then the event's command.
 ///
 /// # Errors
 ///
-/// [`HookError`]: a store error, an unreadable transcript, a payload decode
-/// error raised by the port, or a port.
-pub fn exec<E: HookPortError>(
-    runtime: &Runtime<'_, E>,
-    command: Command<'_, E>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+/// [`CommandError`]: stdin that could not be read or decoded, a store error,
+/// an unreadable transcript, or a port.
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
+    event: Event<'_>,
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || stdin::run_event(ctx, event))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -118,10 +125,26 @@ pub(crate) fn run<E: HookPortError>(
 ///
 /// [`HookError`]: the config or the redactor failed. A refusal is a reply.
 #[cfg(any(test, feature = "test-support"))]
-pub fn group_add<E: HookPortError>(
-    runtime: &Runtime<'_, E>,
+pub fn group_add(
+    ctx: &Context,
     input: &GroupAddInput<'_>,
-    read_past: ReadPast<'_, E>,
-) -> Result<HookReply, HookError<E>> {
-    group_add::run(&runtime.ctx(), input, read_past)
+    read_past: ReadPast<'_, CommandError>,
+) -> Result<HookReply, CommandError> {
+    Ok(group_add::run(&ctx.core(), input, read_past)?)
+}
+
+/// One line per write or refusal the run reports, and none when it changed
+/// nothing.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        let Self::Replied(reply) = self;
+        reply
+            .outcomes
+            .iter()
+            .map(|outcome| match outcome.error_code {
+                Some(code) => Line::failure(outcome.target.clone(), code),
+                None => Line::success(outcome.target.clone()),
+            })
+            .collect()
+    }
 }

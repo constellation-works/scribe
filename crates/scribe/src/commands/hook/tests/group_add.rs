@@ -1,10 +1,11 @@
 //! Deterministic checks for typed group additions.
 
 use super::super::group_add::{self, run_with_transcript_reader};
-use crate::commands::hook::{group_turns, payload::PromptPayload};
+use crate::commands::hook::group_turns;
 use crate::output::Output;
 use scribe_core::GroupVerbs;
 use scribe_core::SessionId;
+use scribe_core::apps::hook::PromptPayload;
 use scribe_core::composition::Context;
 use scribe_core::testing::StoreTestReads;
 use serde_json::json;

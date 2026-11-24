@@ -59,10 +59,9 @@ policy() {
       ;;
     scribe)
       # The CLI reaches scribe.db through scribe_core::Store; its tests may
-      # stage database states with rusqlite as a dev-dependency. scribe-tools
-      # is interim: from ORB-27921 step 3 PR 2 until PR 4 moves composition
-      # into the core.
-      ALLOWED="scribe-core scribe-tools"
+      # stage database states with rusqlite as a dev-dependency. Composition,
+      # the tools and the audit guard live in the core (ORB-27921 step 3).
+      ALLOWED="scribe-core"
       BANNED="rusqlite"
       ;;
     *) return 1 ;;
@@ -386,9 +385,13 @@ ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crat
 ban "$CLI" 'process::(Command|Child)|Command::new' "the binary spawns no process: scribe-core's providers/ reaches a model"
 
 # Rendering is derived from payloads only; it never reaches back up (R1).
-ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output must not import app, cli, commands or audit_middleware"
-# Dispatch depends on the middleware, never the reverse (R1).
-ban "$CLI/audit_middleware.rs" 'crate::(cli|commands)'           "audit_middleware must not import cli or commands"
+ban "$CLI/output"    'crate::(app|cli|commands)'    "output must not import app, cli or commands"
+# The binary reaches the core through its public surface only: the
+# composition context, the apps and the re-exported types. It names no
+# lower crate and no runtime path; the audit guard runs inside each app's
+# exec (ORB-27921 step 3).
+ban "$CLI" '(^|[^[:alnum:]_])scribe_(domain|store|tools)::' "the binary must not name scribe_domain, scribe_store or scribe_tools: it reaches them through scribe_core"
+ban "$CLI" 'scribe_core::runtime(::|[^[:alnum:]_]|$)' "the binary must not name scribe_core::runtime: the runtime is internal to the core"
 
 # Commands may read files the host owns (a hook's transcript, git config), but
 # every write goes through the store's atomic writer under its lock (R4).
@@ -422,6 +425,12 @@ for retired in \
   crates/scribe/src/commands/hook/tests/payload.rs \
   crates/scribe/src/commands/hook/project.rs \
   crates/scribe/src/commands/hook/group_turns \
+  crates/scribe/src/audit_middleware.rs \
+  crates/scribe/src/tests/audit_middleware.rs \
+  crates/scribe/src/commands/hook/session_start.rs \
+  crates/scribe/src/commands/hook/stop.rs \
+  crates/scribe/src/commands/hook/session_end.rs \
+  crates/scribe/src/commands/hook/codex.rs \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done

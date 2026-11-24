@@ -6,32 +6,28 @@
 //! which composes a second store from the envelope's root; its tools reach
 //! the session, consistency and memory apps through their handlers.
 
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::composition::Context;
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
 use crate::{ExportFormat, Exported, InitReport, Moved, Provider};
 use std::path::{Path, PathBuf};
-use time::OffsetDateTime;
 
 /// An `admin` command.
 pub enum Command<'i> {
     /// `init`: install the skill, its files and the provider's hooks in
-    /// `target`, pointing the hooks at `binary`.
+    /// `target`, pointing the hooks at the running executable.
     Init {
         /// The project directory.
         target: &'i Path,
         /// The provider whose hooks are installed.
         provider: Provider,
-        /// The scribe executable the hooks run.
-        binary: &'i Path,
         /// The skill's `SKILL.md`.
         skill: &'i str,
         /// The skill's other files: a skill-relative path and its text.
         skill_files: &'i [(&'i str, &'i str)],
     },
-    /// `store migrate`: import a file store's archives, dated `now`.
-    Migrate {
-        /// When the import runs.
-        now: OffsetDateTime,
-    },
+    /// `store migrate`: import a file store's archives, dated when it runs.
+    Migrate,
     /// `export`: write every record kind into `dir` as `format`.
     Export {
         /// The directory to write into.
@@ -64,40 +60,59 @@ pub struct ExportWritten {
 /// Why an `admin` command did not run.
 pub type Error = crate::Error;
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `command` inside the audit guard `audit` names. `init` first checks
+/// the selected runtime is on `PATH` and resolves the running executable,
+/// which its hooks point at. Admin is the top of the app order, so no app
+/// calls it and it has no `run` of its own.
 ///
 /// # Errors
 ///
-/// A store error, or a refused or failed install.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+/// A store error, a refused or failed install, a runtime missing from
+/// `PATH`, or an executable path that cannot be read or is not UTF-8.
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || {
+        Ok(match command {
+            Command::Init {
+                target,
+                provider,
+                skill,
+                skill_files,
+            } => {
+                ctx.require_runtime()?;
+                let binary = crate::composition::current_exe()?;
+                Outcome::Initialized(Box::new(crate::init_project_with_skill_files(
+                    target,
+                    provider,
+                    &binary,
+                    skill,
+                    skill_files,
+                )?))
+            }
+            Command::Migrate => Outcome::Migrated(Box::new(ctx.store().migrate_store(ctx.now())?)),
+            Command::Export { dir, format } => Outcome::Exported(Box::new(ExportWritten {
+                exported: ctx.store().export(dir, format)?,
+                dir: dir.to_path_buf(),
+                format,
+            })),
+        })
+    })
 }
 
-/// Run `command` against `ctx`: dispatch only.
-pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command<'_>) -> Result<Outcome, Error> {
-    Ok(match command {
-        Command::Init {
-            target,
-            provider,
-            binary,
-            skill,
-            skill_files,
-        } => Outcome::Initialized(Box::new(crate::init_project_with_skill_files(
-            target,
-            provider,
-            binary,
-            skill,
-            skill_files,
-        )?)),
-        Command::Migrate { now } => Outcome::Migrated(Box::new(ctx.store.migrate_store(now)?)),
-        Command::Export { dir, format } => Outcome::Exported(Box::new(ExportWritten {
-            exported: ctx.store.export(dir, format)?,
-            dir: dir.to_path_buf(),
-            format,
-        })),
-    })
+/// `init` writes its line only when it changed a file, naming the provider;
+/// `store migrate` one, naming the records.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Initialized(report) => {
+                Line::written(Some(report.provider.to_string()), report.changed)
+            }
+            Self::Migrated(_) => vec![Line::success(Some(String::from("store:records")))],
+            // `export` writes nothing to the store: never audited.
+            Self::Exported(_) => vec![Line::success(None)],
+        }
+    }
 }

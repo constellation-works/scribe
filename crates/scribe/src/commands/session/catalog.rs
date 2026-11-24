@@ -27,7 +27,7 @@ use clap::Args;
 use scribe_core::Author;
 use scribe_core::apps::session::{self as app, CatalogInput, Command, exec};
 use scribe_core::composition::Context;
-use scribe_core::{AuthorName, Models, Project, SessionId};
+use scribe_core::{Audit, AuthorName, Models, Project, SessionId};
 
 /// A catalog begun: its switch, whether this run wrote it, and the bytes.
 #[cfg(test)]
@@ -69,13 +69,28 @@ pub(crate) struct CatalogArgs {
 }
 
 /// Catalog with the `claude` CLI as the session model.
-pub(super) fn run(args: &CatalogArgs, ctx: &Context) -> Result<Output, CliError> {
-    run_with(args, ctx, |config| ctx.models(config))
+pub(super) fn run(
+    args: &CatalogArgs,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
+    run_audited(args, audit, ctx, |config| ctx.models(config))
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config.
+#[cfg(test)]
 pub(in crate::commands) fn run_with<M: Models>(
     args: &CatalogArgs,
+    ctx: &Context,
+    models: impl FnOnce(&scribe_core::Config) -> M,
+) -> Result<Output, CliError> {
+    run_audited(args, None, ctx, models)
+}
+
+/// [`run_with`], audited as `audit` declares.
+fn run_audited<M: Models>(
+    args: &CatalogArgs,
+    audit: Option<Audit>,
     ctx: &Context,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
@@ -87,7 +102,7 @@ pub(in crate::commands) fn run_with<M: Models>(
         host: ctx.host(),
         models: once(models),
     };
-    Ok(passed(exec(&ctx.runtime(), Command::Catalog(input))?, ctx))
+    Ok(passed(exec(ctx, audit, Command::Catalog(input))?, ctx))
 }
 
 /// Begin a catalog of `input` by `by` (the session app's `begin_catalog`).
@@ -97,10 +112,5 @@ pub(in crate::commands) fn begin(
     input: &SessionId,
     by: Author,
 ) -> Result<Begun, CliError> {
-    Ok(app::begin_catalog(
-        &ctx.runtime(),
-        ctx.provider(),
-        input,
-        by,
-    )?)
+    Ok(app::begin_catalog(ctx, ctx.provider(), input, by)?)
 }

@@ -23,8 +23,6 @@ pub(crate) use payload::{
     RefreshPayload, RevisionPayload, ScanReport, SessionHandoffsPayload, SessionPayload,
     TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
-#[cfg(test)]
-pub(crate) use payload::{HookOutcome, HookReply};
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
 use crate::error::CliError;

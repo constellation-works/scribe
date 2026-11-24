@@ -1703,8 +1703,6 @@ pub(crate) struct TranscriptPayload {
 }
 
 pub(crate) use scribe_core::apps::hook::HookReply;
-#[cfg(test)]
-pub(crate) use scribe_core::runtime::audit::HookOutcome;
 
 /// The JSON a hook prints (Claude Code's hook output).
 #[derive(Serialize)]

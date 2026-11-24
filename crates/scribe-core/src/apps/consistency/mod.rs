@@ -6,7 +6,10 @@ mod scan;
 
 pub use scan::{COMMAND, Deactivated, DeactivationFailed, ScanError, ScanInput, ScanOutcome};
 
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::composition::Context;
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
+use crate::runtime::{Ctx, PortError};
 
 /// A `consistency` command.
 pub enum Command {
@@ -23,19 +26,69 @@ pub enum Outcome {
 /// Why a `consistency` command did not run.
 pub type Error<E> = ScanError<E>;
 
-/// Run `command`: the interim entry point until migration step 3 starts the
-/// runtime from an `Env` and wraps the audit guard.
+/// Run `command` against `ctx`, inside the audit guard when `audit` names
+/// one.
 ///
 /// # Errors
 ///
 /// [`ScanError`]: the config, the redactor, or a store error.
-pub fn exec<E: PortError>(runtime: &Runtime<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
+    command: Command,
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
 pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
     match command {
         Command::Scan(input) => Ok(Outcome::Scanned(Box::new(scan::run(ctx, input)?))),
+    }
+}
+
+/// A scan writes one line per entry re-applied, per proposal opened, closed
+/// or covered, per session deactivated, and one failure line per
+/// deactivation that failed; none when it changed nothing.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        let Self::Scanned(outcome) = self;
+        outcome
+            .reapplied
+            .applied
+            .iter()
+            .map(|r| Line::success(Some(r.entry.to_string())))
+            .chain(
+                outcome
+                    .opened
+                    .iter()
+                    .map(|p| Line::success(Some(p.id.to_string()))),
+            )
+            .chain(
+                outcome
+                    .closed
+                    .iter()
+                    .map(|p| Line::success(Some(p.id.to_string()))),
+            )
+            .chain(
+                outcome
+                    .reapplied
+                    .covered
+                    .iter()
+                    .map(|item| Line::success(Some(item.proposal.to_string()))),
+            )
+            .chain(
+                outcome
+                    .deactivated
+                    .iter()
+                    .map(|d| Line::success(Some(format!("session:{}", d.session)))),
+            )
+            .chain(
+                outcome
+                    .failed_deactivations
+                    .iter()
+                    .map(|f| Line::failure(Some(format!("session:{}", f.session)), f.error_code)),
+            )
+            .collect()
     }
 }

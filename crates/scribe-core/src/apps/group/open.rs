@@ -9,8 +9,10 @@ use crate::{Project, Provider, Related, SessionId, WriteRefusal};
 
 /// What `group open` runs.
 pub struct GroupOpenInput<'i> {
-    /// The calling session.
-    pub session: SessionId,
+    /// The calling session, from the provider's session variable
+    /// ([`Context::caller`](crate::composition::Context::caller)); `None`
+    /// refuses the command as a usage error.
+    pub session: Option<SessionId>,
     /// Title of the work.
     pub title: String,
     /// Free label for the kind of work.
@@ -56,6 +58,7 @@ pub fn run<E: PortError>(
         provider,
         notes,
     } = input;
+    let session = super::calling(session, provider)?;
     let store = ctx.store;
     let mut notices = Vec::new();
     notes.session(session.as_str());

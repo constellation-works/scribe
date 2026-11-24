@@ -13,7 +13,6 @@
 //! record, says `nothing changed` on stderr and writes no audit line.
 
 use super::{SessionRef, View, parse_session_ref};
-use crate::audit_middleware::AuditSubject;
 use crate::error::CliError;
 use crate::output::{Kin, Output, Record, SessionPayload};
 use clap::Args;
@@ -22,6 +21,7 @@ use scribe_core::apps::session::{
     self as app, ActivateInput, ActivityWritten, Command, DeactivateInput, exec,
 };
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditSubject};
 
 /// The command paths in the audit log.
 pub(in crate::commands) const DEACTIVATE_COMMAND: &str = "session deactivate";
@@ -98,7 +98,7 @@ pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> Au
         .segment
         .is_none()
         .then(|| id.id.clone())
-        .and_then(|id| app::resolved_id(&ctx.runtime(), &id))
+        .and_then(|id| app::resolved_id(ctx, &id))
         .map(|id| format!("session:{id}"));
     AuditSubject {
         target,
@@ -107,19 +107,27 @@ pub(super) fn subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> Au
 }
 
 /// `session deactivate`.
-pub(super) fn deactivate(args: DeactivateArgs, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn deactivate(
+    args: DeactivateArgs,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let input = DeactivateInput {
         target: args.id,
         author: args.author,
         reason: &args.reason,
         cite: args.cite.as_deref(),
     };
-    let outcome = exec(&ctx.runtime(), Command::Deactivate(input))?;
+    let outcome = exec(ctx, audit, Command::Deactivate(input))?;
     Ok(super::output(outcome, View::default(), ctx))
 }
 
 /// `session activate`.
-pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn activate(
+    args: ActivateArgs,
+    audit: Option<Audit>,
+    ctx: &Context,
+) -> Result<Output, CliError> {
     let pin = match (args.pin, args.unpin) {
         (true, _) => Some(true),
         (false, true) => Some(false),
@@ -131,7 +139,7 @@ pub(super) fn activate(args: ActivateArgs, ctx: &Context) -> Result<Output, CliE
         reason: args.reason.as_deref(),
         pin,
     };
-    let outcome = exec(&ctx.runtime(), Command::Activate(input))?;
+    let outcome = exec(ctx, audit, Command::Activate(input))?;
     Ok(super::output(outcome, View::default(), ctx))
 }
 

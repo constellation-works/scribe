@@ -12,8 +12,10 @@ pub const CLOSE_COMMAND: &str = "group close";
 
 /// What `group close` runs.
 pub struct GroupCloseInput<'i, F> {
-    /// The calling session.
-    pub session: SessionId,
+    /// The calling session, from the provider's session variable
+    /// ([`Context::caller`](crate::composition::Context::caller)); `None`
+    /// refuses the command as a usage error.
+    pub session: Option<SessionId>,
     /// Group id, unique prefix, or project group slug.
     pub id: String,
     /// Words the user typed in this session naming the group.
@@ -55,6 +57,7 @@ pub fn run<E: PortError, M: Models>(
         models,
         notes,
     } = input;
+    let session = super::calling(session, provider)?;
     let store = ctx.store;
     let mut notices = Vec::new();
     notes.session(session.as_str());

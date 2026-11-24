@@ -25,17 +25,18 @@
 //! session-pass run with any failed pass is an error envelope,
 //! `session_pass_failed`.
 //! The routine tools write,
-//! and are audited here, inside the call, under the same command names as
+//! and are audited inside the call (each app's exec runs the core's audit
+//! guard with the routine's audit declared here), under the same command names as
 //! the CLI verbs (`session pass`, `consistency scan`) and in the store they
 //! change — `plugin call` itself has no audit entry, because which store a
 //! call writes is known only once the envelope is read (4_decisions.md).
 
 use super::{RunLimits, consistency, session};
-use crate::audit_middleware::{AuditGuard, AuditMeta};
 use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
 use scribe_core::composition::Context;
+use scribe_core::{Audit, AuditMeta, AuditSubject};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
@@ -85,7 +86,7 @@ pub(crate) struct CallArgs {}
 impl PluginCommand {
     /// `None`: the routine tools audit
     /// themselves in the store their call names (see the module docs).
-    pub(super) fn audit(&self) -> Option<crate::audit_middleware::AuditMeta> {
+    pub(super) fn audit(&self) -> Option<scribe_core::AuditMeta> {
         match self {
             Self::Call(_) => None,
         }
@@ -238,23 +239,20 @@ fn transcripts_dir(config: &Value) -> Result<PathBuf, PluginReply> {
     )
 }
 
-/// Run a routine command against `routine_ctx`, audited there as `command`.
-fn audited(
-    routine_ctx: &Context,
-    command: &'static str,
-    run: impl FnOnce(&Context) -> Result<Output, CliError>,
-) -> PluginReply {
-    let mut audit = AuditGuard::start(
-        routine_ctx.store(),
-        AuditMeta {
+/// How a routine command is audited: under `command`, stepwise, naming no
+/// subject, as the routine tools have always been.
+fn routine_audit(command: &'static str) -> Option<Audit> {
+    Some(Audit {
+        meta: AuditMeta {
             command,
             stepwise: true,
         },
-        routine_ctx.now(),
-    );
-    let result = run(routine_ctx);
-    audit.mark_result(&result);
-    drop(audit);
+        subject: AuditSubject::default(),
+    })
+}
+
+/// The reply for a routine command's result.
+fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> PluginReply {
     match result {
         Ok(Output::Pass(report)) => PluginReply::Pass(report),
         Ok(Output::Scan(report)) => PluginReply::Scan(report),
@@ -303,9 +301,14 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
     let routine = Context::at(root, transcripts).with_codex_home(codex_home);
     let limits =
         RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    let reply = audited(&routine, session::pass::COMMAND, |routine| {
-        session::pass::run_with(routine, |config| routine.models(config), limits, &[])
-    });
+    let result = session::pass::run_audited(
+        &routine,
+        routine_audit(session::pass::COMMAND),
+        |config| routine.models(config),
+        limits,
+        &[],
+    );
+    let reply = routine_reply(session::pass::COMMAND, result);
     pass_reply(reply)
 }
 
@@ -360,9 +363,8 @@ fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginRepl
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
-    audited(&routine, consistency::COMMAND, |routine| {
-        consistency::scan(routine)
-    })
+    let result = consistency::scan(&routine, routine_audit(consistency::COMMAND));
+    routine_reply(consistency::COMMAND, result)
 }
 
 fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
@@ -378,10 +380,8 @@ fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply 
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
-    audited(&routine, "memory refresh", |routine| {
-        let config = routine.config()?;
-        super::memory::refresh(routine, &routine.models(&config))
-    })
+    let result = super::memory::refresh(&routine, routine_audit("memory refresh"));
+    routine_reply("memory refresh", result)
 }
 
 /// `err` with its cause chain, as `report_error` folds it.

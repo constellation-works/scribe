@@ -18,10 +18,16 @@ pub use show::Shown;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::MemoryVerbs;
 
+use crate::composition::Context;
 use crate::memory::NowItem;
 use crate::models::ModelError;
-use crate::runtime::{Ctx, PortError, Runtime};
+use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::errors::CommandError;
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, MemoryShown, Models, Provider, RefreshWritten, SessionId};
+
+/// The model adapter `memory refresh` builds for the config.
+pub type ModelsFor<'m> = Box<dyn FnOnce(&crate::Config) -> Box<dyn Models + 'm> + 'm>;
 
 /// A `memory` command.
 pub enum Command<'m> {
@@ -58,12 +64,12 @@ pub enum Command<'m> {
         /// The profile revision.
         revision: i64,
     },
-    /// `memory refresh` with `models`.
+    /// `memory refresh` with the adapter `models` builds for the config.
     Refresh {
         /// The provider whose `[models]` table applies.
         provider: Provider,
-        /// The model adapter.
-        models: &'m dyn Models,
+        /// The model adapter, built for the provider's config.
+        models: ModelsFor<'m>,
     },
 }
 
@@ -111,11 +117,12 @@ impl<E> From<ModelError> for Error<E> {
 /// # Errors
 ///
 /// [`Error`]: a refusal, the config, the redactor, the model, or the store.
-pub fn exec<E: PortError>(
-    runtime: &Runtime<'_, E>,
+pub fn exec(
+    ctx: &Context,
+    audit: Option<Audit>,
     command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
-    run(&runtime.ctx(), command)
+) -> Result<Outcome, CommandError> {
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -146,7 +153,11 @@ pub(crate) fn run<E: PortError>(
             Outcome::Restored(Box::new(shown), written)
         }
         Command::Refresh { provider, models } => {
-            Outcome::Refreshed(refresh::refresh(ctx, provider, models)?.map(Box::new))
+            // The config is read before the refresh, as `memory refresh` read
+            // it to build the adapter before the flow moved into the core.
+            let config = ctx.store.read().tags().config()?.for_provider(provider);
+            let models = models(&config);
+            Outcome::Refreshed(refresh::refresh(ctx, provider, &*models)?.map(Box::new))
         }
     })
 }
@@ -169,6 +180,28 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
             Error::Port(e) => e,
             Error::Model(e) => Self::Model(e),
             Error::ConfirmRequired(shown) => Self::ForgetConfirmRequired(shown_id(&shown)),
+        }
+    }
+}
+
+/// A write names its item (`memory:<id>`) or the profile when it changed
+/// it, and writes no line when it did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        let item = |shown: &MemoryShown| Some(format!("memory:{}", shown_id(shown)));
+        match self {
+            Self::Show(shown) => match &**shown {
+                Shown::Item(shown) => vec![Line::success(item(shown))],
+                Shown::Revision(_) | Shown::Block(_) => vec![Line::success(None)],
+            },
+            Self::Acked(now, changed) => {
+                Line::written(Some(format!("memory:{}", now.stem)), *changed)
+            }
+            Self::Forgotten(shown) => vec![Line::success(item(shown))],
+            Self::Restored(shown, written) => Line::written(item(shown), *written),
+            Self::Refreshed(written) => {
+                Line::written(Some(String::from("memory:profile")), written.is_some())
+            }
         }
     }
 }
