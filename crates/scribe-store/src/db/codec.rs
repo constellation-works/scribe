@@ -942,9 +942,9 @@ fn split_memory_body(path: &Path, body: &str) -> Result<(String, String)> {
     let title = title.trim();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if title.is_empty()
-        || title.chars().count() > scribe_domain::memory::TITLE_CHARS
+        || title.chars().count() > crate::TITLE_CHARS
         || text.is_empty()
-        || text.chars().count() > scribe_domain::memory::TEXT_CHARS
+        || text.chars().count() > crate::TEXT_CHARS
     {
         return Err(bad());
     }
@@ -957,23 +957,19 @@ fn memory_front<T: serde::de::DeserializeOwned>(path: &Path, bytes: &[u8]) -> Re
     Ok((value, body.to_owned()))
 }
 
-fn stem_of(path: &Path, stem: &str) -> Result<scribe_domain::memory::Stem> {
+fn stem_of(path: &Path, stem: &str) -> Result<crate::Stem> {
     stem.parse().map_err(|e: String| shape(path, e))
 }
 
 /// Parse `memory/now/<stem>.md`.
-pub(crate) fn decode_now(
-    path: &Path,
-    bytes: &[u8],
-    stem: &str,
-) -> Result<scribe_domain::memory::NowItem> {
+pub(crate) fn decode_now(path: &Path, bytes: &[u8], stem: &str) -> Result<crate::NowItem> {
     let stem = stem_of(path, stem)?;
-    let (front, body): (scribe_domain::memory::NowFront, String) = memory_front(path, bytes)?;
+    let (front, body): (crate::NowFront, String) = memory_front(path, bytes)?;
     let (title, text) = split_memory_body(path, &body)?;
     if front.sources.is_empty() {
         return Err(shape(path, "a now item names at least one source session"));
     }
-    Ok(scribe_domain::memory::NowItem {
+    Ok(crate::NowItem {
         stem,
         date: front.date,
         kind: front.kind,
@@ -986,8 +982,8 @@ pub(crate) fn decode_now(
 }
 
 /// A `now` file's bytes.
-pub(crate) fn encode_now(path: &Path, item: &scribe_domain::memory::NowItem) -> Result<String> {
-    let front = yaml_serde::to_string(&scribe_domain::memory::NowFront {
+pub(crate) fn encode_now(path: &Path, item: &crate::NowItem) -> Result<String> {
+    let front = yaml_serde::to_string(&crate::NowFront {
         date: item.date,
         kind: item.kind,
         sources: item.sources.clone(),
@@ -1002,15 +998,11 @@ pub(crate) fn encode_now(path: &Path, item: &scribe_domain::memory::NowItem) -> 
 }
 
 /// Parse `memory/milestones/<stem>.md`.
-pub(crate) fn decode_milestone(
-    path: &Path,
-    bytes: &[u8],
-    stem: &str,
-) -> Result<scribe_domain::memory::Milestone> {
+pub(crate) fn decode_milestone(path: &Path, bytes: &[u8], stem: &str) -> Result<crate::Milestone> {
     let stem = stem_of(path, stem)?;
-    let (front, body): (scribe_domain::memory::MilestoneFront, String) = memory_front(path, bytes)?;
+    let (front, body): (crate::MilestoneFront, String) = memory_front(path, bytes)?;
     let (title, text) = split_memory_body(path, &body)?;
-    Ok(scribe_domain::memory::Milestone {
+    Ok(crate::Milestone {
         stem,
         date: front.date,
         sources: front.sources,
@@ -1021,11 +1013,8 @@ pub(crate) fn decode_milestone(
 }
 
 /// A milestone file's bytes.
-pub(crate) fn encode_milestone(
-    path: &Path,
-    item: &scribe_domain::memory::Milestone,
-) -> Result<String> {
-    let front = yaml_serde::to_string(&scribe_domain::memory::MilestoneFront {
+pub(crate) fn encode_milestone(path: &Path, item: &crate::Milestone) -> Result<String> {
+    let front = yaml_serde::to_string(&crate::MilestoneFront {
         date: item.date,
         sources: item.sources.clone(),
         updated: item.updated,

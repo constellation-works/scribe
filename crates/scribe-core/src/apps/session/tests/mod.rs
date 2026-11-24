@@ -1,5 +1,6 @@
 mod activity;
 mod control;
+mod message;
 mod pass;
 mod voice;
 

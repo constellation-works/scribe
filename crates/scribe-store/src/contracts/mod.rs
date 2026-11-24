@@ -9,5 +9,7 @@
 pub(crate) mod action;
 pub(crate) mod group;
 pub(crate) mod mark;
+pub(crate) mod memory;
+pub(crate) mod message;
 #[cfg(test)]
 mod tests;

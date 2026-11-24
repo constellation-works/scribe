@@ -116,8 +116,23 @@ pub mod instruction {
     pub use crate::apps::entry::rules::instruction::*;
     pub use scribe_store::ClaudeSeen;
 }
-pub use scribe_domain::memory;
-pub use scribe_domain::message;
+/// `memory` at its old path: the memory shapes (the store's contracts) and
+/// the memory app's checks, planning, block and profile (`apps/memory`).
+pub mod memory {
+    pub use crate::apps::memory::rules::*;
+    pub use scribe_store::{
+        Milestone, MilestoneFront, NowFront, NowItem, NowKind, Pending, ProfileView, Raised,
+        Refusal, SLUG_CHARS, Stem, TEXT_CHARS, TITLE_CHARS,
+    };
+}
+/// `message` at its old path: the message shapes (the store's contracts),
+/// which typed turns are kept (`apps/entry`) and a pass window's messages
+/// (`apps/session`).
+pub mod message {
+    pub use crate::apps::entry::rules::message::{keeps, typed_text, typed_turn};
+    pub use crate::apps::session::rules::message::window;
+    pub use scribe_store::{MessageMatch, MessageSearch, NewMessage};
+}
 /// The model request and answer shapes (`scribe-domain`), with the
 /// [`Models`] port and its [`ModelError`](providers::ModelError) from
 /// [`providers`] at their old paths.

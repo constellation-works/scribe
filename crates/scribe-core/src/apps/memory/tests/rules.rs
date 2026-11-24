@@ -2,7 +2,7 @@ use super::T0;
 use crate::entry::Speaker;
 use crate::memory::{
     self, Checked, Draft, ElementKind, Milestone, NowItem, NowKind, PassChange, Pending,
-    ProfileView, Refusal, Stem, profile,
+    ProfileView, Refusal, profile,
 };
 use crate::models::{MemoryAnswer, PassMessage};
 use crate::session::SessionId;
@@ -303,20 +303,6 @@ fn a_now_item_leaves_fourteen_days_after_its_date() {
     let day = date!(2026 - 12 - 01);
     assert!(!memory::expired(day, date!(2026 - 12 - 15)));
     assert!(memory::expired(day, date!(2026 - 12 - 16)));
-}
-
-#[test]
-fn a_stem_is_the_date_and_a_slug_of_the_title() {
-    assert_eq!(
-        Stem::new(date!(2026 - 12 - 12), "Sister's wedding!").as_str(),
-        "2026-12-12-sister-s-wedding"
-    );
-    assert_eq!(
-        Stem::new(date!(2026 - 12 - 12), "!!").as_str(),
-        "2026-12-12-item"
-    );
-    assert!("2026-12-12-Sister".parse::<Stem>().is_err());
-    assert!("../2026-12-12-x".parse::<Stem>().is_err());
 }
 
 fn now_item(stem: &str, date: Date, title: &str) -> NowItem {

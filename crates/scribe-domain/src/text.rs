@@ -3,7 +3,7 @@
 //! memory rules and stored messages check (§13.8), and the SHA-256 hashes a
 //! cite and a transcript boundary carry. Pure functions and constants over
 //! text; no I/O (STD-02 R5). Each is re-exported from the module that first
-//! owned it ([`crate::memory`], scribe-core's `capture`).
+//! owned it (scribe-core's `memory` and `capture`).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -137,7 +137,8 @@ pub const SENSITIVE_WORDS: &[(&str, SensitiveKind)] = &[
 ];
 
 /// Whether `text` holds `phrase` as whole words, case aside.
-pub(crate) fn has_phrase(text: &str, phrase: &str) -> bool {
+#[must_use]
+pub fn has_phrase(text: &str, phrase: &str) -> bool {
     let words: Vec<String> = text
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())

@@ -4,6 +4,7 @@
 //! - [`activity`]: whether a session record still describes something
 //!   current, and who cataloged it;
 //! - [`control`]: the `/scribe` switch transitions;
+//! - [`message`]: the messages a pass keeps from its window;
 //! - [`pass`]: a session pass, from a switched-on session's transcript to
 //!   its distilled record;
 //! - here: the checks of a session write, a hand-set field, an activity
@@ -11,6 +12,7 @@
 
 pub mod activity;
 pub mod control;
+pub mod message;
 pub mod pass;
 
 use crate::apps::entry::check_content;
