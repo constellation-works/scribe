@@ -19,9 +19,9 @@
 //! Bytes in, messages out: no I/O (STD-02 R5). A survey of the same bytes
 //! counts Daniel's turns the way a pass does, for `transcript list`.
 
-use crate::capture;
 use crate::control;
 use crate::entry::Speaker;
+use crate::origin;
 use crate::record::Project;
 use serde::Deserialize;
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -30,6 +30,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+
+pub mod codex;
 
 /// How far `first_prompt` and each preview turn are cut, in characters.
 pub const PROMPT_CHARS: usize = 300;
@@ -364,7 +366,7 @@ fn refused_typed_form(line: &[u8], raw: &RawLine<'_>, message: &Message) -> bool
         None if raw.kind.as_deref() == Some("attachment") => text.as_str(),
         None => return false,
     };
-    capture::agent_originated(&[], words) || capture::line_refused(line)
+    origin::agent_originated(&[], words) || origin::line_refused(line)
 }
 
 /// A string field that is `None` when the JSON value is not a string; the

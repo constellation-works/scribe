@@ -29,6 +29,39 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::str::FromStr;
 use time::{Date, OffsetDateTime};
 
+/// How the next context should treat a refresh handoff
+/// ([`crate::handoff`], re-exported there as `Mode`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HandoffMode {
+    /// Resume from this handoff.
+    Continue,
+    /// Start a clean context.
+    New,
+}
+
+impl HandoffMode {
+    /// Stable CLI and storage spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::New => "new",
+        }
+    }
+}
+
+impl std::str::FromStr for HandoffMode {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "continue" => Ok(Self::Continue),
+            "new" => Ok(Self::New),
+            _ => Err("expected continue or new"),
+        }
+    }
+}
+
 /// Why a value was rejected as an entry field.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EntryError {
@@ -405,7 +438,7 @@ pub struct Entry {
     pub quote: Option<String>,
     /// Refresh mode for a handoff, or null for older and other entries.
     #[serde(default)]
-    pub handoff_mode: Option<crate::handoff::Mode>,
+    pub handoff_mode: Option<HandoffMode>,
     /// A structured decision, absent from trial entries.
     #[serde(default)]
     pub decision: Option<Decision>,
@@ -770,7 +803,7 @@ pub struct AgentEntry {
     /// The date the finding was true; `None` takes the write's date.
     pub as_of: Option<Date>,
     /// Refresh mode, valid only for handoffs.
-    pub handoff_mode: Option<crate::handoff::Mode>,
+    pub handoff_mode: Option<HandoffMode>,
     /// The caller verified the named session is the writer and has a typed turn.
     pub self_refresh_verified: bool,
     /// Whether this entry records the user's spoken instruction (2_design.md

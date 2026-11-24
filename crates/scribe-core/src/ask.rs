@@ -619,50 +619,7 @@ fn attribution(claim: &Claim, evidence: &[EvidenceItem], user: &UserName) -> Str
 
 // --- words -------------------------------------------------------------------
 
-/// Words that carry no meaning for ranking.
-const STOPWORDS: &[&str] = &[
-    "about", "above", "after", "again", "all", "also", "and", "any", "are", "because", "been",
-    "before", "being", "between", "both", "but", "can", "could", "did", "does", "doing", "done",
-    "each", "for", "from", "had", "has", "have", "having", "her", "here", "him", "his", "how",
-    "into", "its", "just", "let", "like", "made", "make", "may", "more", "most", "much", "must",
-    "not", "now", "off", "once", "only", "other", "our", "out", "over", "own", "please", "same",
-    "say", "said", "she", "should", "some", "such", "than", "that", "the", "their", "them", "then",
-    "there", "these", "they", "this", "those", "through", "too", "under", "until", "very", "was",
-    "way", "were", "what", "when", "where", "which", "while", "who", "whom", "why", "will", "with",
-    "would", "yes", "you", "your", "yours",
-];
-
-/// The ranking tokens of `text` (§6.2): lowercase, split on anything not a
-/// letter or digit, stopwords and tokens under three characters dropped,
-/// and a light suffix strip (`-ing`, `-ed`, `-es`, `-s`, then a final `-e`,
-/// so `merge`, `merges`, `merged` and `merging` are one token).
-#[must_use]
-pub fn tokens(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.chars().count() >= 3 && !STOPWORDS.contains(w))
-        .map(stem)
-        .collect()
-}
-
-fn stem(word: &str) -> String {
-    let mut stem = word;
-    for suffix in ["ing", "ed", "es", "s"] {
-        if let Some(base) = stem.strip_suffix(suffix)
-            && base.chars().count() >= 3
-            && !(suffix == "s" && base.ends_with('s'))
-        {
-            stem = base;
-            break;
-        }
-    }
-    if stem.chars().count() > 3
-        && let Some(base) = stem.strip_suffix('e')
-    {
-        stem = base;
-    }
-    stem.to_owned()
-}
+pub use crate::text::tokens;
 
 /// The question's words for the lookup classifier: lowercase, split on
 /// anything but letters, digits and `-`.

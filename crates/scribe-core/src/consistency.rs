@@ -461,38 +461,7 @@ pub fn reapply(
     out
 }
 
-/// A settling instruction (form 4): `#scribe approve|reject <p-id>` or
-/// `#scribe retire|forget <entry-id>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Settle {
-    /// Apply a proposal: its older entry becomes `superseded` (or `retired`
-    /// for a stale proposal).
-    Approve(ProposalId),
-    /// Close a proposal for good; its pair is never proposed again.
-    Reject(ProposalId),
-    /// Hide an entry from answers; it stays on disk.
-    Retire(EntryId),
-    /// Blank an entry's text for good; its id, cite and status stay.
-    Forget(EntryId),
-    /// Erase a session's stored record and sources (`s-<n>`, its provider
-    /// id or a unique prefix of it, which the store resolves), leaving an id-only tombstone. Open claims sourced from it are
-    /// withdrawn, citing entries are detached, and handoffs naming it are
-    /// deleted (2_design.md §15.7). The store applies it
-    /// ([`crate::Store::settle`]).
-    ForgetSession(SessionId),
-}
-
-impl Settle {
-    /// The id the instruction names, as typed.
-    #[must_use]
-    pub fn target(&self) -> String {
-        match self {
-            Self::Approve(id) | Self::Reject(id) => id.to_string(),
-            Self::Retire(id) | Self::Forget(id) => id.to_string(),
-            Self::ForgetSession(id) => id.to_string(),
-        }
-    }
-}
+pub use crate::capture::Settle;
 
 /// Why a settling instruction changed nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]

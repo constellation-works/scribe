@@ -22,7 +22,6 @@
 //! the parent record is never rewritten for them. [`check_link`] refuses an
 //! unknown target, a self-link and a cycle.
 
-use crate::activity::{ActiveChange, CatalogedBy};
 use crate::record::{Author, DateRange, Label, Listing, Project, Related, Topic, Topics, nullable};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +29,63 @@ use std::fmt;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::str::FromStr;
 use time::{Duration, OffsetDateTime};
+
+/// The longest `active_change.reason`, in characters.
+pub const REASON_CHARS: usize = 300;
+
+/// How `active` or `keep_active` last changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ActiveRoute {
+    /// The session's last message is older than the configured limit.
+    Age,
+    /// A later entry Daniel wrote says the session's feature was removed or replaced.
+    Removed,
+    /// `session activate` or `session deactivate`, by an agent or Daniel.
+    Manual,
+}
+
+impl ActiveRoute {
+    /// The canonical lowercase token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Age => "age",
+            Self::Removed => "removed",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+/// The last change of a session's `active` or `keep_active`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveChange {
+    /// When it changed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// Who changed it.
+    pub by: Author,
+    /// Which route changed it.
+    pub route: ActiveRoute,
+    /// Why, at most [`REASON_CHARS`] characters; free text, redacted.
+    pub reason: String,
+    /// The record that justified it (`session:<id>#<n>`, an entry id), or
+    /// `null`.
+    #[serde(deserialize_with = "nullable")]
+    pub cite: Option<String>,
+}
+
+/// Who cataloged a session by name, and when (`session catalog`, S14).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogedBy {
+    /// When it was cataloged.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// Who asked for it.
+    pub by: Author,
+}
 
 /// Why a value was rejected as a session field.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -328,7 +384,7 @@ pub enum LogError {
     #[error("segment {0} has no first_message or last_message; only an upgraded segment may")]
     Messages(u32),
     /// `active_change.reason` is over its budget.
-    #[error("active_change.reason has {0} characters; the limit is {max}", max = crate::activity::REASON_CHARS)]
+    #[error("active_change.reason has {0} characters; the limit is {max}", max = REASON_CHARS)]
     Reason(usize),
 }
 
@@ -366,7 +422,7 @@ pub fn check_log(record: &SessionRecord) -> Result<(), LogError> {
     }
     if let Some(change) = &record.active_change {
         let chars = change.reason.chars().count();
-        if chars > crate::activity::REASON_CHARS {
+        if chars > REASON_CHARS {
             return Err(LogError::Reason(chars));
         }
     }
