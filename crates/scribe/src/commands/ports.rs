@@ -109,6 +109,12 @@ impl Transcripts for Context {
         payload::read_checked_bytes(&self.with_provider(provider), path, session)
     }
 
+    fn modified(&self, path: &Path) -> Option<std::time::SystemTime> {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+    }
+
     fn project_of(&self, cwd: &Path) -> Project {
         project::of(cwd)
     }

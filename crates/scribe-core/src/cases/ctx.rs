@@ -118,6 +118,9 @@ pub trait Transcripts {
         session: &SessionId,
     ) -> Result<Option<Vec<u8>>, Unreadable>;
 
+    /// When `path` was last modified, when the file system says.
+    fn modified(&self, path: &Path) -> Option<std::time::SystemTime>;
+
     /// The project a working directory belongs to.
     fn project_of(&self, cwd: &Path) -> Project;
 
