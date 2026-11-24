@@ -12,16 +12,16 @@
 //! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
 //! (§14.6): this hook writes nothing and calls no model for it, it only
 //! echoes that the marker is noted; the Stop of this turn catalogs it
-//! ([`crate::cases::annotation`]). Under Codex the adapter (the CLI's `codex.rs`) echoes them
+//! ([`super::annotation`]). Under Codex the adapter (the CLI's `codex.rs`) echoes them
 //! instead, once it has verified the typed turn.
 //!
 //! A settling line (`#scribe approve|reject <p-id>`,
 //! `#scribe retire|forget <entry-id>`, form 4) is a whole-line command, not
-//! a marker: after the transcript check it goes to [`crate::cases::proposal_command`]
+//! a marker: after the transcript check it goes to [`super::proposal_command`]
 //! (or `issue_command.rs` for an issue id) and is echoed in its place.
 //!
 //! A prompt whose first line is `/scribe on`, `/scribe off` or
-//! `/scribe status` is not a turn: [`crate::cases::scribe_command`] switches the session
+//! `/scribe status` is not a turn: [`super::scribe_command`] switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
 //!
 //! The reply tells the user (`systemMessage`) one echo per settling line and
@@ -33,19 +33,20 @@
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 
+use super::continuation;
+use super::group_add::{self, GroupAddInput};
+use super::proposal_command;
+use super::reply::{HookPortError, HookReply, PROVENANCE_FAILED, chain, quote};
+use super::scribe_command::{self, ScribeCommandInput};
+use super::session_start;
 use crate::apps::group;
+use crate::apps::group::HookError;
+use crate::apps::group::refusal;
 use crate::apps::session;
 use crate::capture::{self, Parsed, Turn};
-use crate::cases::continuation;
-use crate::cases::group_add::{self, GroupAddInput};
-use crate::cases::hook::{
-    HookError, HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, chain, quote, refusal,
-};
-use crate::cases::proposal_command;
-use crate::cases::scribe_command::{self, ScribeCommandInput};
-use crate::cases::session_start;
 use crate::message::NewMessage;
 use crate::runtime::Ctx;
+use crate::runtime::audit::HookOutcome;
 use crate::{Label, Provider, SessionId, annotation};
 use std::path::Path;
 

@@ -1,6 +1,6 @@
 //! The rows a group close reads and writes: its evidence, the opener's seat
 //! chain and the close itself. The close's flow and its refusals are the
-//! caller's (`cases/group`).
+//! caller's (`scribe-core`'s group app).
 
 use super::{Fallible, GroupRows, HOLDS_SEAT, RowError, Rows, db_error, stamp};
 use crate::{Error, Related};

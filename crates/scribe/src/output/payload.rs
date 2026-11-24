@@ -1702,7 +1702,7 @@ pub(crate) struct TranscriptPayload {
     pub(crate) user_first_turns: Option<Vec<String>>,
 }
 
-pub(crate) use scribe_core::cases::hook::HookReply;
+pub(crate) use scribe_core::apps::hook::HookReply;
 #[cfg(test)]
 pub(crate) use scribe_core::runtime::audit::HookOutcome;
 

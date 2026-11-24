@@ -1,5 +1,6 @@
 //! Codex lifecycle adapter: the payload, the event check and `SessionStart`
-//! here, then [`scribe_core::cases::codex::run`] (ORB-27707 step 3c). Only
+//! here, then the hook app's `Codex` command (ORB-27707 step 3c), which
+//! also echoes a verified typed turn's `#scribe` markers. Only
 //! host-attributed user.text messages can drive writes. A before-persistence
 //! prompt is deferred to Stop, never upgraded from an unverified hook payload.
 //! Cursors contain ids only, not private prompts.
@@ -9,48 +10,12 @@
 //! the rollout (`annotation.rs`), as under Claude Code.
 
 use super::payload::{self, StopPayload};
-use super::{group_add, session_end, session_start, user_prompt_submit};
+use super::{group_add, session_end, session_start};
 use crate::{app::Context, error::CliError, output::Output};
-use scribe_core::cases::codex::{self as case, CodexInput, CodexStop, has_marks, refused};
+use scribe_core::apps::hook::{CodexInput, CodexStop, Command, exec, refused};
 use serde_json::Value;
 
 pub(super) fn run(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, CliError> {
-    let output = ingest(event, input, ctx)?;
-    if event != "UserPromptSubmit" {
-        return Ok(output);
-    }
-    // A verified typed turn's markers are echoed here, once: Stop replays
-    // turns through the prompt hook, which therefore does not echo them
-    // under Codex. A refusal (unverified or wrong session) says Stop retries.
-    let Output::Hook(mut reply) = output else {
-        return Ok(output);
-    };
-    let prompt = payload::decode::<Value>(input)?["prompt"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    if reply
-        .outcomes
-        .iter()
-        .any(|o| o.error_code == Some("provenance_failed"))
-        || !has_marks(&prompt)
-    {
-        return Ok(Output::Hook(reply));
-    }
-    let (texts, contexts): (Vec<String>, Vec<String>) =
-        user_prompt_submit::mark_echoes(&prompt).into_iter().unzip();
-    if texts.is_empty() {
-        return Ok(Output::Hook(reply));
-    }
-    let join = |first: Option<String>, more: Vec<String>| {
-        Some(first.into_iter().chain(more).collect::<Vec<_>>().join("\n"))
-    };
-    reply.message = join(reply.message.take(), texts);
-    reply.context = join(reply.context.take(), contexts);
-    Ok(Output::Hook(reply))
-}
-
-fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let value: Value = payload::decode(input)?;
     if value["hook_event_name"] != event {
         return Ok(Output::Hook(refused(
@@ -71,19 +36,16 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             cwd: payload.cwd,
         })
     });
-    let reply = case::run(
-        &ctx.core(),
-        CodexInput {
-            event,
-            payload: &value,
-            provider: ctx.provider(),
-            host: ctx.host(),
-            session_end,
-            stop,
-            read_past: |provider, id: &_, path: &_| {
-                group_add::read_past(&ctx.with_provider(provider), id, path)
-            },
-        },
-    )?;
-    Ok(Output::Hook(reply))
+    let mut read_past =
+        |provider, id: &_, path: &_| group_add::read_past(&ctx.with_provider(provider), id, path);
+    let command = Command::Codex(CodexInput {
+        event,
+        payload: &value,
+        provider: ctx.provider(),
+        host: ctx.host(),
+        session_end,
+        stop,
+        read_past: &mut read_past,
+    });
+    Ok(super::replied(exec(&ctx.runtime(), command)?))
 }

@@ -5,12 +5,13 @@
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use super::continuation;
+use super::reply::HookReply;
 use crate::apps::brief;
 use crate::apps::group;
 use crate::apps::session::{self, ClearedPredecessor};
-use crate::cases::continuation;
-use crate::cases::hook::{HookOutcome, HookReply};
 use crate::group::SeatStart;
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::{ProposalState, Provider, SessionFilter, SessionId, TagName};
 use std::collections::BTreeMap;

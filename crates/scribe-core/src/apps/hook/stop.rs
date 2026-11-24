@@ -3,7 +3,7 @@
 //! switched-on session's pass due (§5.2).
 //!
 //! The `#scribe` markers the user typed are handed to the agent
-//! ([`crate::cases::annotation`], §14): each is echoed to the user and, with
+//! ([`super::annotation`], §14): each is echoed to the user and, with
 //! its line and the `entry add` command that records it, given to the agent
 //! (`additionalContext`). This hook calls no model. A transcript that fails the
 //! provenance check is echoed once and stops the hook: nothing is filled,
@@ -26,11 +26,13 @@
 //! only to count turns for cadence. Markers are cataloged also for a session
 //! that is off or was never switched on.
 
+use super::annotation::{self, AnnotationInput};
+use super::reply::{HookReply, PROVENANCE_FAILED};
 use crate::apps::entry;
 use crate::apps::group;
-use crate::cases::annotation::{self, AnnotationInput};
-use crate::cases::hook::{HookError, HookOutcome, HookReply, PROVENANCE_FAILED};
+use crate::apps::group::HookError;
 use crate::control::{self, Since};
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};

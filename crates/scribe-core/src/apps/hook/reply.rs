@@ -1,14 +1,14 @@
-//! What the hook use cases share (ORB-27707 step 3b): the reply a hook run
-//! makes and its audit outcomes, the error the hook cases return, and the
-//! text helpers their echoes use. The JSON a hook prints from a
+//! What the hooks share (ORB-27707 step 3b): the reply a hook run makes,
+//! the port error the prompt-side hooks need, and the text helpers their
+//! echoes use. Its audit outcomes are `runtime::audit::HookOutcome`; the
+//! error the hooks return is the group app's `HookError`. The JSON a hook prints from a
 //! [`HookReply`] (Claude Code's hook protocol) is rendered by the CLI.
 
 use crate::Error;
-pub use crate::apps::group::HookError;
-pub(crate) use crate::apps::group::refusal;
+use crate::apps::group::HookError;
 use crate::apps::session::CatalogError;
 use crate::runtime::PortError;
-pub use crate::runtime::audit::HookOutcome;
+use crate::runtime::audit::HookOutcome;
 
 /// The code of a payload whose transcript failed the provenance check.
 pub const PROVENANCE_FAILED: &str = "provenance_failed";

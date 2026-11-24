@@ -1,5 +1,5 @@
 //! `scribe hook user-prompt-submit`: the payload, then
-//! [`scribe_core::cases::user_prompt_submit::run`], which echoes the `#scribe` markers of a typed
+//! the hook app's `UserPromptSubmit`, which echoes the `#scribe` markers of a typed
 //! prompt and apply its settling commands (docs/design/scribe/2_design.md
 //! §4.4, §14).
 //!
@@ -13,16 +13,16 @@
 //! (`#scribe idea: …`, `#scribe add this to preferences`), is a marker
 //! (§14.6): this hook writes nothing and calls no model for it, it only
 //! echoes that the marker is noted; the Stop of this turn catalogs it
-//! (`scribe_core::cases::annotation`). Under Codex the adapter (`codex.rs`) echoes them
+//! (the hook app's annotation). Under Codex the adapter (`codex.rs`) echoes them
 //! instead, once it has verified the typed turn.
 //!
 //! A settling line (`#scribe approve|reject <p-id>`,
 //! `#scribe retire|forget <entry-id>`, form 4) is a whole-line command, not
-//! a marker: after the transcript check it goes to `scribe_core::cases::proposal_command`
+//! a marker: after the transcript check it goes to the hook app's `proposal_command`
 //! (or `issue_command.rs` for an issue id) and is echoed in its place.
 //!
 //! A prompt whose first line is `/scribe on`, `/scribe off` or
-//! `/scribe status` is not a turn: `scribe_core::cases::scribe_command` switches the session
+//! `/scribe status` is not a turn: the hook app's `scribe_command` switches the session
 //! and blocks it (§5.1), and its `#scribe` lines, if any, are not read.
 //!
 //! The reply tells the user (`systemMessage`) one echo per settling line and
@@ -39,17 +39,16 @@ use super::payload::{self, PromptPayload};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::Output;
-use scribe_core::cases::user_prompt_submit::{self as case, PromptInput};
-
-pub(super) use scribe_core::cases::user_prompt_submit::mark_echoes;
+use scribe_core::apps::hook::{Command, PromptInput, exec};
 
 /// Run the hook on its stdin payload.
 pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
     let payload: PromptPayload = payload::decode(input)?;
     let session = payload::session(&payload.session_id)?;
-    let reply = case::run(
-        &ctx.core(),
-        &PromptInput {
+    let mut read_past =
+        |provider, id: &_, path: &_| group_add::read_past(&ctx.with_provider(provider), id, path);
+    let command = Command::UserPromptSubmit {
+        input: PromptInput {
             session: &session,
             transcript_path: &payload.transcript_path,
             cwd: &payload.cwd,
@@ -58,7 +57,7 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
             provider: ctx.provider(),
             host: ctx.host(),
         },
-        |provider, id, path| group_add::read_past(&ctx.with_provider(provider), id, path),
-    )?;
-    Ok(Output::Hook(reply))
+        read_past: &mut read_past,
+    };
+    Ok(super::replied(exec(&ctx.runtime(), command)?))
 }

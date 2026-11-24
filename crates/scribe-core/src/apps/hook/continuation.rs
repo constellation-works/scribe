@@ -2,10 +2,11 @@
 //! selection (ORB-27707 step 3b). The predecessor lookup is the session
 //! app's.
 
+use super::reply::HookReply;
 use crate::SessionId;
 use crate::apps::session::{self, ClearedPredecessor, HandoffSelection};
-use crate::cases::hook::{HookOutcome, HookReply};
 use crate::runtime::Ctx;
+use crate::runtime::audit::HookOutcome;
 
 /// Restore the handoff `selection` names into `child`: its body as context,
 /// one outcome when it changed anything, or the refusal.

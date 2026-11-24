@@ -265,7 +265,19 @@ if [[ -n "$app_hits" ]]; then
   echo "$app_hits" >&2
   err "scribe-core's app order: an app imports only lower apps, through their mod.rs (ARCHITECTURE.md)"
 fi
-ban "$CORE/apps" 'crate::cases(::|[^[:alnum:]_]|$)' "an app must not import cases/: move what it needs first"
+# ORB-27921 step 2 moved every use case into apps/ and deleted cases/
+# (listed with the retired paths below). Nothing names it again: not the
+# core, and not the binary, which reaches the core through each app's
+# exec, Command, Outcome and Error.
+ban "$CORE" 'crate::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: a use case lives in its app under apps/"
+ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the app's exec through scribe_core::apps::<app>"
+# The model callers are pass, catalog and rebuild (session), memory refresh
+# and group close: only those three apps name the Models port, each carrying
+# the adapter in its Command. No other app reaches a model.
+for app in tag mark entry proposal search brief consistency hook admin; do
+  ban "$CORE/apps/$app" '(crate::models::|[^[:alnum:]_]Models[^[:alnum:]_])' \
+    "apps/$app names the Models port: only session, memory and group call a model"
+done
 
 # Pass is an orchestrator; its lower-level callers in the rules ring cannot
 # depend on it.
@@ -350,49 +362,12 @@ for retired in \
   crates/scribe-core/src/tests/query.rs \
   crates/scribe/src/commands/note.rs \
   crates/scribe/src/commands/tests/note.rs \
-  crates/scribe-core/src/cases/ctx.rs \
-  crates/scribe-core/src/cases/resolve.rs \
-  crates/scribe-core/src/cases/read_error.rs \
-  crates/scribe-core/src/cases/write_error.rs \
-  crates/scribe-core/src/cases/audit.rs \
-  crates/scribe-core/src/cases/tag.rs \
-  crates/scribe-core/src/cases/tag_cmd.rs \
-  crates/scribe-core/src/cases/mark.rs \
-  crates/scribe-core/src/cases/memory.rs \
-  crates/scribe-core/src/cases/memory_block.rs \
-  crates/scribe-core/src/cases/memory_cmd.rs \
-  crates/scribe-core/src/cases/entry.rs \
-  crates/scribe-core/src/cases/entry_cmd.rs \
-  crates/scribe-core/src/cases/entry_verify.rs \
-  crates/scribe-core/src/cases/pickup.rs \
-  crates/scribe-core/src/cases/instruction_check.rs \
-  crates/scribe-core/src/cases/proposal.rs \
-  crates/scribe-core/src/cases/proposal_cmd.rs \
-  crates/scribe-core/src/cases/session.rs \
-  crates/scribe-core/src/cases/session_activity.rs \
-  crates/scribe-core/src/cases/catalog.rs \
-  crates/scribe-core/src/cases/rebuild.rs \
-  crates/scribe-core/src/cases/pass.rs \
-  crates/scribe-core/src/cases/pass/run.rs \
-  crates/scribe-core/src/cases/transcript.rs \
-  crates/scribe-core/src/cases/group.rs \
-  crates/scribe-core/src/cases/group/capture.rs \
-  crates/scribe-core/src/cases/group/close.rs \
-  crates/scribe-core/src/cases/group_backfill.rs \
-  crates/scribe-core/src/cases/group_close.rs \
-  crates/scribe-core/src/cases/group_cmd.rs \
-  crates/scribe-core/src/cases/group_join.rs \
-  crates/scribe-core/src/cases/group_leave.rs \
-  crates/scribe-core/src/cases/group_open.rs \
-  crates/scribe-core/src/cases/group_turns.rs \
-  crates/scribe-core/src/cases/search.rs \
-  crates/scribe-core/src/cases/brief.rs \
-  crates/scribe-core/src/cases/consistency_scan.rs; do
+  crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain
-# and its store/ module scribe-store; scribe-core keeps cases/, tests/ and
-# lib.rs. A module file under scribe-core with one of these names is a copy
+# and its store/ module scribe-store; scribe-core keeps apps/, runtime/,
+# tests/ and lib.rs. A module file under scribe-core with one of these names is a copy
 # that should be in the crate below.
 for module in action activity annotation ask brief capture checks claim config consistency \
   control entry error group handoff instruction memory message models origin pass proposal \
