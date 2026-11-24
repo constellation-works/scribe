@@ -1130,7 +1130,7 @@ fn open_items_are_answered_with_checked_words_then_closed_by_their_decision() {
 }
 
 #[test]
-fn delayed_older_answer_does_not_replace_a_newer_choice() {
+fn delayed_older_answer_uses_the_retained_choice_for_session_notice() {
     let fx = Fixture::new();
     let earlier = decision_transcript_in(
         &fx,
@@ -1144,15 +1144,21 @@ fn delayed_older_answer_does_not_replace_a_newer_choice() {
         "2026-11-11T02:00:00Z",
         &[("user", "Choose B")],
     );
-    assert!(
-        add_record(
-            &fx,
-            "open-item",
-            &["--asked-by", "0-chief", "--blocked", "Build", "Choose"]
-        )
-        .status
-        .success()
+    let required_session = format!("session:{LATER_SESSION}");
+    let added = add_record(
+        &fx,
+        "open-item",
+        &[
+            "--asked-by",
+            "0-chief",
+            "--blocked",
+            "Build",
+            "--answer-in",
+            &required_session,
+            "Choose",
+        ],
     );
+    assert!(added.status.success(), "{added:?}");
     let answer = |words, session| {
         settle(
             &fx,
@@ -1161,9 +1167,18 @@ fn delayed_older_answer_does_not_replace_a_newer_choice() {
             &["--quote", words, "--related", session],
         )
     };
-    assert!(answer("Choose A", &earlier).status.success());
+    let accepted_outside = answer("Choose A", &earlier);
+    assert!(accepted_outside.status.success(), "{accepted_outside:?}");
+    assert!(
+        text(&accepted_outside.stderr).contains("must also type it in that session"),
+        "{accepted_outside:?}"
+    );
     let newer = answer("Choose B", &later);
     assert!(newer.status.success(), "{newer:?}");
+    assert!(
+        !text(&newer.stderr).contains("must also type it in that session"),
+        "{newer:?}"
+    );
     let expected = json(&newer.stdout)["item"]["answer"].clone();
     assert_eq!(expected["words"], "Choose B");
     assert_eq!(expected["at"], "2026-11-11T02:00:00Z");
@@ -1171,6 +1186,10 @@ fn delayed_older_answer_does_not_replace_a_newer_choice() {
         let retry = answer(words, session);
         assert!(retry.status.success(), "{retry:?}");
         assert!(text(&retry.stderr).contains("nothing changed"), "{retry:?}");
+        assert!(
+            !text(&retry.stderr).contains("must also type it in that session"),
+            "{retry:?}"
+        );
         assert_eq!(json(&retry.stdout)["item"]["answer"], expected);
     }
 }
