@@ -38,12 +38,15 @@ for the marker before then.
 When the line marks something to keep, record it as theirs with their exact
 words, using the flags scribe gives: `scribe entry add --tag <tag> --project
 <project> --author <name> --related session:<id> --quote '<their words>'
---spoken '<statement>'`; for an action tag such as `standard` the command
-scribe gives has no `--spoken`, since `entry add` refuses it there. A tag
-named after the marker or at the end of its line is the `--tag`; `#scribe/global` gives `--project global` for every
-repository. Quote only the `quote` as theirs. When the line marks nothing,
-record nothing. A queued line and a slash command's arguments are marked the
-same way. `scribe mark list` shows the markers with no entry from scribe.
+--spoken '<statement>'`. For an action tag such as `standard` the command
+scribe gives has no `--spoken`, since `entry add` refuses it there.
+
+A tag named after the marker or at the end of its line is the `--tag`;
+`#scribe/global` gives `--project global` for every repository. Quote only
+the `quote` as theirs. When the line marks nothing, record nothing.
+
+A queued line and a slash command's arguments are marked the same way.
+`scribe mark list` shows the markers with no entry from scribe.
 
 ## Settlement and deletion by the human
 
