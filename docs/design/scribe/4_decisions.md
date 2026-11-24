@@ -2821,7 +2821,7 @@ session transcript through the `session:<id>` cite.
 ## Agent entries have a five-minute cancel window
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/action.rs` (`CANCEL_WINDOW`), `crates/scribe-core/src/store/pickups.rs`
+**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`CANCEL_WINDOW`), `crates/scribe-core/src/store/pickups.rs`
 
 Agents write action entries unasked and announce them in one line; the
 human cancels with `#scribe retire <id>`. That only works if no consumer
@@ -2850,7 +2850,7 @@ later forgotten stays as a dangling note.
 ## An action entry is stuck after one hour without a pickup
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/action.rs` (`STUCK_AFTER`), `crates/scribe/src/commands/hook/session_start.rs`
+**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`STUCK_AFTER`), `crates/scribe/src/commands/hook/session_start.rs`
 
 The `SessionStart` hook prints one line counting active action entries
 older than one hour with no pickup, per tag, and nothing otherwise. An
@@ -2862,7 +2862,7 @@ line until the entries are picked up or retired.
 ## The quote check runs in the CLI against this host's transcript
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe/src/commands/entry.rs` (`verify_quote`), `crates/scribe-core/src/action.rs` (`quote_found`)
+**Code anchors:** `crates/scribe/src/commands/entry.rs` (`verify_quote`), `crates/scribe-core/src/apps/entry/rules.rs` (`quote_found`)
 
 A `standard` entry changes rules for every agent, so an agent may write
 one only from the human's own correction: `--quote` must be a verbatim

@@ -173,7 +173,7 @@ DOMAIN_RINGS='
 base:       record text verbatim provider origin
 records:    session activity control entry handoff tag proposal
 transcript: transcript
-rules:      trigger voice claim capture pass instruction models config error checks group memory message action annotation redact
+rules:      trigger voice claim capture pass instruction models config error checks group memory message annotation redact
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -485,7 +485,8 @@ for retired in \
   crates/scribe-core/src/cases \
   crates/scribe-domain/src/brief.rs \
   crates/scribe-domain/src/search.rs \
-  crates/scribe-domain/src/consistency.rs; do
+  crates/scribe-domain/src/consistency.rs \
+  crates/scribe-domain/src/action.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

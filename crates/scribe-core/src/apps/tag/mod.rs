@@ -5,7 +5,10 @@
 
 mod add;
 mod list;
+pub mod rules;
 mod show;
+#[cfg(test)]
+mod tests;
 mod update;
 mod verbs;
 

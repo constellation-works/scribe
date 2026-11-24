@@ -43,7 +43,16 @@
 #[cfg(test)]
 extern crate self as scribe_core;
 
-pub use scribe_domain::action;
+/// Action entries at the path they had in the domain: the pickup shape
+/// (the store's contracts), the cancel window, state, stuck count and
+/// quote check (`apps/entry`), and the per-tag counts (`apps/tag`).
+pub mod action {
+    pub use crate::apps::entry::rules::{
+        ActionState, CANCEL_WINDOW, STUCK_AFTER, quote_found, state, stuck,
+    };
+    pub use crate::apps::tag::rules::tag_counts;
+    pub use crate::store::Pickup;
+}
 pub use scribe_domain::activity;
 pub use scribe_domain::annotation;
 pub mod apps;
@@ -60,7 +69,7 @@ pub(crate) use scribe_domain::config;
 /// (`apps/entry`).
 pub mod consistency {
     pub use crate::apps::consistency::rules::*;
-    pub use crate::apps::entry::rules::*;
+    pub use crate::apps::entry::rules::{SettleRefusal, Settled, forget};
     pub use crate::apps::proposal::rules::*;
 }
 pub use scribe_domain::control;

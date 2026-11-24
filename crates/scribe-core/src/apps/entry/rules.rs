@@ -1,11 +1,29 @@
-//! The entry side of the settling verbs (docs/design/scribe/2_design.md
-//! §3, §7): what `forget` changes, and the outcome every settling verb
-//! reports. Pure functions over loaded records: no I/O (STD-02 R5).
+//! The entry app's rules. Pure functions over loaded records: no I/O
+//! (STD-02 R5).
+//!
+//! - The entry side of the settling verbs (docs/design/scribe/2_design.md
+//!   §3, §7): what `forget` changes, and the outcome every settling verb
+//!   reports.
+//! - Action entries: the work items a consumer outside scribe picks up
+//!   (§4.6; 4_decisions.md, "Action tags are marked in config, and three
+//!   ship"). An entry under an action tag is an ordinary entry; what scribe
+//!   adds around it is the **cancel window** ([`CANCEL_WINDOW`]), the
+//!   per-entry [`ActionState`] built from its pickups
+//!   ([`Pickup`], kept in `pickups.json`, never in the
+//!   entry), the count of **stuck** entries the session-start hook prints
+//!   ([`stuck`]), and the **quote check** an agent's entry under a
+//!   `require_quote` tag must pass ([`quote_found`]).
 
-use crate::entry::{Entry, EntryId, EntryStatus};
+use crate::entry::{Entry, EntryId, EntryStatus, TagName};
 use crate::proposal::{Proposal, ProposalId, ProposalState};
+use crate::record::AuthorKind;
+use crate::store::Pickup;
+use crate::tag::TagTable;
+use crate::transcript::{Message, user_turns};
+use crate::verbatim;
+use std::collections::BTreeMap;
 use std::fmt;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 /// Why a settling instruction changed nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,4 +215,90 @@ pub(crate) fn forget_proposals(id: &EntryId, proposals: &mut [Proposal]) -> bool
         }
     }
     changed
+}
+
+// --- action entries ------------------------------------------------------
+
+/// How long after it is written an agent-written action entry stays
+/// cancellable: no consumer picks it up before then
+/// (4_decisions.md, "Agent entries have a five-minute cancel window").
+pub const CANCEL_WINDOW: Duration = Duration::minutes(5);
+
+/// How old an active action entry with no pickup must be before the
+/// session-start hook counts it as stuck.
+pub const STUCK_AFTER: Duration = Duration::hours(1);
+
+/// Where an action entry stands for an intake, at one instant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionState {
+    /// How long ago it was created.
+    pub age: Duration,
+    /// When its cancel window ends: `created` + [`CANCEL_WINDOW`] for an
+    /// agent-written entry; `None` for Daniel's own entries.
+    pub cancel_window_ends: Option<OffsetDateTime>,
+    /// Whether an intake may take it now: past its cancel window (always,
+    /// for Daniel's).
+    pub past_cancel_window: bool,
+    /// Whether any consumer recorded a pickup.
+    pub picked_up: bool,
+    /// Whether a consumer recorded that its result was rejected.
+    pub rejected: bool,
+    /// The pickups recorded, oldest first.
+    pub pickups: Vec<Pickup>,
+}
+
+/// The state of `entry` at `now`, given every pickup in the store.
+#[must_use]
+pub fn state(entry: &Entry, pickups: &[Pickup], now: OffsetDateTime) -> ActionState {
+    let cancel_window_ends =
+        (entry.author.kind == AuthorKind::Agent).then(|| entry.created + CANCEL_WINDOW);
+    let mut mine: Vec<Pickup> = pickups
+        .iter()
+        .filter(|p| p.entry == entry.id)
+        .cloned()
+        .collect();
+    mine.sort_by_key(|p| p.at);
+    ActionState {
+        age: now - entry.created,
+        past_cancel_window: cancel_window_ends.is_none_or(|ends| now >= ends),
+        cancel_window_ends,
+        picked_up: !mine.is_empty(),
+        rejected: mine.iter().any(|p| p.rejected),
+        pickups: mine,
+    }
+}
+
+/// Active action entries older than [`STUCK_AFTER`] at `now` that no
+/// consumer has picked up, counted per tag. An idea the session pass
+/// captured itself is not counted: nobody asked for it to be taken up
+/// (2_design.md §11.6).
+#[must_use]
+pub fn stuck(
+    entries: &[Entry],
+    tags: &TagTable,
+    pickups: &[Pickup],
+    now: OffsetDateTime,
+) -> BTreeMap<TagName, usize> {
+    let mut counts = BTreeMap::new();
+    for entry in entries {
+        if entry.status == EntryStatus::Active
+            && tags.action(&entry.tag).is_some()
+            && !crate::voice::is_pass_captured(entry)
+            && now - entry.created >= STUCK_AFTER
+            && !pickups.iter().any(|p| p.entry == entry.id)
+        {
+            *counts.entry(entry.tag.clone()).or_default() += 1;
+        }
+    }
+    counts
+}
+
+/// Whether `quote` is a verbatim span ([`verbatim::contains`]) of Daniel's
+/// own words in one of the typed turns of `messages`: user turns only,
+/// pasted blocks, harness wrappers and `/scribe` lines left out.
+#[must_use]
+pub fn quote_found(messages: &[Message], quote: &str) -> bool {
+    user_turns(messages)
+        .iter()
+        .any(|turn| verbatim::contains(&turn.own, quote))
 }

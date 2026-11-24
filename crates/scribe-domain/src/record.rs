@@ -732,7 +732,7 @@ impl<T> Listing<T> {
 /// missing key is an error. serde treats a missing `Option` field as `None`
 /// unless the field names its own deserializer, which this is; a record
 /// with a missing frontmatter key is refused, not defaulted.
-pub(crate) fn nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub fn nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,

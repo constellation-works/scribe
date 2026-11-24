@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `activity`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `group`, `memory`, `message`, `action`, `annotation`, `redact` |
+| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `group`, `memory`, `message`, `annotation`, `redact` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -127,6 +127,12 @@ split by its lowest user: the stale step is in `apps/consistency`, settling
 and approval in `apps/proposal`, and `forget` with the `Settled` outcome in
 `apps/entry`. The core's root re-exports them as `crate::brief`,
 `crate::search` and `crate::consistency`.
+
+`action` followed in PR 5-4: `Pickup` to the store's
+`contracts/action.rs`, the cancel window, state, stuck count and quote check
+to `apps/entry/rules.rs`, and `tag_counts` to `apps/tag/rules.rs` (the tag
+app sits below entry in the app order). The core's root re-exports them as
+`crate::action`.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

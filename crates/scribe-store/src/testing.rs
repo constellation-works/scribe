@@ -145,7 +145,7 @@ pub trait StoreTestInternals {
     /// The store's tag definitions. (`Store::store_tags`).
     fn store_tags(&self) -> Result<Vec<crate::StoreTag>>;
     /// Every pickup. (`Store::pickups`).
-    fn pickups(&self) -> Result<Vec<crate::action::Pickup>>;
+    fn pickups(&self) -> Result<Vec<crate::Pickup>>;
     /// Every mark. (`Store::all_marks`).
     fn all_marks(&self) -> Result<Vec<crate::annotation::MarkRecord>>;
     /// Write one entry. (`Store::write_entry`).
@@ -275,7 +275,7 @@ impl StoreTestInternals for Store {
     fn store_tags(&self) -> Result<Vec<crate::StoreTag>> {
         Store::store_tags(self)
     }
-    fn pickups(&self) -> Result<Vec<crate::action::Pickup>> {
+    fn pickups(&self) -> Result<Vec<crate::Pickup>> {
         Store::pickups(self)
     }
     fn all_marks(&self) -> Result<Vec<crate::annotation::MarkRecord>> {
@@ -452,7 +452,7 @@ pub struct Seed {
     /// The marks.
     pub marks: Vec<crate::annotation::MarkRecord>,
     /// The pickups.
-    pub pickups: Vec<crate::action::Pickup>,
+    pub pickups: Vec<crate::Pickup>,
     /// The audit lines, each with its format.
     pub audit: Vec<(u32, crate::AuditEvent)>,
 }

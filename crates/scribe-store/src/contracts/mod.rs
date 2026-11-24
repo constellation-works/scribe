@@ -6,4 +6,5 @@
 //!
 //! Step 5 moves the record shapes in, family by family.
 
+pub(crate) mod action;
 pub(crate) mod group;

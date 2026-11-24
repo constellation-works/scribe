@@ -68,6 +68,7 @@ pub use db::locks::SessionLock;
 pub use db::write::ImportFacts;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
+pub use contracts::action::Pickup;
 pub use contracts::group::LastGroup;
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
@@ -105,8 +106,8 @@ use scribe_domain::{
     StoreTag, TagDef, TagTable, WriteRefusal,
 };
 use scribe_domain::{
-    action, annotation, capture, checks, config, entry, error, group, handoff, instruction,
-    message, models, proposal, record, redact, session,
+    annotation, capture, checks, config, entry, error, group, handoff, instruction, message,
+    models, proposal, record, redact, session,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;

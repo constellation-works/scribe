@@ -18,6 +18,8 @@ mod retire;
 pub mod rules;
 mod scope;
 mod show;
+#[cfg(test)]
+mod tests;
 mod update;
 mod verbs;
 mod verify;

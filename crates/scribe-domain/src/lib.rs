@@ -19,7 +19,6 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod action;
 pub mod activity;
 pub mod annotation;
 pub mod capture;
