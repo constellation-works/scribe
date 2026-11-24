@@ -3,7 +3,7 @@
 //! §12.2, §12.5).
 //!
 //! The flags come together or not at all (a usage error, exit 2). With them,
-//! [`scribe_core::cases::instruction_check::check`] finds the session's
+//! the entry app's instruction check finds the session's
 //! transcript on this host, reads it through the provenance check of §4.1
 //! (one no-follow handle for check and read, as the action-tag quote check
 //! does) and hands the bytes to [`scribe_core::instruction`], before the
@@ -12,7 +12,7 @@
 use crate::app::Context;
 use clap::Args;
 use scribe_core::SessionId;
-use scribe_core::cases::instruction_check::Instruction;
+use scribe_core::apps::entry::Instruction;
 
 /// The instruction a write is run on: given together or not at all.
 #[derive(Debug, Args)]
@@ -27,7 +27,7 @@ pub(crate) struct InstructionArgs {
 }
 
 impl InstructionArgs {
-    /// The flags as [`scribe_core::cases::instruction_check`] takes them.
+    /// The flags as the entry app's instruction check takes them.
     pub(crate) fn case<'a>(&'a self, ctx: &'a Context) -> Instruction<'a> {
         Instruction {
             session: self.session.as_ref(),

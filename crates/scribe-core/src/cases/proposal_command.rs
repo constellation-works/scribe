@@ -5,7 +5,7 @@
 //!
 //! [`crate::cases::user_prompt_submit`] hands each such line here after the transcript
 //! check, in prompt order. One locked store call per line applies it
-//! ([`crate::ProposalVerbs::settle`]) and the line gets one echo:
+//! ([`proposal::settle`]) and the line gets one echo:
 //!
 //! - approve: the proposal is `approved` and its older entry `superseded`
 //!   by the newer (or `retired`, for a stale proposal);
@@ -26,9 +26,9 @@
 //! "Proposals are settled only by #scribe in a typed turn").
 
 use crate::EntryStatus;
+use crate::apps::proposal;
 use crate::capture::{Settling, Turn};
 use crate::cases::hook::{HookOutcome, chain, quote, refusal};
-use crate::cases::proposal::ProposalVerbs;
 use crate::consistency::Settled;
 use crate::runtime::Ctx;
 
@@ -45,7 +45,7 @@ pub struct Reply {
 #[must_use]
 pub fn run<E>(ctx: &Ctx<'_, E>, settling: &Settling, turn: &Turn) -> Reply {
     let cite = turn.cite(settling.line);
-    let settled = match ctx.store.settle(&settling.action, &cite, ctx.clock.now()) {
+    let settled = match proposal::settle(ctx.store, &settling.action, &cite, ctx.clock.now()) {
         Ok(settled) => settled,
         Err(err) => {
             return Reply {

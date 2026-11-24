@@ -13,6 +13,7 @@ use crate::{
     Author, AuthorKind, AuthorName, EntryId, EntryStatus, Error, Proposal, ProposalId,
     ProposalKind, ProposalState, Redactor, Result, Store, Tx, WriteRefusal,
 };
+use crate::{SessionForget, SessionId, handoff};
 use time::OffsetDateTime;
 
 /// The proposal verbs, implemented for [`Store`].
@@ -335,7 +336,7 @@ impl ProposalVerbs for Store {
     fn settle(&self, action: &Settle, cite: &Cite, now: time::OffsetDateTime) -> Result<Settled> {
         self.write(|tx| {
             if let Settle::ForgetSession(id) = action {
-                return Ok(match crate::cases::session::forget_session(tx, id, now)? {
+                return Ok(match forget_session(tx, id, now)? {
                     SessionForgetOutcome::Forgotten(forgot) => Settled::SessionForgotten(forgot),
                     SessionForgetOutcome::Already {
                         id: resolved,
@@ -704,47 +705,48 @@ enum CandidateWrite {
     },
 }
 
-/// What `proposal list` reads: the filter as typed, its `--entry` and
-/// `--since`/`--until` still to resolve and check.
-pub struct ListInput<'i> {
-    /// The filter; its `entry` and `dates` are replaced.
-    pub filter: crate::ProposalFilter,
-    /// `--entry`: an entry id or unique prefix.
-    pub entry: Option<&'i str>,
-    /// `--since`.
-    pub since: Option<time::Date>,
-    /// `--until`.
-    pub until: Option<time::Date>,
-}
-
-/// `proposal list`: resolve `--entry`, check the dates, then keep the
-/// proposals the filter passes. The filter as applied, and the proposals.
-///
-/// # Errors
-///
-/// [`ReadError`](crate::runtime::errors::ReadError): an unknown entry, a
-/// range that ends before it starts, or a store error.
-pub fn list<E>(
-    ctx: &crate::runtime::Ctx<'_, E>,
-    input: ListInput<'_>,
-) -> std::result::Result<
-    (crate::ProposalFilter, Vec<crate::Proposal>),
-    crate::runtime::errors::ReadError<E>,
-> {
-    let mut filter = input.filter;
-    filter.entry = match input.entry {
-        Some(id) => Some(crate::cases::entry::EntryVerbs::resolve_entry(ctx.store, id)?.id),
-        None => None,
+/// Erase session data and detach dependent records in the write under way
+/// ([`ProposalVerbs::settle`]). The tombstone also drives replay of
+/// filesystem cleanup after commit.
+fn forget_session(
+    tx: &Tx<'_>,
+    input: &SessionId,
+    now: OffsetDateTime,
+) -> Result<SessionForgetOutcome> {
+    let id = match tx.sessions().resolve_or_handoff(input) {
+        Ok(id) => id,
+        Err(error @ Error::SessionNotFound { .. }) => {
+            let known = tx.sessions().has_group_membership(input)?
+                || tx
+                    .entries()
+                    .all()?
+                    .0
+                    .iter()
+                    .any(|entry| handoff::session_ids(entry).contains(input));
+            if !known {
+                return Err(error);
+            }
+            input.clone()
+        }
+        Err(error) => return Err(error),
     };
-    filter.dates = crate::DateRange::checked(input.since, input.until)
-        .map_err(crate::runtime::errors::ReadError::Usage)?;
-    let proposals = ctx
-        .store
-        .read()
-        .proposals()
-        .all()?
-        .into_iter()
-        .filter(|p| filter.matches(p))
-        .collect();
-    Ok((filter, proposals))
+    let number = tx.sessions().numbers()?.get(&id).copied();
+    let erased = tx.sessions().erase(&id, number, now)?;
+    let number = tx.sessions().numbers()?.get(&id).copied();
+    Ok(if erased.already {
+        SessionForgetOutcome::Already {
+            id,
+            number,
+            cleaned: erased.changed || erased.files > 0,
+        }
+    } else {
+        SessionForgetOutcome::Forgotten(SessionForget {
+            id,
+            number,
+            messages: erased.messages,
+            segments: erased.segments,
+            files: erased.files,
+            was_on: erased.was_on,
+        })
+    })
 }

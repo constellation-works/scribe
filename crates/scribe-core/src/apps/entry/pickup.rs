@@ -1,8 +1,13 @@
 //! Pickup verbs: a consumer's note on an action entry (2_design.md §4.6).
 
 use crate::action::{self, Pickup};
+
+use super::written::{EntryWritten, written};
 use crate::checks::{check_agent_author, refusal};
-use crate::{Author, AuthorName, EntryStatus, Related, Result, Store, WriteRefusal};
+use crate::runtime::errors::WriteError;
+use crate::runtime::{Ctx, PortError, resolve};
+use crate::{Author, EntryStatus, Result, Store};
+use crate::{AuthorName, Provider, Related, WriteRefusal};
 use time::OffsetDateTime;
 
 /// The pickup verbs, implemented for [`Store`].
@@ -98,4 +103,43 @@ impl PickupVerbs for Store {
             Ok((pickup, true))
         })
     }
+}
+
+/// What `entry pickup` runs.
+pub struct PickupInput<'i> {
+    /// The action entry's id or a unique prefix.
+    pub id: &'i str,
+    /// The consumer.
+    pub author: AuthorName,
+    /// What the consumer made of it.
+    pub result: Option<&'i Related>,
+    /// The user rejected the result.
+    pub rejected: bool,
+    /// The provider whose transcripts resolve a `session:` result.
+    pub provider: Provider,
+}
+
+/// `entry pickup`.
+///
+/// # Errors
+///
+/// [`WriteError`]: a refusal or a store error.
+pub fn pickup<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: PickupInput<'_>,
+) -> Result<EntryWritten, WriteError<E>> {
+    crate::check_agent_author(&input.author)?;
+    let result = input
+        .result
+        .map(|r| resolve::related(ctx, input.provider, r))
+        .transpose()?;
+    let (pickup, changed) = ctx.store.record_pickup(
+        input.id,
+        input.author,
+        result,
+        input.rejected,
+        ctx.clock.now(),
+    )?;
+    let entry = ctx.store.read().entries().get(&pickup.entry)?;
+    written(ctx, entry, changed)
 }

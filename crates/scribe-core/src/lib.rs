@@ -87,16 +87,19 @@ pub use scribe_domain::verbatim;
 pub use scribe_domain::voice;
 
 #[cfg(any(test, feature = "test-support"))]
+pub use apps::entry::EntryVerbs;
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::entry::PickupVerbs;
+#[cfg(any(test, feature = "test-support"))]
 pub use apps::mark::MarkVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::memory::MemoryVerbs;
 #[cfg(any(test, feature = "test-support"))]
+pub use apps::proposal::ProposalVerbs;
+#[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
-pub use cases::entry::EntryVerbs;
 pub use cases::group::GroupVerbs;
 pub use cases::pass::{ClaimsWritten, PassVerbs};
-pub use cases::pickup::PickupVerbs;
-pub use cases::proposal::ProposalVerbs;
 pub use cases::rebuild::RebuildVerbs;
 pub use cases::session::{HandoffSelection, SessionVerbs};
 pub use checks::entry::check_handoff_related;

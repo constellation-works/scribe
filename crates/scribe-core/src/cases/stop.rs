@@ -26,8 +26,8 @@
 //! only to count turns for cadence. Markers are cataloged also for a session
 //! that is off or was never switched on.
 
+use crate::apps::entry;
 use crate::cases::annotation::{self, AnnotationInput};
-use crate::cases::entry::EntryVerbs;
 use crate::cases::group_turns;
 use crate::cases::hook::{HookError, HookOutcome, HookReply, PROVENANCE_FAILED};
 use crate::control::{self, Since};
@@ -242,7 +242,7 @@ fn fill_cites<E: PortError>(
     session: &SessionId,
 ) -> Result<Vec<HookOutcome>, HookError<E>> {
     let session = session.clone();
-    if !ctx.store.has_unfilled_cites(&session)? {
+    if !entry::has_unfilled_cites(ctx.store, &session)? {
         return Ok(Vec::new());
     }
     match ctx.transcripts.check(provider, transcript_path, &session) {
@@ -262,9 +262,9 @@ fn fill_cites<E: PortError>(
         .filter(|m| m.role == Speaker::User)
         .map(Hashed::new)
         .collect();
-    let filled = ctx
-        .store
-        .fill_cite_messages(&session, ctx.clock.now(), |cite| best_match(&prompts, cite))?;
+    let filled = entry::fill_cite_messages(ctx.store, &session, ctx.clock.now(), |cite| {
+        best_match(&prompts, cite)
+    })?;
     Ok(filled
         .into_iter()
         .map(|id| HookOutcome {

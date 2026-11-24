@@ -232,6 +232,28 @@ impl From<scribe_core::apps::memory::Error<CliError>> for CliError {
     }
 }
 
+/// `scribe entry`'s errors, each the variant it was before the app moved.
+impl From<scribe_core::apps::entry::Error<CliError>> for CliError {
+    fn from(err: scribe_core::apps::entry::Error<CliError>) -> Self {
+        use scribe_core::apps::entry::Error;
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
+    }
+}
+
+/// `scribe proposal`'s errors, each the variant it was before the app moved.
+impl From<scribe_core::apps::proposal::Error<CliError>> for CliError {
+    fn from(err: scribe_core::apps::proposal::Error<CliError>) -> Self {
+        use scribe_core::apps::proposal::Error;
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
+    }
+}
+
 /// `consistency scan`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::consistency_scan::ScanError<CliError>> for CliError {
     fn from(err: scribe_core::cases::consistency_scan::ScanError<CliError>) -> Self {

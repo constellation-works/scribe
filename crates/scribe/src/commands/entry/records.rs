@@ -1,13 +1,13 @@
 //! CLI fields for decision and open-item writes; their checks are
-//! [`scribe_core::cases::entry_cmd`]'s and [`scribe_core::cases::entry_verify`]'s.
+//! the entry app's ([`scribe_core::apps::entry`]).
 
 use clap::Args;
-use scribe_core::cases::entry_cmd::RecordFields;
+use scribe_core::apps::entry::RecordFields;
 use scribe_core::{AnswerIn, AuthorName, EntryId};
 #[cfg(test)]
 use {
     crate::error::CliError, scribe_core::SessionId,
-    scribe_core::cases::entry_verify::verify_quotes_in_sessions, time::OffsetDateTime,
+    scribe_core::apps::entry::verify_quotes_in_sessions, time::OffsetDateTime,
 };
 
 #[derive(Debug, Args)]
@@ -48,7 +48,7 @@ pub(super) struct RecordArgs {
 }
 
 impl RecordArgs {
-    /// The fields as [`scribe_core::cases::entry_cmd::add`] checks them.
+    /// The fields as `entry add` checks them.
     pub(super) fn into_fields(self) -> RecordFields {
         RecordFields {
             decided_by: self.decided_by,

@@ -10,8 +10,7 @@ use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
-use scribe_core::EntryVerbs;
-use scribe_core::cases::entry_cmd;
+use scribe_core::apps::entry::{self, Command, Outcome, exec};
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,
@@ -311,55 +310,67 @@ impl EntryCommand {
 
 /// The id of the entry `input` resolves to, or `None` when it does not.
 fn resolved_entry(ctx: &Context, input: &str) -> Option<String> {
-    ctx.store()
-        .resolve_entry(input)
-        .ok()
-        .map(|entry| entry.id.to_string())
+    entry::resolved_id(&ctx.runtime(), input)
 }
 
 /// Run one `entry` verb.
 pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        EntryCommand::List(args) => list(args, ctx),
-        EntryCommand::Show(args) => show(&args, ctx),
-        EntryCommand::Add(args) => {
-            let written = entry_cmd::add(
-                &ctx.core(),
-                entry_cmd::AddInput {
-                    tag: args.tag,
-                    content: args.content,
-                    author: args.author,
-                    project: args.project,
-                    topics: args.topic,
-                    related: args.related,
-                    quote: args.quote,
-                    mode: args.mode,
-                    evidence: args.evidence,
-                    as_of: args.as_of,
-                    spoken: args.spoken,
-                    record: args.record.into_fields(),
-                    provider: ctx.provider(),
-                    host: ctx.host(),
-                    current_session: std::env::var("CLAUDE_CODE_SESSION_ID").ok(),
-                },
-            )?;
-            Ok(output(written))
+    let runtime = ctx.runtime();
+    let command = match command {
+        EntryCommand::List(args) => {
+            let input = list_input(&args, ctx);
+            let outcome = exec(&runtime, Command::List(Box::new(input)))?;
+            return Ok(output(outcome, false, Some(&args), ctx));
         }
+        EntryCommand::Show(args) => {
+            return Ok(output(
+                exec(&runtime, Command::Show(args.id))?,
+                args.window,
+                None,
+                ctx,
+            ));
+        }
+        EntryCommand::Add(args) => Command::Add(Box::new(entry::AddInput {
+            tag: args.tag,
+            content: args.content,
+            author: args.author,
+            project: args.project,
+            topics: args.topic,
+            related: args.related,
+            quote: args.quote,
+            mode: args.mode,
+            evidence: args.evidence,
+            as_of: args.as_of,
+            spoken: args.spoken,
+            record: args.record.into_fields(),
+            provider: ctx.provider(),
+            host: ctx.host(),
+            current_session: std::env::var("CLAUDE_CODE_SESSION_ID").ok(),
+        })),
         EntryCommand::Pickup(args) => {
-            let written = entry_cmd::pickup(
-                &ctx.core(),
-                entry_cmd::PickupInput {
-                    id: &args.id,
-                    author: args.author,
-                    result: args.result.as_ref(),
-                    rejected: args.rejected,
-                    provider: ctx.provider(),
-                },
-            )?;
-            Ok(output(written))
+            let PickupArgs {
+                id,
+                author,
+                result,
+                rejected,
+            } = args;
+            let input = entry::PickupInput {
+                id: &id,
+                author,
+                result: result.as_ref(),
+                rejected,
+                provider: ctx.provider(),
+            };
+            return Ok(output(
+                exec(&runtime, Command::Pickup(input))?,
+                false,
+                None,
+                ctx,
+            ));
         }
-        EntryCommand::Update(args) => {
-            let patch = scribe_core::EntryPatch {
+        EntryCommand::Update(args) => Command::Update {
+            id: args.id,
+            patch: Box::new(scribe_core::EntryPatch {
                 content: args.content,
                 decision_options: (args.clear_options || !args.options.is_empty())
                     .then_some(args.options),
@@ -369,99 +380,123 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 remove_topics: args.remove_topic,
                 add_related: args.add_related,
                 remove_related: args.remove_related,
-            };
-            let written =
-                entry_cmd::update(&ctx.core(), &args.id, patch, args.author, ctx.provider())?;
-            Ok(output(written))
-        }
-        EntryCommand::Retire(args) => {
-            let written = entry_cmd::retire(
-                &ctx.core(),
-                &args.id,
-                &args.reason,
-                args.author,
-                &args.instruction.case(ctx),
-            )?;
-            Ok(output(written))
-        }
-        EntryCommand::Forget(args) => {
-            let written = entry_cmd::forget(
-                &ctx.core(),
-                &args.id,
-                &args.author,
-                args.confirm,
-                &args.instruction.case(ctx),
-            )?;
-            Ok(output(written))
-        }
-        EntryCommand::Answer(args) => {
-            let written = entry_cmd::answer(
-                &ctx.core(),
-                &args.id,
-                &args.author,
-                &args.quote,
-                &args.related,
-                ctx.provider(),
-            )?;
-            Ok(output(written))
-        }
-        EntryCommand::Close(args) => {
-            let written = entry_cmd::close(
-                &ctx.core(),
-                &args.id,
-                args.decision.as_ref(),
-                args.note.as_deref(),
-                args.author,
-            )?;
-            Ok(output(written))
-        }
-    }
-}
-
-/// An entry write's result as output, with its notices.
-fn output(written: entry_cmd::EntryWritten) -> Output {
-    let payload = EntryPayload::from(&written.entry).with_action(written.action.as_ref());
-    let mut output = Output::written(Record::Entry(Box::new(payload)), written.changed);
-    if let Output::Written { notices, .. } = &mut output {
-        notices.extend(written.notices);
-    }
-    output
-}
-
-fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let listed = scribe_core::cases::entry::list(
-        &ctx.core(),
-        scribe_core::cases::entry::ListInput {
-            filter: EntryFilter {
-                tag: args.tag,
-                status: args.status,
-                project: args.project,
-                topics: args.topic,
-                related: args.related.clone(),
-                dates: scribe_core::DateRange::default(),
-                after: args.after,
-                author: args.author.map(scribe_core::AuthorName::current),
-                author_kind: args.author_kind.map(AuthorKind::from),
-                states: args.state,
-                limit: args.limit,
-            },
-            since: args.dates.since,
-            until: args.dates.until,
-            group: args.group,
+            }),
+            author: args.author,
             provider: ctx.provider(),
         },
-    )?;
+        EntryCommand::Retire(args) => {
+            let RetireArgs {
+                id,
+                author,
+                reason,
+                instruction,
+            } = args;
+            let command = Command::Retire {
+                id,
+                reason,
+                author,
+                instruction: instruction.case(ctx),
+            };
+            return Ok(output(exec(&runtime, command)?, false, None, ctx));
+        }
+        EntryCommand::Forget(args) => {
+            let ForgetArgs {
+                id,
+                author,
+                confirm,
+                instruction,
+            } = args;
+            let command = Command::Forget {
+                id,
+                author,
+                confirm,
+                instruction: instruction.case(ctx),
+            };
+            return Ok(output(exec(&runtime, command)?, false, None, ctx));
+        }
+        EntryCommand::Answer(args) => Command::Answer {
+            id: args.id,
+            author: args.author,
+            quote: args.quote,
+            related: args.related,
+            provider: ctx.provider(),
+        },
+        EntryCommand::Close(args) => Command::Close {
+            id: args.id,
+            decision: args.decision,
+            note: args.note,
+            author: args.author,
+        },
+    };
+    Ok(output(exec(&runtime, command)?, false, None, ctx))
+}
+
+/// The output of `outcome`: `window` is `show --window`, and a list
+/// echoes `args` as criteria.
+fn output(outcome: Outcome, window: bool, args: Option<&ListArgs>, ctx: &Context) -> Output {
+    match outcome {
+        Outcome::Written(written) => {
+            let written = *written;
+            let payload = EntryPayload::from(&written.entry).with_action(written.action.as_ref());
+            let mut output = Output::written(Record::Entry(Box::new(payload)), written.changed);
+            if let Output::Written { notices, .. } = &mut output {
+                notices.extend(written.notices);
+            }
+            output
+        }
+        Outcome::Shown(shown) => {
+            let shown = *shown;
+            let actions = Actions(shown.actions);
+            Output::Show {
+                record: Record::Entry(Box::new(
+                    actions
+                        .payload(&shown.entry, window)
+                        .with_admitted(shown.admitted),
+                )),
+            }
+        }
+        Outcome::Listed(listed) => list(*listed, args, ctx),
+    }
+}
+
+fn list_input(args: &ListArgs, ctx: &Context) -> entry::ListInput {
+    entry::ListInput {
+        filter: EntryFilter {
+            tag: args.tag.clone(),
+            status: args.status,
+            project: args.project.clone(),
+            topics: args.topic.clone(),
+            related: args.related.clone(),
+            dates: scribe_core::DateRange::default(),
+            after: args.after,
+            author: args.author.clone().map(scribe_core::AuthorName::current),
+            author_kind: args.author_kind.map(AuthorKind::from),
+            states: args.state.clone(),
+            limit: args.limit,
+        },
+        since: args.dates.since,
+        until: args.dates.until,
+        group: args.group.clone(),
+        provider: ctx.provider(),
+    }
+}
+
+/// `entry list`'s output, echoing `args` as criteria.
+fn list(listed: entry::Listed, args: Option<&ListArgs>, ctx: &Context) -> Output {
     let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
     );
-    let mut criteria = criteria_with_related(&filter, &args.related);
+    let mut criteria =
+        criteria_with_related(&filter, args.map_or(&filter.related, |args| &args.related));
     if let Some(group) = group {
         criteria.push(format!("--group {}", group.id));
     }
-    criteria.extend(args.dates.criteria());
-    if let Some(after) = args.after
+    if let Some(args) = args {
+        criteria.extend(args.dates.criteria());
+    }
+    if let Some(after) = args.and_then(|args| args.after)
         && let Ok(text) = after.format(&time::format_description::well_known::Rfc3339)
     {
         criteria.push(format!("--after {text}"));
@@ -477,15 +512,10 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             .listing
             .items
             .iter()
-            .map(|e| actions.payload(e, args.window))
+            .map(|e| actions.payload(e, args.is_some_and(|args| args.window)))
             .collect(),
     );
-    Ok(list_output(
-        records,
-        found.listing.total,
-        &found.skipped,
-        &notice,
-    ))
+    list_output(records, found.listing.total, &found.skipped, &notice)
 }
 
 /// The filters applied, as the flags that set them (the dates aside, which
@@ -524,19 +554,7 @@ fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related])
     criteria
 }
 
-fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let shown = scribe_core::cases::entry::show(&ctx.core(), &args.id)?;
-    let actions = Actions(shown.actions);
-    Ok(Output::Show {
-        record: Record::Entry(Box::new(
-            actions
-                .payload(&shown.entry, args.window)
-                .with_admitted(shown.admitted),
-        )),
-    })
-}
-
-struct Actions(entry_cmd::Actions);
+struct Actions(entry::Actions);
 
 impl Actions {
     /// `entry` as output, with its action state when its tag is an action

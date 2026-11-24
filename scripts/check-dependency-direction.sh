@@ -360,7 +360,14 @@ for retired in \
   crates/scribe-core/src/cases/mark.rs \
   crates/scribe-core/src/cases/memory.rs \
   crates/scribe-core/src/cases/memory_block.rs \
-  crates/scribe-core/src/cases/memory_cmd.rs; do
+  crates/scribe-core/src/cases/memory_cmd.rs \
+  crates/scribe-core/src/cases/entry.rs \
+  crates/scribe-core/src/cases/entry_cmd.rs \
+  crates/scribe-core/src/cases/entry_verify.rs \
+  crates/scribe-core/src/cases/pickup.rs \
+  crates/scribe-core/src/cases/instruction_check.rs \
+  crates/scribe-core/src/cases/proposal.rs \
+  crates/scribe-core/src/cases/proposal_cmd.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain
