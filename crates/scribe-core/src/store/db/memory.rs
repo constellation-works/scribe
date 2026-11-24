@@ -28,7 +28,7 @@ use time::OffsetDateTime;
 /// leaves the same file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::store) struct FileOp {
+pub struct FileOp {
     /// The path under `memory/`: `profile.md`, `now/<stem>.md` or
     /// `milestones/<stem>.md`.
     pub path: String,
@@ -40,7 +40,7 @@ pub(in crate::store) struct FileOp {
 /// `ask` and search still recall it; also the hints a migration leaves for
 /// the first refresh.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::store) struct HistoryRow {
+pub struct HistoryRow {
     /// The item's id: a file stem, or `m-<n>`.
     pub item: String,
     /// `now`, `milestones`, `profile`, `projects` or `working`.
@@ -55,7 +55,7 @@ pub(in crate::store) struct HistoryRow {
 
 /// One undated `now` candidate to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::store) struct PendingRow {
+pub struct PendingRow {
     /// Its session.
     pub session: SessionId,
     /// Its turn.
@@ -70,7 +70,7 @@ pub(in crate::store) struct PendingRow {
 
 /// Everything one memory write commits before it touches a file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::store) struct MemoryCommit {
+pub struct MemoryCommit {
     /// The file operations, in order.
     pub ops: Vec<FileOp>,
     /// The history rows to add.
@@ -133,7 +133,7 @@ pub(in crate::store) struct Journal {
 
 /// One profile revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::store) struct Revision {
+pub struct Revision {
     /// Its number, from 1.
     pub n: i64,
     /// When it was committed.

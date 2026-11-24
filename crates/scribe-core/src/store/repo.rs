@@ -15,6 +15,8 @@
 
 use super::audit::AuditEvent;
 pub use super::db::{CaptureState, CloseHeader, GroupRows, MemberWindow, RowError};
+pub use super::db::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
+pub use super::memory::{MemoryFiles, MemoryJournal, MemoryRows};
 use super::{
     EntryList, LoadedSessions, MemoryShown, MemoryView, MemoryWritten, PassMemory, Redactor,
     SessionErasure, SessionList, SessionView, Skipped, Store,
@@ -339,6 +341,17 @@ impl Sessions<'_> {
         self.store.set_session_field(id, field, value)
     }
 
+    /// The ids of the forgotten sessions.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn forgotten_ids(&self) -> Result<Vec<SessionId>> {
+        Ok(super::db::sessions::read_forgotten(&self.store.root)?
+            .map(|forgotten| forgotten.into_keys().collect())
+            .unwrap_or_default())
+    }
+
     /// Whether a group seats `id`.
     ///
     /// # Errors
@@ -611,6 +624,31 @@ impl Memory<'_> {
     /// The store's read errors.
     pub fn file(&self, id: &str) -> Result<MemoryShown> {
         self.store.memory_file(id)
+    }
+
+    /// One memory write in the write under way: `f` reads the rows and the
+    /// files as the open journals leave them and returns what to commit,
+    /// which is journaled, and applied to the files once the write commits.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn commit<T>(
+        &self,
+        now: OffsetDateTime,
+        f: impl FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, T)>,
+    ) -> Result<(T, MemoryJournal)> {
+        self.store.memory_commit(now, f)
+    }
+
+    /// Discard every earlier copy of the files `journal` removed, from open
+    /// and closed journals, and truncate the log after the commit.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
+        self.store.scrub_copies(journal)
     }
 }
 

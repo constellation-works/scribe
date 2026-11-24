@@ -59,6 +59,10 @@ mod fsio;
 mod ids;
 mod init;
 mod memory;
+pub(crate) use memory::{
+    Basis, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
+    REFRESH_VERBATIM_SESSIONS, bare, not_found,
+};
 pub use memory::{
     MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
     PassMemory, ProfileInputs, ProfileRevision, RefreshWritten,
