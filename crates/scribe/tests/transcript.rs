@@ -148,6 +148,45 @@ fn list_skips_a_transcript_whose_mtime_is_before_since() {
 }
 
 #[test]
+fn exact_provider_id_reads_transcript_when_an_unrelated_group_roster_is_corrupt() {
+    const ID: &str = "d00d0000-1111-4222-8333-444455556666";
+    let fx = Fixture::new();
+    fx.ok(&["store", "migrate"]);
+    support::sql(
+        &fx.root(),
+        r#"INSERT INTO groups (title, kind, project, opened, opener, related)
+           VALUES ('Unrelated', 'review', 'scribe', '2026-11-22T09:00:00Z', 'other-session', '["invalid"]')"#,
+    );
+
+    let project = fx.home().join(".claude/projects/-work");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{ID}.jsonl"));
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            json!({
+                "type": "user", "uuid": "u-1", "timestamp": "2026-10-15T10:00:00Z",
+                "cwd": "/work", "message": {"role": "user", "content": "Hello"}
+            })
+        ),
+    )
+    .unwrap();
+    support::make_private(&path);
+
+    let broken_roster = fx.run(&["group", "list", "--json"]);
+    assert_eq!(broken_roster.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&broken_roster.stderr).unwrap();
+    assert_eq!(error["code"], "store_corrupt");
+
+    let shown = fx.run(&["transcript", "show", ID, "--json"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", text(&shown.stderr));
+    let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown["session"], ID);
+    assert_eq!(shown["user_first_turns"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn cataloged_transcript_alias_round_trips_and_json_keeps_provider_id() {
     const ID: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
     let fx = Fixture::new();
