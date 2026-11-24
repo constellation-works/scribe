@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe is four crates (domain, store, use cases, CLI), and why ask, the Orbit task search and the tmux popup are removed.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), and why ask, the Orbit task search and the tmux popup are removed.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
@@ -599,6 +599,12 @@ core module. When persistence earns its own crate, `store/` moves out whole.
 
 ## Four crates: domain, store, use cases and CLI
 
+> **Superseded, 2026-11-24 ([ORB-27921]):** scribe is laid out by app, in
+> four crates, `scribe`, `scribe-core`, `scribe-store` and `scribe-tools`
+> ([see below](#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools)).
+> `scribe-domain` dissolves into the store's contracts, the core's apps and
+> the tools. The step-by-step method (no behaviour change per step) stands.
+
 **Recorded:** 2026-11-24 · [ORB-27707] · **Daniel's direction**
 **Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh::policy` and `DOMAIN_RINGS`; `ARCHITECTURE.md`
 
@@ -681,6 +687,121 @@ ARCHITECTURE.md names the import behind each.
   other. `scribe-core` keeps re-export shims so that public paths did not
   change. The store tests that stayed in `scribe-core` reach store internals
   through a test-only module rather than directly.
+
+## Scribe is laid out by app, in four crates: scribe, core, store and tools
+
+**Recorded:** 2026-11-24 · [ORB-27921] · **Daniel's direction**
+**Code anchors:** [specs/architecture.md](./specs/architecture.md); `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh`; `ARCHITECTURE.md`
+
+Supersedes [Four crates: domain, store, use cases and CLI](#four-crates-domain-store-use-cases-and-cli).
+
+### Context
+
+Daniel, 2026-11-24, in the chief's chat (quoted on ORB-27563), on the result
+of ORB-27707:
+
+> "scribe refactor needs to be redone."
+
+> "crates/scribe/src/models/codex.rs & crates/scribe/src/models.rs do not
+> belong in scribe crate."
+
+> "crates/scribe/src/app.rs --- composition does not belong in scribe.
+> scribe-core/src/composition.rs"
+
+> "scribe should just be a cli tool, exposing tools for agents to
+> query/update. Any operations that require agent invocations (e.g. session
+> pass; delete \"ask\" entirely, not needed) should be executed as orbit
+> jobs with agent_invoke activities, passing the transcript data or
+> whatever."
+
+His sketch:
+
+```
+scribe
+
+core
+- apps/{entry,group,session,tag,memory...} these are exported, not runtime; each cli command maps to core/apps/<some_app>; invokes some_app.exec
+- runtime.rs calls composition + contains common function shared by apps
+- composition.rs
+
+store
+- db/ (common fs)
+- repository/<apps>/ ()
+- contracts/apps
+
+tools (will write parsing and deterministic functions for activities)
+```
+
+The four-crate shape had sorted code by layer, so one subject (a group, an
+entry) was spread over four crates; it left composition and the model
+adapters in the binary; and its use-case folder came out as 50 flat files,
+the complaint the refactor started from.
+
+### Decision
+
+Four crates, specified in [specs/architecture.md](./specs/architecture.md):
+
+- `scribe`: parse, call one `scribe_core::apps::<app>::exec`, render.
+- `scribe-core`: `apps/<app>/` (each with `Command`, `Outcome`, `Error`,
+  `run` and `exec`), `runtime/` (context, id resolution, errors, audit),
+  `composition.rs`, and the interim `providers/` that holds the model calls
+  until Orbit jobs replace them.
+- `scribe-store`: `db/`, one repository per record, and `contracts/` with
+  record shapes only.
+- `scribe-tools`: the functions hooks and activities are built from, each
+  subject whole in one place (finding, reading and parsing transcripts,
+  windows, markers, hook payloads). It has its own `fs` module and uses
+  `scribe-store` as needed; a tool that writes takes the caller's `Tx`, and
+  it never names `scribe-core`.
+
+`scribe-domain` dissolves into those three homes.
+
+The chief proposed four changes to the sketch: repositories per record
+instead of per app; contracts limited to record shapes, with each app's
+types and rules in the core; `runtime` limited to the context, resolution,
+errors and audit; and `tools` as a pure library below the core instead of
+the surface Orbit activities call, because the hooks parse transcripts.
+Daniel: "I meant activity calls, but let's go with yours." He then widened
+`tools`:
+
+> "allow tools to have its own fs module or import from scribe-store as
+> needed. instead of creating logics spread across multiple places"
+
+So `tools` stays a library below the core, but it is not pure: it reads
+files through its own `fs` module and uses the store, so that one subject
+(a transcript: finding, reading, parsing, cutting a window) is not split
+between a reader in the core and a parser elsewhere.
+
+### Alternatives
+
+- `tools` as the entry point Orbit activities call, above the core beside the
+  CLI, with parsing in the core (his first reading). Rejected because the
+  Stop and capture hooks parse transcripts, so parsing must sit below the
+  apps; whatever an activity calls that reads or writes records is an
+  ordinary CLI command mapped to an app.
+- `tools` as a pure library over bytes and text, importing only the
+  store's contracts (the chief's first revision). Replaced by Daniel's
+  amendment, because it split each subject between a reader in the core and
+  a parser in `tools`. He also offered leaving `tools` out; the chief kept
+  it, so the hooks and future activities share one home for that code.
+- Repositories per app, as sketched. Rejected because apps and records do
+  not line up: the session app writes sessions, messages, proposals, entries
+  and memory.
+
+### Consequences
+
+- A change to one subject touches one app folder and the repositories it
+  composes. Each app's surface is its `Command`, `Outcome`, `Error` and
+  `exec`; apps call each other only through `run` or what `mod.rs`
+  re-exports, in an order the guard script holds.
+- Departures from the crates, "one repository per record", "contracts hold
+  shapes only" or the tools' limits (writes take the caller's `Tx`; no
+  `scribe-core` import) go back to Daniel.
+- ORB-27921 migrates in the spec's steps 2–6, none changing behaviour;
+  ORB-27911 keeps the deletions.
+- Cost: a second full move of every file within a day of ORB-27707, which
+  churns history and `git blame`, and the interim `providers/` folder lets
+  `std::process` into the core until the five model callers are replaced.
 
 ## Commands are one module per noun
 

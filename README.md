@@ -76,6 +76,7 @@ scribe group show <slug> --json
 - [Catchers](docs/design/scribe/specs/catchers.md) — what a session pass keeps.
 - [Output contract](docs/design/scribe/specs/output-contract.md) — JSON shapes, streams and exit status.
 - [Architecture](ARCHITECTURE.md) — crate layers and what may call what.
+- [Architecture spec](docs/design/scribe/specs/architecture.md) — the approved layout by app that the code is moving to.
 - [Changelog](CHANGELOG.md) — notable changes.
 - [Agent skill](skills/scribe/SKILL.md) — how an agent reads and writes the records.
 - [Orbit plugin](plugin/.orbit-plugin/README.md) — the routine tools and their install.
