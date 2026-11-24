@@ -1,9 +1,9 @@
 //! Incremental Claude group capture, scoped to one membership position.
 
-use super::{CaptureState, after_cursor, capture_state, turns_since, write_captured_turns};
-use crate::instruction::{ClaudeGroupTurns, ClaudeSeen};
-use crate::store::db::{DB_FILE, Fallible, db_error, open_writer, refuse_newer};
-use crate::{Redactor, Result, SessionId, Store};
+use super::{CaptureState, GroupRows, RowError, Rows, capture_state};
+use crate::SessionId;
+use crate::instruction::{ClaudeGroupTurns, ClaudeSeen, ResolvedClaudeTurns};
+use crate::store::db::{Fallible, refuse_newer};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
@@ -51,115 +51,82 @@ impl ClaudeGroupCapture {
     pub fn progress(&self) -> Option<&ClaudeCapturePosition> {
         self.progress.as_ref()
     }
+
+    /// The membership the hook observed.
+    #[must_use]
+    pub fn member(&self) -> &CaptureState {
+        &self.member
+    }
 }
 
-impl Store {
-    /// Read the capture snapshot without locking or migrating the database.
-    pub fn claude_group_capture(&self, session: &SessionId) -> Result<Option<ClaudeGroupCapture>> {
-        self.read_groups(|conn, path| snapshot(conn, path, session))
+impl GroupRows<'_> {
+    /// `session`'s capture row and its Claude transcript progress.
+    pub fn claude_snapshot(&self, session: &SessionId) -> Rows<Option<ClaudeGroupCapture>> {
+        snapshot(self.conn, self.path, session).map_err(RowError)
     }
 
-    /// Commit the verified batch, first-seen ids and byte position together.
-    /// A stale snapshot returns `None` so the hook can retry from fresh progress.
-    pub fn capture_claude_group_turns(
+    /// Resolve `batch` against the ids membership row `position` has seen,
+    /// reading them only when `resumed`.
+    pub(crate) fn resolve_seen(
         &self,
-        before: &ClaudeGroupCapture,
-        resumed: bool,
-        position: &ClaudeCapturePosition,
+        position: i64,
         batch: ClaudeGroupTurns,
-        redactor: &Redactor,
-    ) -> Result<Option<usize>> {
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("store Claude group progress in", &path, e);
-            let session = batch.session().clone();
-            if snapshot(&conn, &path, &session)
-                .map_err(Fallible::into_error)?
-                .as_ref()
-                != Some(before)
-            {
-                return Ok(None);
-            }
-            let member = &before.member;
-            let mut lookup = conn
-                .prepare(
-                    "SELECT permitted, message FROM group_claude_seen
+        resumed: bool,
+    ) -> Rows<ResolvedClaudeTurns> {
+        let mut lookup = self
+            .conn
+            .prepare(
+                "SELECT permitted, message FROM group_claude_seen
                  WHERE position = ?1 AND id_hash = ?2",
-                )
-                .map_err(fail)?;
-            let resolved = batch
-                .resolve(|id| {
-                    if !resumed {
-                        return Ok(ClaudeSeen::default());
-                    }
-                    lookup
-                        .query_row((member.position, id), |row| {
-                            Ok(ClaudeSeen {
-                                permitted: row.get(0)?,
-                                message: row.get(1)?,
-                            })
+            )
+            .map_err(|e| self.fail(e))?;
+        batch
+            .resolve(|id| {
+                if !resumed {
+                    return Ok(ClaudeSeen::default());
+                }
+                lookup
+                    .query_row((position, id), |row| {
+                        Ok(ClaudeSeen {
+                            permitted: row.get(0)?,
+                            message: row.get(1)?,
                         })
-                        .optional()
-                        .map(|seen| seen.unwrap_or_default())
-                })
-                .map_err(fail)?;
+                    })
+                    .optional()
+                    .map(|seen| seen.unwrap_or_default())
+            })
+            .map_err(|e| self.fail(e))
+    }
 
-            let after = if resumed {
-                Some(resolved.turns.as_slice())
-            } else {
-                after_cursor(member, &resolved.turns)
-            };
-            let skipped = (!member.holds).then(|| resolved.turns.last()).flatten();
-            if after.is_none() && skipped.is_none() {
-                // A replacement transcript without the old cursor does not
-                // establish continuity. Wait for a replay that contains it.
-                return Ok(Some(0));
-            }
-            let turns = if member.holds {
-                turns_since(member, after.unwrap_or_default())
-            } else {
-                Vec::new()
-            };
-            let last = skipped.or_else(|| turns.last().copied());
-            let inserted = write_captured_turns(&conn, &path, &session, turns, redactor)?;
-            if let Some(last) = last {
-                conn.execute(
-                    "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
-                    (member.position, &last.message),
-                )
-                .map_err(fail)?;
-            }
-            if !resumed {
-                clear_progress(&conn, member.position).map_err(fail)?;
-            }
-            conn.execute(
+    /// Keep membership row `position`'s byte progress in its transcript.
+    pub fn save_progress(&self, position: i64, at: &ClaudeCapturePosition) -> Rows<()> {
+        self.conn
+            .execute(
                 "INSERT INTO group_claude_progress (position, file_id, offset, modified, boundary)
                  VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(position) DO UPDATE SET
                  file_id = excluded.file_id, offset = excluded.offset,
                  modified = excluded.modified, boundary = excluded.boundary",
-                (
-                    member.position,
-                    &position.file_id,
-                    position.offset,
-                    &position.modified,
-                    &position.boundary,
-                ),
+                (position, &at.file_id, at.offset, &at.modified, &at.boundary),
             )
-            .map_err(fail)?;
-            let mut save = conn
-                .prepare(
-                    "INSERT INTO group_claude_seen (position, id_hash, permitted, message)
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Keep the hashed ids membership row `position` has now seen.
+    pub(crate) fn save_seen(&self, position: i64, seen: Vec<(String, ClaudeSeen)>) -> Rows<()> {
+        let mut save = self
+            .conn
+            .prepare(
+                "INSERT INTO group_claude_seen (position, id_hash, permitted, message)
                  VALUES (?1, ?2, ?3, ?4) ON CONFLICT(position, id_hash) DO UPDATE SET
                  permitted = excluded.permitted, message = excluded.message",
-                )
-                .map_err(fail)?;
-            for (id, seen) in resolved.seen {
-                save.execute((member.position, id, seen.permitted, seen.message))
-                    .map_err(fail)?;
-            }
-            Ok(Some(inserted))
-        })
+            )
+            .map_err(|e| self.fail(e))?;
+        for (id, seen) in seen {
+            save.execute((position, id, seen.permitted, seen.message))
+                .map_err(|e| self.fail(e))?;
+        }
+        Ok(())
     }
 }
 

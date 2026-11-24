@@ -14,7 +14,7 @@
 //! transaction across calls.
 
 use super::audit::AuditEvent;
-pub use super::db::{GroupRows, MemberWindow, RowError};
+pub use super::db::{CaptureState, CloseHeader, GroupRows, MemberWindow, RowError};
 use super::{
     EntryList, LoadedSessions, MemoryShown, MemoryView, MemoryWritten, PassMemory, Redactor,
     SessionErasure, SessionList, SessionView, Skipped, Store,
@@ -53,6 +53,21 @@ impl Store {
         f: impl FnOnce(&Tx<'_>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
         self.step(|| f(&Tx { store: self }))
+    }
+
+    /// [`Store::write`] that keeps its committed result when the cleanup after
+    /// the commit fails, and returns that cleanup's outcome beside it: the
+    /// store's write-with-cleanup step. Run it outside a pending write, so
+    /// the commit is its own.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and [`Store::transaction`]'s.
+    pub fn write_with_cleanup<T>(
+        &self,
+        f: impl FnOnce(&Tx<'_>) -> Result<T>,
+    ) -> Result<(T, Result<()>)> {
+        self.write_step_with_cleanup(|| f(&Tx { store: self }))
     }
 }
 
@@ -552,6 +567,21 @@ impl Groups<'_> {
         f: impl Fn(&GroupRows<'_>) -> std::result::Result<T, RowError>,
     ) -> Result<T> {
         self.store.read_group_rows(f)
+    }
+
+    /// [`Groups::read_rows`] inside one read transaction, so its reads see
+    /// one state: the read a group close takes its evidence from. `action`
+    /// names the read in a database error.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn read_rows_in_tx<T: Default>(
+        &self,
+        action: &'static str,
+        f: impl Fn(&GroupRows<'_>) -> std::result::Result<T, RowError>,
+    ) -> Result<T> {
+        self.store.read_group_rows_in_tx(action, f)
     }
 
     /// Whether a deferred ancestry check is pending for `session`.

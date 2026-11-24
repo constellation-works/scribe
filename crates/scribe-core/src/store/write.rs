@@ -257,7 +257,7 @@ impl Store {
 
     /// Run a write and retain its committed result even if cleanup fails.
     /// The caller must run outside a pending write to observe the commit.
-    pub(super) fn write_with_cleanup<T>(
+    pub(super) fn write_step_with_cleanup<T>(
         &self,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<(T, Result<()>)> {
@@ -267,8 +267,9 @@ impl Store {
     }
 
     /// Whether a write transaction is pending on this thread for this
-    /// store (begun or not).
-    pub(super) fn in_write(&self) -> bool {
+    /// store (begun or not): the transaction state [`Store::write`] keeps.
+    #[must_use]
+    pub fn in_write(&self) -> bool {
         PENDING.with(|p| p.borrow().as_ref().is_some_and(|p| p.root == self.root))
     }
 
