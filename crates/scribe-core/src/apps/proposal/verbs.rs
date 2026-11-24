@@ -364,7 +364,7 @@ impl ProposalVerbs for Store {
                 // The stored messages first (2_design.md §15.7): they hold the
                 // words the forget removes, and deleting them again is a no-op;
                 // the archive tables are erased in the same write.
-                tx.entries().forget_residue(entry, &before_proposals, now)?;
+                tx.entries().erase_residue(entry, &before_proposals, now)?;
             }
             if proposals != before_proposals {
                 tx.proposals().put_all(&proposals)?;

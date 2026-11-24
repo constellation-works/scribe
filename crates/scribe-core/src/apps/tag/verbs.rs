@@ -5,7 +5,7 @@
 use crate::checks::tag::check_description;
 use crate::checks::{check_agent_author, refusal};
 use crate::record::patch;
-use crate::repo::Tags;
+use crate::repository::Tags;
 use crate::{
     Author, AuthorKind, AuthorName, Redactor, Result, Store, StoreTag, TagName, TagPatch, TagTable,
     WriteRefusal,

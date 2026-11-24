@@ -1,0 +1,1335 @@
+//! Sessions in `scribe.db` (docs/design/scribe/2_design.md §15.7, phase 6):
+//! where they are read from, `scribe store migrate`, `scribe export`, and
+//! a session's forget.
+//!
+//! - **Reads.** Every session read comes from the database. A file store
+//!   whose sessions never moved in is refused: this build has no file
+//!   decoder (phase 8).
+//! - **Migrate.** `scribe store migrate` imports the file store's archives
+//!   into the archive tables now (`db/import.rs`), as the first write does on
+//!   its own; it is refused while a session is on, while a rebuild
+//!   checkpoint file waits, or when there is nothing to import.
+//! - **Locks.** The per-session locks held across model calls (Codex
+//!   ingestion, rebuild) are lock files in `locks/`; they hold no data.
+
+use super::Sessions;
+use super::ids::resolve;
+use crate::checks::refusal;
+use crate::db::sessions::{self as rows, SessionTx};
+use crate::db::write::Move;
+use crate::db::{self, codec};
+use crate::error::{Error, Result};
+use crate::message::NewMessage;
+use crate::record::Listing;
+use crate::session::{self as session_mod, Child};
+use crate::{
+    CONTROL_FILE, ControlState, DB_FILE, Imported, MemoryWritten, PassMemory, RECORD_EXT, Redactor,
+    Related, SESSIONS_DIR, SessionFilter, SessionId, SessionRecord, Skipped, Store, fsio,
+};
+use scribe_domain::WriteRefusal;
+use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
+use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
+
+impl Sessions<'_> {
+    /// Every session scribe knows: records, unreadable rows, numbers,
+    /// switches and tombstones.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn loaded(&self) -> Result<LoadedSessions> {
+        self.store.load_sessions()
+    }
+
+    /// Where the sessions are kept, for a not-found error to name.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn place(&self) -> Result<std::path::PathBuf> {
+        self.store.sessions_place()
+    }
+
+    /// The database file, for an error to name.
+    #[must_use]
+    pub fn db_path(&self) -> std::path::PathBuf {
+        self.store.root.join(crate::DB_FILE)
+    }
+
+    /// The rebuild checkpoint of `original`'s session, if any.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn checkpoint(&self, original: &SessionRecord) -> Result<Option<SessionRecord>> {
+        self.store.checkpoint_of(original)
+    }
+
+    /// Keep `record` as its session's rebuild checkpoint; `false` when the
+    /// session has no row.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn keep_checkpoint(&self, record: &SessionRecord) -> Result<bool> {
+        self.store.keep_checkpoint(record)
+    }
+
+    /// Write a rebuilt `record` and drop its checkpoint, together.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put_from_checkpoint(&self, record: &SessionRecord) -> Result<()> {
+        self.store.put_from_checkpoint(record)
+    }
+
+    /// Change the switches and write a record in one session transaction:
+    /// `f` changes the state and returns the record to write, if any. The
+    /// switches are written only when they changed.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn change<T>(
+        &self,
+        f: impl FnOnce(&mut ControlState) -> Result<(T, Option<SessionRecord>)>,
+    ) -> Result<T> {
+        self.store.change_sessions(f)
+    }
+
+    /// Commit one pass window in one transaction: `record`, its `messages`,
+    /// the memory planned from `memory` (drafts already checked, with the
+    /// `sensitive` refusals the check made, reported first), and the
+    /// switches as `change` leaves them.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn commit_window(
+        &self,
+        record: Option<&SessionRecord>,
+        messages: &[NewMessage],
+        memory: Option<&PassMemory>,
+        sensitive: &[scribe_domain::memory::Refusal],
+        redactor: &Redactor,
+        change: impl FnOnce(&mut ControlState),
+    ) -> Result<MemoryWritten> {
+        self.store
+            .commit_window(record, messages, memory, sensitive, redactor, change)
+    }
+
+    /// Erase the session's rows, archives, documents and memory; `number`
+    /// is its `s-<n>`, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`] when it has no row, and the store's write
+    /// errors.
+    pub fn erase(
+        &self,
+        id: &SessionId,
+        number: Option<NonZeroU64>,
+        now: OffsetDateTime,
+    ) -> Result<SessionErasure> {
+        self.store.erase_session(id, number, now)
+    }
+
+    /// The session an id, a unique prefix or an `s-<n>` names, also counting
+    /// sessions known only through a handoff.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`], `id_ambiguous`, and the store's read
+    /// errors.
+    pub fn resolve_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_handoff(input)
+    }
+
+    /// Set the session's `field` to `value`; returns how many rows changed,
+    /// 0 when the session has no record or was forgotten.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put_field(
+        &self,
+        id: &SessionId,
+        field: crate::session::SessionField,
+        value: &str,
+    ) -> Result<usize> {
+        self.store.set_session_field(id, field, value)
+    }
+
+    /// The ids of the forgotten sessions.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn forgotten_ids(&self) -> Result<Vec<SessionId>> {
+        Ok(crate::db::sessions::read_forgotten(&self.store.root)?
+            .map(|forgotten| forgotten.into_keys().collect())
+            .unwrap_or_default())
+    }
+
+    /// Whether a group seats `id`.
+    ///
+    /// # Errors
+    ///
+    /// The store's errors.
+    pub fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
+        self.store.has_group_membership(id)
+    }
+
+    /// One session's record and its log ([`Store::session`]).
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn get(&self, id: &SessionId) -> Result<SessionView> {
+        self.store.session(id)
+    }
+
+    /// The sessions `filter` selects ([`Store::list_sessions`]).
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn list(&self, filter: &SessionFilter) -> Result<SessionList> {
+        self.store.list_sessions(filter)
+    }
+
+    /// Every session's `s-<n>`.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
+        self.store.session_numbers()
+    }
+
+    /// Every switch and Codex cursor.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn control(&self) -> Result<ControlState> {
+        self.store.control()
+    }
+
+    /// Write `record` whole in the transaction under way.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put(&self, record: &SessionRecord) -> Result<()> {
+        self.store
+            .sessions_tx(|tx| tx.put_record(record).map(|_| ()))
+    }
+
+    /// Write the switches and cursors that changed from `before` to
+    /// `after`.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put_control(&self, before: &ControlState, after: &ControlState) -> Result<()> {
+        self.store.sessions_tx(|tx| tx.put_control(before, after))
+    }
+
+    /// Keep a rebuild checkpoint of `id`; `false` when it has no row.
+    ///
+    /// # Errors
+    ///
+    /// A forgotten session's refusal, and the store's write errors.
+    pub fn put_checkpoint(&self, id: &SessionId, text: &str, now: OffsetDateTime) -> Result<bool> {
+        self.store
+            .sessions_tx(|tx| tx.put_checkpoint(id, text, now))
+    }
+
+    /// Drop the rebuild checkpoint of `id`.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn drop_checkpoint(&self, id: &SessionId) -> Result<()> {
+        self.store.sessions_tx(|tx| tx.drop_checkpoint(id))
+    }
+
+    /// The full id of the one session `input` names, or whose id starts with
+    /// it. Reads only.
+    pub fn resolve(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session(input)
+    }
+
+    /// [`Sessions::resolve_or_handoff`], returning an id matching no known
+    /// session as typed. Reads only.
+    pub fn resolve_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_typed(input)
+    }
+
+    /// [`Sessions::resolve_or_typed`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_or_typed_with(
+        &self,
+        input: &SessionId,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        self.store.resolve_session_or_typed_with(input, extra_ids)
+    }
+
+    /// Every session id the store knows: the universe display prefixes must
+    /// be unique in. Reads only.
+    pub fn ids(&self) -> Result<Vec<String>> {
+        self.store.session_ids()
+    }
+
+    /// `related` with a `session:` id prefix replaced by the full id
+    ///. Reads only.
+    pub fn resolve_related(&self, related: &Related) -> Result<Related> {
+        self.store.resolve_related(related)
+    }
+
+    /// [`Sessions::resolve_related`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_related_with(&self, related: &Related, extra_ids: &[String]) -> Result<Related> {
+        self.store.resolve_related_with(related, extra_ids)
+    }
+
+    /// [`Sessions::resolve_related`] over a list. Reads only.
+    pub fn resolve_relateds(&self, related: &[Related]) -> Result<Vec<Related>> {
+        self.store.resolve_relateds(related)
+    }
+
+    /// [`Sessions::resolve_related_with`] over a list. Reads only.
+    pub fn resolve_relateds_with(
+        &self,
+        related: &[Related],
+        extra_ids: &[String],
+    ) -> Result<Vec<Related>> {
+        self.store.resolve_relateds_with(related, extra_ids)
+    }
+
+    /// Session records matching `filter` among the `members` sessions, when
+    /// given. Reads only.
+    pub fn list_scoped(
+        &self,
+        filter: &SessionFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<SessionList> {
+        self.store.list_sessions_scoped(filter, members)
+    }
+
+    /// Whether `#scribe forget` erased `id`. Reads only.
+    pub fn is_forgotten(&self, id: &SessionId) -> Result<bool> {
+        crate::db::sessions::read_is_forgotten(&self.store.root, id)
+    }
+
+    /// Change the on/off state in the write under way: `change` gets the
+    /// current state, and it is written only when it changed.
+    pub fn change_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
+        self.store.change_control(change)
+    }
+
+    /// The file a session record lives in, by the month it started.
+    #[must_use]
+    pub fn path(&self, record: &SessionRecord) -> std::path::PathBuf {
+        self.store.session_path(record)
+    }
+}
+
+/// What [`Store::list_sessions`] found.
+#[derive(Debug)]
+pub struct SessionList {
+    /// The matching session records, oldest first.
+    pub listing: Listing<SessionRecord>,
+    /// Every session's children, derived from all records' links (not only
+    /// the listed ones), by the id they link to.
+    pub children: BTreeMap<SessionId, Vec<Child>>,
+    /// Every record's title, by id, for naming a linked session.
+    pub titles: BTreeMap<SessionId, String>,
+    /// Every session's on/off switch, to show beside its record.
+    pub control: ControlState,
+    /// Inactive sessions the filter left out that match its other
+    /// criteria; `0` when it includes inactive ones.
+    pub inactive_hidden: usize,
+    /// Record files or rows left out because they did not parse.
+    pub skipped: Vec<Skipped>,
+    /// The session ids of the skipped records, where that much reads.
+    pub skipped_sessions: Vec<SessionId>,
+    /// Every session's `s-<n>`.
+    pub numbers: BTreeMap<SessionId, NonZeroU64>,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, time::OffsetDateTime>,
+}
+
+/// One session record with its switch.
+#[derive(Debug)]
+pub struct SessionView {
+    /// The record.
+    pub record: SessionRecord,
+    /// Its switch in `control.json`, if it has one.
+    pub control: Option<crate::session::SessionControl>,
+    /// The sessions that link to it, derived from their records.
+    pub children: Vec<Child>,
+    /// The titles of the sessions its links point at that have a record.
+    pub linked_titles: BTreeMap<SessionId, String>,
+    /// Its `s-<n>`.
+    pub number: Option<NonZeroU64>,
+    /// When `#scribe forget` erased it, if it did.
+    pub forgotten: Option<time::OffsetDateTime>,
+}
+
+impl Store {
+    /// Session records matching `filter`, oldest first, with the on/off
+    /// state beside them.
+    pub(crate) fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
+        self.list_sessions_scoped(filter, None)
+    }
+
+    /// List session records, optionally restricting the records and their
+    /// derived lookup data to the group's member sessions.
+    pub(crate) fn list_sessions_scoped(
+        &self,
+        filter: &SessionFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<SessionList> {
+        let mut loaded = self.load_sessions()?;
+        if let Some(members) = members {
+            loaded.records.retain(|r| members.contains(&r.id));
+            loaded
+                .skipped
+                .retain(|(id, _)| id.as_ref().is_some_and(|id| members.contains(id)));
+        }
+        let control = loaded.control;
+        let records = loaded.records;
+        let skipped_sessions = loaded
+            .skipped
+            .iter()
+            .filter_map(|(id, _)| id.clone())
+            .collect();
+        let skipped: Vec<Skipped> = loaded.skipped.into_iter().map(|(_, s)| s).collect();
+        let numbers = loaded.numbers;
+        let forgotten = loaded.forgotten;
+        let inactive_hidden = if filter.include_inactive {
+            0
+        } else {
+            let any = SessionFilter {
+                include_inactive: true,
+                ..filter.clone()
+            };
+            records
+                .iter()
+                .filter(|r| !r.active && any.matches(r))
+                .count()
+        };
+        Ok(SessionList {
+            children: session_mod::children(&records),
+            titles: records
+                .iter()
+                .map(|r| (r.id.clone(), r.title.clone()))
+                .collect(),
+            listing: filter.select(records),
+            inactive_hidden,
+            control,
+            skipped,
+            skipped_sessions,
+            numbers,
+            forgotten,
+        })
+    }
+
+    /// The session record with this id, its switch, the sessions that link
+    /// to it and the titles of those it links to. Other records that do not
+    /// parse are left out of the children.
+    pub(crate) fn session(&self, id: &SessionId) -> Result<SessionView> {
+        let mut loaded = self.load_sessions()?;
+        let record = match loaded.forgotten.get(id).copied() {
+            Some(at) => forgotten_record(id, at),
+            None => match loaded.take(id) {
+                Some(record) => record?,
+                None => {
+                    return Err(Error::SessionNotFound {
+                        id: id.clone(),
+                        path: self.sessions_place()?,
+                    });
+                }
+            },
+        };
+        let control = loaded.control;
+        let number = loaded.numbers.get(id).copied();
+        let forgotten = loaded.forgotten.get(id).copied();
+        let mut others = loaded.records;
+        let linked_titles = others
+            .iter()
+            .filter(|r| record.links.iter().any(|l| l.session == r.id))
+            .map(|r| (r.id.clone(), r.title.clone()))
+            .collect();
+        others.push(record.clone());
+        let children = session_mod::children(&others)
+            .remove(id)
+            .unwrap_or_default();
+        Ok(SessionView {
+            record,
+            control: control.get(id).cloned(),
+            children,
+            linked_titles,
+            number,
+            forgotten,
+        })
+    }
+
+    /// Where the sessions are, for a not-found error: `scribe.db` once they
+    /// moved there, else `sessions/`.
+    pub(crate) fn sessions_place(&self) -> Result<PathBuf> {
+        Ok(
+            if self.root_exists()? && db::sessions::read_moved(&self.root)? {
+                self.root.join(DB_FILE)
+            } else {
+                self.root.join(SESSIONS_DIR)
+            },
+        )
+    }
+
+    /// The on/off state and Codex cursors, from `scribe.db`; empty before
+    /// the first write. A file store is refused.
+    pub(crate) fn control(&self) -> Result<ControlState> {
+        if !self.root_exists()? {
+            return Ok(ControlState::default());
+        }
+        match db::sessions::read_control(&self.root)? {
+            Some(state) => self.check_stamp().map(|()| state),
+            None => {
+                self.refuse_file_store()?;
+                Ok(ControlState::default())
+            }
+        }
+    }
+
+    /// Change the on/off state under the store lock: `change` gets the
+    /// current state and its result is returned. `control.json` is
+    /// rewritten only when the state changed. The data directory is created
+    /// owner-only when absent, so a caller that may change nothing (the
+    /// `Stop` hook) reads [`Store::control`] first and calls this only when
+    /// a change is likely.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn update_control<T>(
+        &self,
+        change: impl FnOnce(&mut ControlState) -> T,
+    ) -> Result<T> {
+        self.prepare_dir(&self.root)?;
+        self.write_step(|| self.change_control(change))
+    }
+
+    /// [`Store::update_control`] for a caller that holds the lock.
+    /// Nothing is written when nothing changed: the lock keeps the state
+    /// read here current.
+    pub(crate) fn change_control<T>(
+        &self,
+        change: impl FnOnce(&mut ControlState) -> T,
+    ) -> Result<T> {
+        let mut state = self.control()?;
+        let before = state.clone();
+        let out = change(&mut state);
+        if state != before {
+            self.sessions_tx(|tx| tx.put_control(&before, &state))?;
+        }
+        Ok(out)
+    }
+
+    /// The file a session record lives in,
+    /// `<root>/sessions/<yyyy>/<mm>/<id>.md`, by the month it started.
+    #[must_use]
+    pub(crate) fn session_path(&self, record: &SessionRecord) -> PathBuf {
+        self.root
+            .join(SESSIONS_DIR)
+            .join(format!("{:04}", record.started.year()))
+            .join(format!("{:02}", u8::from(record.started.month())))
+            .join(format!("{}{RECORD_EXT}", record.id))
+    }
+
+    /// Commit one pass window in one `scribe.db` transaction: the record (its
+    /// cursor advanced), the window's `messages`, the memory rows and
+    /// journal planned from `memory`, and the switches as `change` leaves
+    /// them; the memory files follow the journal (2_design.md §15.6, §15.7).
+    pub(crate) fn commit_window(
+        &self,
+        record: Option<&SessionRecord>,
+        messages: &[crate::message::NewMessage],
+        memory: Option<&PassMemory>,
+        sensitive: &[scribe_domain::memory::Refusal],
+        redactor: &Redactor,
+        change: impl FnOnce(&mut ControlState),
+    ) -> Result<MemoryWritten> {
+        let conn = db::open_writer(&self.root, self.lock_wait)?;
+        // Memory is planned first (any open journal replayed, `m-<n>` items
+        // migrated); its rows and journal commit with the record below.
+        let (memory_commit, memory_written) = match (memory, record) {
+            (Some(memory), Some(record)) => {
+                let mut writer = db::Writer::new(&conn, &self.root);
+                self.stage_window_memory(&mut writer, memory, sensitive, record)?
+            }
+            _ => (db::MemoryCommit::default(), MemoryWritten::default()),
+        };
+        let tx = db::sessions::SessionTx::begin(&conn, &self.root)?;
+        let mut state = tx.control()?;
+        let before = state.clone();
+        if let Some(record) = record {
+            tx.put_record(record)?;
+            tx.upsert_messages(messages, redactor)?;
+            // A pass forgets nothing, so it erases no message. The files
+            // follow the journal after the commit.
+            if !memory_commit.is_empty()
+                && tx.stage_memory(&memory_commit, record.updated)?.0.is_some()
+            {
+                self.defer_journals();
+            }
+        }
+        change(&mut state);
+        if state != before {
+            tx.put_control(&before, &state)?;
+        }
+        tx.commit()?;
+        Ok(memory_written)
+    }
+
+    /// The session `input` names: `s-<n>`, a session with that exact
+    /// provider id (a record or a switch), else the one session whose id
+    /// starts with it (at least four characters). Reads only.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`] when nothing matches; a usage error for a
+    /// short input; an `id_ambiguous`
+    /// [`Error::AgentWrite`] naming the candidates when several do; a store
+    /// error otherwise.
+    pub(crate) fn resolve_session(&self, input: &SessionId) -> Result<SessionId> {
+        self.resolve_session_with(input, false, &[])
+    }
+
+    /// [`Store::resolve_session`], also accepting sessions known only through
+    /// an active `handoff` entry (a session that was never switched on and
+    /// has no session record; 2_design.md §16). Reads only.
+    pub(crate) fn resolve_session_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+        self.resolve_session_with(input, true, &[])
+    }
+
+    /// Every session id the store knows and `resolve_session_or_handoff`
+    /// accepts: records (readable or not), switches, Codex cursors and
+    /// sessions named only by an active handoff, and group members. The
+    /// universe display prefixes must be unique in. Reads only.
+    pub(crate) fn session_ids(&self) -> Result<Vec<String>> {
+        let loaded = self.load_sessions()?;
+        let handoffs: Vec<SessionId> = self
+            .load_entries()?
+            .0
+            .iter()
+            .filter(|e| {
+                e.status == crate::EntryStatus::Active
+                    && e.tag.as_str() == crate::handoff::HANDOFF_TAG
+            })
+            .flat_map(crate::handoff::session_ids)
+            .collect();
+        let mut ids = Self::session_id_universe(&loaded, &handoffs);
+        ids.extend(self.group_session_ids()?);
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    /// `related` with a `session:` target written as a unique id prefix
+    /// replaced by the full id, so what is stored or compared is always the
+    /// full id. A target that matches no known session stays as typed: the
+    /// session may be one the store has never cataloged, and the command
+    /// that reads the reference reports it. Any other kind is returned as
+    /// given. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// A usage error for a target shorter than four characters that is not a
+    /// known id; `id_ambiguous` naming the candidates when several ids
+    /// match.
+    pub(crate) fn resolve_related(&self, related: &crate::Related) -> Result<crate::Related> {
+        self.resolve_related_with(related, &[])
+    }
+
+    /// [`Store::resolve_related`], also counting `extra_ids` (such as
+    /// uncataloged transcripts on disk) in the session id universe. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_related`].
+    pub(crate) fn resolve_related_with(
+        &self,
+        related: &crate::Related,
+        extra_ids: &[String],
+    ) -> Result<crate::Related> {
+        if related.kind() != crate::RelatedKind::Session {
+            return Ok(related.clone());
+        }
+        let Ok(input) = related.target().parse::<SessionId>() else {
+            return Ok(related.clone());
+        };
+        match self.resolve_session_with(&input, true, extra_ids) {
+            Ok(id) if id == input => Ok(related.clone()),
+            Ok(id) => format!("session:{id}")
+                .parse::<crate::Related>()
+                .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
+            Err(Error::SessionNotFound { .. }) => Ok(related.clone()),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// [`Store::resolve_session_or_handoff`], except that an id matching no
+    /// known session is returned as typed: for a caller naming the session
+    /// it runs in, which the store may never have cataloged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_session_or_handoff`], except not-found.
+    pub(crate) fn resolve_session_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+        self.resolve_session_or_typed_with(input, &[])
+    }
+
+    /// [`Store::resolve_session_or_typed`], also counting `extra_ids` (such as
+    /// uncataloged transcripts on disk) in the session id universe. Reads only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::resolve_session_or_typed`].
+    pub(crate) fn resolve_session_or_typed_with(
+        &self,
+        input: &SessionId,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        match self.resolve_session_with(input, true, extra_ids) {
+            Err(Error::SessionNotFound { .. }) => Ok(input.clone()),
+            other => other,
+        }
+    }
+
+    /// [`Store::resolve_related`] over a list.
+    ///
+    /// # Errors
+    ///
+    /// The first error of [`Store::resolve_related`].
+    pub(crate) fn resolve_relateds(
+        &self,
+        related: &[crate::Related],
+    ) -> Result<Vec<crate::Related>> {
+        self.resolve_relateds_with(related, &[])
+    }
+
+    /// [`Store::resolve_related_with`] over a list.
+    ///
+    /// # Errors
+    ///
+    /// The first error of [`Store::resolve_related_with`].
+    pub(crate) fn resolve_relateds_with(
+        &self,
+        related: &[crate::Related],
+        extra_ids: &[String],
+    ) -> Result<Vec<crate::Related>> {
+        related
+            .iter()
+            .map(|r| self.resolve_related_with(r, extra_ids))
+            .collect()
+    }
+
+    fn group_session_ids(&self) -> Result<Vec<String>> {
+        Ok(self
+            .groups()?
+            .into_iter()
+            .flat_map(|g| {
+                let mut ids: Vec<String> =
+                    g.members().into_iter().map(|id| id.to_string()).collect();
+                ids.push(g.opener);
+                ids
+            })
+            .collect())
+    }
+
+    fn session_id_universe(
+        loaded: &crate::repository::sessions::LoadedSessions,
+        handoffs: &[SessionId],
+    ) -> Vec<String> {
+        let mut ids: Vec<String> = loaded
+            .records
+            .iter()
+            .map(|r| r.id.as_str().to_owned())
+            .chain(
+                loaded
+                    .skipped
+                    .iter()
+                    .filter_map(|(id, _)| id.as_ref().map(|id| id.as_str().to_owned())),
+            )
+            .chain(loaded.numbers.keys().map(|id| id.as_str().to_owned()))
+            .chain(
+                loaded
+                    .control
+                    .sessions
+                    .keys()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .chain(
+                loaded
+                    .control
+                    .codex_cursors
+                    .keys()
+                    .map(|id| id.as_str().to_owned()),
+            )
+            .chain(handoffs.iter().map(|id| id.as_str().to_owned()))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    fn resolve_session_with(
+        &self,
+        input: &SessionId,
+        include_handoffs: bool,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        let loaded = self.load_sessions()?;
+        let handoff_sessions: Vec<SessionId> = if include_handoffs {
+            self.load_entries()?
+                .0
+                .iter()
+                .filter(|e| {
+                    e.status == crate::EntryStatus::Active
+                        && e.tag.as_str() == crate::handoff::HANDOFF_TAG
+                })
+                .flat_map(crate::handoff::session_ids)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let not_found = || -> Result<SessionId> {
+            Err(Error::SessionNotFound {
+                id: input.clone(),
+                path: self.root.join(crate::SESSIONS_DIR),
+            })
+        };
+        let mut ids = Self::session_id_universe(&loaded, &handoff_sessions);
+        ids.extend(self.group_session_ids()?);
+        ids.extend(extra_ids.iter().cloned());
+        ids.sort();
+        ids.dedup();
+        // An exact provider id first; then `s-<n>`, the row id (2_design.md
+        // §15.7), which a provider's UUID never looks like.
+        if !ids.iter().any(|id| id == input.as_str())
+            && let Some(n) = input
+                .as_str()
+                .strip_prefix("s-")
+                .and_then(|n| n.parse::<u64>().ok())
+        {
+            return match loaded.numbers.iter().find(|(_, v)| v.get() == n) {
+                Some((id, _)) => Ok(id.clone()),
+                None => not_found(),
+            };
+        }
+        match resolve(input.as_str(), &ids)? {
+            Some(i) => ids[i]
+                .parse::<SessionId>()
+                .map_err(|e| refusal(WriteRefusal::InvalidId, e.to_string())),
+            None => not_found(),
+        }
+    }
+}
+
+/// The directory of advisory lock files under the root.
+pub const LOCKS_DIR: &str = "locks";
+
+/// Every session scribe knows, from wherever they live
+/// ([`crate::repository::Sessions::loaded`]).
+#[derive(Debug, Default)]
+pub struct LoadedSessions {
+    /// The records that read, in no particular order.
+    pub records: Vec<SessionRecord>,
+    /// The records that did not, with their id when known.
+    pub skipped: Vec<(Option<SessionId>, Skipped)>,
+    /// Every session's `s-<n>`.
+    pub numbers: BTreeMap<SessionId, NonZeroU64>,
+    /// Every switch and Codex cursor.
+    pub control: ControlState,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
+}
+
+impl LoadedSessions {
+    /// The record of `id`, or the error it failed to read with.
+    pub fn take(&mut self, id: &SessionId) -> Option<Result<SessionRecord>> {
+        if let Some(i) = self.records.iter().position(|r| &r.id == id) {
+            return Some(Ok(self.records.swap_remove(i)));
+        }
+        let i = self
+            .skipped
+            .iter()
+            .position(|(sid, _)| sid.as_ref() == Some(id))?;
+        Some(Err(self.skipped.swap_remove(i).1.error))
+    }
+}
+
+pub use crate::session::SessionForget;
+
+/// What [`crate::repository::Sessions::erase`] erased of a session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SessionErasure {
+    /// Stored messages deleted.
+    pub messages: usize,
+    /// Segments deleted.
+    pub segments: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
+    /// Whether it was forgotten before.
+    pub already: bool,
+    /// Whether anything changed.
+    pub changed: bool,
+    /// Archived records erased.
+    pub files: usize,
+}
+
+/// The format of `scribe export`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportFormat {
+    /// One file per session, the shape of today's record files, and
+    /// `control.json`.
+    Markdown,
+    /// One line per row, one file per table.
+    Jsonl,
+}
+
+/// What `scribe export` wrote.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExportCounts {
+    /// The files written, relative to the target directory, in order.
+    pub files: Vec<String>,
+    /// Sessions written.
+    pub sessions: usize,
+    /// Entries written.
+    pub entries: usize,
+    /// Claims written.
+    pub claims: usize,
+    /// Audit lines written.
+    pub audit_lines: usize,
+    /// Records that did not read, so were not written.
+    pub skipped: Vec<PathBuf>,
+}
+
+impl Store {
+    /// Every session, read-only, from `scribe.db`; none before the first
+    /// write. A file store is refused.
+    pub(crate) fn load_sessions(&self) -> Result<LoadedSessions> {
+        if !self.root_exists()? {
+            return Ok(LoadedSessions::default());
+        }
+        let Some(found) = rows::read_sessions(&self.root)? else {
+            self.refuse_file_store()?;
+            return Ok(LoadedSessions::default());
+        };
+        self.check_stamp()?;
+        let mut loaded = LoadedSessions {
+            numbers: found.numbers,
+            control: found.control,
+            forgotten: found.forgotten,
+            ..LoadedSessions::default()
+        };
+        for row in found.records {
+            match row {
+                Ok((_, record)) if !loaded.forgotten.contains_key(&record.id) => {
+                    loaded.records.push(record);
+                }
+                Ok(_) => {}
+                Err(bad) => loaded.skipped.push((
+                    bad.id,
+                    Skipped {
+                        path: bad.path,
+                        error: bad.error,
+                    },
+                )),
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Refuses a store whose `control.json` stamp is newer than this
+    /// binary: the stamp is all that file holds. Read as plain JSON.
+    pub(crate) fn check_stamp(&self) -> Result<()> {
+        let path = self.root.join(CONTROL_FILE);
+        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+            return Ok(());
+        }
+        codec::check_stamp(&path, &fsio::read(&path)?)
+    }
+
+    /// `scribe store migrate`: import the file store's `pre-sqlite-*` and
+    /// `pre-issue-*` archives into `scribe.db` in one transaction, then
+    /// remove them.
+    ///
+    /// # Errors
+    ///
+    /// `migrate_blocked` while any session is switched on, while any rebuild
+    /// checkpoint file exists, or when there is nothing to import;
+    /// `store_corrupt` for a file store whose records never moved; store
+    /// failures.
+    pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Imported> {
+        self.transaction_as(Move::ByHand, now, || {
+            self.with_conn(|_, _| Ok(()))?;
+            Ok::<_, Error>(self.moved_now().unwrap_or_default())
+        })
+    }
+
+    /// Every rebuild checkpoint file of a file store,
+    /// `sessions/<yyyy>/<mm>/.<id>.rebuild.md`, by session.
+    pub(crate) fn checkpoint_files(&self) -> Result<Vec<(SessionId, PathBuf)>> {
+        let mut out = Vec::new();
+        let dir = self.root.join(SESSIONS_DIR);
+        if !fsio::inspect_subdir(&dir)? {
+            return Ok(out);
+        }
+        for year in fsio::list_dir(&dir)? {
+            let year_dir = dir.join(&year);
+            if !fsio::inspect_subdir(&year_dir)? {
+                continue;
+            }
+            for month in fsio::list_dir(&year_dir)? {
+                let month_dir = year_dir.join(&month);
+                if !fsio::inspect_subdir(&month_dir)? {
+                    continue;
+                }
+                for name in fsio::list_dir(&month_dir)? {
+                    let Some(id) = name
+                        .strip_prefix('.')
+                        .and_then(|n| n.strip_suffix(".rebuild.md"))
+                    else {
+                        continue;
+                    };
+                    let path = month_dir.join(&name);
+                    if let (Ok(id), true) = (id.parse(), fsio::inspect_file(&path)?) {
+                        out.push((id, path));
+                    }
+                }
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    /// A lock file under `locks/`, the directory created owner-only when
+    /// missing.
+    pub(crate) fn lock_path(&self, name: &str) -> Result<PathBuf> {
+        self.prepare_dir(&self.root)?;
+        let dir = self.root.join(LOCKS_DIR);
+        self.prepare_subdir(&dir)?;
+        Ok(dir.join(name))
+    }
+
+    /// The rebuild checkpoint of `id`, read-only.
+    pub(crate) fn checkpoint_of(&self, original: &SessionRecord) -> Result<Option<SessionRecord>> {
+        let Some(text) = rows::read_checkpoint(&self.root, &original.id)? else {
+            return Ok(None);
+        };
+        let path = rows::db_path(&self.root);
+        codec::decode_session(&path, text.as_bytes(), original.id.as_str()).map(Some)
+    }
+
+    /// Run `f` in one session transaction on `scribe.db`, inside the store
+    /// write it joins or one of its own (the first write moves any files
+    /// in first). A write that refuses leaves everything where it was.
+    pub(crate) fn sessions_tx<T>(&self, f: impl FnOnce(&SessionTx<'_>) -> Result<T>) -> Result<T> {
+        self.write_step(|| {
+            let conn = db::open_writer(&self.root, self.lock_wait)?;
+            let tx = SessionTx::begin(&conn, &self.root)?;
+            let out = f(&tx)?;
+            tx.commit()?;
+            Ok(out)
+        })
+    }
+
+    /// `scribe export`: write every record to `target`, a directory that is
+    /// missing or empty, created owner-only. Reads the store only: no lock,
+    /// no store write (STD-01 R31).
+    ///
+    /// # Errors
+    ///
+    /// `export_target_exists` for a directory with anything in it;
+    /// `store_corrupt` for a file store whose records never moved into
+    /// `scribe.db`; I/O and store failures.
+    pub fn export(&self, target: &Path, as_format: ExportFormat) -> Result<ExportCounts> {
+        let mut out = ExportCounts::default();
+        let rows = match as_format {
+            ExportFormat::Markdown => None,
+            ExportFormat::Jsonl if !self.root_exists()? => Some(Vec::new()),
+            ExportFormat::Jsonl => {
+                let db = db::read_export(&self.root, SESSION_EXPORT_TABLES, DOC_EXPORT_TABLES)?;
+                let (spooled, _) = self.spooled_audit()?;
+                if !db.sessions_moved || !db.docs_moved {
+                    self.refuse_file_store()?;
+                }
+                self.check_stamp()?;
+                let mut rows = db.rows;
+                if !spooled.is_empty() {
+                    let drained: BTreeSet<&str> = rows
+                        .iter()
+                        .filter(|(table, _)| *table == "audit")
+                        .filter_map(|(_, row)| row.get("spool").and_then(serde_json::Value::as_str))
+                        .collect();
+                    let spool_dir = self.root.join(crate::db::write::AUDIT_SPOOL_DIR);
+                    let mut pending = Vec::with_capacity(spooled.len());
+                    for (name, format, event) in &spooled {
+                        if !drained.contains(name.as_str()) {
+                            pending.push((
+                                "audit",
+                                crate::db::docs::audit_export_row(
+                                    &spool_dir.join(name),
+                                    *format,
+                                    event,
+                                    name,
+                                )?,
+                            ));
+                        }
+                    }
+                    rows.extend(pending);
+                }
+                Some(rows)
+            }
+        };
+        prepare_target(target)?;
+        let mut files = Vec::new();
+        let mut write = |rel: String, bytes: &[u8]| -> Result<()> {
+            let path = target.join(&rel);
+            let mut dir = target.to_path_buf();
+            for part in Path::new(&rel)
+                .parent()
+                .into_iter()
+                .flat_map(Path::components)
+            {
+                dir.push(part);
+                if !fsio::inspect_subdir(&dir)? {
+                    fsio::create_private_dir(&dir)?;
+                }
+            }
+            fsio::write_atomic(&path, bytes)?;
+            files.push(rel);
+            Ok(())
+        };
+        match rows {
+            Some(rows) => {
+                let mut tables: BTreeMap<&str, Vec<u8>> = BTreeMap::new();
+                for (table, row) in rows {
+                    let line = tables.entry(table).or_default();
+                    serde_json::to_writer(&mut *line, &row).map_err(|e| {
+                        Error::corrupt(target, format!("a row does not encode: {e}"))
+                    })?;
+                    line.push(b'\n');
+                }
+                let lines = |name: &str| {
+                    tables
+                        .get(name)
+                        .map_or(0, |b| b.iter().filter(|c| **c == b'\n').count())
+                };
+                out.sessions = lines("sessions");
+                out.entries = lines("entries");
+                out.claims = lines("claims");
+                out.audit_lines = lines("audit");
+                for (table, bytes) in tables {
+                    write(format!("{table}.jsonl"), &bytes)?;
+                }
+            }
+            None => {
+                let loaded = self.load_sessions()?;
+                let mut records = loaded.records;
+                records.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.id.cmp(&b.id)));
+                for record in &records {
+                    let rel = format!(
+                        "{SESSIONS_DIR}/{:04}/{:02}/{}{RECORD_EXT}",
+                        record.started.year(),
+                        u8::from(record.started.month()),
+                        record.id
+                    );
+                    let bytes = codec::encode_session(&target.join(&rel), record)?;
+                    write(rel, &bytes)?;
+                }
+                let path = target.join(CONTROL_FILE);
+                write(
+                    CONTROL_FILE.to_owned(),
+                    &codec::encode_control(&path, &loaded.control)?,
+                )?;
+                out.sessions = records.len();
+                out.skipped = loaded.skipped.into_iter().map(|(_, s)| s.path).collect();
+                self.export_documents(target, &mut write, &mut out)?;
+            }
+        }
+        out.files = files;
+        Ok(out)
+    }
+
+    /// Erase `id`'s rows, archives, documents and memory in the write under
+    /// way, registering it first when it has no `s-<n>` (`number`).
+    pub(crate) fn erase_session(
+        &self,
+        id: &SessionId,
+        number: Option<NonZeroU64>,
+        now: OffsetDateTime,
+    ) -> Result<SessionErasure> {
+        let (erased, already, changed, files) = self.with_conn(|conn, path| {
+            if number.is_none() {
+                rows::register(conn, path, id)?;
+            }
+            let (files, archive_changed) =
+                crate::db::import::scrub_session(conn, path, id, number)?;
+            let (erased, already, mut changed) =
+                rows::erase(conn, path, id, now)?.ok_or_else(|| Error::SessionNotFound {
+                    id: id.clone(),
+                    path: path.to_path_buf(),
+                })?;
+            changed |= self.erase_session_documents(id, now)?;
+            changed |= self.erase_session_memory(id, now)?;
+            changed |= archive_changed;
+            if changed || files > 0 {
+                db::truncate_wal_of(&self.root, self.lock_wait)?;
+            }
+            Ok((erased, already, changed, files))
+        })?;
+        Ok(SessionErasure {
+            messages: erased.messages,
+            segments: erased.segments,
+            was_on: erased.was_on,
+            already,
+            changed,
+            files,
+        })
+    }
+
+    /// Whether a group seats `id`, in the write under way.
+    pub(crate) fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
+        self.with_conn(|conn, path| rows::has_group_membership(conn, path, id))
+    }
+
+    /// Change the switches, and write a record, in one session transaction:
+    /// `f` changes the state and returns the record to write, if any.
+    pub(crate) fn change_sessions<T>(
+        &self,
+        f: impl FnOnce(&mut ControlState) -> Result<(T, Option<SessionRecord>)>,
+    ) -> Result<T> {
+        self.sessions_tx(|tx| {
+            let mut state = tx.control()?;
+            let before = state.clone();
+            let (out, record) = f(&mut state)?;
+            if state != before {
+                tx.put_control(&before, &state)?;
+            }
+            if let Some(record) = record {
+                tx.put_record(&record)?;
+            }
+            Ok(out)
+        })
+    }
+
+    /// Write a rebuilt `record` and drop its checkpoint, together.
+    pub(crate) fn put_from_checkpoint(&self, record: &SessionRecord) -> Result<()> {
+        self.sessions_tx(|tx| {
+            tx.put_record(record)?;
+            tx.drop_checkpoint(&record.id)
+        })
+    }
+
+    /// The `s-<n>` of every session, read-only.
+    pub(crate) fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
+        Ok(self.load_sessions()?.numbers)
+    }
+}
+
+/// Every session table `scribe export --as jsonl` writes (phase 6), with
+/// its row order.
+const SESSION_EXPORT_TABLES: &[(&str, &str)] = &[
+    ("sessions", "id"),
+    ("segments", "session, n"),
+    ("session_links", "session, position"),
+    ("session_terms", "session, position"),
+    ("codex_cursors", "session"),
+    ("rebuild_checkpoints", "session"),
+];
+
+/// Every document table `scribe export --as jsonl` writes (phase 7), with
+/// its row order.
+const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
+    ("entries", "tag, n"),
+    ("claims", "n"),
+    ("agent_tags", "name"),
+    ("marks", "position"),
+    ("pickups", "position"),
+    ("audit", "id"),
+];
+
+/// The checkpoint's file text at the current format, as a row holds it.
+pub(crate) fn encode_checkpoint(path: &Path, record: &SessionRecord) -> Result<String> {
+    String::from_utf8(codec::encode_session(path, record)?).map_err(|e| Error::corrupt(path, e))
+}
+
+/// Create `target` owner-only, or accept it empty.
+fn prepare_target(target: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(target) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).map_err(|e| Error::io("create", parent, e))?;
+            }
+            fsio::create_private_dir(target)
+        }
+        Err(e) => Err(Error::io("inspect", target, e)),
+        Ok(meta) if meta.is_dir() => {
+            if !fsio::list_dir(target)?.is_empty() {
+                return Err(refusal(
+                    WriteRefusal::ExportTargetExists,
+                    format!(
+                        "{} is not empty; export into a new or empty directory",
+                        target.display()
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        Ok(_) => Err(refusal(
+            WriteRefusal::ExportTargetExists,
+            format!("{} exists and is not a directory", target.display()),
+        )),
+    }
+}
+
+/// The existing session-show shape, populated solely from a tombstone.
+/// It is never listed, exported as a record or offered as evidence.
+pub(crate) fn forgotten_record(id: &SessionId, at: OffsetDateTime) -> SessionRecord {
+    use crate::{Label, Project, SessionStatus};
+    SessionRecord {
+        id: id.clone(),
+        status: SessionStatus::Final,
+        active: false,
+        keep_active: false,
+        active_change: None,
+        cataloged_by: None,
+        rebuilt_by: None,
+        project: Project::sanitized("deleted"),
+        topics: Default::default(),
+        related: Vec::new(),
+        links: Vec::new(),
+        terms: Vec::new(),
+        provider: Label::sanitized("deleted", "deleted"),
+        host: Label::sanitized("deleted", "deleted"),
+        created: at,
+        updated: at,
+        title: String::new(),
+        cwd: String::new(),
+        started: at,
+        on_since: at,
+        scribed_through: None,
+        passes: 0,
+        next_open: 0,
+        log: Vec::new(),
+        summary: String::new(),
+        goals: String::new(),
+        next: String::new(),
+    }
+}

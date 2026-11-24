@@ -16,24 +16,88 @@
 //!   archives them with the other files the file store left (§15.7,
 //!   phase 8), and a read only counts them.
 
-use super::db::codec;
-use super::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Revision, Writer};
-use super::{RECORD_EXT, Skipped, Store, fsio};
+use super::Memory;
 use crate::checks::refusal;
+use crate::db::{
+    self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Revision, Writer, codec,
+};
+use crate::error::{Error, Result};
 use crate::models::{MemoryContext, PendingContext};
-use crate::{Error, Result, SessionId, WriteRefusal};
+use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};
 use scribe_domain::memory::{
     self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem,
 };
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
+impl Memory<'_> {
+    /// The memory's profile, `now` items and milestones.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn view(&self) -> Result<MemoryView> {
+        self.store.memory_view()
+    }
+
+    /// One memory file by its id.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn file(&self, id: &str) -> Result<MemoryShown> {
+        self.store.memory_file(id)
+    }
+
+    /// One memory write in the write under way: `f` reads the rows and the
+    /// files as the open journals leave them and returns what to commit,
+    /// which is journaled, and applied to the files once the write commits.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn commit<T>(
+        &self,
+        now: OffsetDateTime,
+        f: impl FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, T)>,
+    ) -> Result<(T, MemoryJournal)> {
+        self.store.memory_commit(now, f)
+    }
+
+    /// Discard every earlier copy of the files `journal` removed, from open
+    /// and closed journals, and truncate the log after the commit.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
+        self.store.scrub_copies(journal)
+    }
+
+    /// Profile revision `n`. Reads only.
+    pub fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
+        self.store.profile_revision(n)
+    }
+
+    /// The `now` items and `session`'s pending candidates the session pass
+    /// reads before its model call. Reads only.
+    pub fn context(
+        &self,
+        session: &SessionId,
+    ) -> Result<(Vec<MemoryContext>, Vec<PendingContext>)> {
+        self.store.memory_context(session)
+    }
+}
+
 /// The memory directory's name under the data directory.
 pub const MEMORY_DIR: &str = "memory";
+
 /// The `now` items' directory under [`MEMORY_DIR`].
 pub const NOW_DIR: &str = "now";
+
 /// The milestones' directory under [`MEMORY_DIR`].
 pub const MILESTONES_DIR: &str = "milestones";
+
 /// The profile's file under [`MEMORY_DIR`].
 pub const PROFILE_FILE: &str = "profile.md";
 
@@ -185,7 +249,7 @@ impl Store {
     fn op_path(&self, rel: &str) -> Result<PathBuf> {
         let bad = || {
             Error::corrupt(
-                self.root.join(super::db::DB_FILE),
+                self.root.join(crate::db::DB_FILE),
                 format!("the memory journal names a path outside memory/: {rel}"),
             )
         };
@@ -262,7 +326,7 @@ impl Store {
     /// Apply a committed journal's file operations, then close it: after
     /// the write's commit when one is under way, so a rollback never leaves
     /// files the database does not record.
-    pub(super) fn finish_journal(
+    pub(crate) fn finish_journal(
         &self,
         writer: &mut Writer<'_>,
         journal: Option<&Journal>,
@@ -280,13 +344,13 @@ impl Store {
 
     /// Ask the pending write to apply the open journals after it commits;
     /// `false` when no write is under way.
-    pub(super) fn defer_journals(&self) -> bool {
+    pub(crate) fn defer_journals(&self) -> bool {
         self.after(|after| after.journals = true)
     }
 
     /// After a commit: apply and close every open journal, in a write of
     /// its own so two processes never replay one at once.
-    pub(super) fn apply_open_journals(&self) -> Result<()> {
+    pub(crate) fn apply_open_journals(&self) -> Result<()> {
         Self::crash_after_commit(&self.memory_dir())?;
         self.write_step(|| {
             self.prepare_subdir(&self.memory_dir())?;
@@ -324,7 +388,7 @@ impl Store {
         if !fsio::inspect_subdir(&self.memory_dir())? || !fsio::inspect_subdir(&dir)? {
             return Ok((items, skipped));
         }
-        let mut names: Vec<String> = super::visible(fsio::list_dir(&dir)?).collect();
+        let mut names: Vec<String> = crate::visible(fsio::list_dir(&dir)?).collect();
         names.sort();
         for name in names {
             let Some(stem) = name.strip_suffix(RECORD_EXT) else {
@@ -350,7 +414,7 @@ impl Store {
         if !fsio::inspect_subdir(&dir)? {
             return Ok(0);
         }
-        Ok(super::visible(fsio::list_dir(&dir)?)
+        Ok(crate::visible(fsio::list_dir(&dir)?)
             .filter(|name| {
                 name.strip_suffix(RECORD_EXT)
                     .is_some_and(|stem| stem.starts_with("m-"))
@@ -398,7 +462,7 @@ impl Store {
         let (mut milestones, more) = self.read_items(MILESTONES_DIR, codec::decode_milestone)?;
         skipped.extend(more);
         let legacy = self.legacy_count()?;
-        if let Some(forgotten) = super::db::sessions::read_forgotten(&self.root)? {
+        if let Some(forgotten) = crate::db::sessions::read_forgotten(&self.root)? {
             let live = |id: &SessionId| !forgotten.contains_key(id);
             now.retain_mut(|item| {
                 let sourced = !item.sources.is_empty();
@@ -512,7 +576,7 @@ impl Store {
             return Ok((Vec::new(), Vec::new()));
         }
         let (now, _) = self.read_items(NOW_DIR, codec::decode_now)?;
-        let forgotten = super::db::sessions::read_forgotten(&self.root)?.unwrap_or_default();
+        let forgotten = crate::db::sessions::read_forgotten(&self.root)?.unwrap_or_default();
         let pending = db::pending_read(&self.root, session)?;
         Ok((
             now.iter()
@@ -626,7 +690,7 @@ impl Store {
     /// written, so a replayed window writes nothing. The final pass drops
     /// the session's pending candidates. The pass commits the returned rows
     /// and journal in its own transaction, with the record.
-    pub(super) fn plan_pass_memory(
+    pub(crate) fn stage_window_memory(
         &self,
         writer: &mut Writer<'_>,
         pass: &PassMemory,
@@ -717,10 +781,10 @@ impl Store {
     /// A pass window's memory written on its own, for tests: planned and
     /// committed through one journal, as the pass's transaction does.
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn write_pass_memory(
+    pub(crate) fn write_window_memory(
         &self,
         pass: &PassMemory,
-        redactor: &super::Redactor,
+        redactor: &crate::Redactor,
         record: &crate::SessionRecord,
     ) -> Result<MemoryWritten> {
         self.prepare_dir(&self.root)?;
@@ -733,7 +797,7 @@ impl Store {
             drafts,
             ..pass.clone()
         };
-        let (commit, written) = self.plan_pass_memory(&mut writer, &pass, &sensitive, record)?;
+        let (commit, written) = self.stage_window_memory(&mut writer, &pass, &sensitive, record)?;
         self.commit_memory(&mut writer, &commit, record.updated)?;
         drop(writer);
         drop(conn);
@@ -743,7 +807,7 @@ impl Store {
 
     /// Remove session occurrences and retire items without any other source.
     /// The existing journal keeps the file changes in step with the audit.
-    pub(super) fn forget_session_memory(
+    pub(crate) fn erase_session_memory(
         &self,
         session: &SessionId,
         now: OffsetDateTime,
@@ -808,7 +872,7 @@ impl Store {
 
     /// One memory write inside the write under way, with its rows and the
     /// files as the open journals leave them ([`Store::memory_write`]).
-    pub(super) fn memory_commit<T>(
+    pub(crate) fn memory_commit<T>(
         &self,
         now: OffsetDateTime,
         f: impl FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, T)>,
@@ -829,7 +893,7 @@ impl Store {
     /// Discard every copy of the files `journal` removed from the journals,
     /// closed ones included, keeping its own removal, and truncate the log
     /// once the write commits.
-    pub(super) fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
+    pub(crate) fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let writer = Writer::new(&conn, &self.root);
         writer.scrub_journal(journal.0.as_ref(), |_| Ok(false))?;
@@ -838,7 +902,7 @@ impl Store {
     }
 }
 
-/// A committed memory write's journal ([`crate::repo::Memory::commit`]).
+/// A committed memory write's journal ([`crate::repository::Memory::commit`]).
 #[derive(Debug)]
 pub struct MemoryJournal(Option<Journal>);
 
@@ -851,7 +915,7 @@ impl MemoryJournal {
 }
 
 /// The rows a memory write reads, and the file operations it stages
-/// ([`crate::repo::Memory::commit`]).
+/// ([`crate::repository::Memory::commit`]).
 pub struct MemoryRows<'w> {
     writer: &'w Writer<'w>,
     dir: &'w Path,

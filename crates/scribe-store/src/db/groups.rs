@@ -2,11 +2,11 @@
 //! the store transaction. Provider ids have no foreign key to cataloged sessions.
 
 mod claude;
-mod close;
+mod rows;
 
 pub(super) use claude::V15;
 pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
-pub use close::CloseHeader;
+pub use rows::CloseHeader;
 
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
@@ -112,7 +112,7 @@ WHERE position IN (
 /// Drop a forgotten session's seat membership, clear derived summaries, and
 /// restart any restored holder's capture window. A seat that still has members
 /// keeps its role and chain.
-pub(super) fn forget_session(
+pub(super) fn erase_session_rows(
     conn: &Connection,
     path: &Path,
     id: &SessionId,
@@ -667,7 +667,7 @@ fn newest_open_seat(
 }
 
 /// The group tables' rows over the one connection of a write step or a read
-/// ([`crate::repo::Groups::rows`], [`crate::repo::Groups::read_rows`]). Each
+/// ([`crate::repository::Groups::rows`], [`crate::repository::Groups::read_rows`]). Each
 /// method runs one statement, or the statements of one row change, and
 /// reports the rows as they are: what they mean, and whether a write is
 /// refused, is the caller's.

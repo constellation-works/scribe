@@ -27,6 +27,7 @@
 pub(super) mod archive;
 pub(crate) mod codec;
 pub(super) mod docs;
+pub(crate) mod documents;
 pub mod fsio;
 pub(crate) mod import;
 pub(crate) mod locks;

@@ -570,7 +570,7 @@ impl EntryVerbs for Store {
             // The cited turns' stored messages go first: they hold the words
             // the forget removes, and deleting them again is a no-op; the
             // archived copies are erased in the same transaction.
-            tx.entries().forget_residue(&target, &before, now)?;
+            tx.entries().erase_residue(&target, &before, now)?;
             if proposals != before {
                 tx.proposals().put_all(&proposals)?;
             }

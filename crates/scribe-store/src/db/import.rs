@@ -18,8 +18,7 @@
 //!   fields and lose every other field. Unrelated records are kept.
 
 use crate::db::archive::{self as rows, ArchiveRow};
-use crate::db::{self, Conn as Connection, DB_FILE};
-use crate::documents::is_moved_variant;
+use crate::db::{self, Conn as Connection, DB_FILE, docs};
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
@@ -29,6 +28,7 @@ use crate::{
     SESSIONS_DIR, Store, fsio,
 };
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -287,7 +287,7 @@ fn classify(rel: &str, issue: bool) -> &'static str {
     for (base, kind) in [
         (PROPOSALS_FILE, "claims"),
         (CONTROL_FILE, "control"),
-        (crate::documents::TAGS_FILE, "tags"),
+        (crate::repository::tags::TAGS_FILE, "tags"),
         (MARKS_FILE, "marks"),
         (PICKUPS_FILE, "pickups"),
         (AUDIT_FILE, "audit"),
@@ -629,7 +629,7 @@ pub(crate) fn scrub_entry(
     entry: &Entry,
     proposals: &[Proposal],
 ) -> Result<bool> {
-    let texts = crate::documents::erased_texts(entry, proposals);
+    let texts = erased_texts(entry, proposals);
     scrub_entry_with(conn, db, &entry.id, Some(entry), TextMatcher::texts(texts))
 }
 
@@ -833,7 +833,7 @@ fn forget_claims(claims: &mut Vec<Value>, id: &str) {
 /// recorded before phase 8 for archives it had not cleaned yet.
 pub(crate) struct TextMatcher {
     texts: Vec<String>,
-    digests: Option<crate::documents::DigestMatcher>,
+    digests: Option<DigestMatcher>,
 }
 
 impl TextMatcher {
@@ -847,7 +847,7 @@ impl TextMatcher {
     fn digests(salt: &str, digests: &[db::docs::TextDigest], db: &Path) -> Result<Self> {
         Ok(Self {
             texts: Vec::new(),
-            digests: Some(crate::documents::DigestMatcher::new(salt, digests, db)?),
+            digests: Some(DigestMatcher::new(salt, digests, db)?),
         })
     }
 
@@ -857,5 +857,185 @@ impl TextMatcher {
                 .digests
                 .as_ref()
                 .is_some_and(|d| d.matches_str(haystack))
+    }
+}
+
+pub(crate) fn is_moved_variant(name: &str, base: &str) -> bool {
+    name == base
+        || name
+            .strip_prefix(base)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Domain separation prefix for salted SHA-256 digests stored in
+/// `pending_archive_forgets` before phase 8.
+const ARCHIVE_FORGET_DOMAIN: &[u8] = b"scribe-archive-forget-v1\0";
+
+fn salted_prefix(salt: &str) -> Sha256 {
+    let mut hasher = Sha256::new();
+    hasher.update(ARCHIVE_FORGET_DOMAIN);
+    hasher.update(salt.as_bytes());
+    hasher.update(b"\0");
+    hasher
+}
+
+fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let nibble = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    };
+    let mut out = [0u8; 32];
+    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let hi = nibble(pair[0])?;
+        let lo = nibble(pair[1])?;
+        *slot = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// Matches text against the salted SHA-256 digests (`{len, sha256}`) a
+/// forget recorded, before phase 8, for archives it had not cleaned yet:
+/// the archive import replays them on the imported records.
+pub(crate) struct DigestMatcher {
+    prefix: Sha256,
+    digests_by_len: BTreeMap<usize, Vec<[u8; 32]>>,
+}
+
+impl DigestMatcher {
+    pub(crate) fn new(salt: &str, digests: &[docs::TextDigest], db_path: &Path) -> Result<Self> {
+        let mut digests_by_len: BTreeMap<usize, Vec<[u8; 32]>> = BTreeMap::new();
+        for d in digests {
+            let bytes = decode_hex_32(&d.sha256).ok_or_else(|| {
+                Error::corrupt(db_path, "pending archive forget digest is not 64 hex chars")
+            })?;
+            digests_by_len.entry(d.len).or_default().push(bytes);
+        }
+        for group in digests_by_len.values_mut() {
+            group.sort();
+            group.dedup();
+        }
+        Ok(Self {
+            prefix: salted_prefix(salt),
+            digests_by_len,
+        })
+    }
+
+    pub(crate) fn matches_str(&self, haystack: &str) -> bool {
+        for (&len, targets) in &self.digests_by_len {
+            if len == 0 || haystack.len() < len {
+                continue;
+            }
+            for (start, _) in haystack.char_indices() {
+                let Some(end) = start.checked_add(len) else {
+                    break;
+                };
+                if end > haystack.len() {
+                    break;
+                }
+                if !haystack.is_char_boundary(end) {
+                    continue;
+                }
+                let mut hasher = self.prefix.clone();
+                hasher.update(&haystack.as_bytes()[start..end]);
+                let digest: [u8; 32] = hasher.finalize().into();
+                if targets.binary_search(&digest).is_ok() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+fn push_non_empty(out: &mut Vec<String>, text: &str) {
+    if !text.trim().is_empty() {
+        out.push(text.to_owned());
+    }
+}
+
+fn collect_proposal_texts(id: &EntryId, proposals: &[Proposal], out: &mut Vec<String>) {
+    for p in proposals {
+        if p.older == *id || p.newer.as_ref() == Some(id) {
+            push_non_empty(out, &p.reason);
+            if let Some(c) = &p.candidate {
+                push_non_empty(out, &c.quote);
+                for opt in [
+                    c.context.as_deref(),
+                    c.statement.as_deref(),
+                    c.subject.as_deref(),
+                    c.evidence.as_deref(),
+                    c.admitted.as_ref().map(|a| a.matched.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    push_non_empty(out, opt);
+                }
+            }
+            if let Some(quote) = p.instruction.as_ref().and_then(|i| i.quote.as_deref()) {
+                push_non_empty(out, quote);
+            }
+        }
+        for q in p.quotes.iter().filter(|q| q.entry == *id) {
+            push_non_empty(out, &q.text);
+        }
+    }
+}
+
+pub(crate) fn erased_texts(entry: &Entry, proposals: &[Proposal]) -> Vec<String> {
+    let mut out = Vec::new();
+    push_non_empty(&mut out, &entry.content);
+    push_non_empty(&mut out, &entry.said);
+    for opt in [
+        entry.quote.as_deref(),
+        entry.evidence.as_deref(),
+        entry.retirement_reason.as_deref(),
+        entry.instruction.as_ref().and_then(|i| i.quote.as_deref()),
+        entry
+            .removal_instruction
+            .as_ref()
+            .and_then(|i| i.quote.as_deref()),
+        entry.outcome.as_ref().and_then(|o| o.reason.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_non_empty(&mut out, opt);
+    }
+    if let Some(window) = &entry.window {
+        for turn in &window.turns {
+            push_non_empty(&mut out, &turn.text);
+        }
+    }
+    if entry.decision.is_some() || entry.item.is_some() {
+        let mut record = entry.clone();
+        out.extend(
+            crate::redact::entry_fields(&mut record)
+                .into_iter()
+                .filter_map(|(name, text)| {
+                    (name.starts_with("entry.decision.") || name.starts_with("entry.item."))
+                        .then(|| text.clone())
+                }),
+        );
+    }
+    collect_proposal_texts(&entry.id, proposals, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+pub(crate) fn is_empty(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Array(a) => a.is_empty(),
+        serde_json::Value::Object(o) => o.is_empty(),
+        serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
     }
 }

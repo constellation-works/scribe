@@ -4,7 +4,7 @@
 
 use crate::checks::refusal;
 use crate::group::{CloseEvidence, GroupCloser};
-use crate::repo::GroupRows;
+use crate::repository::GroupRows;
 use crate::{AuditEvent, Error, Redactor, Related, Result, Store, WriteRefusal};
 use time::OffsetDateTime;
 
@@ -76,7 +76,7 @@ pub(super) fn close_group_with_outcome<E: From<Error>>(
                     "group evidence changed during close; run group close again",
                 ));
             }
-            rows.close(n, now, &summary)?;
+            rows.set_closed(n, now, &summary)?;
             tx.audit().record(&audit(&group.id))?;
             Ok(())
         })
@@ -128,15 +128,15 @@ fn check_closer(rows: &GroupRows<'_>, n: i64, opener: &str, closer: GroupCloser<
 
 fn snapshot(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<Option<Snapshot>> {
     let header = rows
-        .close_header(n)?
+        .header(n)?
         .ok_or_else(|| refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}")))?;
     check_closer(rows, n, &header.opener, closer)?;
     if !header.open {
         return Ok(None);
     }
     let related = rows.related(&header.related)?;
-    let handoffs = rows.close_handoffs(n)?;
-    let turns = rows.close_turns(n)?;
+    let handoffs = rows.member_handoffs(n)?;
+    let turns = rows.member_turns(n)?;
     Ok(Some(Snapshot {
         evidence: CloseEvidence {
             title: header.title,
