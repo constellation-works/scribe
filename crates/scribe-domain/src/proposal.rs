@@ -345,7 +345,7 @@ impl EntryCandidate {
     }
 
     /// Provenance fields a pass derives from the host transcript.
-    pub(crate) fn has_valid_provenance(&self) -> bool {
+    pub fn has_valid_provenance(&self) -> bool {
         self.cite
             .message
             .as_ref()
@@ -364,7 +364,7 @@ impl Proposal {
     /// Reconstruct an approved candidate's entry, including after an
     /// interrupted approval. The reserved id makes recovery idempotent.
     #[must_use]
-    pub(crate) fn candidate_entry(&self, review_after: Option<time::Date>) -> Option<Entry> {
+    pub fn candidate_entry(&self, review_after: Option<time::Date>) -> Option<Entry> {
         let candidate = self.candidate.as_ref()?;
         let at = self.settled_at?;
         let message = candidate.cite.message.clone()?;
@@ -438,7 +438,7 @@ impl Proposal {
 /// How the `said` of an entry approved on Daniel's instruction begins: the
 /// canonical `proposal settle` command, where a typed approval's begins
 /// `#scribe approve p-` (2_design.md §12.3).
-pub(crate) const INSTRUCTED_SAID_PREFIX: &str = "scribe proposal settle p-";
+pub const INSTRUCTED_SAID_PREFIX: &str = "scribe proposal settle p-";
 
 /// The canonical command an agent ran to approve `id` on `instruction`:
 /// `scribe proposal settle <id> --approve --author <name> --session <id>

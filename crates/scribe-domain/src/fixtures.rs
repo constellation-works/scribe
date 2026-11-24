@@ -1,33 +1,7 @@
-//! Unit tests for the business-logic modules, one file per source file
-//! (STD-02 R19). Being siblings rather than children of the modules they test,
-//! they reach only `pub(crate)` items. The store's tests live in
-//! `store/tests/`.
-
-mod action;
-mod activity;
-mod annotation;
-mod ask;
-mod brief;
-mod capture;
-mod config;
-mod consistency;
-mod control;
-mod entry;
-mod group;
-mod handoff;
-mod instruction;
-mod memory;
-mod message;
-mod pass;
-mod proposal;
-mod record;
-mod search;
-mod session;
-mod tag;
-mod transcript;
-mod trigger;
-mod verbatim;
-mod voice;
+//! Record fixtures for unit tests: this crate's own, and those of
+//! `scribe-core`'s store, which turns on the `test-support` feature in its
+//! dev-dependencies. Never compiled into a shipped build.
+#![allow(clippy::unwrap_used)]
 
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};
 use crate::session::{Segment, SegmentOrigin, SegmentState, SessionRecord, SessionStatus};
@@ -37,7 +11,7 @@ use time::macros::datetime;
 /// The `idea` catcher scribe shipped until 2_design.md §15.9 phase 2, now
 /// a config example (specs/catchers.md): an action tag whose claims the
 /// pass writes itself.
-pub(crate) const IDEA_CATCHER: &str = r#"
+pub const IDEA_CATCHER: &str = r#"
 [tags.idea]
 action = true
 description = "a future consideration worth revisiting"
@@ -50,12 +24,12 @@ not = "A direction to act now; a preference; a question of fact; an idea the ses
 "#;
 
 /// The shipped tags plus [`IDEA_CATCHER`].
-pub(crate) fn tags_with_idea() -> crate::tag::TagTable {
+pub fn tags_with_idea() -> crate::tag::TagTable {
     crate::config::Config::parse(IDEA_CATCHER).unwrap().tags
 }
 
 /// An active entry `id` created at `created`, in project `scribe`.
-pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
+pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
     let id: crate::entry::EntryId = id.parse().unwrap();
     Entry {
         tag: id.tag().clone(),
@@ -101,7 +75,7 @@ pub(crate) fn entry(id: &str, created: OffsetDateTime) -> Entry {
 }
 
 /// An open session record `id` started at `started`, in project `scribe`.
-pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
+pub fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
     SessionRecord {
         id: id.parse().unwrap(),
         status: SessionStatus::Open,
@@ -134,7 +108,7 @@ pub(crate) fn session(id: &str, started: OffsetDateTime) -> SessionRecord {
 }
 
 /// Segment `n` of a pass, from `at` to an hour later, holding `text`.
-pub(crate) fn segment(n: u32, state: SegmentState, at: OffsetDateTime, text: &str) -> Segment {
+pub fn segment(n: u32, state: SegmentState, at: OffsetDateTime, text: &str) -> Segment {
     Segment {
         n: std::num::NonZeroU32::new(n).unwrap(),
         heading: format!("part {n}"),
@@ -151,4 +125,5 @@ pub(crate) fn segment(n: u32, state: SegmentState, at: OffsetDateTime, text: &st
     }
 }
 
-pub(crate) const T0: OffsetDateTime = datetime!(2026-11-01 10:00:00 UTC);
+/// The fixtures' reference instant.
+pub const T0: OffsetDateTime = datetime!(2026-11-01 10:00:00 UTC);

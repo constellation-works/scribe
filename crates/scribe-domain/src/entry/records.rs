@@ -7,10 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use time::OffsetDateTime;
 
-pub(crate) const DECISION_TAG: &str = "decision";
-pub(crate) const OPEN_ITEM_TAG: &str = "open-item";
+/// The tag of a decision entry.
+pub const DECISION_TAG: &str = "decision";
+/// The tag of an open-item entry.
+pub const OPEN_ITEM_TAG: &str = "open-item";
 
-pub(crate) fn is_decision_or_item(tag: &str) -> bool {
+/// Whether `tag` is the decision or the open-item tag.
+pub fn is_decision_or_item(tag: &str) -> bool {
     matches!(tag, DECISION_TAG | OPEN_ITEM_TAG)
 }
 

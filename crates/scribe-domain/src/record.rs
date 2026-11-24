@@ -231,7 +231,7 @@ impl Author {
 
     /// scribe's session pass, proposing unmarked user statements.
     #[must_use]
-    pub(crate) fn session_pass() -> Self {
+    pub fn session_pass() -> Self {
         Self {
             kind: AuthorKind::Scribe,
             name: AuthorName(String::from("session-pass")),
@@ -564,7 +564,8 @@ pub struct Related {
 }
 
 impl Related {
-    pub(crate) fn deleted_session() -> Self {
+    /// The `session:deleted` reference a forgotten session leaves behind.
+    pub fn deleted_session() -> Self {
         Self {
             kind: RelatedKind::Session,
             target: String::from("deleted"),
@@ -741,7 +742,7 @@ where
 
 /// `review_after` and other calendar dates: `YYYY-MM-DD`, `null` when
 /// absent, the key always present.
-pub(crate) mod nullable_date {
+pub mod nullable_date {
     use serde::{Deserialize, Deserializer, Serializer};
     use time::Date;
     use time::format_description::BorrowedFormatItem;
@@ -751,7 +752,7 @@ pub(crate) mod nullable_date {
         format_description!("[year]-[month]-[day]");
 
     /// Render a date as `YYYY-MM-DD`.
-    pub(crate) fn format(date: Date) -> String {
+    pub fn format(date: Date) -> String {
         date.format(FORMAT).unwrap_or_else(|_| date.to_string())
     }
 
@@ -794,7 +795,8 @@ pub(crate) mod nullable_date {
     }
 }
 
-pub(crate) fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {
+/// Remove `remove` from `items`, then append each of `add` not already there.
+pub fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {
     items.retain(|item| !remove.contains(item));
     for item in add {
         if !items.contains(item) {

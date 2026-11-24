@@ -163,7 +163,7 @@ impl fmt::Display for SessionId {
 
 /// The shortest id prefix any command accepts, in characters: the store's id
 /// resolution and the typed `#scribe forget` parser share it.
-pub(crate) const MIN_ID_PREFIX: usize = 4;
+pub const MIN_ID_PREFIX: usize = 4;
 
 /// The shortest prefix a table prints for a session id, in characters. The
 /// first group of a Claude Code UUID is this long.
@@ -914,4 +914,22 @@ pub enum SessionField {
     Title,
     /// `project`.
     Project,
+}
+
+/// What `#scribe forget s-<n>` did (`ProposalVerbs::settle` in scribe-core).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionForget {
+    /// The provider's session id.
+    pub id: SessionId,
+    /// Its `s-<n>`.
+    pub number: Option<std::num::NonZeroU64>,
+    /// Stored messages deleted.
+    pub messages: usize,
+    /// Segments deleted.
+    pub segments: usize,
+    /// Archived records of the session (its record and checkpoints in the
+    /// archive tables) erased.
+    pub files: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
 }

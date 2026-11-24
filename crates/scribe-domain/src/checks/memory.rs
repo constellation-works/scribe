@@ -7,10 +7,7 @@ use crate::memory::{Draft, Refusal};
 /// Split a pass window's `drafts` into those the planner may use and a
 /// [`Refusal::Sensitive`] for each one whose title, text or quote redaction
 /// would change, in draft order. Pure: no store read.
-pub(crate) fn check_sensitive_drafts(
-    drafts: &[Draft],
-    redactor: &Redactor,
-) -> (Vec<Draft>, Vec<Refusal>) {
+pub fn check_sensitive_drafts(drafts: &[Draft], redactor: &Redactor) -> (Vec<Draft>, Vec<Refusal>) {
     let mut kept = Vec::new();
     let mut refused = Vec::new();
     for draft in drafts {

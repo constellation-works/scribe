@@ -451,7 +451,7 @@ impl MarkRecord {
     /// [`MAX_ATTEMPTS`] (§14.5). `scribe mark retry` opens it again.
     #[must_use]
     pub fn gave_up(&self) -> bool {
-        self.outcome == MarkState::Refused && self.code.as_deref() == Some(crate::MODEL_FAILED)
+        self.outcome == MarkState::Refused && self.code.as_deref() == Some(MODEL_FAILED)
     }
 
     /// Whether no entry or answer settled it yet: pending a retry, or given
@@ -461,3 +461,6 @@ impl MarkRecord {
         self.outcome == MarkState::Pending || self.gave_up()
     }
 }
+
+/// The refusal code of a marker whose model calls all failed.
+pub const MODEL_FAILED: &str = "model_failed";

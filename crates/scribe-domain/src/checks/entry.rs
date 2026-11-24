@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 /// A quote belongs on an action tag or a `require_quote` tag, and any tag
 /// that requires one gets one. Whether it is verbatim in the user's turns is
 /// the caller's check: it needs the transcript.
-pub(crate) fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
+pub fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
     if def.requires_quote() {
         match quote {
             None => Err(refusal(
@@ -50,7 +50,8 @@ pub(crate) fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()
     }
 }
 
-pub(crate) fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
+/// Refuse `--spoken` under a tag that has its own entry fields.
+pub fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
     if def.name.as_str() == crate::handoff::HANDOFF_TAG || is_decision_or_item(def.name.as_str()) {
         return Err(refusal(
             WriteRefusal::NotMemoryTag,
@@ -78,7 +79,8 @@ pub(crate) fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn check_spoken_quote(quote: Option<&str>) -> Result<()> {
+/// Refuse `--spoken` without the user's words.
+pub fn check_spoken_quote(quote: Option<&str>) -> Result<()> {
     match quote {
         None => Err(refusal(
             WriteRefusal::QuoteRequired,
@@ -94,7 +96,7 @@ pub(crate) fn check_spoken_quote(quote: Option<&str>) -> Result<()> {
 
 /// A handoff entry's body must carry the six fixed headings in order and fit
 /// within [`crate::handoff::MAX_CHARS`] (2_design.md §16).
-pub(crate) fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
+pub fn check_handoff(tag: &TagName, content: &str) -> Result<()> {
     if tag.as_str() != crate::handoff::HANDOFF_TAG {
         return Ok(());
     }
@@ -138,7 +140,7 @@ pub fn check_handoff_related(tag: &TagName, related: &[crate::Related]) -> Resul
 /// Refuse an `entry update` patch that would add, remove, or replace a
 /// `handoff` entry's `session:` reference, which would attach the handoff to
 /// an unverified session or orphan it (2_design.md §16.1).
-pub(crate) fn check_handoff_related_update(
+pub fn check_handoff_related_update(
     entry: &Entry,
     add_related: &[crate::Related],
     remove_related: &[crate::Related],
@@ -160,7 +162,7 @@ pub(crate) fn check_handoff_related_update(
 /// An evidence pointer belongs on a `require_evidence` (finding) entry,
 /// and such a tag gets one: a result with nothing to check it against is
 /// just an agent's memory of itself.
-pub(crate) fn check_evidence(def: &crate::TagDef, evidence: Option<&str>) -> Result<()> {
+pub fn check_evidence(def: &crate::TagDef, evidence: Option<&str>) -> Result<()> {
     match (def.require_evidence, evidence) {
         (true, None) => Err(refusal(
             WriteRefusal::EvidenceRequired,
@@ -186,7 +188,7 @@ pub(crate) fn check_evidence(def: &crate::TagDef, evidence: Option<&str>) -> Res
 
 /// The session a direct finding write names (a `session:` reference), as
 /// the per-session cap counts it.
-pub(crate) fn draft_session(related: &[crate::Related]) -> Option<String> {
+pub fn draft_session(related: &[crate::Related]) -> Option<String> {
     related
         .iter()
         .find(|r| r.kind() == crate::RelatedKind::Session)
@@ -196,7 +198,7 @@ pub(crate) fn draft_session(related: &[crate::Related]) -> Option<String> {
 /// Whether `entry` counts against this write's per-session finding cap:
 /// same named session, or, when the write names none, the same author's
 /// unnamed-session findings of the same day.
-pub(crate) fn counts_toward_cap(
+pub fn counts_toward_cap(
     entry: &Entry,
     tag: &TagName,
     session: Option<&str>,

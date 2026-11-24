@@ -390,7 +390,7 @@ impl TagTable {
     }
 
     /// Merge store definitions in memory; config claims win with explicit warnings.
-    pub(crate) fn merge_store(&self, stored: &[StoreTag]) -> Result<(Self, Vec<String>), TagError> {
+    pub fn merge_store(&self, stored: &[StoreTag]) -> Result<(Self, Vec<String>), TagError> {
         let mut tags = self.tags().to_vec();
         let mut warnings = Vec::new();
         for tag in stored {

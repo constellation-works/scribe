@@ -73,7 +73,7 @@ pub use init::{
     InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
 };
 mod rebuild;
-mod redact;
+use crate::redact;
 pub mod repo;
 pub use repo::{Snapshot, Tx};
 #[cfg(feature = "test-support")]

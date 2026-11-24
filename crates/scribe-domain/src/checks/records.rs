@@ -45,11 +45,8 @@ pub(crate) fn check_record_reference(related: &[Related]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn check_decision_size(
-    decision: &Decision,
-    content: &str,
-    quote: Option<&str>,
-) -> Result<()> {
+/// Refuse a decision too large to store.
+pub fn check_decision_size(decision: &Decision, content: &str, quote: Option<&str>) -> Result<()> {
     if decision.chars(content, quote) > DECISION_MAX_CHARS {
         return Err(refusal(
             WriteRefusal::DecisionTooLong,
@@ -59,7 +56,8 @@ pub(crate) fn check_decision_size(
     Ok(())
 }
 
-pub(crate) fn check_decision(decision: &Decision, draft: &AgentEntry) -> Result<()> {
+/// Refuse a decision whose fields do not fit who decided it.
+pub fn check_decision(decision: &Decision, draft: &AgentEntry) -> Result<()> {
     let quote = draft.quote.as_deref();
     if decision.by_user() {
         if decision.rationale.is_some() {
@@ -118,7 +116,8 @@ pub(crate) fn has_text(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
-pub(crate) fn check_open_item(item: &OpenItem) -> Result<()> {
+/// Refuse an open item with an invalid asker, blocker or options.
+pub fn check_open_item(item: &OpenItem) -> Result<()> {
     check_agent_author(&item.asked_by)?;
     check_content(&item.blocked)?;
     check_options(&item.options, item.recommended)?;
@@ -145,10 +144,8 @@ pub(crate) fn check_open_item(item: &OpenItem) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn check_decision_redaction(
-    draft: &AgentEntry,
-    mask: &dyn Fn(&str) -> String,
-) -> Result<()> {
+/// Refuse a decision whose quoted text redaction would alter.
+pub fn check_decision_redaction(draft: &AgentEntry, mask: &dyn Fn(&str) -> String) -> Result<()> {
     if let Some(decision) = &draft.decision
         && draft
             .quote
@@ -164,7 +161,8 @@ pub(crate) fn check_decision_redaction(
     Ok(())
 }
 
-pub(crate) fn check_decision_update(before: &Entry, after: &Entry) -> Result<()> {
+/// Refuse an update that changes a decision as it may not change.
+pub fn check_decision_update(before: &Entry, after: &Entry) -> Result<()> {
     if let Some(decision) = &after.decision {
         check_record_reference(&after.related)?;
         if decision.by_user()
@@ -180,7 +178,8 @@ pub(crate) fn check_decision_update(before: &Entry, after: &Entry) -> Result<()>
     Ok(())
 }
 
-pub(crate) fn patch_decision(
+/// Apply `patch`'s decision fields to `entry`, masked by `mask`.
+pub fn patch_decision(
     entry: &mut Entry,
     patch: &EntryPatch,
     mask: &dyn Fn(&str) -> String,
@@ -250,7 +249,7 @@ pub fn check_unsettled_item(entry: &Entry) -> Result<ItemState> {
 /// The `item` object of an open item, synthesized for a trial entry that
 /// has none: an action item asked by its author, with nothing typed about
 /// what waits.
-pub(crate) fn item_mut(entry: &mut Entry) -> &mut OpenItem {
+pub fn item_mut(entry: &mut Entry) -> &mut OpenItem {
     let asked_by = entry.author.name.clone();
     entry.item.get_or_insert_with(|| OpenItem {
         asked_by,

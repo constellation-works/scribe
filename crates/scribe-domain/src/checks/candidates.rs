@@ -11,7 +11,7 @@ use crate::{
 /// context paragraph that stands alone and a non-empty subject, each within
 /// its bound, checked on the unmasked text, and no one-line statement. An
 /// empty subject opens no claim.
-pub(crate) fn has_context_and_subject(candidate: &EntryCandidate) -> bool {
+pub fn has_context_and_subject(candidate: &EntryCandidate) -> bool {
     candidate.statement.is_none()
         && candidate
             .context
@@ -25,7 +25,7 @@ pub(crate) fn has_context_and_subject(candidate: &EntryCandidate) -> bool {
 /// Whether the pass already wrote `draft`'s claim as `entry`: the same tag
 /// and turn, and either the same words or an entry since forgotten (whose
 /// words are gone, and which must not come back).
-pub(crate) fn written_from(entry: &Entry, draft: &EntryCandidate) -> bool {
+pub fn written_from(entry: &Entry, draft: &EntryCandidate) -> bool {
     entry.author == Author::session_pass()
         && entry.tag == draft.tag
         && entry.cite.as_ref().is_some_and(|cite| {
@@ -39,7 +39,7 @@ pub(crate) fn written_from(entry: &Entry, draft: &EntryCandidate) -> bool {
 /// the claim carries none (it was drafted for a `propose` tag). A `parked`
 /// reason must still be a verbatim span of Daniel's own words of its turn
 /// and need no redaction; otherwise the idea is written `open`.
-pub(crate) fn checked_outcome(claim: &PassClaim, mask: &dyn Fn(&str) -> String) -> Option<Outcome> {
+pub fn checked_outcome(claim: &PassClaim, mask: &dyn Fn(&str) -> String) -> Option<Outcome> {
     let outcome = claim.outcome.clone()?;
     match (outcome.state, &outcome.reason, &claim.outcome_turn) {
         (OutcomeState::Parked, Some(reason), Some(turn))
@@ -57,7 +57,7 @@ pub(crate) fn checked_outcome(claim: &PassClaim, mask: &dyn Fn(&str) -> String) 
 /// The active entry the pass writes for a checked claim under a `write`
 /// tag: scribe's context as content, the turn's span as `quote`, authored
 /// and stated by the session pass, nothing typed (`said` empty).
-pub(crate) fn pass_entry(
+pub fn pass_entry(
     id: EntryId,
     draft: &EntryCandidate,
     outcome: Outcome,
@@ -106,7 +106,7 @@ pub(crate) fn pass_entry(
 
 /// How many open claims `tag` holds: the count its `max_open` caps
 /// (2_design.md §15.2).
-pub(crate) fn open_under(proposals: &[Proposal], tag: &crate::TagName) -> usize {
+pub fn open_under(proposals: &[Proposal], tag: &crate::TagName) -> usize {
     proposals
         .iter()
         .filter(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Open)

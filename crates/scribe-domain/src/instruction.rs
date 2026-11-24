@@ -598,9 +598,11 @@ pub struct ClaudeGroupTurns {
 /// seen for an id. These are separate because a metadata line can supply
 /// claims even when it does not produce a message.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ClaudeSeen {
-    pub(crate) permitted: Option<bool>,
-    pub(crate) message: bool,
+pub struct ClaudeSeen {
+    /// The first origin claim for the id: whether it permits the turn.
+    pub permitted: Option<bool>,
+    /// Whether a parseable message has been seen for the id.
+    pub message: bool,
 }
 
 impl ClaudeGroupTurns {
@@ -632,13 +634,14 @@ impl ClaudeGroupTurns {
         self.messages.iter().any(|m| m.role == Speaker::User)
     }
 
-    pub(crate) fn session(&self) -> &SessionId {
+    /// The session the batch belongs to.
+    pub fn session(&self) -> &SessionId {
         &self.session
     }
 
     /// Keep first-copy semantics across batches, including ids whose first
     /// copy was rejected. The index only receives hashed ids and flags.
-    pub(crate) fn resolve<E>(
+    pub fn resolve<E>(
         mut self,
         mut lookup: impl FnMut(&str) -> Result<ClaudeSeen, E>,
     ) -> Result<ResolvedClaudeTurns, E> {
@@ -687,9 +690,12 @@ impl ClaudeGroupTurns {
     }
 }
 
-pub(crate) struct ResolvedClaudeTurns {
-    pub(crate) turns: Vec<crate::message::NewMessage>,
-    pub(crate) seen: Vec<(String, ClaudeSeen)>,
+/// A batch of Claude typed turns resolved against the origin claims already stored.
+pub struct ResolvedClaudeTurns {
+    /// The typed turns to store.
+    pub turns: Vec<crate::message::NewMessage>,
+    /// The ids whose first claim this batch settled, with what was seen.
+    pub seen: Vec<(String, ClaudeSeen)>,
 }
 
 /// A Codex rollout as the check reads it. The session's interactivity is

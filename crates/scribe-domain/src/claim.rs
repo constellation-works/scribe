@@ -48,7 +48,7 @@ pub(crate) fn own_lines_where(text: &str, keep: impl Fn(&str) -> bool) -> String
 
 /// Whether `quote` is Daniel's own span of `text`: verbatim, and outside
 /// fenced, indented and blockquoted material and marked instructions.
-pub(crate) fn own_span(text: &str, quote: &str) -> bool {
+pub fn own_span(text: &str, quote: &str) -> bool {
     verbatim::contains(text, quote) && text.contains(quote) && own_lines(text).contains(quote)
 }
 
@@ -202,7 +202,7 @@ pub(crate) fn covers_statement(existing: &str, new: &str) -> bool {
 /// statement, Daniel's quote), if any. Retired, superseded and forgotten entries do
 /// not cover a new line. Comparison is [`covers_statement`].
 #[must_use]
-pub(crate) fn covering_entry<'a>(
+pub fn covering_entry<'a>(
     entries: &'a [Entry],
     statement: &str,
     tag: &TagName,
@@ -227,7 +227,7 @@ pub(crate) fn covering_entry<'a>(
 /// (content and `quote`), so the duplicate checks compare every pair
 /// (2_design.md §11.1).
 #[must_use]
-pub(crate) fn claim_covers(existing: &[&str], new: &[&str]) -> bool {
+pub fn claim_covers(existing: &[&str], new: &[&str]) -> bool {
     existing
         .iter()
         .any(|old| new.iter().any(|text| covers_statement(old, text)))
@@ -235,7 +235,7 @@ pub(crate) fn claim_covers(existing: &[&str], new: &[&str]) -> bool {
 
 /// What an entry says, for the claim duplicate checks: its content and, for
 /// an approved pass statement, Daniel's quote beside it.
-pub(crate) fn entry_says(entry: &Entry) -> Vec<&str> {
+pub fn entry_says(entry: &Entry) -> Vec<&str> {
     let mut texts = vec![entry.content.as_str()];
     if entry.stated_by.is_some()
         && let Some(quote) = &entry.quote
@@ -247,7 +247,7 @@ pub(crate) fn entry_says(entry: &Entry) -> Vec<&str> {
 
 /// What a candidate says: the speaker's quote and, when the pass gave
 /// one, its context (or an older claim's statement).
-pub(crate) fn candidate_says(candidate: &EntryCandidate) -> Vec<&str> {
+pub fn candidate_says(candidate: &EntryCandidate) -> Vec<&str> {
     let mut texts = vec![candidate.quote.as_str()];
     if let Some(stated) = candidate.stated() {
         texts.push(stated);
@@ -259,10 +259,7 @@ pub(crate) fn candidate_says(candidate: &EntryCandidate) -> Vec<&str> {
 /// says its quote or its statement ([`claim_covers`]), if any: the shared
 /// check approval runs before it writes the candidate's entry.
 #[must_use]
-pub(crate) fn covering_claim<'a>(
-    entries: &'a [Entry],
-    candidate: &EntryCandidate,
-) -> Option<&'a Entry> {
+pub fn covering_claim<'a>(entries: &'a [Entry], candidate: &EntryCandidate) -> Option<&'a Entry> {
     let new = candidate_says(candidate);
     entries
         .iter()

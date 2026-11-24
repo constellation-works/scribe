@@ -39,42 +39,42 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod action;
-pub mod activity;
-pub mod annotation;
-pub mod ask;
-pub mod brief;
-pub mod capture;
+pub use scribe_domain::action;
+pub use scribe_domain::activity;
+pub use scribe_domain::annotation;
+pub use scribe_domain::ask;
+pub use scribe_domain::brief;
+pub use scribe_domain::capture;
 pub mod cases;
-mod checks;
-mod claim;
-pub use transcript::codex;
-mod config;
-pub mod consistency;
-pub mod control;
-mod entry;
-mod error;
-pub mod group;
-pub mod handoff;
-pub mod instruction;
-pub mod memory;
-pub mod message;
-pub mod models;
-pub mod origin;
-pub mod pass;
-mod proposal;
-mod provider;
 pub use provider::Provider;
-mod record;
-pub mod search;
-mod session;
+pub(crate) use scribe_domain::checks;
+pub(crate) use scribe_domain::config;
+pub use scribe_domain::consistency;
+pub use scribe_domain::control;
+pub(crate) use scribe_domain::entry;
+pub(crate) use scribe_domain::error;
+pub use scribe_domain::group;
+pub use scribe_domain::handoff;
+pub use scribe_domain::instruction;
+pub use scribe_domain::memory;
+pub use scribe_domain::message;
+pub use scribe_domain::models;
+pub use scribe_domain::origin;
+pub use scribe_domain::pass;
+pub(crate) use scribe_domain::proposal;
+pub(crate) use scribe_domain::provider;
+pub(crate) use scribe_domain::record;
+pub(crate) use scribe_domain::redact;
+pub use scribe_domain::search;
+pub(crate) use scribe_domain::session;
+pub use transcript::codex;
 mod store;
-mod tag;
-pub mod text;
-pub mod transcript;
-pub mod trigger;
-pub mod verbatim;
-pub mod voice;
+pub(crate) use scribe_domain::tag;
+pub use scribe_domain::text;
+pub use scribe_domain::transcript;
+pub use scribe_domain::trigger;
+pub use scribe_domain::verbatim;
+pub use scribe_domain::voice;
 
 pub use cases::entry::EntryVerbs;
 pub use cases::group::GroupVerbs;
@@ -132,5 +132,8 @@ pub use tag::{
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+/// The record fixtures the store's unit tests share.
 #[cfg(test)]
-mod tests;
+mod tests {
+    pub(crate) use scribe_domain::fixtures::{T0, entry, session};
+}

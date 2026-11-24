@@ -266,15 +266,18 @@ pub fn link(
 
 /// How to set the child's switch when adding a session link.
 #[derive(Clone, Copy)]
-pub(crate) enum LinkSwitch {
+pub enum LinkSwitch {
+    /// Set the switch as the link says.
     Manual {
+        /// Whether the child is switched on.
         on: bool,
     },
     /// The verified handoff identifies a parent even if it was never on.
     Inherit,
 }
 
-pub(crate) fn apply_link(
+/// Apply `link` from `session` to the switch state, as [`LinkSwitch`] says.
+pub fn apply_link(
     state: &mut ControlState,
     records: &BTreeMap<SessionId, Vec<SessionLink>>,
     session: &SessionId,

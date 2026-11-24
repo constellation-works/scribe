@@ -144,15 +144,17 @@ impl Redactor {
     }
 
     /// Mask the free-text metadata of a group before storing it.
-    pub(crate) fn group(&self, draft: &mut crate::group::NewGroup) {
+    pub fn group(&self, draft: &mut crate::group::NewGroup) {
         self.mask_all(group_fields(draft));
     }
 
-    pub(crate) fn group_summary(&self, summary: &str) -> String {
+    /// Mask a group's summary.
+    pub fn group_summary(&self, summary: &str) -> String {
         self.mask(summary)
     }
 
-    pub(super) fn message(&self, text: &str) -> String {
+    /// Mask a stored message's text.
+    pub fn message(&self, text: &str) -> String {
         self.mask(text)
     }
 
@@ -341,7 +343,7 @@ fn mask_shapes(text: &str) -> String {
 }
 
 /// The free-text fields of an entry, named as in [`REDACTED_FIELDS`].
-pub(super) fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)> {
+pub fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)> {
     let mut fields = vec![
         ("entry.said", &mut entry.said),
         ("entry.content", &mut entry.content),

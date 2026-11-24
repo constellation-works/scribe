@@ -10,7 +10,6 @@ mod fsio;
 mod memory;
 mod migrated;
 mod rebuild;
-mod redact;
 mod sessions;
 mod store;
 

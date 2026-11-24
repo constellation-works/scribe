@@ -61,8 +61,7 @@ pub enum MarkResult {
     },
 }
 
-/// The refusal code of a marker whose model calls all failed.
-pub const MODEL_FAILED: &str = "model_failed";
+pub use crate::annotation::MODEL_FAILED;
 /// The refusal code of an annotation an active entry already covers.
 pub const COVERED: &str = "covered";
 /// The refusal code of a quote redaction would change.

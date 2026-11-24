@@ -14,7 +14,8 @@ pub mod tag;
 
 use crate::{AuthorName, Error, Result, WriteRefusal};
 
-pub(crate) fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
+/// An agent-write refusal of `kind`, saying `message`.
+pub fn refusal(kind: WriteRefusal, message: impl Into<String>) -> Error {
     Error::AgentWrite {
         kind,
         message: message.into(),
@@ -59,21 +60,24 @@ pub fn check_reason(reason: &str) -> Result<()> {
     required_reason(reason)
 }
 
-pub(crate) fn unknown_tag() -> Error {
+/// The refusal for a tag that is not in the table.
+pub fn unknown_tag() -> Error {
     refusal(
         WriteRefusal::TagNotFound,
         "unknown tag; run 'scribe tag list'",
     )
 }
 
-pub(crate) fn required(text: &str) -> Result<()> {
+/// Refuse empty text.
+pub fn required(text: &str) -> Result<()> {
     if text.trim().is_empty() {
         return Err(refusal(WriteRefusal::InvalidText, "text must not be empty"));
     }
     Ok(())
 }
 
-pub(crate) fn required_reason(reason: &str) -> Result<()> {
+/// Refuse an empty reason, or one over 300 characters.
+pub fn required_reason(reason: &str) -> Result<()> {
     required(reason)?;
     if reason.chars().count() > 300 {
         return Err(refusal(
@@ -87,7 +91,7 @@ pub(crate) fn required_reason(reason: &str) -> Result<()> {
 /// Refuse an instruction without the message id of the turn that backs
 /// it: every record of it names that turn, and a store with a blank one
 /// does not read.
-pub(crate) fn required_message(instructed: &crate::instruction::Instructed) -> Result<()> {
+pub fn required_message(instructed: &crate::instruction::Instructed) -> Result<()> {
     if instructed.message.trim().is_empty() {
         return Err(refusal(
             WriteRefusal::InstructionNotFound,
@@ -99,7 +103,7 @@ pub(crate) fn required_message(instructed: &crate::instruction::Instructed) -> R
 
 /// The refusal of a write to or on behalf of a forgotten session
 /// (`session_forgotten`); `what` says what is refused.
-pub(crate) fn forgotten_refusal(id: &crate::SessionId, what: &str) -> Error {
+pub fn forgotten_refusal(id: &crate::SessionId, what: &str) -> Error {
     refusal(
         WriteRefusal::SessionForgotten,
         format!("session {id} was forgotten (#scribe forget); {what}"),
@@ -108,7 +112,7 @@ pub(crate) fn forgotten_refusal(id: &crate::SessionId, what: &str) -> Error {
 
 /// The routine's own routes carry a scribe author; an agent author here
 /// is a CLI write verb, which may not use a reserved name.
-pub(crate) fn check_active_author(request: &crate::activity::SetActive) -> Result<()> {
+pub fn check_active_author(request: &crate::activity::SetActive) -> Result<()> {
     let by = match request {
         crate::activity::SetActive::Deactivate { by, .. }
         | crate::activity::SetActive::Activate { by, .. } => by,
@@ -120,7 +124,7 @@ pub(crate) fn check_active_author(request: &crate::activity::SetActive) -> Resul
 }
 
 /// Refuse a rebuild write while `id` is on and due: a pass owns it.
-pub(crate) fn refuse_busy(control: &crate::ControlState, id: &crate::SessionId) -> Result<()> {
+pub fn refuse_busy(control: &crate::ControlState, id: &crate::SessionId) -> Result<()> {
     if control.get(id).is_some_and(|c| c.on && c.due) {
         return Err(Error::SessionBusy(id.clone()));
     }
@@ -129,10 +133,7 @@ pub(crate) fn refuse_busy(control: &crate::ControlState, id: &crate::SessionId) 
 
 /// A hand-set session field: content, and either a valid project or a
 /// one-line title. `value` is already trimmed.
-pub(crate) fn check_session_field(
-    field: &str,
-    value: &str,
-) -> Result<crate::session::SessionField> {
+pub fn check_session_field(field: &str, value: &str) -> Result<crate::session::SessionField> {
     check_content(value)?;
     if field == "project" {
         value

@@ -7,14 +7,15 @@ use crate::group::{GroupAddition, GroupConsent, JoinGroup, NewGroup};
 use crate::message::NewMessage;
 use crate::{Redactor, RelatedKind, Result, SessionId, WriteRefusal};
 
-pub(crate) fn number(id: &str) -> Option<i64> {
+/// The number of a group id `g-<n>`, when it is one exactly.
+pub fn number(id: &str) -> Option<i64> {
     let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
     (n > 0 && format!("g-{n}") == id).then_some(n)
 }
 
 /// A project group slug: lowercase letters, digits and interior hyphens, not a
 /// group id, and free of configured sensitive text.
-pub(crate) fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
+pub fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
     if slug.is_empty()
         || slug.len() > 64
         || !slug
@@ -39,7 +40,7 @@ pub(crate) fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> 
 }
 
 /// A backfill takes only the named session's own user turns.
-pub(crate) fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
+pub fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
     if turns
         .iter()
         .any(|m| &m.session != session || m.role != crate::Speaker::User)
@@ -55,7 +56,7 @@ pub(crate) fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) ->
 /// A group opens on consent given for opening one, with the opener's own
 /// user turns, a title and kind as content, and no session among its
 /// references.
-pub(crate) fn check_new_group(
+pub fn check_new_group(
     draft: &NewGroup,
     consent: &GroupConsent,
     earlier_turns: &[NewMessage],
@@ -83,7 +84,7 @@ pub(crate) fn check_new_group(
 }
 
 /// A project-group backfill takes only each named session's user turns.
-pub(crate) fn check_additions(additions: &[GroupAddition]) -> Result<()> {
+pub fn check_additions(additions: &[GroupAddition]) -> Result<()> {
     if additions.iter().any(|addition| {
         addition.turns.as_ref().is_some_and(|turns| {
             turns
@@ -101,7 +102,7 @@ pub(crate) fn check_additions(additions: &[GroupAddition]) -> Result<()> {
 
 /// A join names an agent author that is not reserved, a role that is
 /// content, and the member's own user turns.
-pub(crate) fn check_join(join: &JoinGroup<'_>) -> Result<()> {
+pub fn check_join(join: &JoinGroup<'_>) -> Result<()> {
     check_agent_author(join.author)?;
     if let Some(role) = join.role {
         check_content(role)?;
@@ -110,7 +111,7 @@ pub(crate) fn check_join(join: &JoinGroup<'_>) -> Result<()> {
 }
 
 /// A capture takes only the member's own verified user turns.
-pub(crate) fn check_capture_turns(session: &SessionId, messages: &[NewMessage]) -> Result<()> {
+pub fn check_capture_turns(session: &SessionId, messages: &[NewMessage]) -> Result<()> {
     if messages
         .iter()
         .any(|m| &m.session != session || m.role != crate::Speaker::User)

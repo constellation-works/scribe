@@ -109,12 +109,7 @@ pub(crate) fn is_marked(own: &str) -> bool {
 /// no catcher, does not read that speaker, or none fires. The store calls
 /// it again under its lock.
 #[must_use]
-pub(crate) fn admission(
-    tags: &TagTable,
-    tag: &TagName,
-    speaker: Speaker,
-    own: &str,
-) -> Option<Admitted> {
+pub fn admission(tags: &TagTable, tag: &TagName, speaker: Speaker, own: &str) -> Option<Admitted> {
     if speaker == Speaker::Assistant && crate::handoff::is_handoff(own) {
         return None;
     }

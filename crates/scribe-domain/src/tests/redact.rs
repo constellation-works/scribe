@@ -1,10 +1,8 @@
-use super::super::redact::{
-    entry_fields, group_fields, proposal_fields, session_fields, tag_fields,
-};
 use crate::config::Config;
 use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
+use crate::redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
+use crate::redact::{entry_fields, group_fields, proposal_fields, session_fields, tag_fields};
 use crate::session::{SessionRecord, Term};
-use crate::store::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 use crate::tests::{T0, entry, session};
 
 const SECRET: &str = "sk-live-0123456789abcdef";

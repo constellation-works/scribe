@@ -388,7 +388,7 @@ pub enum Settle {
     /// id or a unique prefix of it, which the store resolves), leaving an id-only tombstone. Open claims sourced from it are
     /// withdrawn, citing entries are detached, and handoffs naming it are
     /// deleted (2_design.md §15.7). The store applies it
-    /// ([`crate::ProposalVerbs::settle`]).
+    /// (`ProposalVerbs::settle` in scribe-core).
     ForgetSession(SessionId),
 }
 

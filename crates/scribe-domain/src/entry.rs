@@ -16,7 +16,7 @@ pub use records::{
     AnswerIn, Decision, InvalidAnswerIn, InvalidItemState, ItemAnswer, ItemClosure, ItemState,
     OpenItem,
 };
-pub(crate) use records::{DECISION_TAG, OPEN_ITEM_TAG, is_decision_or_item};
+pub use records::{DECISION_TAG, OPEN_ITEM_TAG, is_decision_or_item};
 
 use crate::record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, Related, Topic, Topics,
@@ -350,7 +350,8 @@ impl Cite {
         self.session.as_str() == "deleted" && self.line == 0
     }
 
-    pub(crate) fn mark_deleted(&mut self) {
+    /// Point the cite at the deleted session, dropping what identified the turn.
+    pub fn mark_deleted(&mut self) {
         self.session = SessionId::deleted();
         self.message = None;
         self.at = OffsetDateTime::UNIX_EPOCH;

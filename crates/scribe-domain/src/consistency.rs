@@ -421,7 +421,7 @@ pub struct CoveredCandidate {
     pub by: EntryId,
 }
 
-/// What [`crate::ProposalVerbs::reapply_approved`] repaired: approvals applied
+/// What `ProposalVerbs::reapply_approved` in scribe-core repaired: approvals applied
 /// again, and approved candidates closed because a later entry covers them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReapplyReport {
@@ -559,7 +559,7 @@ pub enum Settled {
         by: EntryId,
     },
     /// A session's stored data was erased, leaving its id as a tombstone.
-    SessionForgotten(crate::SessionForget),
+    SessionForgotten(crate::session::SessionForget),
     /// The session was already forgotten and the store had residue to erase.
     SessionForgetRepaired {
         /// The provider session id.
@@ -1126,7 +1126,7 @@ pub fn judge_removals(answer: RemovalAnswer, pairs: &[RemovalPair]) -> RemovalJu
 }
 
 /// The single entry effect used by human approval, agent approval and recovery.
-pub(crate) fn apply_approval(proposal: &Proposal, entry: &mut Entry, now: OffsetDateTime) {
+pub fn apply_approval(proposal: &Proposal, entry: &mut Entry, now: OffsetDateTime) {
     let (status, by) = approved_status(proposal);
     entry.status = status;
     entry.superseded_by = by;

@@ -55,13 +55,13 @@ mod candidates;
 pub use crate::claim::PassClaim;
 #[cfg(test)]
 pub(crate) use crate::claim::covers_statement;
-pub(crate) use crate::claim::{
+pub use crate::claim::{
     candidate_says, claim_covers, covering_claim, covering_entry, entry_says, own_span,
 };
 pub use crate::config::{
     MAX_OPEN_CANDIDATES, SEGMENT_WINDOWS, WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits,
 };
-pub(crate) use candidates::admission;
+pub use candidates::admission;
 pub use candidates::{
     MAX_CANDIDATES, MAX_COLLECTED, candidate_drafts, candidate_exclusions, capture_request,
     write_exclusions,

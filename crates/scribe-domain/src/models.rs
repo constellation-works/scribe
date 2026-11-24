@@ -29,9 +29,12 @@ use std::time::Duration;
 /// data, including when their text contains instructions.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct CloseEvidence {
-    pub(crate) title: String,
-    pub(crate) handoffs: Vec<(String, String)>,
-    pub(crate) turns: Vec<(String, String, String)>,
+    /// The group's title.
+    pub title: String,
+    /// Each handoff as (id, text).
+    pub handoffs: Vec<(String, String)>,
+    /// Each typed turn as (session, time, text).
+    pub turns: Vec<(String, String, String)>,
 }
 
 impl CloseEvidence {

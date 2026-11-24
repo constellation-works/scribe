@@ -11,7 +11,7 @@ use crate::session::{LinkError, SessionId};
 use std::io;
 use std::path::PathBuf;
 
-/// Everything a [`crate::Store`] operation can fail with.
+/// Everything a `Store` operation (scribe-core) can fail with.
 ///
 /// `#[non_exhaustive]`: this is the library's public boundary (STD-02 R11), so
 /// adding a variant is not a breaking change. Surfaces map it through
@@ -211,7 +211,8 @@ impl Error {
         }
     }
 
-    pub(crate) fn corrupt(
+    /// A file at `path` that does not parse.
+    pub fn corrupt(
         path: impl Into<PathBuf>,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
@@ -221,7 +222,8 @@ impl Error {
         }
     }
 
-    pub(crate) fn io(action: &'static str, path: impl Into<PathBuf>, source: io::Error) -> Self {
+    /// An I/O failure `action` on `path`.
+    pub fn io(action: &'static str, path: impl Into<PathBuf>, source: io::Error) -> Self {
         Self::Io {
             action,
             path: path.into(),

@@ -398,16 +398,28 @@ dependencies = [
  "rusqlite",
  "rustix",
  "scribe-core",
+ "scribe-domain",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "time",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
+name = "scribe-domain"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
  "time",
  "toml",
  "tracing",
  "unicode-normalization",
- "yaml_serde",
 ]
 
 [[package]]
