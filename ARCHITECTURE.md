@@ -8,6 +8,12 @@ changes this file and that script in the same commit.
 Why four crates: [the four-crate decision](docs/design/scribe/4_decisions.md#four-crates-domain-store-use-cases-and-cli)
 (ORB-27707). Other decisions are in [4_decisions.md](docs/design/scribe/4_decisions.md).
 
+> **Being replaced.** Daniel approved a layout by app on 2026-11-24:
+> [specs/architecture.md](docs/design/scribe/specs/architecture.md)
+> ([decision](docs/design/scribe/4_decisions.md#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools)).
+> ORB-27921 migrates the code step by step; this file describes the code as
+> it is until its last step rewrites it from the spec.
+
 ## Crates
 
 ```
