@@ -16,11 +16,18 @@
 pub mod annotation;
 pub mod audit;
 pub mod catalog;
+pub mod codex;
 pub mod continuation;
 mod ctx;
 pub mod entry;
 pub mod group;
 pub mod group_add;
+pub mod group_backfill;
+pub mod group_close;
+mod group_cmd;
+pub mod group_join;
+pub mod group_leave;
+pub mod group_open;
 pub mod group_turns;
 pub mod hook;
 pub mod mark;
@@ -33,14 +40,16 @@ pub mod proposal_command;
 pub mod rebuild;
 pub mod scribe_command;
 pub mod session;
+pub mod session_end;
 pub mod session_start;
 pub mod stop;
 pub mod tag;
 pub mod user_prompt_submit;
 
+pub use ctx::{
+    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, RunLimits, TranscriptState,
+    Transcripts, Unreadable,
+};
 #[cfg(unix)]
 pub use ctx::{ClaudeRead, ClaudeWindow};
-pub use ctx::{
-    Clock, Ctx, Discovered, PortError, Redaction, RunLimits, TranscriptState, Transcripts,
-    Unreadable,
-};
+pub use group_cmd::GroupError;

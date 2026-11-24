@@ -27,7 +27,6 @@
 //! except Stop's annotation call in `annotation.rs`.
 
 mod codex;
-mod continuation;
 mod group_add;
 pub(super) mod group_turns;
 pub(super) mod payload;
@@ -36,9 +35,6 @@ mod session_end;
 mod session_start;
 mod stop;
 mod user_prompt_submit;
-
-pub(in crate::commands) use continuation::{ClearedPredecessor, cleared_predecessor};
-pub(in crate::commands) use group_turns::typed_turns;
 
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;

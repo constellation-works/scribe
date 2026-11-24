@@ -120,6 +120,19 @@ pub trait Transcripts {
     /// When the transcripts tree cannot be listed.
     fn discovered(&self, provider: Provider) -> Result<Discovered, Self::Error>;
 
+    /// `session`'s own `provider` transcript, when there is one: another
+    /// session's duplicate id elsewhere in the tree is not an error here, a
+    /// duplicate of `session` itself still is.
+    ///
+    /// # Errors
+    ///
+    /// When the transcripts tree cannot be listed, or `session` is there twice.
+    fn locate_own(
+        &self,
+        provider: Provider,
+        session: &SessionId,
+    ) -> Result<Option<PathBuf>, Self::Error>;
+
     /// Check `path` as `session`'s `provider` transcript and read its
     /// complete records after `prior`, the capture's saved position (from
     /// the start when it no longer matches); `None` when there is no file
@@ -158,6 +171,17 @@ pub struct ClaudeWindow {
     pub resumed: bool,
     /// Where the records end, for the next read.
     pub position: ClaudeCapturePosition,
+}
+
+/// What the CLI's audit middleware records about the instruction a command
+/// acts on, noted as the command runs.
+pub trait AuditNotes {
+    /// The session the instruction was typed in.
+    fn session(&self, session: &str);
+    /// The message that carried the instruction.
+    fn message(&self, message: &str);
+    /// The command's audit line was committed with its write.
+    fn committed(&self);
 }
 
 /// The transcripts found on this host ([`Transcripts::discovered`]).

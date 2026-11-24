@@ -10,7 +10,8 @@ use scribe_core::ClaudeCapturePosition;
 #[cfg(unix)]
 use scribe_core::cases::ClaudeRead;
 use scribe_core::cases::{
-    Clock, Ctx, Discovered, PortError, Redaction, TranscriptState, Transcripts, Unreadable,
+    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, TranscriptState, Transcripts,
+    Unreadable,
 };
 use scribe_core::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
@@ -31,6 +32,20 @@ impl Context {
 impl PortError for CliError {
     fn code(&self) -> &'static str {
         CliError::code(self)
+    }
+}
+
+impl AuditNotes for Context {
+    fn session(&self, session: &str) {
+        self.note_instruction_session(session);
+    }
+
+    fn message(&self, message: &str) {
+        self.note_instruction_message(message);
+    }
+
+    fn committed(&self) {
+        self.note_audit_committed();
     }
 }
 
@@ -92,6 +107,14 @@ impl Transcripts for Context {
         session: &SessionId,
     ) -> Result<Option<Vec<u8>>, Unreadable> {
         payload::claude_header(&self.with_provider(provider), path, session)
+    }
+
+    fn locate_own(
+        &self,
+        provider: Provider,
+        session: &SessionId,
+    ) -> Result<Option<PathBuf>, CliError> {
+        payload::locate_own(&self.with_provider(provider), session)
     }
 
     fn discovered(&self, provider: Provider) -> Result<Discovered, CliError> {

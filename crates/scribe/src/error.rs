@@ -219,6 +219,21 @@ impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
     }
 }
 
+/// `scribe group`'s errors, each the variant it was before the flow moved.
+impl From<scribe_core::cases::GroupError<CliError>> for CliError {
+    fn from(err: scribe_core::cases::GroupError<CliError>) -> Self {
+        use scribe_core::cases::GroupError;
+        match err {
+            GroupError::Core(e) => Self::Core(e),
+            GroupError::Port(e) => e,
+            GroupError::Read { what, source } => Self::Read { what, source },
+            GroupError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            GroupError::Usage(message) => Self::Usage(message),
+            GroupError::Model(e) => Self::Model(e),
+        }
+    }
+}
+
 /// `mark retry`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
     fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {
