@@ -250,11 +250,6 @@ impl<'a> AuditGuard<'a> {
                     target: Some(item.proposal.clone()),
                     error_code: None,
                 }))
-                .chain(report.failed_batches.iter().map(|f| Line {
-                    status: AuditStatus::Failure,
-                    target: Some(format!("batch:{}", f.batch)),
-                    error_code: Some(f.error_code),
-                }))
                 .chain(report.deactivated.iter().map(|d| Line {
                     status: AuditStatus::Success,
                     target: Some(format!("session:{}", d.session)),
@@ -263,11 +258,6 @@ impl<'a> AuditGuard<'a> {
                 .chain(report.failed_deactivations.iter().map(|f| Line {
                     status: AuditStatus::Failure,
                     target: Some(format!("session:{}", f.session)),
-                    error_code: Some(f.error_code),
-                }))
-                .chain(report.failed_removal_batches.iter().map(|f| Line {
-                    status: AuditStatus::Failure,
-                    target: Some(format!("removal-batch:{}", f.batch)),
                     error_code: Some(f.error_code),
                 }))
                 .chain(report.memory.targets.iter().map(|target| Line {

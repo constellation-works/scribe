@@ -1,4 +1,4 @@
-List #scribe markers not cataloged yet: pending a retry, or given up
+List #scribe markers with no entry from scribe
 
 Usage: scribe mark list [OPTIONS]
 
@@ -8,14 +8,17 @@ Options:
   -V, --version            Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
       --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
       --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json                 Shorthand for --format json
 
-A marker is listed while it is pending (the session's next reply retries it)
-or given up (outcome refused, code model_failed: every call failed). It holds
-ids only; the line it marks is in the session's transcript.
+A marker is listed when scribe wrote no entry for it: handed to the agent to
+record (outcome refused, code agent_handoff), or left from before scribe
+stopped calling a model for markers: pending (the session's next reply hands
+it over) or given up (code model_failed). It holds ids only; the line it
+marks is in the session's transcript. Whether the agent recorded it is in
+scribe entry list.
 
 Examples:
   scribe mark list

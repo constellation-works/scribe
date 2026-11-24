@@ -22,7 +22,7 @@ use crate::cases::user_prompt_submit::{self, PromptInput};
 use crate::cases::{Ctx, TranscriptState, group_turns, session_end};
 use crate::codex::TypedTurn;
 use crate::message::NewMessage;
-use crate::{Config, Label, Models, Provider, SessionId, annotation, capture, control};
+use crate::{Label, Provider, SessionId, annotation, capture, control};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -37,7 +37,7 @@ pub struct CodexStop {
 }
 
 /// What the Codex adapter runs on.
-pub struct CodexInput<'i, E, F, R> {
+pub struct CodexInput<'i, E, R> {
     /// The hook event (`UserPromptSubmit`, `Stop` or `SessionEnd`).
     pub event: &'static str,
     /// The decoded payload.
@@ -50,8 +50,6 @@ pub struct CodexInput<'i, E, F, R> {
     pub session_end: Option<Result<SessionId, E>>,
     /// The `Stop` payload, decoded up front for that event.
     pub stop: Option<Result<CodexStop, E>>,
-    /// Builds the `Models` adapter for Stop's config.
-    pub models: F,
     /// Reads a named session's past transcript for `/scribe group add`.
     pub read_past: R,
 }
@@ -111,17 +109,13 @@ fn decoded<T, E>(pre: &mut Option<Result<T, E>>, event: &str) -> Result<T, HookE
 }
 
 /// Run Stop on its pre-decoded payload.
-fn run_stop<E: HookPortError, M: Models>(
+fn run_stop<E: HookPortError>(
     ctx: &Ctx<'_, E>,
     pre: &mut Option<Result<CodexStop, E>>,
     provider: Provider,
     host: &Label,
-    models: &mut Option<impl FnOnce(&Config) -> M>,
 ) -> Result<HookReply, HookError<E>> {
     let payload = decoded(pre, "Stop")?;
-    let models = models
-        .take()
-        .ok_or_else(|| HookError::Usage("Stop ran twice in one Codex hook".into()))?;
     stop::run(
         ctx,
         StopInput {
@@ -130,7 +124,6 @@ fn run_stop<E: HookPortError, M: Models>(
             cwd: payload.cwd,
             provider,
             host: host.clone(),
-            models,
         },
     )
 }
@@ -141,14 +134,9 @@ fn run_stop<E: HookPortError, M: Models>(
 ///
 /// [`HookError`]: a store error, an unreadable transcript, a payload decode
 /// error raised by the port, or a port.
-pub fn run<E, M, F, R>(
-    ctx: &Ctx<'_, E>,
-    input: CodexInput<'_, E, F, R>,
-) -> Result<HookReply, HookError<E>>
+pub fn run<E, R>(ctx: &Ctx<'_, E>, input: CodexInput<'_, E, R>) -> Result<HookReply, HookError<E>>
 where
     E: HookPortError,
-    M: Models,
-    F: FnOnce(&Config) -> M,
     R: FnMut(Provider, &SessionId, &Path) -> Result<Option<Vec<NewMessage>>, E>,
 {
     let CodexInput {
@@ -158,10 +146,8 @@ where
         host,
         session_end: mut end_payload,
         stop: mut stop_payload,
-        models,
         mut read_past,
     } = input;
-    let mut models = Some(models);
     let Some(raw_id) = value["session_id"].as_str() else {
         return Ok(refused(
             event,
@@ -266,11 +252,10 @@ where
     // group turns' outcomes, and the persisted audit is disarmed.
     let finish = |group_outcomes: Vec<HookOutcome>,
                   persisted: Option<&mut PersistedAudit<'_>>,
-                  stop_payload: &mut Option<Result<CodexStop, E>>,
-                  models: &mut Option<F>|
+                  stop_payload: &mut Option<Result<CodexStop, E>>|
      -> Result<HookReply, HookError<E>> {
         let mut out = if event == "Stop" {
-            run_stop(ctx, stop_payload, provider, &host, models)?
+            run_stop(ctx, stop_payload, provider, &host)?
         } else {
             silent(event)
         };
@@ -282,12 +267,7 @@ where
     };
     let candidates: Vec<_> = rollout.typed.iter().filter(|t| relevant(t)).collect();
     if candidates.is_empty() {
-        return finish(
-            group_outcomes,
-            persisted.as_mut(),
-            &mut stop_payload,
-            &mut models,
-        );
+        return finish(group_outcomes, persisted.as_mut(), &mut stop_payload);
     }
     let before = ctx.store.read().sessions().control()?;
     if before
@@ -295,12 +275,7 @@ where
         .get(&id)
         .is_some_and(|cursor| candidates.last().is_some_and(|t| &t.message.uuid == cursor))
     {
-        return finish(
-            group_outcomes,
-            persisted.as_mut(),
-            &mut stop_payload,
-            &mut models,
-        );
+        return finish(group_outcomes, persisted.as_mut(), &mut stop_payload);
     }
     let _ingestion = ctx.store.lock_codex_ingestion(&id)?;
     let state = ctx.store.read().sessions().control()?;
@@ -387,7 +362,7 @@ where
     // turns' replies, so a catch-up Stop still reports what it recorded.
     let mut agent_only = None;
     if event == "Stop" {
-        let reply = run_stop(ctx, &mut stop_payload, provider, &host, &mut models)?;
+        let reply = run_stop(ctx, &mut stop_payload, provider, &host)?;
         replies.extend(reply.message);
         agent_only = reply.context;
         outcomes.extend(reply.outcomes);

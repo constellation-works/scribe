@@ -234,19 +234,6 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     scribe_core::cases::resolve::short_ids(&ctx.core(), ctx.provider(), extra)
 }
 
-/// Resolve a session id or unique prefix across the store and provider
-/// transcripts on disk ([`scribe_core::cases::resolve::session_or_typed`]).
-pub(in crate::commands) fn resolve_session_or_typed(
-    ctx: &Context,
-    input: &scribe_core::SessionId,
-) -> Result<scribe_core::SessionId, CliError> {
-    Ok(scribe_core::cases::resolve::session_or_typed(
-        &ctx.core(),
-        ctx.provider(),
-        input,
-    )?)
-}
-
 /// Run one command, auditing it if it is audited.
 ///
 /// The guard exists before dispatch and records when it is dropped, so a

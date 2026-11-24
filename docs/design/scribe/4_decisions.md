@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), and why ask, the Orbit task search and the tmux popup are removed.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, and why the consistency scan and the Stop hook call no model.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
@@ -2089,6 +2089,11 @@ Every change is audited and reversible with `session activate`.
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
 
+> **Superseded, 2026-11-24 ([ORB-27911]):** the consistency scan calls no
+> model, so no session is deactivated for a removed feature; age is the
+> only automatic route
+> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+
 ### Context
 
 Daniel asked for both a configurable age limit and deactivation of
@@ -2126,7 +2131,12 @@ features.
 ## Removal evidence is Daniel-authored entries only
 
 **Recorded:** 2026-11-10 · [ORB-24005] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`)
+**Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`; removed by ORB-27911)
+
+> **Superseded, 2026-11-24 ([ORB-27911]):** the consistency scan calls no
+> model, so no session is deactivated for a removed feature; age is the
+> only automatic route
+> ([see below](#the-consistency-scan-and-stop-call-no-model)).
 
 ### Context
 
@@ -2789,7 +2799,12 @@ for them.
 ## An action entry's window is capped at 40 turns and 12,000 characters
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`)
+**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`; removed by ORB-27911)
+
+> **Superseded in part, 2026-11-24 ([ORB-27911]):** a `#scribe` marker no
+> longer writes an entry, so no new entry gets a window, and
+> `action_window` is removed; stored windows stay readable
+> ([see below](#the-consistency-scan-and-stop-call-no-model)).
 
 The window keeps the turns since the previous `#scribe` line, so a
 consumer sees the discussion that produced the entry without a model call.
@@ -4097,6 +4112,12 @@ as the approval's evidence.
 **Refines:** [`#scribe` capture in 2_design.md §4](./2_design.md#4-scribe), [A claim carries a statement (§11.1)](./2_design.md#111-a-claim-carries-a-statement)
 **Paths:** `crates/scribe-core/src/capture/**`, `crates/scribe/src/hook/**`, `crates/scribe-core/src/store/**`, `docs/design/scribe/2_design.md` §14
 
+> **Superseded in part, 2026-11-24 ([ORB-27911]):** Stop calls no model:
+> it hands each open marker to the agent with the `scribe entry add`
+> command that records it, and records the marker `refused`
+> `agent_handoff`. Detection, the submit echo and `marks.json` stay
+> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+
 ### Context
 
 Daniel, chief's chat, 2026-11-21: "current scribe's inline command only
@@ -5068,3 +5089,66 @@ behave as before. Step 2 removes the remaining in-process model calls.
   agent reads the ranked records `search` returns and writes its own
   answer. The tests that exercised the ranking's project and topic
   narrowing through `ask` went with it.
+
+## The consistency scan and Stop call no model
+
+**Recorded:** 2026-11-24 · [ORB-27911] · **Daniel's direction**
+**Code anchors:** `crates/scribe-core/src/cases/annotation.rs` (`run`, `hints`); `crates/scribe-core/src/cases/consistency_scan.rs`; `crates/scribe-domain/src/consistency.rs` (`stale_candidates`)
+
+Supersedes [Removal of the feature is the main deactivation route; age is a generous backstop](#removal-of-the-feature-is-the-main-deactivation-route-age-is-a-generous-backstop)
+and [Removal evidence is Daniel-authored entries only](#removal-evidence-is-daniel-authored-entries-only),
+and in part [`#scribe` is an annotation, cataloged at the end of the turn](#scribe-is-an-annotation-cataloged-at-the-end-of-the-turn)
+and [An action entry's window is capped at 40 turns and 12,000 characters](#an-action-entrys-window-is-capped-at-40-turns-and-12000-characters).
+
+### Context
+
+Daniel, 2026-11-24, as ORB-27911 records his words:
+
+> "scribe should just be a cli tool, exposing tools for agents to
+> query/update. Any operations that require agent invocations (e.g. session
+> pass; delete \"ask\" entirely, not needed) should be executed as orbit
+> jobs with agent_invoke activities, passing the transcript data or
+> whatever."
+
+> "no, after seeing this mess of raw agent invocations I realized it must
+> be go."
+
+> "can you have capt start deleting agent stuff."
+
+Stop called a model (`models.annotation`) to catalog each `#scribe`
+marker as Daniel's entry, retrying three times before giving up; the
+consistency scan called one (`models.consistency`) to label entry pairs
+and to judge whether a later entry of Daniel's removed a session's
+feature.
+
+### Decision
+
+Step 2a of ORB-27911 removes both model steps. Stop hands each open
+marker to the main agent in its reply's `additionalContext`, with the
+`scribe entry add` command that records it with Daniel's quoted words
+(`--tag` from the marker's hint, `--project`, `--topic`, and `--spoken`
+unless the hinted tag is an action, evidence or handoff tag, which refuse
+it), and records the
+marker final as `refused` with code `agent_handoff`; a marker an older
+scribe left `pending` is handed over at its next Stop. `scribe mark retry`
+goes; `scribe mark list` stays, listing markers with no entry from scribe.
+The scan keeps re-applying approvals, closing retired-tag candidates,
+opening `stale` proposals and deactivating sessions by age; it drops pair
+judging and the `removed` route, and its report drops the nine fields that
+counted them. `[models]`, `[codex.models]` and `[instructions]` keep
+accepting and checking their `annotation`, `consistency` and `removal`
+keys, unused, so existing `config.toml` files still load.
+
+### Consequences
+
+- No supersession is detected: two entries that contradict both stay
+  active until Daniel retires one. `supersedes` proposals opened before
+  stay settleable.
+- No session is deactivated because a later entry says its feature was
+  removed; it ages out or is deactivated by hand.
+- A marker under an action tag no longer captures the transcript window
+  (§4.6); an entry the agent writes from a marker has none.
+- Whether the agent recorded a handed-over marker is not tracked:
+  `mark list` keeps listing it.
+- The session pass, catalog, rebuild, memory refresh and group close still
+  call models; they wait for Daniel's direction on Orbit jobs.

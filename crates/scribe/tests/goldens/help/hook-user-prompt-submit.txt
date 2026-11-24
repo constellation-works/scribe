@@ -13,7 +13,7 @@ Options:
 
 Global options:
       --provider <PROVIDER>
-          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+          Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
 
       --root <DIR>
           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
@@ -31,8 +31,8 @@ on stdin. Prints Claude Code hook JSON when the prompt has a #scribe line,
 and nothing otherwise; never blocks such a prompt. Every #scribe the user
 typed, inside a sentence or opening a line (#scribe idea: ..., #scribe add
 this to preferences), not quoted or in code, is a marker: it is echoed as
-marked and cataloged at Stop, and nothing is written here; no model is
-called. #scribe approve <p-id>, #scribe reject <p-id>, #scribe retire
+marked and handed to the agent at Stop, and nothing is written here; no
+model is called. #scribe approve <p-id>, #scribe reject <p-id>, #scribe retire
 <entry-id> and #scribe forget <entry-id>, each on its own line, settle a
 proposal or hide or blank an entry. A prompt whose first
 line is /scribe on, /scribe off or /scribe status switches this session's

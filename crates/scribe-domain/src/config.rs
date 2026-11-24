@@ -132,10 +132,6 @@ pub struct ModelIds {
     pub ask: String,
     /// Writes session records.
     pub session: String,
-    /// Judges candidate pairs.
-    pub consistency: String,
-    /// Catalogs `#scribe` annotations at `Stop` (2_design.md §14.3).
-    pub annotation: String,
     /// Rebuilds the profile in `memory refresh` (2_design.md §15.6).
     pub profile: String,
     /// The environment variables that carry the model credential; passed to
@@ -150,8 +146,6 @@ impl ModelIds {
             provider: crate::Provider::Codex,
             ask: String::from("gpt-6-luna"),
             session: String::from("gpt-6-luna"),
-            consistency: String::from("gpt-6-luna"),
-            annotation: String::from("gpt-6-luna"),
             profile: String::from("gpt-6-luna"),
             credentials: vec![String::from("OPENAI_API_KEY")],
         }
@@ -164,8 +158,6 @@ impl Default for ModelIds {
             provider: crate::Provider::ClaudeCode,
             ask: String::from("claude-sonnet-5-5"),
             session: String::from("claude-haiku-5-5"),
-            consistency: String::from("claude-haiku-5-5"),
-            annotation: String::from("claude-haiku-5-5"),
             profile: String::from("claude-sonnet-5-5"),
             credentials: vec![
                 String::from("CLAUDE_CODE_OAUTH_TOKEN"),
@@ -307,7 +299,9 @@ impl Config {
         .into_iter()
         .filter(|(set, _)| *set)
         .map(|(_, key)| {
-            format!("config key {key} is unused: #scribe lines are cataloged by models.annotation; remove it")
+            format!(
+                "config key {key} is unused: #scribe markers are handed to the agent, and models.annotation is unused too; remove it"
+            )
         })
         .collect();
         // Memory has one fixed shape with no switches (2_design.md §15.5):
@@ -323,6 +317,18 @@ impl Config {
                 "config key instructions.memory_pairs is deprecated (config_deprecated): memory consolidation is removed; remove it",
             ));
         }
+        // `[models] consistency` and `annotation` (and the codex twins) name
+        // no model since ORB-27911 step 2a: accepted, checked and ignored.
+        let ignored: Vec<String> = [
+            &raw.models.consistency,
+            &raw.models.annotation,
+            &raw.codex.models.consistency,
+            &raw.codex.models.annotation,
+        ]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
         let models = raw.models.resolve(ModelIds::default());
         let codex_models = raw.codex.models.resolve(ModelIds::codex());
         for name in models
@@ -337,19 +343,15 @@ impl Config {
                 )));
             }
         }
-        for ids in [&models, &codex_models] {
-            for model in [
-                &ids.ask,
-                &ids.session,
-                &ids.consistency,
-                &ids.annotation,
-                &ids.profile,
-            ] {
-                if model.trim().is_empty() || model.chars().any(char::is_control) {
-                    return Err(unlocated(String::from(
-                        "model ids must be nonempty and contain no control characters",
-                    )));
-                }
+        for model in [&models, &codex_models]
+            .into_iter()
+            .flat_map(|ids| [&ids.ask, &ids.session, &ids.profile])
+            .chain(&ignored)
+        {
+            if model.trim().is_empty() || model.chars().any(char::is_control) {
+                return Err(unlocated(String::from(
+                    "model ids must be nonempty and contain no control characters",
+                )));
             }
         }
         let cadence = Cadence::default();
@@ -457,15 +459,20 @@ struct RawUser {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawInstructions {
+    /// Accepted, checked and ignored: `#scribe` markers go to the agent
+    /// (ORB-27911 step 2a).
     annotation: Option<String>,
     session: Option<String>,
     session_header: Option<String>,
     /// Accepted, checked and ignored: `ask` is removed (ORB-27911); the key goes with the model config in step 2.
     ask: Option<String>,
+    /// Accepted, checked and ignored: the consistency scan calls no model
+    /// (ORB-27911 step 2a).
     consistency: Option<String>,
     /// Deprecated: read only to warn that it is unused.
     memory_pairs: Option<String>,
     profile: Option<String>,
+    /// Accepted, checked and ignored, as `consistency`.
     removal: Option<String>,
 }
 
@@ -477,15 +484,17 @@ impl RawInstructions {
             Some(text) => out.set(model_use, &text),
             None => Ok(()),
         };
-        set(ModelUse::Annotation, self.annotation)?;
+        let ignored = |key: &str, text: &Option<String>| match text {
+            Some(text) => crate::voice::check_instruction(key, text).map(|_| ()),
+            None => Ok(()),
+        };
+        ignored("annotation", &self.annotation)?;
         set(ModelUse::Session, self.session)?;
         set(ModelUse::SessionHeader, self.session_header)?;
-        if let Some(text) = &self.ask {
-            crate::voice::check_instruction("ask", text)?;
-        }
-        set(ModelUse::Consistency, self.consistency)?;
+        ignored("ask", &self.ask)?;
+        ignored("consistency", &self.consistency)?;
         set(ModelUse::Profile, self.profile)?;
-        set(ModelUse::Removal, self.removal)?;
+        ignored("removal", &self.removal)?;
         Ok(out)
     }
 }
@@ -921,9 +930,13 @@ struct RawModels {
     /// Picks the group-close summary model (the removed `ask`'s key).
     ask: Option<String>,
     session: Option<String>,
+    /// Accepted, checked and ignored: the consistency scan calls no model
+    /// (ORB-27911 step 2a).
     consistency: Option<String>,
     /// Deprecated: read only to warn that it is unused.
     referent: Option<String>,
+    /// Accepted, checked and ignored: `#scribe` markers go to the agent
+    /// (ORB-27911 step 2a).
     annotation: Option<String>,
     profile: Option<String>,
     credentials: Option<Vec<String>>,
@@ -944,8 +957,6 @@ impl RawModels {
             provider,
             ask: self.ask.unwrap_or(defaults.ask),
             session: self.session.unwrap_or(defaults.session),
-            consistency: self.consistency.unwrap_or(defaults.consistency),
-            annotation: self.annotation.unwrap_or(defaults.annotation),
             profile: self.profile.unwrap_or(defaults.profile),
             credentials: self.credentials.unwrap_or(defaults.credentials),
         }

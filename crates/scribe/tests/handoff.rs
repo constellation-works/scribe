@@ -885,102 +885,43 @@ fn marker_capture_cannot_create_or_attribute_a_handoff_to_the_user() {
         ("u-4", "user", pref),
     ]);
 
-    // First Stop handles at most 2 marked turns (u-1 and u-2), second Stop handles u-3 and u-4.
-    let answers = json!([
-        // Turn 1: u-1 (unhinted) tries to route to `handoff` -> must be refused.
-        {
-            "marker": 1,
-            "kind": "entry",
-            "tag": "handoff",
-            "context": "The user asked to save a session summary. They marked the turn for capture.",
-            "subject": "session summary",
-            "quote": "Please save a session summary before we stop",
-            "message": "u-1",
-            "reason": ""
-        }
-    ]);
-    let fake_claude = fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\ncount_file=\"$HOME/call-count\"\nn=0\nif [ -f \"$count_file\" ]; then n=$(cat \"$count_file\"); fi\nn=$((n + 1))\necho \"$n\" > \"$count_file\"\ncat > \"$HOME/claude-stdin-$n\"\ncase \"$n\" in\n  1) out='{}' ;;\n  2) out='{}' ;;\n  3) out='{}' ;;\n  *) out='{}' ;;\nesac\nprintf '{{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}}\\n' \"$out\"\n",
-            json!({"marks": answers}),
-            json!({"marks": [{
-                "marker": 1,
-                "kind": "entry",
-                "tag": "preferences",
-                "context": "The user marked a handoff line. The model tried to route it to preferences instead.",
-                "subject": "handoff pause",
-                "quote": "capture where we paused in this branch",
-                "message": "u-2",
-                "reason": ""
-            }]}),
-            json!({"marks": [{
-                "marker": 1,
-                "kind": "entry",
-                "tag": "handoff",
-                "context": "The user asked to add a summary to handoff. The model routed it to handoff.",
-                "subject": "summary",
-                "quote": "add this summary to handoff",
-                "message": "u-3",
-                "reason": ""
-            }]}),
-            json!({"marks": [{
-                "marker": 1,
-                "kind": "entry",
-                "tag": "preferences",
-                "context": "The user prefers concise status updates. They marked this rule for scribe.",
-                "subject": "status updates",
-                "quote": "Always keep status updates concise",
-                "message": "u-4",
-                "reason": ""
-            }]}),
-        ),
-    );
-
+    // One Stop hands every marker to the agent and writes no entry.
     let stop_payload = json!({
         "session_id": OFF_SESSION,
         "transcript_path": tr.path,
         "cwd": tr.cwd,
         "hook_event_name": "Stop"
     });
-    for _ in 0..2 {
-        let mut cmd = fx.cmd(&["hook", "stop"]);
-        cmd.env("PATH", &fake_claude);
-        let out = piped(cmd, &stop_payload);
-        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    }
+    let out = piped(fx.cmd(&["hook", "stop"]), &stop_payload);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let context = reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let lines: Vec<&str> = context.lines().collect();
+    assert_eq!(lines.len(), 4, "{context}");
+    // The hinted handoff line is the agent's to write as its own handoff:
+    // no `--spoken`, which would record the user's statement.
+    assert!(lines[1].contains("--tag handoff "), "{context}");
+    assert!(!lines[1].contains("--spoken"), "{context}");
 
-    // `handoff` was never offered in the annotation prompt's `Tags:` list.
-    let prompt1 = std::fs::read_to_string(fx.home().join("claude-stdin-1")).unwrap();
-    assert!(!prompt1.contains("\n- handoff:"), "{prompt1}");
-    assert!(prompt1.contains("\n- preferences:"), "{prompt1}");
-
-    // Zero `handoff` entries were written, and `u-2` did not leak into `preferences`.
+    // Zero entries were written: nothing is attributed to the user.
     let listed = json_of(&fx.ok(&["entry", "list", "--json"]));
     let entries = listed["entries"].as_array().unwrap();
-    assert_eq!(
-        entries.len(),
-        1,
-        "only the preferences marker should persist: {entries:?}"
-    );
-    assert_eq!(entries[0]["id"], "preferences-1");
-    assert_eq!(entries[0]["tag"], "preferences");
+    assert!(entries.is_empty(), "{entries:?}");
 
-    // All three handoff-targeted markers were recorded as refused (`unknown_tag`) in `marks.json`.
+    // Every marker was recorded as handed to the agent in `marks.json`.
     let marks_doc: Value = serde_json::from_str(
         &support::exported(&fx.root(), "marks.json").expect("marks.json written"),
     )
     .unwrap();
     let marks = marks_doc["marks"].as_array().unwrap();
     assert_eq!(marks.len(), 4, "{marks:?}");
-    for uuid in ["u-1", "u-2", "u-3"] {
+    for uuid in ["u-1", "u-2", "u-3", "u-4"] {
         let m = marks.iter().find(|m| m["message"] == uuid).unwrap();
         assert_eq!(m["outcome"], "refused", "{m}");
-        assert_eq!(m["code"], "unknown_tag", "{m}");
+        assert_eq!(m["code"], "agent_handoff", "{m}");
     }
-    let m4 = marks.iter().find(|m| m["message"] == "u-4").unwrap();
-    assert_eq!(m4["outcome"], "entry", "{m4}");
-    assert_eq!(m4["entry"], "preferences-1", "{m4}");
 
     // Agent handoff path still works normally on the same session.
     let rel = format!("session:{OFF_SESSION}");

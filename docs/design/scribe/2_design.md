@@ -1897,19 +1897,17 @@ whose older entry is still `active`: approval writes two files, and this
 repairs a crash between them
 ([4_decisions.md](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter)). Then:
 
-1. **Candidates, model-free.** Within each tag, pair active entries whose
-   token sets overlap (Jaccard ≥ 0.25 over content tokens) or share an
-   explicit subject term; at most 40 pairs per run, newest pairs first.
-   Entries past `review_after` are stale candidates. Pairs already settled
-   (rejected or approved) are never proposed again.
-2. **Judgement.** The `consistency` model (Haiku) labels each pair
-   `contradicts`, `refines` or `unrelated`, with a reason and a verbatim
-   quote from each side. A label survives only if both quotes pass the
-   verbatim check.
-3. **Proposals.** `contradicts` and `refines` become `supersedes`
-   proposals (the newer entry supersedes the older by default; the model
-   may not reverse the order); stale candidates become `stale` proposals.
-   Nothing changes on an entry yet.
+1. **Stale entries, model-free.** Each active entry past `review_after`
+   with no `stale` proposal becomes a `stale` proposal. Nothing changes on
+   an entry yet.
+
+Until ORB-27911 step 2a the scan also paired overlapping entries of a tag
+and had the `consistency` model label each pair, opening a `supersedes`
+proposal for `contradicts` and `refines`. Daniel removed the model step:
+"Any operations that require agent invocations … should be executed as
+orbit jobs" ([4_decisions.md](./4_decisions.md#the-consistency-scan-and-stop-call-no-model)).
+No supersession is detected now; `supersedes` proposals opened before stay
+settleable.
 
 Daniel sees open proposals at session start (the `SessionStart` hook returns
 `scribe: 3 proposals to review — scribe proposal list`). The same hook adds
@@ -1956,59 +1954,30 @@ shape — newer side by date, held items, a resolve step — but not its
 inputs, which were Orbit tasks fed by a ledger extractor that no longer
 exists here.
 
-As built (S6): `scribe consistency scan` (and `scribe.consistency-scan`)
-runs the steps above in `scribe_core::consistency`, pure, with
+As built (S6, model step removed in ORB-27911 step 2a): `scribe
+consistency scan` (and `scribe.consistency-scan`) runs the step above in
+`scribe_core::consistency::stale_candidates`, pure, with
 `Store::reapply_approved`, `Store::open_proposals` and `Store::settle` the
-three locked writes. Candidates are same-tag active pairs that share a
-topic hashtag (the "explicit subject term") or whose content tokens
-(`ask`'s tokenizer: lowercased, stopwords out, light stemming) overlap by
-at least one in four; a pair with a proposal in any state, in either
-order, is never offered again, nor is an entry with a `stale` proposal.
-The 40 pairs go to the model ten per call (`CONSISTENCY_SCHEMA`: one
-judgement per pair, `pair` its number in the batch), each call within
-120 s; a failed batch is reported (`failed_batches`) and audited, and its
-pairs are offered again next scan. A label for an unknown pair, a second
-label for one pair, an unknown label or a quote that is not verbatim in its
-entry is dropped and counted (`dropped_labels`); `unrelated` is counted,
-not stored, so an unrelated pair is judged again by later scans
-([§9](#9-concerns--honest-limitations)). A `stale` proposal's reason is
-scribe's own sentence, and its quote the entry's first 200 characters. The
-store numbers the drafts `p-<max+1>` under the lock, checking again that
-both entries are still active and the subject has no proposal, and masks
-their text with the redactor. The scan changes an entry only by
-re-applying an approval. A pair the model labels `refines` becomes a
-`supersedes` proposal like `contradicts`; topic-merge proposals are not
-built.
+three locked writes. An entry with a `stale` proposal in any state is never
+offered again. A `stale` proposal's reason is scribe's own sentence, and its
+quote the entry's first 200 characters. The store numbers the drafts
+`p-<max+1>` under the lock, checking again that the entry is still active
+and has no proposal, and masks their text with the redactor. The scan
+changes an entry only by re-applying an approval.
 
 **Deactivating sessions** (designed for S10, [§5.7](#57-active-and-inactive-sessions)).
-After the entry steps the scan runs two session steps, skipping pinned
+After the entry steps the scan runs one session step, skipping pinned
 (`keep_active: true`) and inactive sessions:
 
 1. **Age, model-free.** Every session whose last message is older than
    `[sessions] inactive_after_days` is deactivated, route `age`.
-2. **Removed features, model judgement.** Candidates are model-free pairs
-   of an active session S and a later entry R Daniel wrote (`author.kind`
-   is `daniel`, active, whose date is after S's last message, written or
-   updated in the last 8 days, so a weekly scan sees each new entry once)
-   that share a topic or a term with S or overlap its header by at least
-   one token in four, and whose text has a removal cue (`removed`,
-   `deleted`, `dropped`, `decommissioned`, `retired`, `replaced`,
-   `superseded`, `ripped out`, `sunset`). **Evidence rule:** only
-   Daniel-authored entries count. Session headers and segments are
-   model-written — a pass summarizes a transcript that may hold injected
-   text — and agent entries are agent-written (`entry add`), so counting
-   either would let supplied words always satisfy the verbatim quote
-   check and hide a session from `ask`. Sealed segments are excluded too:
-   sealing proves a segment never changed after it was written, not that
-   Daniel wrote it
-   ([4_decisions.md](./4_decisions.md#removal-evidence-is-daniel-authored-entries-only)).
-   At most 20 pairs per scan, ten per call, within 120 s each.
-   The `consistency` model labels each pair `removed` (R says the feature S
-   is about was removed or replaced), `still_current` or `unrelated`, with
-   the feature's name and a verbatim quote from R. A `removed` label whose
-   quote passes the verbatim check against R deactivates S, route
-   `removed`, reason the model's (at most 300 characters), cite R. Other
-   labels are counted, not stored.
+
+Until ORB-27911 step 2a a second step had the `consistency` model judge
+pairs of an active session and a later entry Daniel wrote with a removal
+cue, and deactivated the session, route `removed`, citing that entry
+([4_decisions.md](./4_decisions.md#removal-evidence-is-daniel-authored-entries-only)).
+It is gone with the model step: a session whose feature was removed stays
+active until it ages out or someone runs `scribe session deactivate`.
 
 The routine deactivates directly rather than proposing: an inactive
 session is hidden, not changed, and `session activate` reverses it. Each
@@ -2039,11 +2008,10 @@ proposals'.
 |---|---|---|---|---|
 | Referent of "this"/"it" | `models.referent` | `claude-haiku-5-5` | `UserPromptSubmit` hook | 20 s |
 | Session pass (also `session rebuild` and `session catalog`, from S9/S14) | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job, the CLI | 120 s |
-| Consistency judgement (entry pairs; from S10 also removed-feature session pairs) | `models.consistency` | `claude-haiku-5-5` | `scribe.consistency-scan` job | 120 s per batch of 10 pairs |
 | Group close summary (named `ask` for the removed `ask`, ORB-27911) | `models.ask` | `claude-sonnet-5-5` | `scribe group close` | 90 s |
 | Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
 
-All five go through one `Models` port with one adapter, `ClaudeCliModels`:
+All four go through one `Models` port with one adapter, `ClaudeCliModels`:
 it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
@@ -4823,6 +4791,20 @@ Not built until seen:
 
 ## 14. `#scribe` as an annotation
 
+> **Changed by ORB-27911 step 2a.** Stop no longer calls a model for a
+> marker. It hands each open marker to the main agent in the Stop reply's
+> `additionalContext`, with the `scribe entry add` command that records it
+> (its tag hint, project and topics filled in; `--spoken` for a memory
+> tag), and records the
+> marker `refused` `agent_handoff`. Daniel: "Any operations that require
+> agent invocations … should be executed as orbit jobs". §14.2's model
+> call, §14.3's window and call, §14.4's scribe-written entry and §14.5's
+> retries and `scribe mark retry` describe the removed design; detection
+> (§14.1), the echo at submit and `marks.json` remain. The current
+> replies are in [output-contract.md](./specs/output-contract.md#hook-replies)
+> and the reasons in
+> [4_decisions.md](./4_decisions.md#the-consistency-scan-and-stop-call-no-model).
+
 [ORB-26510], designed 2026-11-21 and **approved** 2026-11-21: Daniel, in
 the chief's chat at 19:18Z, "Approve as proposed", which answers all five
 [§14.11](#1411-questions-for-daniel) questions as proposed. It is built in
@@ -5162,7 +5144,8 @@ from the text above or adds to it:
   for #scribe markers — <reason>` and does nothing else.
 - **`models.referent`** (and `codex.models.referent`) still load and log,
   once per process at warn level, `config key <key> is unused: #scribe
-  lines are cataloged by models.annotation; remove it`.
+  markers are handed to the agent, and models.annotation is unused too;
+  remove it` (worded so since ORB-27911 step 2a).
 - **Codex** ([ORB-26535]) takes the fold as it is: `annotation::marks` now
   finds line-start forms, so the Codex adapter echoes them once the typed
   turn is verified and Stop catalogs them from the rollout; form 4 is still

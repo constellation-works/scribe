@@ -1,10 +1,8 @@
-//! `marks.json`: each `#scribe` annotation marker's outcome, and the
-//! locked write that records annotation entries with them
-//! (docs/design/scribe/2_design.md §14.4, §14.5).
+//! `marks.json`: each `#scribe` annotation marker's outcome
+//! (docs/design/scribe/2_design.md §14.5).
 
 use super::Store;
 use crate::annotation::MarkRecord;
-use crate::entry::{Entry, NewEntry};
 use crate::{Result, SessionId};
 
 /// Which marker an update is for.
@@ -23,49 +21,20 @@ pub struct MarkKey {
 /// What to record for one marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkChange {
-    /// Write this checked annotation entry (`content` the statement,
-    /// `quote` his words, `stated_by` [`Author::annotation`](crate::record::Author::annotation)).
-    Write(Box<NewEntry>),
-    /// The model found nothing to record.
-    Nothing,
-    /// Refused with this code.
+    /// Refused with this code (`agent_handoff` for one handed to the agent).
     Refused(&'static str),
-    /// The model call failed: one more attempt spent.
-    Failed,
 }
 
 /// What recording one marker came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkResult {
-    /// The entry was written.
-    Added(Entry),
-    /// An earlier run already wrote it, or already settled the marker
-    /// (`record` says how).
+    /// An earlier run already settled the marker (`record` says how).
     Already(MarkRecord),
-    /// An active entry of the same tag and project already says it:
-    /// nothing written, refused `covered`.
-    Covered(Entry),
-    /// The quote holds text redaction would change: refused.
-    NeedsRedaction,
-    /// Recorded as nothing found.
-    Nothing,
     /// Recorded as refused with this code.
     Refused(&'static str),
-    /// The call failed; `attempts` spent so far, and whether that was the
-    /// last ([`MAX_ATTEMPTS`](crate::annotation::MAX_ATTEMPTS)), so the marker is now refused `model_failed`.
-    Failed {
-        /// Attempts spent, this one included.
-        attempts: u32,
-        /// No attempt is left.
-        gave_up: bool,
-    },
 }
 
-pub use crate::annotation::MODEL_FAILED;
-/// The refusal code of an annotation an active entry already covers.
-pub const COVERED: &str = "covered";
-/// The refusal code of a quote redaction would change.
-pub const NEEDS_REDACTION: &str = "needs_redaction";
+pub use crate::annotation::{AGENT_HANDOFF, MODEL_FAILED};
 
 impl Store {
     /// Every marker outcome of `session`, in file order; none for a

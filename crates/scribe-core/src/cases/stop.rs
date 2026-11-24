@@ -1,11 +1,11 @@
 //! `scribe hook stop` (ORB-27707 step 3b): check the transcript, fill in cite message ids
-//! (§4.1), catalog the turn's `#scribe` markers, and mark a switched-on
-//! session's pass due (§5.2).
+//! (§4.1), hand the turn's `#scribe` markers to the agent, and mark a
+//! switched-on session's pass due (§5.2).
 //!
-//! The `#scribe` markers the user typed are cataloged ([`crate::cases::annotation`], §14):
-//! the only model call this hook makes, one per marked turn, bounded. A
-//! marker given up after its last failed call is echoed to the user and, with
-//! its line, to the agent (`additionalContext`). A transcript that fails the
+//! The `#scribe` markers the user typed are handed to the agent
+//! ([`crate::cases::annotation`], §14): each is echoed to the user and, with
+//! its line and the `entry add` command that records it, given to the agent
+//! (`additionalContext`). This hook calls no model. A transcript that fails the
 //! provenance check is echoed once and stops the hook: nothing is filled,
 //! cataloged or marked due.
 //!
@@ -26,7 +26,6 @@
 //! only to count turns for cadence. Markers are cataloged also for a session
 //! that is off or was never switched on.
 
-use crate::annotation::MAX_TURNS_PER_STOP;
 use crate::cases::annotation::{self, AnnotationInput};
 use crate::cases::entry::EntryVerbs;
 use crate::cases::group_turns;
@@ -35,11 +34,11 @@ use crate::cases::session::SessionVerbs;
 use crate::cases::{Ctx, PortError, TranscriptState};
 use crate::control::{self, Since};
 use crate::transcript::{self, Message};
-use crate::{Cite, Config, Label, Models, Provider, SessionId, Speaker, pass};
+use crate::{Cite, Label, Provider, SessionId, Speaker, pass};
 use std::path::Path;
 
 /// What `hook stop` runs on: its parsed payload.
-pub struct StopInput<'i, F> {
+pub struct StopInput<'i> {
     /// The session.
     pub session: &'i SessionId,
     /// Its transcript.
@@ -50,8 +49,6 @@ pub struct StopInput<'i, F> {
     pub provider: Provider,
     /// This host, as records name it.
     pub host: Label,
-    /// Builds the `Models` adapter for the config, only when a call is due.
-    pub models: F,
 }
 
 /// Run the hook on its parsed payload.
@@ -59,9 +56,9 @@ pub struct StopInput<'i, F> {
 /// # Errors
 ///
 /// [`HookError`]: a store error, an unreadable transcript, or a port.
-pub fn run<E: PortError, M: Models>(
+pub fn run<E: PortError>(
     ctx: &Ctx<'_, E>,
-    input: StopInput<'_, impl FnOnce(&Config) -> M>,
+    input: StopInput<'_>,
 ) -> Result<HookReply, HookError<E>> {
     let StopInput {
         session,
@@ -69,7 +66,6 @@ pub fn run<E: PortError, M: Models>(
         cwd,
         provider,
         host,
-        models,
     } = input;
     let session = session.clone();
     let mut reply = HookReply {
@@ -130,15 +126,13 @@ pub fn run<E: PortError, M: Models>(
                 cwd,
                 provider,
                 host,
-                turns: MAX_TURNS_PER_STOP,
-                models,
             },
         )?;
         if !cataloged.echoes.is_empty() {
             reply.message = Some(cataloged.echoes.join("\n"));
         }
-        // A given-up marker reaches the agent as well (Claude Code delivers a
-        // Stop's `additionalContext` to the model), so the line is not lost.
+        // Each handed-over marker reaches the agent (Claude Code delivers a
+        // Stop's `additionalContext` to the model), which records it.
         if !cataloged.context.is_empty() {
             reply.context = Some(cataloged.context.join("\n"));
         }

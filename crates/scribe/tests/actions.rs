@@ -1,5 +1,5 @@
 //! End-to-end tests of action tags (docs/design/scribe/2_design.md §4.6):
-//! `#scribe standard|remind:` capture with its transcript window, a
+//! `#scribe <tag>:` markers handed to the agent, a stored transcript window, a
 //! config-marked action tag, agent entries with their cancel window and
 //! quote check, `#scribe retire` on an agent's entry, pickups, the
 //! intake's read surface (`entry list --tag --after --window`), `tag list`'s
@@ -11,7 +11,6 @@
 mod support;
 
 use serde_json::{Value, json};
-use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -38,7 +37,7 @@ impl Claude {
     }
 
     /// Write the transcript: `(uuid, role, text)` turns, a minute apart,
-    /// the last a minute ago (an annotated entry is created at its turn).
+    /// the last a minute ago.
     fn write(&self, turns: &[(&str, &str, &str)]) {
         let mut out = format!(
             "{}\n",
@@ -79,26 +78,24 @@ impl Claude {
         reply["systemMessage"].as_str().unwrap().to_owned()
     }
 
-    /// Run the `Stop` hook with `path` (a fake `claude` first) on `PATH`;
-    /// the reply's `systemMessage`, empty when it printed nothing.
-    fn stop(&self, fx: &Fixture, path: &OsString) -> String {
+    /// Run the `Stop` hook; the reply's `systemMessage` and
+    /// `additionalContext`, empty when it printed nothing.
+    fn stop(&self, fx: &Fixture) -> (String, String) {
         let payload = json!({"session_id": SESSION,
             "transcript_path": self.transcript, "cwd": self.cwd,
             "permission_mode": "default", "hook_event_name": "Stop",
             "stop_hook_active": false});
-        let mut cmd = fx.cmd(&["hook", "stop"]);
-        cmd.env("PATH", path)
-            .env("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-value");
-        let out = piped(cmd, &payload);
+        let out = stdin_run(fx, &["hook", "stop"], &payload);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
         if out.stdout.is_empty() {
-            return String::new();
+            return (String::new(), String::new());
         }
         let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-        reply["systemMessage"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
+        let field = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+        (
+            field(&reply["systemMessage"]),
+            field(&reply["hookSpecificOutput"]["additionalContext"]),
+        )
     }
 
     /// The session-start hook's stdout.
@@ -167,27 +164,17 @@ fn backdate(fx: &Fixture, _tag: &str, id: &str) {
     );
 }
 
-/// A fake `claude` on `PATH` answering every `models.annotation` call
-/// with `marks` (2_design.md §14.3).
-fn annotating(fx: &Fixture, marks: &Value) -> OsString {
-    let answer = json!({"type": "result", "subtype": "success", "is_error": false,
-                        "result": "", "structured_output": {"marks": support::with_mark_contexts(marks)}});
-    fx.fake_program(
-        "claude",
-        &format!("#!/bin/sh\ncat > /dev/null\necho '{answer}'\n"),
-    )
-}
-
-/// The model's `entry` answer for `marker`: `quote` from `message`.
-fn answer(marker: u32, tag: &str, statement: &str, quote: &str, message: &str) -> Value {
-    json!({"marker": marker, "kind": "entry", "tag": tag, "statement": statement,
-           "subject": tag, "quote": quote, "message": message, "reason": ""})
-}
-
-/// The model's `none` answer for `marker`.
-fn nothing(marker: u32) -> Value {
-    json!({"marker": marker, "kind": "none", "tag": "", "statement": "", "subject": "",
-           "quote": "", "message": "", "reason": "only a passing remark"})
+/// Seed entry `id` under `tag` as the user's, saying `content`, with
+/// `fields` (frontmatter key, YAML value) replacing their `null`s.
+fn seed_entry(fx: &Fixture, id: &str, tag: &str, content: &str, fields: &[(&str, &str)]) {
+    let mut record = support::entry_text(1, content)
+        .replace("id: preferences-1\n", &format!("id: {id}\n"))
+        .replace("tag: preferences\n", &format!("tag: {tag}\n"))
+        .replace("#scribe preferences:", &format!("#scribe {tag}:"));
+    for (key, value) in fields {
+        record = record.replace(&format!("\n{key}: null\n"), &format!("\n{key}: {value}\n"));
+    }
+    support::seed_records(&fx.root(), &[&record]);
 }
 
 /// Whether the store holds any entry of `tag`, in any status.
@@ -225,155 +212,7 @@ fn tag_row(fx: &Fixture, name: &str) -> Value {
 }
 
 #[test]
-fn an_action_line_keeps_the_turns_since_the_last_scribe_line_and_a_memory_line_none() {
-    let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let earlier = [
-        ("u-1", "user", "#scribe preferences: ship on fridays"),
-        ("a-1", "assistant", "Recorded."),
-    ];
-    claude.write(&earlier);
-    claude.stop(&fx, &annotating(&fx, &json!([nothing(1)])));
-    let prompt = "Yes, bytes.\n#scribe standard: name the unit in every size\n#scribe preferences: bytes for sizes";
-    assert_eq!(
-        claude.prompt(&fx, prompt),
-        "scribe: marked 2 times — cataloged after the reply"
-    );
-    assert!(!fx.root().join("entries").exists(), "nothing at submit");
-    let mut turns = earlier.to_vec();
-    turns.extend([
-        ("u-2", "user", "the size field has no unit"),
-        ("a-2", "assistant", "Bytes, then?"),
-        ("u-3", "user", prompt),
-        ("a-3", "assistant", "Done."),
-    ]);
-    claude.write(&turns);
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([
-                answer(
-                    1,
-                    "standard",
-                    "Every size names its unit.",
-                    "name the unit in every size",
-                    "u-3"
-                ),
-                answer(
-                    2,
-                    "preferences",
-                    "Daniel wants sizes in bytes.",
-                    "bytes for sizes",
-                    "u-3"
-                ),
-            ]),
-        ),
-    );
-    assert_eq!(
-        echo,
-        "scribe: added standard-1 to standard — \"Every size names its unit. The user and the agent discussed it in this session.\" · your words: \"name the unit in every size\"\n\
-         scribe: added preferences-1 to preferences — \"Daniel wants sizes in bytes. The user and the agent discussed it in this session.\" · your words: \"bytes for sizes\""
-    );
-
-    let decision = entry(&fx, "preferences-1", &["--window"]);
-    assert_eq!(
-        decision["window"],
-        Value::Null,
-        "a memory tag keeps no window"
-    );
-    assert_eq!(decision["window_turns"], Value::Null);
-    assert_eq!(decision["action"], Value::Null);
-
-    let standard = entry(&fx, "standard-1", &[]);
-    assert_eq!(standard["window"], Value::Null, "left out unless asked");
-    assert_eq!(standard["window_turns"], 4);
-    assert_eq!(standard["author"]["kind"], "user");
-    assert_eq!(
-        standard["said"],
-        "#scribe standard: name the unit in every size"
-    );
-    assert_eq!(
-        standard["action"]["past_cancel_window"], true,
-        "Daniel's own"
-    );
-    assert_eq!(standard["action"]["picked_up"], false);
-
-    let window = &entry(&fx, "standard-1", &["--window"])["window"];
-    let turns: Vec<(Value, Value, Value)> = window["turns"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| (t["role"].clone(), t["message"].clone(), t["text"].clone()))
-        .collect();
-    assert_eq!(
-        turns,
-        [
-            (json!("assistant"), json!("a-1"), json!("Recorded.")),
-            (
-                json!("user"),
-                json!("u-2"),
-                json!("the size field has no unit")
-            ),
-            (json!("assistant"), json!("a-2"), json!("Bytes, then?")),
-            (json!("user"), Value::Null, json!(prompt)),
-        ]
-    );
-    assert_eq!(window["truncated"], false);
-    assert_eq!(window["omitted"], 0);
-
-    // The plain read surface shows author and age; the window stays out.
-    let plain = text(&fx.ok(&["entry", "list", "--tag", "standard"]).stdout);
-    let fields: Vec<&str> = plain.trim_end().split('\t').collect();
-    assert_eq!(fields[0], "standard-1");
-    assert_eq!(fields[6], "user");
-    assert_ne!(fields[7], "-", "an action entry shows its age");
-    assert!(!plain.contains("Bytes, then?"));
-}
-
-#[test]
-fn a_window_over_the_cap_is_cut_from_the_oldest_turn_and_says_so() {
-    let fx = Fixture::new();
-    fx.config(support::IDEA_CATCHER);
-    let claude = Claude::new(&fx);
-    let names: Vec<(String, String)> = (0..50)
-        .map(|n| (format!("a-{n}"), format!("turn {n}")))
-        .collect();
-    let turns: Vec<(&str, &str, &str)> = names
-        .iter()
-        .map(|(u, t)| (u.as_str(), "assistant", t.as_str()))
-        .collect();
-    let mut turns = turns;
-    turns.extend([
-        ("u-1", "user", "#scribe idea: tidy the sizes"),
-        ("a-r", "assistant", "Noted."),
-    ]);
-    claude.write(&turns);
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([answer(
-                1,
-                "idea",
-                "Tidy the sizes.",
-                "tidy the sizes",
-                "u-1"
-            )]),
-        ),
-    );
-    assert!(echo.starts_with("scribe: added idea-1 to idea"), "{echo}");
-    let window = &entry(&fx, "idea-1", &["--window"])["window"];
-    let kept = window["turns"].as_array().unwrap();
-    assert_eq!(kept.len(), 40);
-    assert_eq!(window["truncated"], true);
-    assert_eq!(window["omitted"], 11);
-    assert_eq!(kept[0]["message"], "a-11", "the oldest turns went first");
-    assert_eq!(kept[39]["text"], "#scribe idea: tidy the sizes");
-}
-
-#[test]
-fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up() {
+fn a_config_marked_action_tag_is_handed_over_read_and_picked_up() {
     let fx = Fixture::new();
     std::fs::create_dir(fx.root()).unwrap();
     make_private(&fx.root());
@@ -396,59 +235,43 @@ fn a_config_marked_action_tag_captures_with_a_window_and_is_read_and_picked_up()
         ("u-2", "user", prompt),
         ("a-2", "assistant", "On it."),
     ]);
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([
-                answer(1, "task", "Profile the sync.", "profile the sync", "u-2"),
-                answer(
-                    2,
-                    "friction",
-                    "The sync shows no progress.",
-                    "the sync has no progress bar",
-                    "u-2"
-                ),
-                answer(
-                    3,
-                    "idea",
-                    "Cache the manifest.",
-                    "cache the manifest",
-                    "u-2"
-                ),
-            ]),
-        ),
-    );
+    let (echo, context) = claude.stop(&fx);
     let lines: Vec<&str> = echo.lines().collect();
     assert_eq!(lines.len(), 3, "{echo}");
     assert!(
-        lines[0].starts_with("scribe: added task-1 to task — "),
+        lines
+            .iter()
+            .all(|l| l.starts_with("scribe: #scribe in your message is the agent's to record — ")),
         "{echo}"
     );
-    assert_eq!(
-        lines[1],
-        "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named",
-        "friction is not declared, so it is unknown"
+    let context: Vec<&str> = context.lines().collect();
+    assert_eq!(context.len(), 3, "{context:?}");
+    assert!(
+        context[0].contains("scribe entry add --tag task --project scribe"),
+        "{context:?}"
     );
     assert!(
-        lines[2].starts_with("scribe: added idea-1 to idea — "),
-        "{echo}"
+        context[1].contains("scribe entry add --tag <tag> --project scribe"),
+        "friction is not declared, so it is no hint: {context:?}"
     );
-    let friction = marks_json(&fx)
-        .into_iter()
-        .find(|m| m["marker"] == 2)
-        .unwrap();
-    assert_eq!(friction["outcome"], "refused");
-    assert_eq!(friction["code"], "unknown_tag");
+    assert!(
+        context[2].contains("scribe entry add --tag idea --project scribe"),
+        "{context:?}"
+    );
     assert!(!entries_of_tag(&fx, "friction"));
-    for id in ["task-1", "idea-1"] {
-        let e = entry(&fx, id, &[]);
-        assert_eq!(
-            e["window_turns"], 2,
-            "{id}: the earlier turn and the prompt"
-        );
-        assert!(e["action"].is_object(), "{id}");
-    }
+    seed_entry(
+        &fx,
+        "task-1",
+        "task",
+        "profile the sync",
+        &[(
+            "window",
+            "{turns: [{role: user, message: u-1, at: 2026-01-02T03:04:05Z, text: \"the sync is slow\", cut: false}], truncated: false, omitted: 0}",
+        )],
+    );
+    let e = entry(&fx, "task-1", &[]);
+    assert_eq!(e["window_turns"], 1);
+    assert!(e["action"].is_object());
 
     let task = tag_row(&fx, "task");
     assert_eq!(
@@ -537,30 +360,22 @@ fn task_friction_remind_and_finding_are_unknown_tags_without_config_and_not_in_t
             (replies[n].as_str(), "assistant", "Noted."),
         ]);
         claude.write(&turns);
-        let echo = claude.stop(
-            &fx,
-            &annotating(
-                &fx,
-                &json!([answer(
-                    1,
-                    tag,
-                    "Profile the sync.",
-                    "profile the sync",
-                    uuid
-                )]),
-            ),
-        );
+        let (echo, context) = claude.stop(&fx);
         assert_eq!(
             echo,
-            "scribe: nothing recorded for #scribe in your message — the model chose a tag that is not configured or not the one you named",
+            format!("scribe: #scribe in your message is the agent's to record — \"{prompt}\""),
             "{tag}"
+        );
+        assert!(
+            context.contains("scribe entry add --tag <tag> "),
+            "{tag} is no hint: {context}"
         );
         let mark = marks_json(&fx)
             .into_iter()
             .find(|m| m["message"] == uuid.as_str())
             .unwrap();
         assert_eq!(mark["outcome"], "refused", "{tag}");
-        assert_eq!(mark["code"], "unknown_tag", "{tag}");
+        assert_eq!(mark["code"], "agent_handoff", "{tag}");
         assert!(!entries_of_tag(&fx, tag));
     }
     let tags = json_of(&fx.ok(&["tag", "list", "--json"]));
@@ -589,14 +404,19 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
         ("a-2", "assistant", "On it."),
     ]);
     let statement = "Profile the sync to find where it is slow.";
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([answer(1, "task", statement, "profile the sync", "u-2")]),
-        ),
-    );
-    assert!(echo.starts_with("scribe: added task-1 to task"), "{echo}");
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "task",
+        "--author",
+        "opus",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--quote",
+        "profile the sync",
+        statement,
+    ]);
     // The config that declared `task` goes away; the entry stays.
     std::fs::remove_file(&config).unwrap();
 
@@ -604,7 +424,7 @@ fn entries_under_a_tag_config_no_longer_defines_are_still_listed_shown_and_retir
     assert_eq!(list["total"], 1, "{list}");
     assert_eq!(list["entries"][0]["id"], "task-1");
     let shown = entry(&fx, "task-1", &[]);
-    assert_eq!(shown["content"], support::context_of(statement));
+    assert_eq!(shown["content"], statement);
     assert_eq!(shown["quote"], "profile the sync");
     assert_eq!(shown["status"], "active");
 
@@ -663,23 +483,7 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
         ("u-1", "user", "#scribe preferences: ship on fridays"),
         ("a-1", "assistant", "Noted."),
     ]);
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([answer(
-                1,
-                "preferences",
-                "Daniel ships on Fridays.",
-                "ship on fridays",
-                "u-1"
-            )]),
-        ),
-    );
-    assert!(
-        echo.starts_with("scribe: added preferences-1 to preferences"),
-        "{echo}"
-    );
+    seed_entry(&fx, "preferences-1", "preferences", "ship on fridays", &[]);
     fx.ok(&[
         "entry",
         "add",
@@ -750,48 +554,17 @@ fn pickups_are_recorded_once_refused_off_action_tags_and_count_rejections() {
 #[test]
 fn the_intake_reads_by_tag_and_cursor_with_the_window_only_on_request() {
     let fx = Fixture::new();
-    let claude = Claude::new(&fx);
-    let mut turns = vec![
-        ("u-1", "user", "every size needs its unit"),
-        (
-            "u-2",
-            "user",
-            "#scribe standard: name the unit in every size",
-        ),
-        ("a-2", "assistant", "Noted."),
-    ];
-    claude.write(&turns);
-    claude.stop(
+    seed_entry(
         &fx,
-        &annotating(
-            &fx,
-            &json!([answer(
-                1,
-                "standard",
-                "Every size names its unit.",
-                "name the unit in every size",
-                "u-2"
-            )]),
-        ),
+        "standard-1",
+        "standard",
+        "Every size names its unit.",
+        &[(
+            "window",
+            "{turns: [{role: user, message: u-1, at: 2026-01-02T03:04:05Z, text: \"every size needs its unit\", cut: false}], truncated: false, omitted: 0}",
+        )],
     );
-    turns.extend([
-        ("u-3", "user", "#scribe preferences: bytes for sizes"),
-        ("a-3", "assistant", "Noted."),
-    ]);
-    claude.write(&turns);
-    claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([answer(
-                1,
-                "preferences",
-                "Daniel wants sizes in bytes.",
-                "bytes for sizes",
-                "u-3"
-            )]),
-        ),
-    );
+    seed_entry(&fx, "preferences-1", "preferences", "bytes for sizes", &[]);
     assert!(entry(&fx, "preferences-1", &[])["action"].is_null());
 
     let list = json_of(&fx.ok(&["entry", "list", "--tag", "standard", "--json"]));
@@ -912,30 +685,34 @@ fn session_start_counts_action_entries_waiting_with_no_pickup() {
     );
     let prompt = "#scribe idea: profile the sync\n#scribe standard: name the units\n#scribe preferences: ship on fridays";
     claude.write(&[("u-1", "user", prompt), ("a-1", "assistant", "Noted.")]);
-    let echo = claude.stop(
-        &fx,
-        &annotating(
-            &fx,
-            &json!([
-                answer(1, "idea", "Profile the sync.", "profile the sync", "u-1"),
-                answer(
-                    2,
-                    "standard",
-                    "Sizes name their units.",
-                    "name the units",
-                    "u-1"
-                ),
-                answer(
-                    3,
-                    "preferences",
-                    "Daniel ships on Fridays.",
-                    "ship on fridays",
-                    "u-1"
-                ),
-            ]),
+    let session = format!("session:{SESSION}");
+    for (tag, content, extra) in [
+        ("idea", "Profile the sync.", &[][..]),
+        (
+            "standard",
+            "Sizes name their units.",
+            &["--related", &session, "--quote", "name the units"][..],
         ),
-    );
-    assert_eq!(echo.matches("scribe: added ").count(), 3, "{echo}");
+        (
+            "preferences",
+            "Daniel ships on Fridays.",
+            &[
+                "--related",
+                &session,
+                "--quote",
+                "ship on fridays",
+                "--spoken",
+            ][..],
+        ),
+    ] {
+        let args = [
+            &["entry", "add", "--tag", tag, "--author", "opus"][..],
+            extra,
+            &[content],
+        ]
+        .concat();
+        fx.ok(&args);
+    }
     assert_eq!(claude.session_start(&fx), "", "nothing older than an hour");
     for (tag, id) in [
         ("idea", "idea-1"),

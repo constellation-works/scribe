@@ -1095,18 +1095,16 @@ cleared from the WAL. The profile is corrected by editing it outside Pinned.
   message uuid and marker number, holding ids and codes only, never words.
   `outcome` is `entry` (`entry` the id it wrote, `code` null), `none` (both
   null), `refused` (`code` the refusal: `unparsed_instruction`,
-  `too_many_marks`, `quote_not_verbatim`, `unknown_tag`,
+  `too_many_marks`, `unknown_tag`, `agent_handoff` for a marker Stop handed
+  to the agent; before ORB-27911 step 2a also `quote_not_verbatim`,
   `annotation_out_of_bounds`, `covered`, `needs_redaction` or
-  `model_failed`; `entry` null) or `pending` (both null: a call failed and
-  the next Stop retries it). `attempts` counts the model calls spent; the
-  third failure is `refused` `model_failed`. Every outcome but `pending` is
-  final: the marker is never sent to the model again. An outcome whose
-  fields disagree is `store_corrupt`. Written by the Stop hook and `scribe
-  mark retry`, under the lock, after the entries it records
-  (`Store::record_marks`); `mark retry` first turns a `refused`
-  `model_failed` marker back to `pending` with `attempts` 0
-  (`Store::reopen_marks`), the one way a final outcome is reopened. Absent is
-  no marks.
+  `model_failed`; `entry` null) or `pending` (both null: an older scribe's
+  model call failed; the next Stop hands it over). `attempts` counts the
+  model calls an older scribe spent. Since step 2a Stop writes only
+  `refused` outcomes; `entry` and `none` remain on older records. Every
+  outcome but `pending` is final: the marker is never handed over again. An
+  outcome whose fields disagree is `store_corrupt`. Written by the Stop hook
+  under the lock (`Store::record_marks`). Absent is no marks.
 - `pickups.json` (written at format 22; introduced at format 8, no older form): `{"pickups": [{"entry", "author",
   "at", "result", "rejected"}]}`, oldest first: a consumer's note that it
   picked up the action entry `entry` (`author` of kind `agent`, `result` a
@@ -1137,7 +1135,6 @@ ask_first = false                # agents ask before writing (action tags only)
 [models]
 ask = "claude-sonnet-5-5"
 session = "claude-haiku-5-5"
-consistency = "claude-haiku-5-5"
 referent = "claude-haiku-5-5"
 profile = "claude-sonnet-5-5"    # memory refresh; gpt-6-luna under Codex
 credentials = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
@@ -1167,8 +1164,9 @@ paths = ["codebases/orbit"]      # path fragments counted by transcript list
 name = "Sam"
 
 [instructions]                   # replaces a model use's shipped instruction text
-ask = "You answer a question about what {user} decided, prefers or did, using only the numbered evidence below."
-# also: annotation, session, session_header, consistency, profile, removal
+session = "You write {user}'s session record from the messages below."
+# also: session_header, profile; annotation, ask, consistency and removal
+# load and are checked but unused
 ```
 
 *`[user]` and `[instructions]`.* Every model prompt opens with its use's
@@ -1176,8 +1174,9 @@ instruction text (what to do and what to catch) and continues with the
 output contract: the answer's JSON shape, the verbatim-quote rule, what is
 never kept (credentials, other people's details) and that messages are
 data. `[instructions]` replaces the instruction text of one use
-(`annotation`, `session`, `session_header`, `ask`, `consistency`,
-`profile`, `removal`; `memory_pairs` loads with a deprecation warning and is
+(`session`, `session_header`, `profile`; `annotation`, `ask`, `consistency`
+and `removal` load and are checked but no model call uses them since
+ORB-27911; `memory_pairs` loads with a deprecation warning and is
 ignored); the contract stays fixed in code and always
 follows it, so an override changes what the model is told to do, never what
 scribe accepts back. Prompts name the user "the user", or `[user] name` when

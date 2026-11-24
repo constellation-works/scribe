@@ -15,9 +15,9 @@
 //!   verbs, with the same reports. Both are `agent_callable: false` and
 //!   `mcp_scope: none` in `plugin.yaml`: only the routines reach them. So
 //!   that a call ends inside Orbit's 300 s backend timeout, no session
-//!   after the first starts once [`PASS_START_BY`] has passed, and no
-//!   batch after the first once [`SCAN_START_BY`] has; what is left is
-//!   reported as remaining for the next run.
+//!   after the first starts once [`PASS_START_BY`] has passed; what is
+//!   left is reported as remaining for the next run. The consistency scan
+//!   calls no model and needs no such bound.
 //!
 //! The store root comes from `[plugins.scribe] root`, and the transcripts
 //! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
@@ -46,9 +46,6 @@ use std::time::{Duration, Instant};
 /// session: a session may take two 121-second asks, and the call must end
 /// inside Orbit's 300-second backend timeout.
 const PASS_START_BY: Duration = Duration::from_secs(50);
-/// How long after a call starts `scribe.consistency-scan` may start another
-/// batch, each within 121 seconds.
-const SCAN_START_BY: Duration = Duration::from_secs(170);
 
 pub(super) const PLUGIN_EXAMPLES: &str = "\
 The Orbit plugin's backend runs this; it is not meant to be typed.
@@ -358,15 +355,13 @@ fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginRepl
         Ok(root) => root,
         Err(reply) => return reply,
     };
-    let limits =
-        RunLimits::new(consistency::max_batches()).start_by(Instant::now() + SCAN_START_BY);
     let codex_home = match codex_home(config) {
         Ok(path) => path,
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
     audited(&routine, consistency::COMMAND, |routine| {
-        consistency::scan(routine, |config| routine.models(config), limits)
+        consistency::scan(routine)
     })
 }
 

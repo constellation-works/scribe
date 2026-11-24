@@ -1,11 +1,11 @@
 # Seeded disabled as `scribe-consistency` (2_design.md §7). Every Monday at
 # 06:00 it runs the scribe-consistency job, which calls
-# scribe.consistency-scan: proposals to supersede entries a later one
-# replaced and to retire entries due for review. It changes no entry;
+# scribe.consistency-scan: proposals to retire entries due for review, with
+# no model call. It changes no entry;
 # The user settles each proposal with #scribe approve or #scribe reject.
 schemaVersion: 1
 name: consistency
-description: Propose superseding or retiring scribe entries; the user settles each.
+description: Propose retiring scribe entries due for review; the user settles each.
 enabled: false
 trigger:
   cron: "0 6 * * 1"

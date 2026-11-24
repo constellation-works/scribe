@@ -1823,36 +1823,13 @@ pub(crate) struct ScanReport {
     /// Approved candidates this scan closed because an active entry already
     /// covers the statement. Not stored on the proposal.
     pub(crate) covered: Vec<CoveredPayload>,
-    /// Candidate pairs the model labelled.
-    pub(crate) judged_pairs: usize,
-    /// Candidate pairs left for a later scan: past the per-scan cap, or not
-    /// reached in this call's time.
-    pub(crate) pairs_left: usize,
-    /// Pairs labelled `unrelated`.
-    pub(crate) unrelated_pairs: usize,
-    /// Labels dropped: a quote not verbatim in its entry, an unknown pair or
-    /// label.
-    pub(crate) dropped_labels: usize,
     /// Stale entries found (each opens a proposal unless one exists).
     pub(crate) stale_entries: usize,
-    /// Batches the model failed; their pairs are offered again next scan.
-    pub(crate) failed_batches: Vec<BatchFailure>,
     /// Sessions this scan deactivated (S10), by route.
     pub(crate) deactivated: Vec<DeactivatedPayload>,
     /// Sessions the scan could not deactivate; other sessions are still
     /// processed.
     pub(crate) failed_deactivations: Vec<DeactivationFailure>,
-    /// Removed-feature pairs the model labelled.
-    pub(crate) removal_pairs_judged: usize,
-    /// Removed-feature pairs past the cap of 20 or not reached in this
-    /// call's time.
-    pub(crate) removal_pairs_left: usize,
-    /// Removed-feature labels refused: a quote not verbatim in the later
-    /// record, an unknown or repeated pair, an unknown label.
-    pub(crate) dropped_removal_labels: usize,
-    /// Removed-feature batches the model failed; their pairs are offered
-    /// again while their later record is recent.
-    pub(crate) failed_removal_batches: Vec<BatchFailure>,
     /// Always empty since the fixed memory shape (2_design.md §15.5): the
     /// scan no longer consolidates memory. Kept because `--json` field names
     /// are a contract.
@@ -1924,14 +1901,15 @@ pub(crate) struct PromotedPayload {
 pub(crate) struct DeactivatedPayload {
     /// The session id.
     pub(crate) session: String,
-    /// `age` or `removed`.
+    /// `age`, the one route a scan takes since ORB-27911 step 2a removed
+    /// `removed`.
     pub(crate) route: &'static str,
-    /// Why: scribe's sentence for `age`, the model's for `removed`.
+    /// Why: scribe's sentence.
     pub(crate) reason: String,
-    /// The later record a `removed` deactivation rests on; `null` for `age`.
+    /// Always `null`: the later record a `removed` deactivation rested on.
+    /// Kept because `--json` field names are a contract.
     pub(crate) cite: Option<String>,
-    /// The later record's verbatim words a `removed` deactivation rests
-    /// on; `null` for `age`.
+    /// Always `null`, as `cite`.
     pub(crate) quote: Option<String>,
 }
 

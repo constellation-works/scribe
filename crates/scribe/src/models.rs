@@ -29,9 +29,7 @@
 mod codex;
 
 use scribe_core::models::{
-    ANNOTATION_SCHEMA, AnnotationAnswer, AnnotationRequest, CONSISTENCY_SCHEMA, ConsistencyAnswer,
-    ConsistencyRequest, JudgementAnswer, ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest,
-    REMOVAL_SCHEMA, RemovalAnswer, RemovalJudgementAnswer, RemovalRequest, SESSION_HEADER_SCHEMA,
+    ModelError, PROFILE_SCHEMA, ProfileAnswer, ProfileRequest, SESSION_HEADER_SCHEMA,
     SessionAnswer, SessionHeader, SessionHeaderRequest, SessionRequest,
 };
 use scribe_core::{Models, Provider, Redactor};
@@ -269,17 +267,6 @@ impl Models for ClaudeCliModels {
             .map_err(|e| malformed(&self.redactor, "not a group summary", &e))
     }
 
-    fn annotation(&self, request: &AnnotationRequest) -> Result<AnnotationAnswer, ModelError> {
-        let value = self.call(
-            &request.model,
-            ANNOTATION_SCHEMA,
-            request.prompt(),
-            request.budget,
-        )?;
-        serde_json::from_value(value)
-            .map_err(|e| malformed(&self.redactor, "not an annotation answer", &e))
-    }
-
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         let value = self.call(
             &request.model,
@@ -302,16 +289,6 @@ impl Models for ClaudeCliModels {
             .map_err(|e| malformed(&self.redactor, "not a session header", &e))
     }
 
-    fn consistency(&self, request: &ConsistencyRequest) -> Result<ConsistencyAnswer, ModelError> {
-        let value = self.call(
-            &request.model,
-            CONSISTENCY_SCHEMA,
-            request.prompt(),
-            request.budget,
-        )?;
-        judgements(value, "consistency", &self.redactor)
-    }
-
     fn profile(&self, request: &ProfileRequest) -> Result<ProfileAnswer, ModelError> {
         let value = self.call(
             &request.model,
@@ -321,42 +298,6 @@ impl Models for ClaudeCliModels {
         )?;
         serde_json::from_value(value)
             .map_err(|e| malformed(&self.redactor, "not a profile answer", &e))
-    }
-
-    fn removal(&self, request: &RemovalRequest) -> Result<RemovalAnswer, ModelError> {
-        #[derive(Deserialize)]
-        struct Judgement {
-            pair: String,
-            label: String,
-            feature: String,
-            reason: String,
-            quote: String,
-        }
-        #[derive(Deserialize)]
-        struct Answer {
-            judgements: Vec<Judgement>,
-        }
-        let value = self.call(
-            &request.model,
-            REMOVAL_SCHEMA,
-            request.prompt(),
-            request.budget,
-        )?;
-        let a: Answer = serde_json::from_value(value)
-            .map_err(|e| malformed(&self.redactor, "not a removed-feature answer", &e))?;
-        Ok(RemovalAnswer {
-            judgements: a
-                .judgements
-                .into_iter()
-                .map(|j| RemovalJudgementAnswer {
-                    pair: j.pair,
-                    label: j.label,
-                    feature: j.feature,
-                    reason: j.reason,
-                    quote: j.quote,
-                })
-                .collect(),
-        })
     }
 }
 
@@ -627,39 +568,4 @@ impl Drop for Group {
             let _ = self.finish();
         }
     }
-}
-
-/// A pair-labelling answer (`consistency`, `memory_pairs`), unchecked.
-fn judgements(
-    value: serde_json::Value,
-    what: &str,
-    redactor: &Redactor,
-) -> Result<ConsistencyAnswer, ModelError> {
-    #[derive(Deserialize)]
-    struct Judgement {
-        pair: String,
-        label: String,
-        reason: String,
-        older_quote: String,
-        newer_quote: String,
-    }
-    #[derive(Deserialize)]
-    struct Answer {
-        judgements: Vec<Judgement>,
-    }
-    let a: Answer = serde_json::from_value(value)
-        .map_err(|e| malformed(redactor, &format!("not a {what} answer"), &e))?;
-    Ok(ConsistencyAnswer {
-        judgements: a
-            .judgements
-            .into_iter()
-            .map(|j| JudgementAnswer {
-                pair: j.pair,
-                label: j.label,
-                reason: j.reason,
-                older_quote: j.older_quote,
-                newer_quote: j.newer_quote,
-            })
-            .collect(),
-    })
 }

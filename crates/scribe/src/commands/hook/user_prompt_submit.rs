@@ -29,8 +29,8 @@
 //! one for the markers. The main agent (`additionalContext`) gets the same
 //! echoes, each with a note: applied lines say no action is needed,
 //! refused or failed lines say they must be relayed to the user, and markers
-//! say scribe tries to catalog them after the reply and tells the agent if it
-//! gives up, so only then does the agent record the line itself. The hook never blocks the
+//! say Stop hands them to the agent after the reply, so the agent records
+//! nothing for them before then. The hook never blocks the
 //! prompt: a refusal or a store failure is a reply, not an error exit, so
 //! the rest of the prompt still reaches the agent.
 

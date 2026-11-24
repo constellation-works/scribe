@@ -1614,18 +1614,6 @@ pub(crate) fn scan(
             Cell::plain("-"),
         ]);
     }
-    for f in &report.failed_batches {
-        rows.push(vec![
-            Cell {
-                text: String::from("failed"),
-                role: Role::Warn,
-            },
-            Cell::plain(format!("batch-{}", f.batch)),
-            Cell::plain(f.error_code),
-            Cell::plain("-"),
-            Cell::plain("-"),
-        ]);
-    }
     for d in &report.deactivated {
         rows.push(vec![
             Cell {
@@ -1694,18 +1682,6 @@ pub(crate) fn scan(
                 role: Role::Warn,
             },
             Cell::plain(format!("memory-batch-{}", f.batch)),
-            Cell::plain(f.error_code),
-            Cell::plain("-"),
-            Cell::plain("-"),
-        ]);
-    }
-    for f in &report.failed_removal_batches {
-        rows.push(vec![
-            Cell {
-                text: String::from("failed"),
-                role: Role::Warn,
-            },
-            Cell::plain(format!("removal-batch-{}", f.batch)),
             Cell::plain(f.error_code),
             Cell::plain("-"),
             Cell::plain("-"),

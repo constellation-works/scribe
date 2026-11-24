@@ -276,26 +276,6 @@ impl From<scribe_core::cases::read_error::ReadError<CliError>> for CliError {
     }
 }
 
-/// `mark retry`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::mark_retry::MarkRetryError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::mark_retry::MarkRetryError<CliError>) -> Self {
-        use scribe_core::cases::mark_retry::MarkRetryError;
-        match err {
-            MarkRetryError::Core(e) => Self::Core(e),
-            MarkRetryError::Port(e) => e,
-            MarkRetryError::TranscriptMissing(id) => Self::TranscriptMissing(id),
-            MarkRetryError::TranscriptRefused { id, reason } => {
-                Self::TranscriptRefused { id, reason }
-            }
-            MarkRetryError::Read { what, source } => Self::Read { what, source },
-            MarkRetryError::StillFailed(message) => {
-                Self::Model(scribe_core::models::ModelError::Failed(message))
-            }
-            MarkRetryError::Usage(message) => Self::Usage(message),
-        }
-    }
-}
-
 /// `session catalog`'s errors, each the variant it was before the flow moved.
 impl From<scribe_core::cases::catalog::CatalogError<CliError>> for CliError {
     fn from(err: scribe_core::cases::catalog::CatalogError<CliError>) -> Self {

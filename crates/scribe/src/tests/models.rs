@@ -6,10 +6,8 @@
 
 use crate::models::{BASELINE_ENV, ClaudeCliModels, allowed_env, argv};
 use scribe_core::Models;
-use scribe_core::Speaker;
 use scribe_core::models::{
-    ANNOTATION_SCHEMA, AnnotationAnswer, AnnotationMessage, AnnotationRequest, MarkAnswer,
-    ModelError,
+    Budgets, ModelError, SESSION_HEADER_SCHEMA, SessionHeader, SessionHeaderRequest,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -72,33 +70,36 @@ impl FakeClaude {
     }
 }
 
-fn request(budget: Duration) -> AnnotationRequest {
-    AnnotationRequest {
+fn request(budget: Duration) -> SessionHeaderRequest {
+    SessionHeaderRequest {
         model: String::from("claude-haiku-5-5"),
         budget,
-        marks: Vec::new(),
-        messages: vec![AnnotationMessage {
-            uuid: String::from("a-1"),
-            role: Speaker::Assistant,
-            text: String::from("We squash-merge agent PRs."),
-            marked: false,
-        }],
-        tags: Vec::new(),
+        header: SessionHeader {
+            title: String::from("Merge policy"),
+            summary: String::from("We squash-merge agent PRs."),
+            goals: String::from("Settle the merge policy."),
+            next: Vec::new(),
+        },
+        budgets: Budgets {
+            title: 80,
+            summary: 1200,
+            goals: 400,
+            next: 1000,
+        },
+        correction: String::from("summary too long"),
         voice: scribe_core::voice::Voice::default(),
     }
 }
 
-const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"marks":[{"marker":1,"kind":"none","reason":"squash-merge agent PRs"}]}}'"#;
+const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"title":"Merge policy","summary":"squash-merge agent PRs","goals":"g","next":["n"]}}'"#;
 
 /// The answer [`STRUCTURED`] holds.
-fn structured() -> AnnotationAnswer {
-    AnnotationAnswer {
-        marks: vec![MarkAnswer {
-            marker: 1,
-            kind: String::from("none"),
-            reason: String::from("squash-merge agent PRs"),
-            ..MarkAnswer::default()
-        }],
+fn structured() -> SessionHeader {
+    SessionHeader {
+        title: String::from("Merge policy"),
+        summary: String::from("squash-merge agent PRs"),
+        goals: String::from("g"),
+        next: vec![String::from("n")],
     }
 }
 
@@ -107,7 +108,7 @@ fn the_argv_carries_safe_mode_and_no_tools_and_the_prompt_goes_on_stdin() {
     let fake = FakeClaude::new(STRUCTURED);
     let answer = fake
         .models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap();
     assert_eq!(answer, structured());
     let recorded: Vec<String> = fake.read("argv").lines().map(str::to_owned).collect();
@@ -121,13 +122,13 @@ fn the_argv_carries_safe_mode_and_no_tools_and_the_prompt_goes_on_stdin() {
         "--output-format",
         "json",
         "--json-schema",
-        ANNOTATION_SCHEMA,
+        SESSION_HEADER_SCHEMA,
     ]
     .iter()
     .map(|a| format!("<{a}>"))
     .collect();
     assert_eq!(recorded, expected, "`--tools \"\"` is one empty argument");
-    assert_eq!(argv("claude-haiku-5-5", ANNOTATION_SCHEMA).len(), 10);
+    assert_eq!(argv("claude-haiku-5-5", SESSION_HEADER_SCHEMA).len(), 10);
     assert_eq!(fake.read("stdin"), request(Duration::ZERO).prompt());
 }
 
@@ -146,7 +147,7 @@ fn the_child_gets_only_the_allowlisted_environment() {
             ("GITHUB_TOKEN", "not-configured"),
         ],
     )
-    .annotation(&request(Duration::from_secs(10)))
+    .session_header(&request(Duration::from_secs(10)))
     .unwrap();
     let env: BTreeMap<String, String> = fake
         .read("env")
@@ -176,7 +177,7 @@ fn the_child_gets_only_the_allowlisted_environment() {
 fn the_child_leads_its_own_process_group() {
     let fake = FakeClaude::new(STRUCTURED);
     fake.models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap();
     let pid = fake.read("pid").trim().to_owned();
     assert!(!pid.is_empty());
@@ -225,7 +226,7 @@ fn at_its_budget_the_whole_group_is_killed_and_the_child_reaped() {
     let started = Instant::now();
     let err = fake
         .models(&[], &[])
-        .annotation(&request(budget))
+        .session_header(&request(budget))
         .unwrap_err();
     let took = started.elapsed();
     assert_eq!(err, ModelError::Timeout { budget });
@@ -254,7 +255,7 @@ fn a_clean_exit_still_sweeps_what_the_child_left_running() {
     ));
     let started = Instant::now();
     fake.models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(8));
     let grandchild = fake.read("grandchild").trim().to_owned();
@@ -269,7 +270,7 @@ fn a_failing_claude_is_a_model_error_naming_its_last_words() {
     let fake = FakeClaude::new("echo 'Not logged in. Run /login' >&2\nexit 3");
     let err = fake
         .models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -292,7 +293,7 @@ fn a_failing_claude_names_the_credentials_missing_from_the_environment() {
     let err = fake
         .models(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], &[])
         .with_credentials(&names)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -306,7 +307,7 @@ fn a_failing_claude_names_the_credentials_missing_from_the_environment() {
 
     let err = with_oauth(&fake)
         .with_credentials(&names)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -324,7 +325,7 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
     );
     let err = fake
         .models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     assert_eq!(
         err,
@@ -338,7 +339,7 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
     ] {
         let err = FakeClaude::new(body)
             .models(&[], &[])
-            .annotation(&request(Duration::from_secs(10)))
+            .session_header(&request(Duration::from_secs(10)))
             .unwrap_err();
         assert!(matches!(err, ModelError::Malformed(_)), "{body}: {err:?}");
     }
@@ -347,11 +348,11 @@ fn an_error_result_is_a_failure_and_a_bad_answer_is_malformed() {
 #[test]
 fn an_answer_in_the_result_text_is_read_when_there_is_no_structured_output() {
     let fake = FakeClaude::new(
-        r#"printf '%s\n' '{"type":"result","is_error":false,"result":"```json\n{\"marks\":[{\"marker\":1,\"kind\":\"none\",\"reason\":\"squash-merge agent PRs\"}]}\n```"}'"#,
+        r#"printf '%s\n' '{"type":"result","is_error":false,"result":"```json\n{\"title\":\"Merge policy\",\"summary\":\"squash-merge agent PRs\",\"goals\":\"g\",\"next\":[\"n\"]}\n```"}'"#,
     );
     let answer = fake
         .models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap();
     assert_eq!(answer, structured());
 }
@@ -363,7 +364,7 @@ fn no_claude_on_path_is_unavailable() {
     std::fs::create_dir(&empty).unwrap();
     let models = ClaudeCliModels::new(vec![(OsString::from("PATH"), empty.into_os_string())]);
     let err = models
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     assert!(matches!(err, ModelError::Unavailable(_)), "{err:?}");
 }
@@ -384,7 +385,7 @@ fn with_oauth(fake: &FakeClaude) -> ClaudeCliModels {
 fn a_failing_claude_masks_a_configured_credential_in_its_stderr() {
     let fake = FakeClaude::new("echo \"auth failed for $CLAUDE_CODE_OAUTH_TOKEN\" >&2\nexit 3");
     let err = with_oauth(&fake)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -405,7 +406,7 @@ fn a_failing_claude_with_only_stdout_masks_the_shapes_it_prints() {
     );
     let err = fake
         .models(&[], &[])
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -426,7 +427,7 @@ fn an_error_result_masks_the_credential_and_the_shape_it_echoes() {
         r#"printf '{"type":"result","is_error":true,"result":"API Error: token %s rejected, key sk-ant-api03-SYNTHETICTAIL123"}\n' "$CLAUDE_CODE_OAUTH_TOKEN""#,
     );
     let err = with_oauth(&fake)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     assert_eq!(
         err,
@@ -440,10 +441,10 @@ fn an_error_result_masks_the_credential_and_the_shape_it_echoes() {
 fn a_mistyped_answer_does_not_echo_the_credential_in_its_error() {
     // serde names the value of a mistyped field; the error must not carry it.
     let fake = FakeClaude::new(
-        r#"printf '{"type":"result","is_error":false,"structured_output":{"marks":[{"marker":"%s","kind":"none","reason":"r"}]}}\n' "$CLAUDE_CODE_OAUTH_TOKEN""#,
+        r#"printf '{"type":"result","is_error":false,"structured_output":{"title":"t","summary":"s","goals":"g","next":"%s"}}\n' "$CLAUDE_CODE_OAUTH_TOKEN""#,
     );
     let err = with_oauth(&fake)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Malformed(message) = &err else {
         panic!("expected a malformed answer: {err:?}");
@@ -466,7 +467,7 @@ fn a_stderr_cut_at_its_limit_does_not_report_the_credential_it_cuts() {
 exit 3"#,
     );
     let err = with_oauth(&fake)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");
@@ -488,7 +489,7 @@ fn a_configured_secret_the_child_never_received_is_masked_too() {
     let err = fake
         .models(&[], &[])
         .with_redactor(redactor)
-        .annotation(&request(Duration::from_secs(10)))
+        .session_header(&request(Duration::from_secs(10)))
         .unwrap_err();
     let ModelError::Failed(message) = &err else {
         panic!("expected a failure: {err:?}");

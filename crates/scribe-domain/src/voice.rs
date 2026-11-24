@@ -125,41 +125,25 @@ impl UserName {
 /// by its name under `[instructions]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelUse {
-    /// Cataloging a `#scribe` annotation.
-    Annotation,
     /// The session pass that writes a session record.
     Session,
     /// Shortening a refused session header.
     SessionHeader,
-    /// The consistency routine's judgement of entry pairs.
-    Consistency,
     /// `memory refresh`'s profile rebuild (2_design.md §15.6).
     Profile,
-    /// The consistency routine's judgement of removed-feature pairs.
-    Removal,
 }
 
 impl ModelUse {
     /// Every use, in the order `config.toml` documents them.
-    pub const ALL: [Self; 6] = [
-        Self::Annotation,
-        Self::Session,
-        Self::SessionHeader,
-        Self::Consistency,
-        Self::Profile,
-        Self::Removal,
-    ];
+    pub const ALL: [Self; 3] = [Self::Session, Self::SessionHeader, Self::Profile];
 
     /// Its key under `[instructions]`.
     #[must_use]
     pub fn key(self) -> &'static str {
         match self {
-            Self::Annotation => "annotation",
             Self::Session => "session",
             Self::SessionHeader => "session_header",
-            Self::Consistency => "consistency",
             Self::Profile => "profile",
-            Self::Removal => "removal",
         }
     }
 }

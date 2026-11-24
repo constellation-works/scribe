@@ -5,9 +5,8 @@ Lists the #scribe markers whose model call is pending or gave up, and catalogs a
 Usage: scribe mark [OPTIONS] <COMMAND>
 
 Commands:
-  list   List #scribe markers not cataloged yet: pending a retry, or given up
-  retry  Catalog a session's given-up and pending #scribe markers now
-  help   Print this message or the help of the given subcommand(s)
+  list  List #scribe markers with no entry from scribe
+  help  Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -18,7 +17,7 @@ Options:
 
 Global options:
       --provider <PROVIDER>
-          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+          Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
 
       --root <DIR>
           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
@@ -34,4 +33,3 @@ Global options:
 Examples:
   scribe mark list
   scribe mark list --session <id> --json
-  scribe mark retry <id>
