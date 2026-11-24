@@ -81,6 +81,25 @@ pub(super) const V18: &str = "
 ALTER TABLE group_members ADD COLUMN restarted INTEGER NOT NULL DEFAULT 0 CHECK (restarted IN (0, 1));
 ";
 
+/// Version 19 repairs the version 18 default. A holder restored before its
+/// store reached version 18 has a reset `joined` but `restarted = 0`, and the
+/// rows cannot be told apart from a holder that never was displaced. Mark
+/// conservatively: a seat holder with a vanished `position` after its own was
+/// possibly restored, since `AUTOINCREMENT` never reuses a position and the
+/// departed displacer's row is gone. A holder with no such gap cannot have
+/// been restored, because its displacer's row would still hold a later
+/// position. A false positive only narrows an explicit backfill to turns
+/// dated since `joined`; a miss would store a turn typed during displacement.
+pub(super) const V19: &str = "
+UPDATE group_members SET restarted = 1
+WHERE position = (
+        SELECT MAX(m2.position) FROM group_members m2
+        WHERE m2.group_id = group_members.group_id AND m2.seat = group_members.seat
+    )
+    AND (SELECT COUNT(*) FROM group_members later WHERE later.position > group_members.position)
+        < COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'group_members'), 0) - position;
+";
+
 /// Drop a forgotten session's seat membership, clear derived summaries, and
 /// restart any restored holder's capture window. A seat that still has members
 /// keeps its role and chain.

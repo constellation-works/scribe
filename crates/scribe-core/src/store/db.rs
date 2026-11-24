@@ -88,6 +88,7 @@ const MIGRATIONS: &[&str] = &[
     V16,
     V17,
     groups::V18,
+    groups::V19,
 ];
 
 /// Version 17 ships typed records and replaces the trial's tag registrations.

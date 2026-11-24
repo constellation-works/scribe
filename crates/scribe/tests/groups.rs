@@ -1739,7 +1739,7 @@ fn old_schema_reads_empty_without_migration_then_upgrades_on_open() {
     };
     assert_eq!(version(), 8);
     open(&f);
-    assert_eq!(version(), 18);
+    assert_eq!(version(), 19);
 }
 
 #[test]
@@ -4181,6 +4181,98 @@ fn backfill_keeps_a_restored_holders_displaced_turns_out() {
     let repeat = invoke(&f, A, &["group", "backfill", "g-1"], 0);
     assert_eq!(repeat["stored"], 0);
     assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
+}
+
+/// A version 17 store cannot say whether a holder was restored: the old
+/// `remove_seat_member` reset `joined` but wrote no mark. The upgrade marks a
+/// holder whose seat lost a later membership (a vanished `position`), so an
+/// explicit backfill after the upgrade still keeps the displaced interval out.
+#[test]
+fn backfill_after_a_version_17_upgrade_keeps_an_already_restored_holders_cutoff() {
+    let f = Fixture::new();
+    let mut a_rows = vec![
+        row_at(A, "u", "user", QUOTE, OLD),
+        row_at(
+            A,
+            "before",
+            "user",
+            "beforeorchid typed before the join",
+            OLD,
+        ),
+    ];
+    transcript(&f, A, &a_rows);
+    transcript(&f, B, &[row_at(B, "b", "user", "joining now", OLD)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    join(&f, B, "g-1", &["--replace"], 0);
+    a_rows.push(row_at(
+        A,
+        "during",
+        "user",
+        "duringorchid typed while displaced",
+        OLD,
+    ));
+    transcript(&f, A, &a_rows);
+    invoke(&f, B, &["group", "leave"], 0);
+    a_rows.push(row(
+        A,
+        "after",
+        "user",
+        "afterorchid typed after the restore",
+    ));
+    transcript(&f, A, &a_rows);
+    // Stage the store as a version 17 build left it: the restore reset
+    // `joined`, there is no `restarted` column and `during` was never stored.
+    support::sql(
+        &f.root(),
+        "ALTER TABLE group_members DROP COLUMN restarted; PRAGMA user_version = 17;",
+    );
+    assert_eq!(stored_turns(&f, A), ["u", "before"]);
+
+    let result = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(result["stored"], 1, "{result}");
+    assert_eq!(stored_turns(&f, A), ["u", "before", "after"]);
+    assert_eq!(search_group(&f, "duringorchid")["total"], 0);
+    let restarted: i64 = rusqlite::Connection::open(f.root().join("scribe.db"))
+        .unwrap()
+        .query_row(
+            "SELECT restarted FROM group_members WHERE session = ?1",
+            [A],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(restarted, 1);
+}
+
+/// The upgrade marks only a holder that can have been restored. One whose seat
+/// never lost a later membership keeps backfilling its whole transcript.
+#[test]
+fn backfill_after_a_version_17_upgrade_leaves_a_never_displaced_holder_unmarked() {
+    let f = Fixture::new();
+    transcript(
+        &f,
+        A,
+        &[
+            row_at(A, "u", "user", QUOTE, OLD),
+            row_at(
+                A,
+                "before",
+                "user",
+                "beforeorchid typed before the join",
+                OLD,
+            ),
+        ],
+    );
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    support::sql(
+        &f.root(),
+        "DELETE FROM messages;
+         ALTER TABLE group_members DROP COLUMN restarted; PRAGMA user_version = 17;",
+    );
+    let result = invoke(&f, A, &["group", "backfill", "g-1"], 0);
+    assert_eq!(result["stored"], 2, "{result}");
+    assert_eq!(stored_turns(&f, A), ["u", "before"]);
 }
 
 #[test]
