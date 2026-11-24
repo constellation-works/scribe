@@ -11,7 +11,9 @@
 #      depend only on the internal crates in its allowlist, and never on the
 #      external crates in its banlist. Dev-dependencies are exempt. A crate
 #      without a policy fails the check, so a new member forces a decision.
-#   2. Module edges inside a crate, as grep bans over non-test sources.
+#   2. Module edges inside a crate: scribe-domain's ring order, and grep
+#      bans over non-test sources for what a crate edge cannot express
+#      (std I/O, the environment, one module's mechanism inside a crate).
 #
 # The layer order is written down in ARCHITECTURE.md; change it and this
 # script in the same commit (STD-02 R6).
@@ -34,6 +36,7 @@ policy() {
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile rustix"
       ;;
     scribe-store)
+      # The only crate that touches the data root and scribe.db.
       ALLOWED="scribe-domain"
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored"
       ;;
@@ -45,8 +48,10 @@ policy() {
       BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile rustix"
       ;;
     scribe)
+      # The CLI reaches scribe.db through scribe_core::Store; its tests may
+      # stage database states with rusqlite as a dev-dependency.
       ALLOWED="scribe-core"
-      BANNED=""
+      BANNED="rusqlite"
       ;;
     *) return 1 ;;
   esac
@@ -126,39 +131,93 @@ ban_std() {
   fi
 }
 
-# A `crate::cases` path, or a `*Verbs` trait the core root re-exports.
-USE_CASES='crate::cases|[^[:alnum:]_][A-Z][[:alnum:]]*Verbs([^[:alnum:]_]|$)'
 DOMAIN=crates/scribe-domain/src
 STORE=crates/scribe-store/src
 CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
-# scribe-domain (ORB-27707 step 4) holds the business modules: none does I/O,
-# knows how records are stored or names the use cases. Its crate edges keep
-# store/ and cases/ out of reach; these bans keep std I/O out too.
-for path in "$DOMAIN"/*; do
-  name=$(basename "$path")
-  [[ "$name" == tests ]] && continue
-  ban_std "$path" 'fs|net|process' "domain/$name is business logic: file and process access belong in the store"
-  ban "$path" 'tempfile::|rustix::' "domain/$name is business logic: file and process access belong in the store"
-  ban "$path" "$USE_CASES"          "domain/$name is business logic: it must not depend on the use cases"
+# The crate edges keep the use cases out of scribe-domain and scribe-store,
+# and rusqlite, tempfile and rustix out of every crate but the store. What
+# they cannot keep out is std: scribe-domain and scribe-core do no file,
+# network or process I/O of their own (R4, R5).
+for path in "$DOMAIN"/* "$CORE"/*; do
+  [[ "$(basename "$path")" == tests ]] && continue
+  ban_std "$path" 'fs|net|process' "${path#crates/}: file and process access belong in scribe-store"
 done
 
-# Core is the use cases (cases/, ORB-27707) over scribe-store, with the crate
-# root re-exporting scribe-domain and scribe-store at their old paths. It
-# does no I/O of its own: it reaches files through the store. scribe-store
-# cannot name the use cases at all (no crate edge); these bans also keep a
-# `*Verbs` name out of its source, as a doc path or otherwise.
-for path in "$CORE"/*; do
-  name=$(basename "$path")
-  [[ "$name" == tests ]] && continue
-  ban_std "$path" 'fs|net|process' "core/$name is the use cases: file and process access belong in scribe-store"
-  ban "$path" 'tempfile::|rustix::' "core/$name is the use cases: file and process access belong in scribe-store"
-done
-ban "$STORE" "$USE_CASES"                                 "scribe-store is persistence: it must not depend on the use cases"
-# Pass is an orchestrator; its lower-level callers cannot depend on it.
+# scribe-domain's rings (ORB-27707 step 4; ARCHITECTURE.md): every module is
+# in one ring and imports only modules of its own ring or an earlier one,
+# whether by path (`crate::session::…`), in a grouped import
+# (`crate::{session, …}`) or through a name the crate root re-exports
+# (`crate::SessionId`). A new module fails until it is given a ring here.
+DOMAIN_RINGS='
+base:       record text verbatim provider origin
+records:    session activity control entry handoff tag proposal
+transcript: transcript
+rules:      trigger voice claim brief capture ask consistency pass instruction models config error checks search group memory message action annotation redact
+'
+ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
+  use strict; use warnings;
+  my $root = shift;
+  my (%ring, %rank); my $n = 0;
+  for my $line (split /\n/, $ENV{DOMAIN_RINGS}) {
+    next unless $line =~ /^(\w+):\s*(.*)$/;
+    $rank{$1} = $n++;
+    $ring{$_} = $1 for split " ", $2;
+  }
+  local $/;
+  open my $lib, "<", "$root/lib.rs" or die "$root/lib.rs: $!";
+  my $l = <$lib>;
+  my (%mods, %name);
+  $mods{$1} = 1 while $l =~ /^pub mod (\w+);/mg;
+  while ($l =~ /^pub use (\w+)::\{([^}]*)\};/mg) {
+    my ($m, $g) = ($1, $2);
+    $name{(split /\s+as\s+/)[-1]} = $m for grep { length } map { s/\s//gr } split /,/, $g;
+  }
+  $name{$2} = $1 while $l =~ /^pub use (\w+)::(\w+);/mg;
+  for my $m (sort keys %mods) {
+    next if $m eq "fixtures";    # test support, compiled for tests only
+    print "$root/lib.rs: module $m has no ring\n" unless $ring{$m};
+  }
+  my @files = split /\0/, `find "$root" -name "*.rs" -not -path "*/tests/*" -print0`;
+  for my $file (@files) {
+    my ($rel) = $file =~ m{^\Q$root\E/(.*)$};
+    next if $rel eq "lib.rs" || $rel eq "fixtures.rs";
+    my ($src) = $rel =~ m{^(\w+)};
+    next unless $ring{$src};
+    open my $fh, "<", $file or die "$file: $!";
+    my $s = <$fh>;
+    $s =~ s{^\s*//.*$}{}mg;
+    my @refs;
+    push @refs, [$1, $-[0]] while $s =~ /crate::(\w+)/g;
+    while ($s =~ /crate::\{/g) {
+      my ($at, $i, $d) = ($-[0], pos($s), 1);
+      my $j = $i;
+      while ($d && $j < length $s) { my $c = substr($s, $j++, 1); $d++ if $c eq "{"; $d-- if $c eq "}"; }
+      my $g = substr($s, $i, $j - $i - 1);
+      1 while $g =~ s/\{[^{}]*\}//g;
+      push @refs, [$_, $at] for map { /^\s*(\w+)/ ? $1 : () } split /,/, $g;
+      pos($s) = $j;
+    }
+    for my $r (@refs) {
+      my ($t, $at) = @$r;
+      my $m = $mods{$t} ? $t : $name{$t};
+      next unless $m && $ring{$m} && $m ne $src;
+      next if $rank{$ring{$m}} <= $rank{$ring{$src}};
+      my $line = 1 + (substr($s, 0, $at) =~ tr/\n//);
+      print "$file:$line: $src ($ring{$src}) imports $t from $m ($ring{$m})\n";
+    }
+  }
+' "$DOMAIN" 2>&1 || true)
+if [[ -n "$ring_hits" ]]; then
+  echo "$ring_hits" >&2
+  err "scribe-domain's ring order: a module imports only its own ring or an earlier one (ARCHITECTURE.md)"
+fi
+
+# Pass is an orchestrator; its lower-level callers in the rules ring cannot
+# depend on it.
 for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
-  ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "core/$path must not depend on pass"
+  ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "domain/$path must not depend on pass"
 done
 # The Models port must not import its callers.
 ban "$DOMAIN/models.rs" 'crate::(ask|memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
@@ -177,10 +236,9 @@ if [[ -n "$port_grouped" ]]; then
   err "the Models port must not import its callers"
 fi
 
-# Inside store/: fsio is mechanism with no knowledge of records, and the
-# codec and audit record shapes do no I/O of their own (R4, R5). Redaction
-# moved to scribe-domain, whose loop above bans its I/O.
-ban "$STORE/fsio.rs"        'crate::(entry|tag|session|proposal|record|config|verbatim|store)|super::' \
+# Inside scribe-store: fsio is mechanism with no knowledge of records, and
+# the codec and audit record shapes do no I/O of their own (R4, R5).
+ban "$STORE/fsio.rs"        'crate::(entry|tag|session|proposal|record|config|verbatim)|super::' \
                                                                  "store/fsio.rs is mechanism only; it must not know records or the store"
 for shape in codec:"converts bytes" audit:"is a record shape"; do
   file="$STORE/${shape%%:*}.rs"
@@ -188,15 +246,13 @@ for shape in codec:"converts bytes" audit:"is a record shape"; do
   ban "$file" 'super::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
 done
 # SQLite is one store module's mechanism (2_design.md §15.7): every other
-# module, in any crate, reaches scribe.db through the Store.
-# testing.rs is test support: it hands the tests a connection.
+# store module reaches scribe.db through it, and the crate policies keep
+# rusqlite out of every other crate. testing.rs is test support: it hands
+# the tests a connection.
 for path in "$STORE"/*; do
   case "$(basename "$path")" in tests | db.rs | db | testing.rs) continue ;; esac
   ban "$path" 'rusqlite' "scribe-store/${path#"$STORE"/} must not use rusqlite: scribe.db belongs to db.rs and db/"
 done
-ban "$CORE" 'rusqlite' "the core crate must not use rusqlite: scribe.db belongs to scribe-store's db.rs and db/"
-ban "$DOMAIN" 'rusqlite' "the domain must not use rusqlite: scribe.db belongs to scribe-store's db.rs and db/"
-ban "$CLI" 'rusqlite' "the CLI must not use rusqlite: scribe.db is reached through scribe_core::Store"
 # The domain receives resolved roots and configuration (R3).
 ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
 ban "$DOMAIN"        'std::env::|home_dir|current_dir'           "the domain crate must not read the environment or discover paths"
@@ -249,6 +305,18 @@ for retired in \
   crates/scribe/src/commands/note.rs \
   crates/scribe/src/commands/tests/note.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
+done
+# ORB-27707 step 4: scribe-core's business modules became scribe-domain
+# and its store/ module scribe-store; scribe-core keeps cases/, tests/ and
+# lib.rs. A module file under scribe-core with one of these names is a copy
+# that should be in the crate below.
+for module in action activity annotation ask brief capture checks claim config consistency \
+  control entry error group handoff instruction memory message models origin pass proposal \
+  provider record redact search session tag text transcript trigger verbatim voice \
+  store testing; do
+  for retired in "crates/scribe-core/src/$module.rs" "crates/scribe-core/src/$module"; do
+    [[ -e "$retired" ]] && err "retired path exists again: $retired (now in scribe-domain or scribe-store)"
+  done
 done
 
 if [[ "$fail" -eq 0 ]]; then

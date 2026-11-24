@@ -1,17 +1,17 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-23
+last_updated: 2026-11-24
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary and agents see only ask, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, and why scribe is four crates (domain, store, use cases, CLI).
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707]
 ---
 
 # scribe — Decisions
@@ -525,6 +525,12 @@ alternatives, so one may legitimately be unset.
 **Recorded:** 2026-09 · [ORB-13117]
 **Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh::policy`
 
+> **Superseded for the crate count, 2026-11-24 ([ORB-27707]):** scribe is
+> four crates, `scribe-domain`, `scribe-store`, `scribe-core` and `scribe`
+> ([see below](#four-crates-domain-store-use-cases-and-cli)). The
+> domain/surface boundary this entry set up stands: clap is still
+> unreachable from every library crate.
+
 ### Context
 
 STD-02 asks for an enforceable boundary between the domain and the surface.
@@ -550,7 +556,12 @@ these two.
 ## Persistence is one module inside the core crate
 
 **Recorded:** 2026-09-26
-**Code anchors:** `crates/scribe-core/src/store/mod.rs`; `scripts/check-dependency-direction.sh` (the `store | tests` loop)
+**Code anchors:** `crates/scribe-core/src/store/mod.rs` (now `crates/scribe-store/src/lib.rs`); `scripts/check-dependency-direction.sh` (the `store | tests` loop, removed)
+
+> **Superseded, 2026-11-24 ([ORB-27707]):** persistence earned its own
+> crate. `store/` moved out whole as `scribe-store`, and the grep bans that
+> kept `crate::store` out of the business modules became crate edges
+> ([see below](#four-crates-domain-store-use-cases-and-cli)).
 
 ### Context
 
@@ -574,6 +585,91 @@ core module. When persistence earns its own crate, `store/` moves out whole.
   filesystem.
 - Cost: `Store` is a concrete type, not a trait, and the module boundary is
   enforced by visibility and grep, which are weaker than a crate edge.
+
+## Four crates: domain, store, use cases and CLI
+
+**Recorded:** 2026-11-24 · [ORB-27707] · **Daniel's direction**
+**Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh::policy` and `DOMAIN_RINGS`; `ARCHITECTURE.md`
+
+Supersedes [A domain library crate and a CLI crate](#a-domain-library-crate-and-a-cli-crate)
+for the crate count, and [Persistence is one module inside the core crate](#persistence-is-one-module-inside-the-core-crate).
+
+### Context
+
+Daniel, typed in the chief's chat on 2026-11-24, as ORB-27707 records his
+words:
+
+> "scribe needs architectural refactor. scribe-core has no coherent
+> structure and flow of data - its mostly a flat structure. store should be
+> extracted into its own crate."
+
+> "can you analyze scribe-core and propose a new architecture to bring
+> order, predictability, and sensible modularity?"
+
+To the proposal of four crates he answered "Yes, file it", then "and have
+lieutenant implement it directly".
+
+At filing, `scribe-core` was about 40k non-test lines in 30 top-level
+modules, with import cycles among them. The store was half of it and
+imported 22 of the 29 business modules, held rules, and named its methods by
+use case. A use case was split across the CLI command, the core's step
+functions and the store's write-time checks. The only enforced boundary
+was a grep rule between the store and everything else.
+
+### Decision
+
+Four crates, each depending only on the ones before it:
+`scribe-domain` ← `scribe-store` ← `scribe-core` ← `scribe`.
+
+- `scribe-domain`: records and pure rules, no I/O, in four rings (base,
+  records, transcript, rules) that each import only their own ring or an
+  earlier one.
+- `scribe-store`: the data root and `scribe.db`; `Store::open`, `read()`
+  and `write(|tx| …)` over per-record repositories, and no use-case verbs. A
+  check that must be atomic with its write is a domain function run inside
+  the caller's `write` closure.
+- `scribe-core`: one use-case module per flow under `cases/`; its root
+  re-exports the two crates below at their old paths.
+- `scribe`: arguments, adapters and rendering; a command parses, calls one
+  use case and renders.
+
+The work went in four steps: break the cycles, move the rules out of the
+store, lift orchestration out of the CLI's commands, cut the crates. None
+of them changed the CLI, the output, the format version or the schema.
+
+The rings are the ones the code dictates, which differ from the proposal's
+lists. `group`, `memory`, `message`, `action` and `annotation` sit in rules,
+not records, because each imports a rule or a model shape. `transcript`
+comes before rules because the rules read transcripts. `config` sits in
+rules because it imports `trigger` and `voice` and `pass` imports it.
+ARCHITECTURE.md names the import behind each.
+
+### Consequences
+
+- The compiler enforces the boundaries the grep rules used to: the domain
+  and the store cannot name a use case, and only `scribe-store` depends on
+  `rusqlite` (dev-dependencies are exempt, so tests can stage database
+  states). `check-dependency-direction.sh` keeps what a crate edge cannot
+  express (std I/O, the environment, mechanism inside the store) and checks
+  the ring order inside `scribe-domain`.
+- The store's tests that call the use cases live in `scribe-core`, which
+  reaches the store's internals through `scribe_store::testing`, compiled
+  only under `test-support`.
+- Remaining design targets of the proposal, not done in ORB-27707, and the
+  captain decides whether they become tasks:
+  - the `Models` and `Tasks` ports move into `scribe-core`; this needs
+    `ask::answer` to move into the use cases first;
+  - `store/init.rs` (project scaffolding) moves to the CLI's composition
+    tier;
+  - `models.rs` goes away, each feature keeping its request and answer
+    shapes beside its rules;
+  - refusals become per-rule enums, not one crate-wide `Error`;
+  - the store takes the proposed layout (`repo/`, `schema/`, `legacy/`).
+- Cost: four manifests and a `test-support` feature in each library crate.
+  Many items moved from `pub(crate)` to `pub`, so that crates can reach each
+  other. `scribe-core` keeps re-export shims so that public paths did not
+  change. The store tests that stayed in `scribe-core` reach store internals
+  through a test-only module rather than directly.
 
 ## Commands are one module per noun
 
