@@ -10,14 +10,9 @@ pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
-use crate::checks::group::{
-    check_additions, check_join, check_new_group, check_own_user_turns, check_project_slug, number,
-};
+use crate::checks::group::{check_own_user_turns, number};
 use crate::checks::refusal;
-use crate::group::{
-    Added, Group, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat,
-    SeatHold, SeatStart,
-};
+use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
 use crate::{Error, Project, Redactor, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -357,7 +352,7 @@ impl Store {
         )
     }
 
-    fn group_number(&self, input: &str) -> Result<i64> {
+    pub(in crate::store) fn group_number(&self, input: &str) -> Result<i64> {
         // Open project slugs take precedence over id prefixes.
         let slug = self.read_groups(|conn, path| {
             if refuse_newer(conn, path)? < 12 {
@@ -416,409 +411,45 @@ impl Store {
         super::search_messages(self.root(), tokens, Some(n))
     }
 
-    /// Open a group on verified consent. The opener joins a seat separately.
-    /// `earlier_turns` are the opener's typed turns from the start of its own
-    /// transcript. They are stored with the group in the same transaction, so
-    /// the line that started the work is kept even though it was typed before
-    /// the group existed. An opener that is already a member of a group, or has
-    /// been forgotten, stores none: its own join decided what it keeps.
-    pub fn open_group(
+    /// Run `f` over the group rows of one write step: the store's lock and
+    /// transaction (the write under way, when there is one), with `action`
+    /// naming the write in a database error.
+    pub(in crate::store) fn group_rows<T>(
         &self,
-        mut draft: NewGroup,
-        consent: &GroupConsent,
-        earlier_turns: &[NewMessage],
-        now: OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<OpenedGroup> {
-        check_new_group(&draft, consent, earlier_turns)?;
-        redactor.group(&mut draft);
+        action: &'static str,
+        f: impl FnOnce(&GroupRows<'_>) -> Result<T>,
+    ) -> Result<T> {
         self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("open group in", &path, e);
-            let mut query = conn
-                .prepare("SELECT 'g-' || id FROM groups WHERE project = ?1 AND closed IS NULL ORDER BY id DESC")
-                .map_err(fail)?;
-            let still_open = query
-                .query_map([draft.project.as_str()], |row| row.get(0))
-                .map_err(fail)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(fail)?;
-            let related =
-                serde_json::to_string(&draft.related).map_err(|e| Error::corrupt(&path, e))?;
-            let n: i64 = conn
-                .query_row(
-                    "INSERT INTO groups(title,kind,project,opened,opener,related)
-                VALUES (?1,?2,?3,?4,?5,?6) RETURNING id",
-                    params![
-                        draft.title,
-                        draft.kind,
-                        draft.project.as_str(),
-                        stamp(now),
-                        consent.session().as_str(),
-                        related
-                    ],
-                    |r| r.get(0),
-                )
-                .map_err(fail)?;
-            let opener = consent.session();
-            if !earlier_turns.is_empty()
-                && !has_membership(&conn, opener).map_err(fail)?
-                && !super::sessions::is_forgotten(&conn, opener).map_err(fail)?
-            {
-                write_captured_turns(
-                    &conn,
-                    &path,
-                    opener,
-                    earlier_turns.iter().collect(),
-                    redactor,
-                )?;
-            }
-            Ok(OpenedGroup { id: format!("g-{n}"), still_open })
-        })
-    }
-
-    /// Create or join an open project group on a user-typed hook command.
-    pub fn join_project_group(
-        &self,
-        slug: &str,
-        project: &Project,
-        session: &SessionId,
-        now: OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<String> {
-        check_project_slug(slug, redactor)?;
-        self.write_step(|| {
-            self.refuse_forgotten(session)?;
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("join project group in", &path, e);
-            let held = project_group_membership(&conn, session).map_err(fail)?;
-            if let Some((_, name)) = held {
-                return Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    format!(
-                        "session already belongs to group {}; leave it before joining",
-                        redactor.mask(&name)
-                    ),
-                ));
-            }
-            let existing = open_project_group(&conn, slug).map_err(fail)?;
-            let n = match existing {
-                Some(n) => n,
-                None => insert_project_group(&conn, slug, project, now, session).map_err(fail)?,
-            };
-            seat_member(&conn, n, session, now).map_err(fail)?;
-            Ok(format!("g-{n}"))
-        })
-    }
-
-    /// Add named past sessions to an open project group on a user-typed hook
-    /// command, opening the group when absent. A session already in another
-    /// group refuses the whole line, naming each such session and its group, so
-    /// nothing changes. A session whose transcript was read has its typed turns
-    /// stored, whatever their age, and its capture cursor set to the last of
-    /// them; one without a transcript gets membership only. Backfilled turns
-    /// must all be user turns belonging to their named session; otherwise the
-    /// whole call is refused before it writes anything.
-    pub fn add_project_group_sessions(
-        &self,
-        slug: &str,
-        project: &Project,
-        opener: &SessionId,
-        additions: &[GroupAddition],
-        now: OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<GroupAdded> {
-        check_project_slug(slug, redactor)?;
-        check_additions(additions)?;
-        self.write_step(|| {
-            for addition in additions {
-                self.refuse_forgotten(&addition.session)?;
-            }
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("add to project group in", &path, e);
-            let existing = open_project_group(&conn, slug).map_err(fail)?;
-            let mut elsewhere = Vec::new();
-            let mut already = Vec::new();
-            for addition in additions {
-                let held = project_group_membership(&conn, &addition.session).map_err(fail)?;
-                match held {
-                    Some((group, _)) if Some(group) == existing => {
-                        already.push(addition.session.as_str());
-                    }
-                    Some((_, name)) => elsewhere.push(format!(
-                        "session {} already belongs to group {}",
-                        addition.session,
-                        redactor.mask(&name)
-                    )),
-                    None => {}
-                }
-            }
-            if !elsewhere.is_empty() {
-                return Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    format!("{}; nothing changed", elsewhere.join("; ")),
-                ));
-            }
-            let (n, created) = match existing {
-                Some(n) => (n, false),
-                None => (
-                    insert_project_group(&conn, slug, project, now, opener).map_err(fail)?,
-                    true,
-                ),
-            };
-            let mut sessions = Vec::new();
-            for addition in additions {
-                if already.contains(&addition.session.as_str()) {
-                    sessions.push((addition.session.clone(), Added::AlreadyMember));
-                    continue;
-                }
-                seat_member(&conn, n, &addition.session, now).map_err(fail)?;
-                let stored = match &addition.turns {
-                    None => None,
-                    Some(turns) => {
-                        let inserted = write_captured_turns(
-                            &conn,
-                            &path,
-                            &addition.session,
-                            turns.iter().collect(),
-                            redactor,
-                        )?;
-                        if let Some(last) = turns.last() {
-                            conn.execute(
-                                "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
-                                params![addition.session.as_str(), last.message],
-                            )
-                            .map_err(fail)?;
-                        }
-                        Some(inserted)
-                    }
-                };
-                sessions.push((addition.session.clone(), Added::Joined { stored }));
-            }
-            Ok(GroupAdded {
-                id: format!("g-{n}"),
-                created,
-                sessions,
+            f(&GroupRows {
+                conn: &conn,
+                path: &path,
+                action,
+                read: false,
             })
         })
     }
 
-    /// Append a member, or return false on retry. An ended transcript is named
-    /// explicitly so a stale liveness check cannot authorize a different replacement.
-    pub fn join_group(&self, join: JoinGroup<'_>, redactor: &Redactor) -> Result<bool> {
-        check_join(&join)?;
-        self.write_step(|| {
-            self.refuse_forgotten(join.session)?;
-            let n = self.group_number(join.group)?;
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("join group in", &path, e);
-            let seat = join.seat.as_str();
-            let session = join.session.as_str();
-            let closed: bool = conn
-                .query_row("SELECT closed IS NOT NULL FROM groups WHERE id = ?1", [n], |r| r.get(0))
-                .map_err(fail)?;
-            let held: Option<(i64, String)> = conn
-                .query_row(
-                    "SELECT group_id, seat FROM group_members WHERE session = ?1",
-                    [session],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(fail)?;
-            if let Some((group, name)) = &held
-                && (*group != n || name != seat)
-            {
-                return Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    format!("the calling session already belongs to group g-{group}; leave it before joining"),
-                ));
-            }
-            if closed && held.is_none() {
-                return Err(refusal(WriteRefusal::GroupMembership, "the group is already closed"));
-            }
-
-            let role = join.role.map(|role| redactor.mask(role));
-            let current: Option<(String, String)> = conn
-                .query_row(
-                    "SELECT s.role, m.session FROM group_seats s
-                     JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
-                     WHERE s.group_id = ?1 AND s.name = ?2 ORDER BY m.position DESC LIMIT 1",
-                    params![n, seat],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(fail)?;
-            if let Some((stored_role, latest)) = current {
-                if role.as_ref().is_some_and(|r| r != &stored_role) {
-                    return Err(refusal(
-                        WriteRefusal::GroupMembership,
-                        "the seat already has a different role; omit --role to keep it",
-                    ));
-                }
-                if held.is_some() {
-                    return Ok(false);
-                }
-                if !join.replace
-                    && join.ended.map(SessionId::as_str) != Some(latest.as_str())
-                    && join.predecessor.map(SessionId::as_str) != Some(latest.as_str())
-                {
-                    return Err(refusal(
-                        WriteRefusal::SeatOccupied,
-                        format!("seat {seat} is held by session {latest}; pass --replace to take it over"),
-                    ));
-                }
-            } else {
-                let role = role.unwrap_or_else(|| redactor.mask(seat));
-                conn.execute(
-                    "INSERT INTO group_seats(group_id, name, role) VALUES (?1, ?2, ?3)",
-                    params![n, seat, role],
-                )
-                .map_err(fail)?;
-            }
-            conn.execute(
-                "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![n, seat, session, join.author.as_str(), stamp(join.snapshot_at)],
-            )
-            .map_err(fail)?;
-            // The capture starts at the session's own first line, not at the
-            // join time, so the cursor takes over from its last stored turn.
-            // With no stored turn the join time is the snapshot's, taken before
-            // the transcript was read, so a turn typed since stays in capture.
-            if let Some(last) = join.earlier_turns.last() {
-                write_captured_turns(
-                    &conn,
-                    &path,
-                    join.session,
-                    join.earlier_turns.iter().collect(),
-                    redactor,
-                )?;
-                conn.execute(
-                    "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
-                    params![session, last.message],
-                )
-                .map_err(fail)?;
-            }
-            Ok(true)
-        })
-    }
-
-    /// Remove only the caller from its chain and remove a seat left empty.
-    pub fn leave_group(&self, session: &SessionId) -> Result<String> {
-        self.leave_group_inner(session, false)
-    }
-
-    fn leave_group_inner(&self, session: &SessionId, keep_turns: bool) -> Result<String> {
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("leave group in", &path, e);
-            let n = remove_seat_member(
-                &conn,
-                &path,
-                "leave group in",
-                session,
-                OffsetDateTime::now_utc(),
-            )?
-            .ok_or_else(|| {
-                refusal(
-                    WriteRefusal::GroupMembership,
-                    "the calling session has no group membership",
-                )
-            })?
-            .group;
-            let erased = if keep_turns {
-                0
-            } else {
-                conn.execute(
-                    "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
-                    [session.as_str()],
-                )
-                .map_err(fail)?
-            };
-            let cleared = conn
-                .execute(
-                    "UPDATE groups SET summary = NULL WHERE id = ?1 AND summary IS NOT NULL",
-                    [n],
-                )
-                .map_err(fail)?;
-            if erased > 0 {
-                optimize_fts(&conn).map_err(fail)?;
-            }
-            if erased > 0 || cleared > 0 {
-                super::truncate_wal(&conn, &path, std::time::Instant::now())?;
-            }
-            Ok(format!("g-{n}"))
-        })
-    }
-
-    /// Move a member atomically, retaining its stored turns and capture cursor.
-    pub fn move_project_group(
+    /// Run `f` over the group rows of one read; `T::default()` before the
+    /// store has groups.
+    pub(in crate::store) fn read_group_rows<T: Default>(
         &self,
-        session: &SessionId,
-        slug: &str,
-        project: &Project,
-        now: OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<String> {
-        check_project_slug(slug, redactor)?;
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("move group member in", &path, e);
-            let (old, joined, cursor, held): (i64, String, Option<String>, bool) = conn
-                .query_row(
-                    &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
-                    [session.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-                )
-                .optional()
-                .map_err(fail)?
-                .ok_or_else(|| {
-                    refusal(
-                        WriteRefusal::GroupMembership,
-                        "session has no group membership",
-                    )
-                })?;
-            let target = open_project_group(&conn, slug).map_err(fail)?;
-            if target == Some(old) {
-                return Ok(format!("g-{old}"));
-            }
-            self.leave_group_inner(session, true)?;
-            let id = self.join_project_group(slug, project, session, now, redactor)?;
-            let (joined, cursor) = if held { (joined, cursor) } else { (stamp(now), None) };
-            conn.execute(
-                "UPDATE group_members SET joined=?2, turn_cursor=?3 WHERE session=?1",
-                params![session.as_str(), joined, cursor],
-            )
-            .map_err(fail)?;
-            if let Some(n) = target {
-                conn.execute("UPDATE groups SET summary=NULL WHERE id=?1", [n])
-                    .map_err(fail)?;
-            }
-            Ok(id)
-        })
-    }
-
-    /// Record that a start could not inspect its transcript yet.
-    pub fn defer_ancestry(&self, session: &SessionId) -> Result<bool> {
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            conn.execute(
-                "INSERT OR IGNORE INTO deferred_ancestry (session) VALUES (?1)",
-                [session.as_str()],
-            )
-            .map(|n| n > 0)
-            .map_err(|e| db_error("defer ancestry in", &path, e))
+        f: impl Fn(&GroupRows<'_>) -> Result<T, RowError>,
+    ) -> Result<T> {
+        self.read_groups(|conn, path| {
+            f(&GroupRows {
+                conn,
+                path,
+                action: "read groups from",
+                read: true,
+            })
+            .map_err(|e| e.0)
         })
     }
 
     /// Whether a deferred ancestry check is pending for `session`.
-    pub fn has_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
+    pub(in crate::store) fn deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
         self.read_groups(|conn, path| {
             if refuse_newer(conn, path)? < 13 {
                 return Ok(false);
@@ -829,108 +460,6 @@ impl Store {
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|e| Fallible::from_sqlite("read deferred ancestry from", path, e))
-        })
-    }
-
-    /// Consume a deferred check once, without writing on ordinary prompts.
-    pub fn take_deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
-        if !self.has_deferred_ancestry(session)? {
-            return Ok(false);
-        }
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            conn.execute(
-                "DELETE FROM deferred_ancestry WHERE session = ?1",
-                [session.as_str()],
-            )
-            .map(|n| n > 0)
-            .map_err(|e| db_error("consume deferred ancestry in", &path, e))
-        })
-    }
-
-    /// Inherit the predecessor's open seat for a newly cleared session.
-    /// An ordinary start takes no write lock; any candidate write rechecks
-    /// seat ownership inside the transaction.
-    pub fn inherit_seat(
-        &self,
-        child: &SessionId,
-        predecessor: Option<&SessionId>,
-    ) -> Result<SeatStart> {
-        #[derive(Default)]
-        enum Snapshot {
-            #[default]
-            NoOpenGroups,
-            AlreadySeated(SeatHold),
-            Replaced,
-            Inherit,
-            Unjoined,
-        }
-
-        let predecessor = predecessor.filter(|parent| *parent != child);
-        let snap = self.read_groups(|conn, path| {
-            let fail = |e| Fallible::from_sqlite("read groups from", path, e);
-            if let Some(hold) = held_seat(conn, child).map_err(fail)? {
-                return Ok(Snapshot::AlreadySeated(hold));
-            }
-            if !has_open_groups(conn).map_err(fail)? {
-                return Ok(Snapshot::NoOpenGroups);
-            }
-            if has_membership(conn, child).map_err(fail)? {
-                return Ok(Snapshot::Replaced);
-            }
-            let Some(parent) = predecessor else {
-                return Ok(Snapshot::Unjoined);
-            };
-            if newest_open_seat(conn, parent).map_err(fail)?.is_none() {
-                return Ok(Snapshot::Unjoined);
-            }
-            Ok(Snapshot::Inherit)
-        })?;
-        let Snapshot::Inherit = snap else {
-            return Ok(match snap {
-                Snapshot::NoOpenGroups => SeatStart::NoOpenGroups,
-                Snapshot::AlreadySeated(hold) => SeatStart::AlreadySeated(hold),
-                Snapshot::Replaced => SeatStart::Replaced,
-                Snapshot::Unjoined => SeatStart::Unjoined,
-                Snapshot::Inherit => unreachable!(),
-            });
-        };
-        let Some(parent) = predecessor else {
-            return Ok(SeatStart::Unjoined);
-        };
-        self.write_step(|| {
-            self.refuse_forgotten(child)?;
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("inherit group seat in", &path, e);
-            if let Some(hold) = held_seat(&conn, child).map_err(fail)? {
-                return Ok(SeatStart::AlreadySeated(hold));
-            }
-            if !has_open_groups(&conn).map_err(fail)? {
-                return Ok(SeatStart::NoOpenGroups);
-            }
-            if has_membership(&conn, child).map_err(fail)? {
-                return Ok(SeatStart::Replaced);
-            }
-            let Some((group, seat, role, author)) =
-                newest_open_seat(&conn, parent).map_err(fail)?
-            else {
-                return Ok(SeatStart::Unjoined);
-            };
-            conn.execute(
-                "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![group, seat, child.as_str(), author, stamp(OffsetDateTime::now_utc())],
-            )
-            .map_err(fail)?;
-            Ok(SeatStart::Inherited {
-                hold: SeatHold {
-                    group: format!("g-{group}"),
-                    seat,
-                    role,
-                },
-                from: parent.clone(),
-            })
         })
     }
 
@@ -1287,6 +816,365 @@ fn newest_open_seat(
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )
     .optional()
+}
+
+/// The group tables' rows over the one connection of a write step or a read
+/// ([`crate::repo::Groups::rows`], [`crate::repo::Groups::read_rows`]). Each
+/// method runs one statement, or the statements of one row change, and
+/// reports the rows as they are: what they mean, and whether a write is
+/// refused, is the caller's.
+pub struct GroupRows<'c> {
+    conn: &'c Connection,
+    path: &'c Path,
+    action: &'static str,
+    read: bool,
+}
+
+/// A membership row's group and capture window ([`GroupRows::member_window`]).
+#[derive(Debug)]
+pub struct MemberWindow {
+    /// The group's number.
+    pub group: i64,
+    /// When the window starts, as stored.
+    pub joined: String,
+    /// The capture cursor, as stored.
+    pub cursor: Option<String>,
+    /// Whether the member holds its seat.
+    pub holds_seat: bool,
+}
+
+/// A [`GroupRows`] call's failure. It converts into [`Error`]; a read keeps
+/// whether a read-only copy of the database could serve it.
+pub struct RowError(Fallible);
+
+impl std::fmt::Debug for RowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RowError")
+    }
+}
+
+impl From<RowError> for Error {
+    fn from(e: RowError) -> Self {
+        e.0.into_error()
+    }
+}
+
+impl From<Error> for RowError {
+    fn from(e: Error) -> Self {
+        Self(Fallible::Failed(e))
+    }
+}
+
+type Rows<T> = std::result::Result<T, RowError>;
+
+impl GroupRows<'_> {
+    fn fail(&self, e: rusqlite::Error) -> RowError {
+        RowError(if self.read {
+            Fallible::from_sqlite(self.action, self.path, e)
+        } else {
+            Fallible::Failed(db_error(self.action, self.path, e))
+        })
+    }
+
+    /// The ids of the project's open groups, newest first.
+    pub fn open_in_project(&self, project: &Project) -> Rows<Vec<String>> {
+        let mut query = self
+            .conn
+            .prepare("SELECT 'g-' || id FROM groups WHERE project = ?1 AND closed IS NULL ORDER BY id DESC")
+            .map_err(|e| self.fail(e))?;
+        query
+            .query_map([project.as_str()], |row| row.get(0))
+            .map_err(|e| self.fail(e))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Insert the group `draft` opened by `opener`; returns its number.
+    pub fn insert_group(
+        &self,
+        draft: &NewGroup,
+        opener: &SessionId,
+        now: OffsetDateTime,
+    ) -> Rows<i64> {
+        let related =
+            serde_json::to_string(&draft.related).map_err(|e| Error::corrupt(self.path, e))?;
+        self.conn
+            .query_row(
+                "INSERT INTO groups(title,kind,project,opened,opener,related)
+                VALUES (?1,?2,?3,?4,?5,?6) RETURNING id",
+                params![
+                    draft.title,
+                    draft.kind,
+                    draft.project.as_str(),
+                    stamp(now),
+                    opener.as_str(),
+                    related
+                ],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Whether `session` has a membership row, current or historical.
+    pub fn has_membership(&self, session: &SessionId) -> Rows<bool> {
+        has_membership(self.conn, session).map_err(|e| self.fail(e))
+    }
+
+    /// Whether `session`'s catalog row is forgotten.
+    pub fn session_forgotten(&self, session: &SessionId) -> Rows<bool> {
+        super::sessions::is_forgotten(self.conn, session).map_err(|e| self.fail(e))
+    }
+
+    /// Store `turns` as `session`'s group turns, masked by `redactor`;
+    /// returns how many rows were inserted.
+    pub fn store_turns(
+        &self,
+        session: &SessionId,
+        turns: &[NewMessage],
+        redactor: &Redactor,
+    ) -> Rows<usize> {
+        Ok(write_captured_turns(
+            self.conn,
+            self.path,
+            session,
+            turns.iter().collect(),
+            redactor,
+        )?)
+    }
+
+    /// The group `session` is a member of, with its slug or else its id.
+    pub fn project_membership(&self, session: &SessionId) -> Rows<Option<(i64, String)>> {
+        project_group_membership(self.conn, session).map_err(|e| self.fail(e))
+    }
+
+    /// The open project group with `slug`.
+    pub fn open_project(&self, slug: &str) -> Rows<Option<i64>> {
+        open_project_group(self.conn, slug).map_err(|e| self.fail(e))
+    }
+
+    /// Insert a project group `slug` opened by `opener`; returns its number.
+    pub fn insert_project(
+        &self,
+        slug: &str,
+        project: &Project,
+        now: OffsetDateTime,
+        opener: &SessionId,
+    ) -> Rows<i64> {
+        insert_project_group(self.conn, slug, project, now, opener).map_err(|e| self.fail(e))
+    }
+
+    /// Seat `session` in group `n` under an automatic seat name no member
+    /// holds.
+    pub fn seat_member(&self, n: i64, session: &SessionId, now: OffsetDateTime) -> Rows<()> {
+        seat_member(self.conn, n, session, now).map_err(|e| self.fail(e))
+    }
+
+    /// Set `session`'s capture cursor to `message`.
+    pub fn set_cursor(&self, session: &SessionId, message: &str) -> Rows<()> {
+        self.conn
+            .execute(
+                "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
+                params![session.as_str(), message],
+            )
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Whether group `n` is closed.
+    pub fn is_closed(&self, n: i64) -> Rows<bool> {
+        self.conn
+            .query_row(
+                "SELECT closed IS NOT NULL FROM groups WHERE id = ?1",
+                [n],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// The group and seat of `session`'s membership row.
+    pub fn membership(&self, session: &SessionId) -> Rows<Option<(i64, String)>> {
+        self.conn
+            .query_row(
+                "SELECT group_id, seat FROM group_members WHERE session = ?1",
+                [session.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Seat `seat` of group `n`: its role and its newest member.
+    pub fn seat_holder(&self, n: i64, seat: &str) -> Rows<Option<(String, String)>> {
+        self.conn
+            .query_row(
+                "SELECT s.role, m.session FROM group_seats s
+                     JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
+                     WHERE s.group_id = ?1 AND s.name = ?2 ORDER BY m.position DESC LIMIT 1",
+                params![n, seat],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Insert seat `seat` of group `n` with `role`.
+    pub fn insert_seat(&self, n: i64, seat: &str, role: &str) -> Rows<()> {
+        self.conn
+            .execute(
+                "INSERT INTO group_seats(group_id, name, role) VALUES (?1, ?2, ?3)",
+                params![n, seat, role],
+            )
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Insert `session` as the newest member of seat `seat` in group `n`.
+    pub fn insert_member(
+        &self,
+        n: i64,
+        seat: &str,
+        session: &SessionId,
+        author: &str,
+        joined: OffsetDateTime,
+    ) -> Rows<()> {
+        self.conn
+            .execute(
+                "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![n, seat, session.as_str(), author, stamp(joined)],
+            )
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Delete `session`'s membership row and a seat it leaves empty, and
+    /// restart the consent window of a member it displaced; returns the
+    /// group, or `None` when `session` had no row.
+    pub fn remove_member(&self, session: &SessionId, now: OffsetDateTime) -> Rows<Option<i64>> {
+        Ok(
+            remove_seat_member(self.conn, self.path, self.action, session, now)?
+                .map(|removed| removed.group),
+        )
+    }
+
+    /// Delete `session`'s group-only stored turns; returns how many.
+    pub fn erase_group_turns(&self, session: &SessionId) -> Rows<usize> {
+        self.conn
+            .execute(
+                "DELETE FROM messages WHERE session = ?1 AND group_only = 1",
+                [session.as_str()],
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Clear group `n`'s summary when it has one; returns how many rows
+    /// changed.
+    pub fn clear_set_summary(&self, n: i64) -> Rows<usize> {
+        self.conn
+            .execute(
+                "UPDATE groups SET summary = NULL WHERE id = ?1 AND summary IS NOT NULL",
+                [n],
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Clear group `n`'s summary.
+    pub fn clear_summary(&self, n: i64) -> Rows<()> {
+        self.conn
+            .execute("UPDATE groups SET summary=NULL WHERE id=?1", [n])
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Optimize the message search index after rows were deleted.
+    pub fn optimize_search(&self) -> Rows<()> {
+        optimize_fts(self.conn).map_err(|e| self.fail(e))
+    }
+
+    /// Truncate the write-ahead log.
+    pub fn truncate_wal(&self) -> Rows<()> {
+        Ok(super::truncate_wal(
+            self.conn,
+            self.path,
+            std::time::Instant::now(),
+        )?)
+    }
+
+    /// `session`'s membership row and whether it holds its seat.
+    pub fn member_window(&self, session: &SessionId) -> Rows<Option<MemberWindow>> {
+        self.conn
+            .query_row(
+                &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
+                [session.as_str()],
+                |r| {
+                    Ok(MemberWindow {
+                        group: r.get(0)?,
+                        joined: r.get(1)?,
+                        cursor: r.get(2)?,
+                        holds_seat: r.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Set `session`'s joined time and capture cursor as stored.
+    pub fn set_window(&self, session: &SessionId, joined: &str, cursor: Option<&str>) -> Rows<()> {
+        self.conn
+            .execute(
+                "UPDATE group_members SET joined=?2, turn_cursor=?3 WHERE session=?1",
+                params![session.as_str(), joined, cursor],
+            )
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Restart `session`'s capture window at `now`, with no cursor.
+    pub fn restart_window(&self, session: &SessionId, now: OffsetDateTime) -> Rows<()> {
+        self.set_window(session, &stamp(now), None)
+    }
+
+    /// Record a deferred ancestry check for `session`; returns whether a row
+    /// was added.
+    pub fn defer_ancestry(&self, session: &SessionId) -> Rows<bool> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO deferred_ancestry (session) VALUES (?1)",
+                [session.as_str()],
+            )
+            .map(|n| n > 0)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Delete `session`'s deferred ancestry check; returns whether there was
+    /// one.
+    pub fn take_deferred_ancestry(&self, session: &SessionId) -> Rows<bool> {
+        self.conn
+            .execute(
+                "DELETE FROM deferred_ancestry WHERE session = ?1",
+                [session.as_str()],
+            )
+            .map(|n| n > 0)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// The seat `session` holds now.
+    pub fn held_seat(&self, session: &SessionId) -> Rows<Option<SeatHold>> {
+        held_seat(self.conn, session).map_err(|e| self.fail(e))
+    }
+
+    /// Whether any group is open.
+    pub fn has_open_groups(&self) -> Rows<bool> {
+        has_open_groups(self.conn).map_err(|e| self.fail(e))
+    }
+
+    /// The open seat `session` holds now: group, seat, role and author.
+    pub fn newest_open_seat(
+        &self,
+        session: &SessionId,
+    ) -> Rows<Option<(i64, String, String, String)>> {
+        newest_open_seat(self.conn, session).map_err(|e| self.fail(e))
+    }
 }
 
 #[cfg(test)]

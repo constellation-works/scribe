@@ -21,6 +21,7 @@ use super::{group_turns, user_prompt_submit};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::GroupVerbs;
 use scribe_core::group::{Added, GroupAddition};
 use scribe_core::{SessionId, Store};
 

@@ -9,6 +9,7 @@ use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::GroupVerbs;
 use scribe_core::group::SeatStart;
 use scribe_core::{ProposalState, Provider, SessionFilter, SessionId, TagName};
 use std::collections::BTreeMap;
