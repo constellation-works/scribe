@@ -123,6 +123,8 @@ pub use apps::session::RebuildVerbs;
 pub use apps::session::SessionVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::session::{ClaimsWritten, PassVerbs};
+pub use apps::session::{SessionList, SessionView};
+pub use apps::tag::TagList;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
 pub use checks::entry::check_handoff_related;
@@ -161,8 +163,8 @@ pub use store::{
     ExportFormat, ImportFacts, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
     MILESTONES_DIR, MIN_SECRET_CHARS, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
     PROFILE_FILE, PROPOSALS_FILE, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
-    SessionForget, SessionList, SessionLock, SessionView, Skipped, Snapshot, Store, TagList, Tx,
-    resolve_prefix, unresolved_redact_env,
+    SessionForget, SessionLock, SessionRow, Skipped, Snapshot, Store, Tx, resolve_prefix,
+    unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
@@ -170,7 +172,39 @@ pub use tag::{
     TagTable,
 };
 
+/// Test support: the store's ([`scribe_store::testing`]), and a shim for
+/// the reads whose view an app derives (ORB-27921 step 5), so the tests'
+/// call syntax (`store.session(id)`, `store.list_tags()`, …) stays as it
+/// was. It is not API. Compiled for tests and the `test-support` feature
+/// only.
 #[cfg(any(test, feature = "test-support"))]
-pub use scribe_store::testing;
+pub mod testing {
+    pub use scribe_store::testing::*;
+
+    use crate::{Result, SessionFilter, SessionId, SessionList, SessionView, Store, TagList};
+
+    /// The reads the tests call by their store names whose view an app now
+    /// derives. Each is one call to that app's read.
+    pub trait ViewTestReads {
+        /// [`crate::apps::session::session_view`].
+        fn session(&self, id: &SessionId) -> Result<SessionView>;
+        /// [`crate::apps::session::list_sessions`], unscoped.
+        fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList>;
+        /// [`crate::apps::tag::list_tags`].
+        fn list_tags(&self) -> Result<TagList>;
+    }
+
+    impl ViewTestReads for Store {
+        fn session(&self, id: &SessionId) -> Result<SessionView> {
+            crate::apps::session::session_view(&self.read(), id)
+        }
+        fn list_sessions(&self, filter: &SessionFilter) -> Result<SessionList> {
+            crate::apps::session::list_sessions(&self.read(), filter, None)
+        }
+        fn list_tags(&self) -> Result<TagList> {
+            crate::apps::tag::list_tags(&self.read())
+        }
+    }
+}
 #[cfg(test)]
 mod tests;

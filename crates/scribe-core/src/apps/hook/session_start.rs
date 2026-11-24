@@ -74,7 +74,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
             "scribe: {n} proposals to review — scribe proposal list"
         )),
     };
-    let stuck = match ctx.store.read().pickups().stuck_actions(ctx.clock.now()) {
+    let stuck = match stuck_actions(&ctx.store.read(), ctx.clock.now()) {
         Ok(counts) => stuck_line(&counts),
         Err(err) => {
             tracing::warn!(%err, "cannot read the action entries; not reporting them");
@@ -273,10 +273,14 @@ fn continuation_line<E: PortError>(
 ) -> Option<String> {
     let cwd = cwd.map(str::trim).filter(|cwd| !cwd.is_empty())?;
     let project = ctx.transcripts.project_of(Path::new(cwd));
-    let listed = match ctx.store.read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..SessionFilter::default()
-    }) {
+    let listed = match crate::apps::session::list_sessions(
+        &ctx.store.read(),
+        &SessionFilter {
+            include_inactive: true,
+            ..SessionFilter::default()
+        },
+        None,
+    ) {
         Ok(listed) => listed,
         Err(err) => {
             tracing::warn!(%err, "cannot read the sessions; not suggesting a continuation");
@@ -331,6 +335,25 @@ fn recent(now: OffsetDateTime, updated: OffsetDateTime) -> bool {
 }
 
 /// The stuck-entries line, or `None` when there are none.
+/// Active action entries older than [`crate::action::STUCK_AFTER`] at
+/// `now` with no pickup, counted per tag. Reads only.
+fn stuck_actions(
+    read: &crate::Snapshot<'_>,
+    now: time::OffsetDateTime,
+) -> crate::Result<BTreeMap<TagName, usize>> {
+    if !read.exists()? {
+        return Ok(BTreeMap::new());
+    }
+    let config = read.tags().config()?;
+    let (entries, _) = read.entries().all()?;
+    Ok(crate::action::stuck(
+        &entries,
+        &config.tags,
+        &read.pickups().all()?,
+        now,
+    ))
+}
+
 fn stuck_line(counts: &BTreeMap<TagName, usize>) -> Option<String> {
     let total: usize = counts.values().sum();
     if total == 0 {

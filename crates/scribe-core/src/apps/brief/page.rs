@@ -63,10 +63,14 @@ fn build<E>(
     exclude: Option<&SessionId>,
     sessions: usize,
 ) -> crate::Result<Brief> {
-    let listed = ctx.store.read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..SessionFilter::default()
-    })?;
+    let listed = crate::apps::session::list_sessions(
+        &ctx.store.read(),
+        &SessionFilter {
+            include_inactive: true,
+            ..SessionFilter::default()
+        },
+        None,
+    )?;
     let handoffs = ctx.store.read().entries().list(&EntryFilter {
         tag: crate::HANDOFF_TAG.parse().ok(),
         status: Some(EntryStatus::Active),

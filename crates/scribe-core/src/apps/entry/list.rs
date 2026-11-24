@@ -53,7 +53,7 @@ pub fn list<E: crate::runtime::PortError>(
         .store
         .read()
         .entries()
-        .list_scoped(&filter, members.as_ref())?;
+        .list_where(&filter, super::of_members(members.as_ref()))?;
     let actions = super::written::Actions::load(ctx)?;
     Ok(Listed {
         found,

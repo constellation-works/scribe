@@ -16,6 +16,7 @@ use crate::session::{SessionFilter, SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{ExportFormat, PassWrite, Redactor, Store, codec, db};
 use crate::testing::StoreTestInternals;
+use crate::testing::ViewTestReads;
 use crate::tests::{T0, session};
 use crate::{EntryVerbs, ProposalVerbs};
 use crate::{PassVerbs, RebuildVerbs};

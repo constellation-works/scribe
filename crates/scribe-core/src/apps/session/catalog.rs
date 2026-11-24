@@ -267,10 +267,14 @@ pub fn begin<E: PortError>(
 
 /// Whether `id` has a session record, readable or not.
 fn recorded<E>(ctx: &Ctx<'_, E>, id: &SessionId) -> Result<bool, crate::Error> {
-    let found = ctx.store.read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
+    let found = crate::apps::session::list_sessions(
+        &ctx.store.read(),
+        &SessionFilter {
+            include_inactive: true,
+            ..Default::default()
+        },
+        None,
+    )?;
     let parsed = found.listing.items.iter().any(|record| &record.id == id);
     let skipped = found.skipped.iter().any(|skipped| {
         skipped.path.file_stem().and_then(|stem| stem.to_str()) == Some(id.as_str())

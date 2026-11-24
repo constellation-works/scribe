@@ -2,7 +2,7 @@ use super::private_tempdir;
 use crate::ProposalVerbs;
 use crate::consistency::Settle;
 use crate::entry::Cite;
-use crate::testing::StoreTestInternals;
+use crate::testing::ViewTestReads;
 use crate::{PassVerbs, RebuildVerbs};
 use crate::{Redactor, SegmentOrigin, SegmentState, SessionFilter, Store};
 use time::macros::datetime;

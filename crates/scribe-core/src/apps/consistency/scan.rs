@@ -154,7 +154,9 @@ fn deactivate_aged(
         include_inactive: true,
         ..SessionFilter::default()
     };
-    let sessions = store.read().sessions().list(&filter)?.listing.items;
+    let sessions = crate::apps::session::list_sessions(&store.read(), &filter, None)?
+        .listing
+        .items;
     let limit = config.sessions.inactive_after_days;
     let aged: Vec<(SessionId, SetActive)> = sessions
         .iter()

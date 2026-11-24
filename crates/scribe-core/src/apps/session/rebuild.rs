@@ -262,15 +262,16 @@ pub fn run<E: PortError, M: Models>(
         memory_pending: 0,
         memory_refused: std::collections::BTreeMap::new(),
     };
-    let records = store
-        .read()
-        .sessions()
-        .list(&crate::SessionFilter {
+    let records = super::list_sessions(
+        &store.read(),
+        &crate::SessionFilter {
             include_inactive: true,
             ..Default::default()
-        })?
-        .listing
-        .items;
+        },
+        None,
+    )?
+    .listing
+    .items;
     let linked = pass::linked_context(&original.links, &records);
     let known_topics: BTreeSet<String> = records
         .iter()

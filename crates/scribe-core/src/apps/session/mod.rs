@@ -16,6 +16,7 @@ mod rebuild;
 mod show;
 mod transcript;
 mod verbs;
+mod view;
 
 pub use activity::{
     ActivateInput, ActivityWritten, DeactivateInput, SessionRef, parse_session_ref,
@@ -33,6 +34,7 @@ pub use transcript::{ListInput as TranscriptListInput, Listed as TranscriptsList
 pub use verbs::HandoffSelection;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::SessionVerbs;
+pub use view::{SessionList, SessionView, list_sessions, session_view};
 
 pub(crate) use continuation::{ClearedPredecessor, cleared_predecessor, try_cleared_predecessor};
 
