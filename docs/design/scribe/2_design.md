@@ -210,12 +210,15 @@ Rules every verb keeps:
   the supplied id. An instruction check first expands `--session <id>` as a
   unique prefix across stored sessions and local transcripts, including
   uncataloged sessions. If there is no match, it keeps the id as typed for
-  transcript lookup. If the session has no transcript on this host, or the
-  provenance check refuses the transcript (including a Codex rollout this
-  build cannot parse as a main interactive thread, or one whose `session_meta`
-  names another session), it refuses with `instruction_not_found`. An I/O
-  error finding or reading the transcript is `io_error`. A session that is not
-  interactive, such as a Codex `exec` rollout, is `not_interactive`.
+  transcript lookup. If there is no matching transcript on this host, the
+  check returns `instruction_not_found`. For Codex, before parsing the rollout
+  or comparing its `session_meta` id with the requested id, scribe requires a
+  `session_meta.payload.source` of `cli` or `vscode`; a missing or unsupported
+  source, including a rollout with no `session_meta`, returns
+  `not_interactive`. After an allowed source, a rollout that fails parsing or
+  identifies another session returns `instruction_not_found`. An I/O error
+  finding or reading a transcript is `io_error`. Other noninteractive
+  sessions, such as a Codex `exec` rollout, return `not_interactive`.
   `session pass --session <id>` also keeps a no-match id and refuses it as
   `session_not_on`. Other session lookups refuse a no-match as
   `session_not_found`. A record written from a prefix stores the full id,
