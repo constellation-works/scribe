@@ -1,10 +1,10 @@
-//! `scribe tag add|update` (ORB-27707 step 3d): agent tags, without changing
+//! `scribe tag add` (ORB-27707 step 3d): an agent tag, without changing
 //! config.toml.
 
-use crate::cases::tag::TagVerbs;
+use super::verbs::TagVerbs;
 use crate::runtime::Ctx;
 use crate::runtime::errors::{WriteError, redactor};
-use crate::{Author, AuthorName, StoreTag, TagName, TagPatch};
+use crate::{Author, AuthorName, StoreTag, TagName};
 
 /// What `tag add` runs.
 pub struct TagAddInput {
@@ -42,26 +42,4 @@ pub fn add<E>(ctx: &Ctx<'_, E>, input: TagAddInput) -> Result<StoreTag, WriteErr
     ctx.store.check_new_tag(&tag)?;
     let redactor = redactor(ctx)?;
     Ok(ctx.store.add_agent_tag(tag, &redactor)?)
-}
-
-/// Update the agent tag `name`. The tag, and whether this changed it.
-///
-/// # Errors
-///
-/// [`WriteError`]: a refusal, the redactor, or a store error.
-pub fn update<E>(
-    ctx: &Ctx<'_, E>,
-    name: &TagName,
-    patch: TagPatch,
-    author: AuthorName,
-) -> Result<(StoreTag, bool), WriteError<E>> {
-    crate::check_agent_author(&author)?;
-    if let Some(description) = &patch.description {
-        crate::check_description(description)?;
-    }
-    ctx.store.check_agent_tag_update(name, &patch)?;
-    let redactor = redactor(ctx)?;
-    Ok(ctx
-        .store
-        .update_agent_tag(name, patch, author, ctx.clock.now(), &redactor)?)
 }

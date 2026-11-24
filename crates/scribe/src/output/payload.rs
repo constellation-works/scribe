@@ -1362,7 +1362,7 @@ impl MemoryBlockPayload {
     pub(crate) fn from_view(view: &scribe_core::MemoryView, root: &std::path::Path) -> Self {
         let mut now: Vec<&scribe_core::memory::NowItem> = view.now.iter().collect();
         now.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.stem.cmp(&b.stem)));
-        let warnings = scribe_core::cases::memory_block::warnings(view, root);
+        let warnings = scribe_core::apps::memory::warnings(view, root);
         Self {
             profile: view.profile.as_ref().map(|p| ProfileBlockPayload {
                 text: p.text.clone(),
@@ -1384,7 +1384,7 @@ impl MemoryBlockPayload {
                     title: m.title.clone(),
                 })
                 .collect(),
-            text: scribe_core::cases::memory_block::text(view),
+            text: scribe_core::apps::memory::text(view),
             warnings,
         }
     }

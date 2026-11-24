@@ -10,8 +10,8 @@ use scribe_core::ClaudeCapturePosition;
 #[cfg(unix)]
 use scribe_core::runtime::ClaudeRead;
 use scribe_core::runtime::{
-    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, TranscriptState, Transcripts,
-    Unreadable,
+    AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, Runtime, TranscriptState,
+    Transcripts, Unreadable,
 };
 use scribe_core::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
@@ -26,6 +26,11 @@ impl Context {
             transcripts: self,
             redaction: self,
         }
+    }
+
+    /// The store and this context's ports, for an app's `exec`.
+    pub(crate) fn runtime(&self) -> Runtime<'_, CliError> {
+        Runtime::from_parts(self.store(), self, self, self)
     }
 }
 

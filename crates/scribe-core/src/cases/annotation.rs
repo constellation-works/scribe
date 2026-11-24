@@ -8,7 +8,7 @@
 //! (`instruction::claude_conversation_raw_typed`, §4.1): a plain prompt, a
 //! queued line the user typed while the agent was busy, or a slash command,
 //! whose markers are read from its args (`annotation::turn_marks`). Each
-//! unsettled marker is recorded in one store call (`Store::record_marks`):
+//! unsettled marker is recorded in one store call (`mark::record_marks`):
 //!
 //! - refused before any handoff (a marker problem, or a decision or open
 //!   item named): never handed over;
@@ -31,9 +31,9 @@
 //! session's, and a `$scribe` skill control is skipped as a `/scribe` one is.
 
 use crate::annotation::{self, AGENT_HANDOFF, Mark};
+use crate::apps::mark;
 use crate::capture::{self, Turn};
 use crate::cases::hook::{HookError, HookOutcome, chain, quote, refusal};
-use crate::cases::mark::MarkVerbs;
 use crate::control::is_control;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};
@@ -287,7 +287,7 @@ pub fn run<E: PortError>(
     if updates.is_empty() {
         return Ok(out);
     }
-    let results = match store.record_marks(updates, ctx.clock.now()) {
+    let results = match mark::record_marks(store, updates, ctx.clock.now()) {
         Ok(results) => results,
         Err(err) => {
             out.echoes.push(format!(
