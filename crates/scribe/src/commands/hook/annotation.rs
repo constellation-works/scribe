@@ -147,7 +147,7 @@ pub(in crate::commands) fn run<M: Models>(
         return Ok(out);
     }
     let store = ctx.store();
-    let records = store.marks(session)?;
+    let records = store.read().marks().of_session(session)?;
     let unsettled = |message: &Message, mark: &Mark| {
         !records
             .iter()
@@ -504,14 +504,20 @@ fn written_lines(
 ) -> Result<BTreeSet<u32>, CliError> {
     let store = ctx.store();
     let mut written: BTreeSet<u32> = store
-        .entries_from_prompt(session, &capture::prompt_sha256(&message.text()))?
+        .read()
+        .entries()
+        .from_prompt(session, &capture::prompt_sha256(&message.text()))?
         .iter()
         .filter_map(|entry| entry.cite.as_ref().map(|cite| cite.line))
         .collect();
     if message.blocks.len() > 1 {
         let mut offset = 0u32;
         for block in &message.blocks {
-            for entry in store.entries_from_prompt(session, &capture::prompt_sha256(block))? {
+            for entry in store
+                .read()
+                .entries()
+                .from_prompt(session, &capture::prompt_sha256(block))?
+            {
                 if let Some(cite) = entry.cite {
                     written.insert(offset.saturating_add(cite.line));
                 }

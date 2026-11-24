@@ -10,7 +10,10 @@ use time::OffsetDateTime;
 impl Store {
     /// Active action entries older than [`action::STUCK_AFTER`] at `now`
     /// with no pickup, counted per tag. Reads only.
-    pub fn stuck_actions(&self, now: OffsetDateTime) -> Result<BTreeMap<TagName, usize>> {
+    pub(in crate::store) fn stuck_actions(
+        &self,
+        now: OffsetDateTime,
+    ) -> Result<BTreeMap<TagName, usize>> {
         if !self.root_exists()? {
             return Ok(BTreeMap::new());
         }

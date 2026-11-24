@@ -12,6 +12,7 @@
 mod support;
 
 use scribe_core::PassVerbs;
+use scribe_core::testing::StoreTestReads;
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::Write;

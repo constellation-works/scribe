@@ -18,6 +18,7 @@ use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
 use scribe_core::MarkVerbs;
 use scribe_core::SessionId;
+use scribe_core::SessionVerbs;
 use scribe_core::models::ModelError;
 
 pub(super) const EXAMPLES: &str = "\
@@ -119,7 +120,7 @@ fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
         .as_ref()
         .map(|id| super::resolve_session_or_typed(ctx, id))
         .transpose()?;
-    let marks = ctx.store().uncataloged_marks(session.as_ref())?;
+    let marks = ctx.store().read().marks().uncataloged(session.as_ref())?;
     let notice = ListNotice {
         noun: "uncataloged #scribe markers",
         criteria: session.iter().map(|id| format!("--session {id}")).collect(),
@@ -165,7 +166,9 @@ fn retry(args: &RetryArgs, ctx: &Context) -> Result<Output, CliError> {
     })?;
     let touched: Vec<_> = ctx
         .store()
-        .marks(&session)?
+        .read()
+        .marks()
+        .of_session(&session)?
         .into_iter()
         .filter(|m| m.at >= now)
         .collect();

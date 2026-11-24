@@ -500,7 +500,7 @@ impl Store {
     ///
     /// Anything but a file that does not parse: a link, loose modes, a
     /// newer format, an I/O or database error.
-    pub fn memory_view(&self) -> Result<MemoryView> {
+    pub(in crate::store) fn memory_view(&self) -> Result<MemoryView> {
         if !self.root_exists()? {
             return Ok(MemoryView::default());
         }
@@ -558,7 +558,7 @@ impl Store {
     /// # Errors
     ///
     /// `memory_not_found`, a file that does not parse, and store failures.
-    pub fn memory_file(&self, input: &str) -> Result<MemoryShown> {
+    pub(in crate::store) fn memory_file(&self, input: &str) -> Result<MemoryShown> {
         let view = self.memory_view()?;
         if input.trim() == "profile" {
             return view
@@ -593,7 +593,7 @@ impl Store {
     /// # Errors
     ///
     /// `revision_not_found`, and store failures.
-    pub fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
+    pub(in crate::store) fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
         db::revision_at(&self.root, n)?
             .map(|r| ProfileRevision {
                 n: r.n,
@@ -614,7 +614,7 @@ impl Store {
     /// # Errors
     ///
     /// Store failures; a `now` file that does not parse is left out.
-    pub fn memory_context(
+    pub(in crate::store) fn memory_context(
         &self,
         session: &SessionId,
     ) -> Result<(Vec<MemoryContext>, Vec<PendingContext>)> {

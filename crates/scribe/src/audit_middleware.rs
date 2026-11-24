@@ -322,7 +322,7 @@ impl<'a> AuditGuard<'a> {
     /// A store error writing a line, which fails the transaction.
     pub(crate) fn flush(&mut self) -> Result<(), scribe_core::Error> {
         for event in self.events() {
-            self.store.record_audit(&event)?;
+            self.store.read().audit().record(&event)?;
         }
         self.lines.clear();
         Ok(())
@@ -356,7 +356,7 @@ impl Drop for AuditGuard<'_> {
         }
         // Fail open, and never panic in a destructor (STD-03 R4).
         for event in self.events() {
-            if let Err(err) = self.store.record_audit(&event) {
+            if let Err(err) = self.store.read().audit().record(&event) {
                 tracing::warn!(
                     command = self.meta.command,
                     error = %err,

@@ -12,6 +12,7 @@ use scribe_core::models::{
     ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,
     SessionHeaderRequest, SessionRequest, TermAnswer,
 };
+use scribe_core::testing::StoreTestReads;
 use scribe_core::{Models, Redactor, SessionId};
 use serde_json::json;
 use std::cell::RefCell;

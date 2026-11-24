@@ -13,9 +13,12 @@
 //! rows), as the store's reads always have. It does not pin one read
 //! transaction across calls.
 
-use super::audit::AuditEvent;
+use super::TagList;
+use super::audit::{self, AuditEvent};
+use super::db::{self, docs};
 pub use super::db::{CaptureState, CloseHeader, GroupRows, MemberWindow, RowError};
 pub use super::db::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
+use super::memory::ProfileRevision;
 pub use super::memory::{MemoryFiles, MemoryJournal, MemoryRows};
 use super::{
     EntryList, LoadedSessions, MemoryShown, MemoryView, MemoryWritten, PassMemory, Redactor,
@@ -23,14 +26,17 @@ use super::{
 };
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
+use crate::brief::LastGroup;
 use crate::error::{Error, Result};
 use crate::group::Group;
 use crate::message::{MessageSearch, NewMessage};
+use crate::models::{MemoryContext, PendingContext};
 use crate::{
     Config, ControlState, Entry, EntryFilter, EntryId, Proposal, SessionFilter, SessionId,
     SessionRecord, StoreTag,
 };
-use std::collections::BTreeMap;
+use crate::{Project, Related, TagDef, TagName};
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use time::OffsetDateTime;
 
@@ -209,6 +215,28 @@ impl Entries<'_> {
     /// The store's write errors.
     pub fn put(&self, entry: &Entry, new: bool) -> Result<()> {
         self.store.write_entry(entry, new)
+    }
+
+    /// Entries matching `filter` among those of the `members` sessions, when
+    /// given. Reads only.
+    pub fn list_scoped(
+        &self,
+        filter: &EntryFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<EntryList> {
+        self.store.list_entries_scoped(filter, members)
+    }
+
+    /// Active `handoff` entries referencing `session:<id>`, newest first.
+    /// Reads only.
+    pub fn handoffs_for_session(&self, id: &SessionId) -> Result<Vec<Entry>> {
+        self.store.handoffs_for_session(id)
+    }
+
+    /// The entries already recorded from one prompt, by their cite's
+    /// `session` and `prompt_sha256`. Reads only.
+    pub fn from_prompt(&self, session: &SessionId, prompt_sha256: &str) -> Result<Vec<Entry>> {
+        self.store.entries_from_prompt(session, prompt_sha256)
     }
 }
 
@@ -437,6 +465,87 @@ impl Sessions<'_> {
     pub fn drop_checkpoint(&self, id: &SessionId) -> Result<()> {
         self.store.sessions_tx(|tx| tx.drop_checkpoint(id))
     }
+
+    /// The full id of the one session `input` names, or whose id starts with
+    /// it. Reads only.
+    pub fn resolve(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session(input)
+    }
+
+    /// [`Sessions::resolve_or_handoff`], returning an id matching no known
+    /// session as typed. Reads only.
+    pub fn resolve_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_typed(input)
+    }
+
+    /// [`Sessions::resolve_or_typed`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_or_typed_with(
+        &self,
+        input: &SessionId,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        self.store.resolve_session_or_typed_with(input, extra_ids)
+    }
+
+    /// Every session id the store knows: the universe display prefixes must
+    /// be unique in. Reads only.
+    pub fn ids(&self) -> Result<Vec<String>> {
+        self.store.session_ids()
+    }
+
+    /// `related` with a `session:` id prefix replaced by the full id
+    ///. Reads only.
+    pub fn resolve_related(&self, related: &Related) -> Result<Related> {
+        self.store.resolve_related(related)
+    }
+
+    /// [`Sessions::resolve_related`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_related_with(&self, related: &Related, extra_ids: &[String]) -> Result<Related> {
+        self.store.resolve_related_with(related, extra_ids)
+    }
+
+    /// [`Sessions::resolve_related`] over a list. Reads only.
+    pub fn resolve_relateds(&self, related: &[Related]) -> Result<Vec<Related>> {
+        self.store.resolve_relateds(related)
+    }
+
+    /// [`Sessions::resolve_related_with`] over a list. Reads only.
+    pub fn resolve_relateds_with(
+        &self,
+        related: &[Related],
+        extra_ids: &[String],
+    ) -> Result<Vec<Related>> {
+        self.store.resolve_relateds_with(related, extra_ids)
+    }
+
+    /// Session records matching `filter` among the `members` sessions, when
+    /// given. Reads only.
+    pub fn list_scoped(
+        &self,
+        filter: &SessionFilter,
+        members: Option<&BTreeSet<SessionId>>,
+    ) -> Result<SessionList> {
+        self.store.list_sessions_scoped(filter, members)
+    }
+
+    /// Whether `#scribe forget` erased `id`. Reads only.
+    pub fn is_forgotten(&self, id: &SessionId) -> Result<bool> {
+        super::db::sessions::read_is_forgotten(&self.store.root, id)
+    }
+
+    /// Change the on/off state in the write under way: `change` gets the
+    /// current state, and it is written only when it changed.
+    pub fn change_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
+        self.store.change_control(change)
+    }
+
+    /// The file a session record lives in, by the month it started.
+    #[must_use]
+    pub fn path(&self, record: &SessionRecord) -> std::path::PathBuf {
+        self.store.session_path(record)
+    }
 }
 
 impl Proposals<'_> {
@@ -533,6 +642,24 @@ impl Tags<'_> {
     pub fn put_all(&self, tags: &[StoreTag]) -> Result<()> {
         self.store.write_tags(tags)
     }
+
+    /// Every configured tag and every tag that has entries, with counts.
+    /// Reads only.
+    pub fn list(&self) -> Result<TagList> {
+        self.store.list_tags()
+    }
+
+    /// The definition `word` names, and whether it comes from `config` or
+    /// the `store`. Reads only.
+    pub fn definition(&self, word: &str) -> Result<(TagDef, &'static str)> {
+        self.store.tag_definition(word)
+    }
+
+    /// The path of `config.toml`, whether or not it exists.
+    #[must_use]
+    pub fn config_path(&self) -> std::path::PathBuf {
+        self.store.config_path()
+    }
 }
 
 impl Groups<'_> {
@@ -617,6 +744,17 @@ impl Groups<'_> {
     pub fn deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
         self.store.deferred_ancestry(session)
     }
+
+    /// The most recently opened group in `project`. Reads only.
+    pub fn last(&self, project: &Project) -> Result<Option<LastGroup>> {
+        self.store.last_group(project)
+    }
+
+    /// The stored messages of `group`'s member sessions matching `tokens`.
+    /// Reads only.
+    pub fn search_messages(&self, group: &str, tokens: &[String]) -> Result<MessageSearch> {
+        self.store.search_group_messages(group, tokens)
+    }
 }
 
 impl Memory<'_> {
@@ -661,6 +799,20 @@ impl Memory<'_> {
     /// The store's write errors.
     pub fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
         self.store.scrub_copies(journal)
+    }
+
+    /// Profile revision `n`. Reads only.
+    pub fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
+        self.store.profile_revision(n)
+    }
+
+    /// The `now` items and `session`'s pending candidates the session pass
+    /// reads before its model call. Reads only.
+    pub fn context(
+        &self,
+        session: &SessionId,
+    ) -> Result<(Vec<MemoryContext>, Vec<PendingContext>)> {
+        self.store.memory_context(session)
     }
 }
 
@@ -712,6 +864,12 @@ impl Marks<'_> {
     pub fn put_all(&self, marks: &[MarkRecord]) -> Result<()> {
         self.store.write_marks(marks)
     }
+
+    /// The markers no entry or answer settled yet, of `session` or of every
+    /// session, in file order. Reads only.
+    pub fn uncataloged(&self, session: Option<&SessionId>) -> Result<Vec<MarkRecord>> {
+        self.store.uncataloged_marks(session)
+    }
 }
 
 impl Pickups<'_> {
@@ -732,6 +890,12 @@ impl Pickups<'_> {
     pub fn put_all(&self, pickups: &[Pickup]) -> Result<()> {
         self.store.write_pickups(pickups)
     }
+
+    /// Active action entries past the stuck age at `now` with no pickup,
+    /// counted per tag. Reads only.
+    pub fn stuck_actions(&self, now: OffsetDateTime) -> Result<BTreeMap<TagName, usize>> {
+        self.store.stuck_actions(now)
+    }
 }
 
 impl Audit<'_> {
@@ -744,12 +908,46 @@ impl Audit<'_> {
         self.store.audit_events()
     }
 
-    /// Record `event`, committing with the transaction under way.
+    /// Record one audit line. Inside a write's transaction it commits with
+    /// the write. Otherwise it is inserted without waiting, and spooled to
+    /// a file of its own when another writer holds the database or the
+    /// store is still files, so no line waits on a lock or is lost to one.
+    ///
+    /// A store too new for this build takes no line.
     ///
     /// # Errors
     ///
-    /// The store's write errors.
+    /// An unsafe data directory, or a spool file that cannot be written.
     pub fn record(&self, event: &AuditEvent) -> Result<()> {
-        self.store.record_audit(event)
+        if self.store.open_conn().is_some() {
+            return self.store.with_conn(|conn, path| {
+                docs::put_audit(conn, path, audit::AUDIT_FORMAT, event, None, |e| {
+                    db::db_error("audit to", path, e)
+                })
+                .map(drop)
+            });
+        }
+        self.store.prepare_dir(&self.store.root)?;
+        let moved = match self.store.documents_moved() {
+            Ok(moved) => moved,
+            // A store a newer build migrated takes no write from this one,
+            // its log included; the command already reported the refusal.
+            Err(Error::NewerFormat { .. }) => return Ok(()),
+            Err(other) => return Err(other),
+        };
+        if moved {
+            match self.store.audit_without_waiting(event) {
+                Ok(()) => return Ok(()),
+                Err(Error::Locked { .. }) => {}
+                Err(other) => return Err(other),
+            }
+        }
+        self.store.spool_audit(event)
+    }
+
+    /// The audit log, `<root>/audit.jsonl`.
+    #[must_use]
+    pub fn path(&self) -> std::path::PathBuf {
+        self.store.audit_path()
     }
 }

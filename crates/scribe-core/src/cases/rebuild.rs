@@ -1,6 +1,7 @@
 //! Rebuild verbs: a session record rebuilt in windows beside the visible
 //! one, under its own lock (2_design.md §15.7).
 
+use crate::cases::session::SessionVerbs;
 use crate::checks::{forgotten_refusal, refuse_busy};
 use crate::{Error, RebuildGuard, Redactor, Result, SessionRecord, Store};
 use time::OffsetDateTime;

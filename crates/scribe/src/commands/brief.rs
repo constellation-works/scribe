@@ -72,16 +72,16 @@ pub(in crate::commands) fn brief(
     exclude: Option<&SessionId>,
     sessions: usize,
 ) -> Result<Brief, CliError> {
-    let listed = ctx.store().list_sessions(&SessionFilter {
+    let listed = ctx.store().read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..SessionFilter::default()
     })?;
-    let handoffs = ctx.store().list_entries(&EntryFilter {
+    let handoffs = ctx.store().read().entries().list(&EntryFilter {
         tag: scribe_core::HANDOFF_TAG.parse().ok(),
         status: Some(EntryStatus::Active),
         ..EntryFilter::default()
     })?;
-    let proposals = ctx.store().proposals()?;
+    let proposals = ctx.store().read().proposals().all()?;
     let mut brief = brief::build(
         &listed.listing.items,
         &handoffs.listing.items,
@@ -92,18 +92,18 @@ pub(in crate::commands) fn brief(
     );
     brief.memory = memory;
     if let Some(project) = project {
-        brief.last_group = ctx.store().last_group(project)?;
+        brief.last_group = ctx.store().read().groups().last(project)?;
     }
     Ok(brief)
 }
 
 /// Resolve display names against all known sessions, including transcripts.
 pub(in crate::commands) fn brief_ids(ctx: &Context, brief: &Brief) -> scribe_core::ShortIds {
-    let mut ids = ctx.store().session_ids().unwrap_or_default();
+    let mut ids = ctx.store().read().sessions().ids().unwrap_or_default();
     ids.extend(super::transcript_session_ids(ctx).unwrap_or_default());
     ids.extend(brief.sessions.iter().map(|s| s.id.to_string()));
     let mut shorts = scribe_core::ShortIds::new(ids);
-    if let Ok(numbers) = ctx.store().session_numbers() {
+    if let Ok(numbers) = ctx.store().read().sessions().numbers() {
         shorts.set_aliases(
             numbers
                 .into_iter()

@@ -161,6 +161,8 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
     }
     if ctx
         .store()
+        .read()
+        .sessions()
         .control()?
         .get(&id)
         .is_some_and(|c| c.provider != Provider::Codex)
@@ -218,7 +220,7 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
     if candidates.is_empty() {
         return finish_without_replay(event, input, ctx, group_outcomes, persisted.as_mut());
     }
-    let before = ctx.store().control()?;
+    let before = ctx.store().read().sessions().control()?;
     if before
         .codex_cursors
         .get(&id)
@@ -227,7 +229,7 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
         return finish_without_replay(event, input, ctx, group_outcomes, persisted.as_mut());
     }
     let _ingestion = ctx.store().lock_codex_ingestion(&id)?;
-    let state = ctx.store().control()?;
+    let state = ctx.store().read().sessions().control()?;
     let cursor = state.codex_cursors.get(&id);
     let start = match cursor {
         Some(cursor) => match candidates.iter().position(|t| &t.message.uuid == cursor) {
@@ -275,13 +277,15 @@ fn ingest(event: &'static str, input: &[u8], ctx: &Context) -> Result<Output, Cl
             {
                 break;
             }
-            ctx.store().update_control(|state| {
-                if let Some(switch) = state.sessions.get_mut(&id) {
-                    switch.provider = Provider::Codex;
-                }
-                state
-                    .codex_cursors
-                    .insert(id.clone(), turn.message.uuid.clone());
+            ctx.store().write(|tx| {
+                tx.sessions().change_control(|state| {
+                    if let Some(switch) = state.sessions.get_mut(&id) {
+                        switch.provider = Provider::Codex;
+                    }
+                    state
+                        .codex_cursors
+                        .insert(id.clone(), turn.message.uuid.clone());
+                })
             })?;
             outcomes.push(HookOutcome {
                 target: Some(format!("session:{id}")),

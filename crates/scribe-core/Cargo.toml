@@ -15,7 +15,8 @@ path = "src/lib.rs"
 # clap, tracing-subscriber and any other surface crate here.
 [features]
 # `Store::seed_records`, for the CLI's integration tests to stage records in
-# `scribe.db`. Only `scribe`'s dev-dependencies turn it on.
+# `scribe.db`, and `testing::StoreTestReads`. Only dev-dependencies turn it
+# on: `scribe`'s, and scribe-core's own for its integration tests.
 test-support = []
 
 [dependencies]
@@ -35,6 +36,7 @@ yaml_serde = { workspace = true }
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
+scribe-core = { path = ".", features = ["test-support"] }
 tempfile = { workspace = true }
 time = { workspace = true, features = ["macros"] }
 

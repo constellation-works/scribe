@@ -3,6 +3,7 @@
 //! §14.4, §14.5).
 
 use crate::annotation::{MAX_ATTEMPTS, MarkRecord, MarkState};
+use crate::cases::session::SessionVerbs;
 use crate::entry::{Cite, Entry, EntryId};
 use crate::pass::covering_entry;
 use crate::{

@@ -238,7 +238,7 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         MemoryCommand::Forget(args) => {
             if !args.confirm {
                 // Names the file, or refuses one that does not exist.
-                let shown = ctx.store().memory_file(&args.id)?;
+                let shown = ctx.store().read().memory().file(&args.id)?;
                 return Err(CliError::ForgetConfirmRequired(
                     MemoryPayload::from_shown(&shown).id,
                 ));
@@ -253,7 +253,7 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         }
         MemoryCommand::Restore(args) => {
             let written = ctx.store().restore_profile(args.revision, ctx.now())?;
-            let shown = ctx.store().memory_file("profile")?;
+            let shown = ctx.store().read().memory().file("profile")?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
                 written.is_some(),
@@ -309,7 +309,7 @@ pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, Cl
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     if let Some(n) = args.revision {
-        let revision = ctx.store().profile_revision(n)?;
+        let revision = ctx.store().read().memory().profile_revision(n)?;
         return Ok(Output::Show {
             record: Record::MemoryRevision(Box::new(RevisionPayload {
                 revision: revision.n,
@@ -319,7 +319,7 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         });
     }
     if let Some(id) = &args.id {
-        let shown: MemoryShown = ctx.store().memory_file(id)?;
+        let shown: MemoryShown = ctx.store().read().memory().file(id)?;
         return Ok(Output::Show {
             record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
         });
@@ -338,6 +338,6 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
 /// The memory block (2_design.md §15.4). Read-only: no lock, no write, no
 /// replay.
 pub(super) fn block(ctx: &Context) -> Result<MemoryBlockPayload, CliError> {
-    let view = ctx.store().memory_view()?;
+    let view = ctx.store().read().memory().view()?;
     Ok(MemoryBlockPayload::from_view(&view, ctx.store().root()))
 }

@@ -6,6 +6,7 @@
 mod capture;
 mod close;
 
+use crate::cases::session::SessionVerbs;
 use crate::checks::group::{check_additions, check_join, check_new_group, check_project_slug};
 use crate::checks::refusal;
 use crate::group::{

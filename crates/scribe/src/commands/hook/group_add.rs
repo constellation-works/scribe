@@ -177,12 +177,12 @@ fn additions(
         .chain(refused.keys())
         .map(ToString::to_string)
         .collect();
-    for group in store.groups()? {
+    for group in store.read().groups().all()? {
         ids.extend(group.members().into_iter().map(|id| id.to_string()));
     }
     let mut additions: Vec<GroupAddition> = Vec::new();
     for input in named {
-        let id = store.resolve_session_or_typed_with(input, &ids)?;
+        let id = store.read().sessions().resolve_or_typed_with(input, &ids)?;
         if additions.iter().any(|a| a.session == id) {
             continue;
         }

@@ -4,6 +4,7 @@
 //! store; the store still calls them, and step 2 of the four-crate refactor
 //! moves each call into its use case's write closure. No I/O (STD-02 R5).
 
+pub mod admin;
 pub mod candidates;
 pub mod entry;
 pub mod group;

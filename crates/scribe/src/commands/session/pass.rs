@@ -49,6 +49,7 @@ use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
 use scribe_core::PassVerbs;
+use scribe_core::SessionVerbs;
 use scribe_core::control::{self};
 use scribe_core::models::SessionRequest;
 use scribe_core::{
@@ -113,7 +114,7 @@ pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
     let sessions = args
         .sessions
         .iter()
-        .map(|id| match ctx.store().resolve_session(id) {
+        .map(|id| match ctx.store().read().sessions().resolve(id) {
             Err(scribe_core::Error::SessionNotFound { .. }) => Ok(id.clone()),
             other => other,
         })
@@ -138,7 +139,7 @@ pub(in crate::commands) fn run_with<M: Models>(
     only: &[SessionId],
 ) -> Result<Output, CliError> {
     let store = ctx.store();
-    let state = store.control()?;
+    let state = store.read().sessions().control()?;
     for id in only {
         store.refuse_forgotten(id)?;
     }
@@ -173,9 +174,9 @@ pub(in crate::commands) fn run_with<M: Models>(
             memory_targets: Vec::new(),
         }));
     }
-    let config = store.config()?;
+    let config = store.read().tags().config()?;
     let redactor = ctx.redactor(&config)?;
-    let found = store.list_sessions(&SessionFilter {
+    let found = store.read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..Default::default()
     })?;
@@ -284,7 +285,7 @@ pub(in crate::commands) fn run_catalog<M: Models>(
     let store = ctx.store();
     let config = ctx.config()?;
     let redactor = ctx.redactor(&config)?;
-    let found = store.list_sessions(&SessionFilter {
+    let found = store.read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..Default::default()
     })?;
@@ -611,12 +612,16 @@ impl Job<'_> {
             let entries = self
                 .ctx
                 .store()
-                .list_entries(&Default::default())
+                .read()
+                .entries()
+                .list(&Default::default())
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             let proposals = self
                 .ctx
                 .store()
+                .read()
                 .proposals()
+                .all()
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             // Retired-tag open candidates will be closed under the lock before
             // the cap is counted, so count only open candidates whose tag is
@@ -645,7 +650,9 @@ impl Job<'_> {
             let (memory_now, memory_pending) = self
                 .ctx
                 .store()
-                .memory_context(self.id)
+                .read()
+                .memory()
+                .context(self.id)
                 .map_err(|err| PassError::new(err.code(), err.to_string()))?;
             request.memory = true;
             request.memory_limit = self.memory.slots;
@@ -916,9 +923,10 @@ impl Job<'_> {
     /// The previous record is kept and the pass stays due, so the next run
     /// retries it.
     fn failed(&self, failure: PassError) -> Result<PassPayload, CliError> {
-        self.ctx
-            .store()
-            .update_control(|state| control::fail(state, self.id, self.ctx.now()))?;
+        self.ctx.store().write(|tx| {
+            tx.sessions()
+                .change_control(|state| control::fail(state, self.id, self.ctx.now()))
+        })?;
         Ok(PassPayload {
             session: self.id.to_string(),
             result: "failed",

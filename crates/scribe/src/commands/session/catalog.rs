@@ -25,6 +25,7 @@ use crate::commands::hook::payload;
 use crate::error::CliError;
 use crate::output::{Output, PassReport};
 use clap::Args;
+use scribe_core::SessionVerbs;
 use scribe_core::control::{self, CatalogGate};
 use scribe_core::{Author, AuthorName, Models, Project, SessionFilter, SessionId, transcript};
 use std::path::PathBuf;
@@ -163,30 +164,33 @@ pub(in crate::commands) fn begin(
     // The gate, including the record lookup, runs inside the store lock, so
     // a `/scribe on` or a second catalog that lands first is seen and
     // refused, never overwritten.
-    let (switch, wrote_switch) = store.update_control(|state| -> Result<_, CliError> {
-        let has_record = recorded(ctx, &id)?;
-        match control::catalog_gate(state, &id, has_record) {
-            CatalogGate::Refused => Err(CliError::SessionCataloged(id.clone())),
-            CatalogGate::Resume(switch) => {
-                if switch.provider != ctx.provider() {
-                    return Err(CliError::Usage(String::from(
-                        "catalog switch belongs to another provider",
-                    )));
+    let (switch, wrote_switch) = store.write(|tx| {
+        tx.sessions()
+            .change_control(|state| -> Result<_, CliError> {
+                let has_record = recorded(ctx, &id)?;
+                match control::catalog_gate(state, &id, has_record) {
+                    CatalogGate::Refused => Err(CliError::SessionCataloged(id.clone())),
+                    CatalogGate::Resume(switch) => {
+                        if switch.provider != ctx.provider() {
+                            return Err(CliError::Usage(String::from(
+                                "catalog switch belongs to another provider",
+                            )));
+                        }
+                        Ok((switch, false))
+                    }
+                    CatalogGate::Start => {
+                        control::catalog_on(state, &id, by, ctx.now());
+                        let switch = state.sessions.get_mut(&id).ok_or_else(|| {
+                            CliError::Core(scribe_core::Error::SessionNotFound {
+                                id: id.clone(),
+                                path: store.root().join("control.json"),
+                            })
+                        })?;
+                        switch.provider = ctx.provider();
+                        Ok((switch.clone(), true))
+                    }
                 }
-                Ok((switch, false))
-            }
-            CatalogGate::Start => {
-                control::catalog_on(state, &id, by, ctx.now());
-                let switch = state.sessions.get_mut(&id).ok_or_else(|| {
-                    CliError::Core(scribe_core::Error::SessionNotFound {
-                        id: id.clone(),
-                        path: store.root().join("control.json"),
-                    })
-                })?;
-                switch.provider = ctx.provider();
-                Ok((switch.clone(), true))
-            }
-        }
+            })
     })??;
     Ok(Begun {
         id,
@@ -198,7 +202,7 @@ pub(in crate::commands) fn begin(
 
 /// Whether a session file for `id` exists, including one that did not parse.
 fn recorded(ctx: &Context, id: &SessionId) -> Result<bool, scribe_core::Error> {
-    let found = ctx.store().list_sessions(&SessionFilter {
+    let found = ctx.store().read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..Default::default()
     })?;

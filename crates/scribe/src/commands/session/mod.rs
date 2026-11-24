@@ -206,7 +206,9 @@ impl SessionCommand {
             Self::Rebuild(args) => AuditSubject {
                 target: ctx
                     .store()
-                    .resolve_session(&args.id)
+                    .read()
+                    .sessions()
+                    .resolve(&args.id)
                     .ok()
                     .map(|id| format!("session:{id}")),
                 author: Some(args.author.as_str().to_owned()),
@@ -280,10 +282,13 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let group = args
         .group
         .as_deref()
-        .map(|id| store.group(id))
+        .map(|id| store.read().groups().get(id))
         .transpose()?;
     let members = group.as_ref().map(|group| group.members());
-    let found = store.list_sessions_scoped(&filter, members.as_ref())?;
+    let found = store
+        .read()
+        .sessions()
+        .list_scoped(&filter, members.as_ref())?;
     let empty = format!(
         "no session records in {}; a session is cataloged after /scribe on",
         ctx.store().root().display()
@@ -366,9 +371,13 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         }
         (flag, cite) => flag.or(cite),
     };
-    let id = ctx.store().resolve_session_or_handoff(&args.id.id)?;
-    let handoffs = ctx.store().handoffs_for_session(&id)?;
-    let view = match ctx.store().session(&id) {
+    let id = ctx
+        .store()
+        .read()
+        .sessions()
+        .resolve_or_handoff(&args.id.id)?;
+    let handoffs = ctx.store().read().entries().handoffs_for_session(&id)?;
+    let view = match ctx.store().read().sessions().get(&id) {
         Ok(view) => view,
         Err(scribe_core::Error::SessionNotFound { .. }) if !handoffs.is_empty() => {
             if let Some(n) = segment {
@@ -378,7 +387,7 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
                     count: 0,
                 });
             }
-            let control = ctx.store().control()?;
+            let control = ctx.store().read().sessions().control()?;
             return Ok(Output::Show {
                 record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
                     &id,

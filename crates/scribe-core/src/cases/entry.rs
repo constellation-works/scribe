@@ -1,6 +1,7 @@
 //! Entry verbs: notes written with agent provenance, and the decision and
 //! open-item records (2_design.md §12, §18).
 
+use crate::cases::session::SessionVerbs;
 use crate::checks::entry::{
     check_evidence, check_handoff, check_handoff_related, check_handoff_related_update,
     check_quote, check_spoken_quote, check_spoken_tag, counts_toward_cap, draft_session,
@@ -300,7 +301,7 @@ impl EntryVerbs for Store {
                 && let Some(id) = draft_session(&draft.related)
                 && let Ok(id) = id.parse::<crate::SessionId>()
             {
-                let resolved = match self.resolve_session(&id) {
+                let resolved = match self.read().sessions().resolve(&id) {
                     Ok(resolved) => resolved,
                     Err(Error::SessionNotFound { .. }) => id,
                     Err(error) => return Err(error),

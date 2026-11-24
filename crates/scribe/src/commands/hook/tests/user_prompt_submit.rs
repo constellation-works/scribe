@@ -7,6 +7,7 @@ use crate::commands::hook::user_prompt_submit::run;
 use crate::output::Output;
 use scribe_core::EntryFilter;
 use scribe_core::GroupVerbs;
+use scribe_core::testing::StoreTestReads;
 use serde_json::json;
 
 const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";

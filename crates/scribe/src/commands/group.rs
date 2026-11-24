@@ -120,11 +120,11 @@ impl GroupCommand {
         match self {
             Self::Join { id, author, .. } => AuditSubject {
                 author: Some(author.to_string()),
-                target: ctx.store().group(id).ok().map(|g| g.id),
+                target: ctx.store().read().groups().get(id).ok().map(|g| g.id),
             },
             Self::Close { id, .. } | Self::Backfill { id } => AuditSubject {
                 author: None,
-                target: ctx.store().group(id).ok().map(|g| g.id),
+                target: ctx.store().read().groups().get(id).ok().map(|g| g.id),
             },
             Self::Open { .. } | Self::Leave | Self::List | Self::Show { .. } => {
                 AuditSubject::default()
@@ -270,7 +270,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             replace,
         } => {
             let caller = caller(ctx)?;
-            let group = store.group(&id)?;
+            let group = store.read().groups().get(&id)?;
             let seat = match seat {
                 Some(seat) => seat,
                 None if group.slug.is_some() => {
@@ -341,7 +341,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             (group.id, changed)
         }
         GroupCommand::Backfill { id } => {
-            let group = store.group(&id)?;
+            let group = store.read().groups().get(&id)?;
             if group.closed.is_some() {
                 return Err(scribe_core::Error::AgentWrite {
                     kind: WriteRefusal::GroupMembership,
@@ -404,7 +404,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             let models = ctx.models(&config);
             // Resolve the alias once: consent, close and audit all bind to this
             // canonical id, so a slug reused after a close cannot redirect them.
-            let group = store.group(&id)?;
+            let group = store.read().groups().get(&id)?;
             let consent = match quote {
                 None => None,
                 Some(quote) if quote.trim().is_empty() => {
@@ -478,11 +478,11 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
         }
         GroupCommand::Show { id } => {
             return Ok(Output::Show {
-                record: Record::Group(Box::new(store.group(&id)?)),
+                record: Record::Group(Box::new(store.read().groups().get(&id)?)),
             });
         }
         GroupCommand::List => {
-            let groups = store.groups()?;
+            let groups = store.read().groups().all()?;
             let total = groups.len();
             return Ok(list_output(
                 Records::Groups(groups),
@@ -497,7 +497,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
         }
     };
     Ok(Output::Written {
-        record: Record::Group(Box::new(store.group(&id)?)),
+        record: Record::Group(Box::new(store.read().groups().get(&id)?)),
         changed,
         notices,
     })

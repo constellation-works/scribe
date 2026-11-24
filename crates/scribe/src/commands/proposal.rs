@@ -183,7 +183,7 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             if let Some(newer) = &args.newer {
                 ctx.store().resolve_entry(newer)?;
             }
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (proposal, changed) = ctx.store().add_agent_proposal(
                 kind,
                 &args.older,
@@ -199,7 +199,7 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
             scribe_core::check_agent_author(&args.author)?;
             scribe_core::check_reason(&args.reason)?;
             ctx.store().resolve_proposal(&args.id)?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,
                 scribe_core::ProposalChange::Update,
@@ -231,7 +231,7 @@ pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, Cli
                 },
                 &scribe_core::instruction::Target::new(target.id.to_string(), &args.id),
             )?;
-            let redactor = ctx.redactor(&ctx.store().config()?)?;
+            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
             let (proposal, changed) = ctx.store().change_agent_proposal(
                 &args.id,
                 if args.approve {
@@ -271,7 +271,9 @@ fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
         }),
     };
     let proposals: Vec<_> = store
-        .proposals()?
+        .read()
+        .proposals()
+        .all()?
         .into_iter()
         .filter(|p| filter.matches(p))
         .collect();

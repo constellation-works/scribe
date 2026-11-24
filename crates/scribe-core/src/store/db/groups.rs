@@ -325,12 +325,15 @@ impl Store {
     }
 
     /// Groups newest first, including seats and their active handoffs.
-    pub fn groups(&self) -> Result<Vec<Group>> {
+    pub(in crate::store) fn groups(&self) -> Result<Vec<Group>> {
         self.read_groups(|conn, path| roster(conn, path, None))
     }
 
     /// The most recently opened group in the project.
-    pub fn last_group(&self, project: &Project) -> Result<Option<crate::brief::LastGroup>> {
+    pub(in crate::store) fn last_group(
+        &self,
+        project: &Project,
+    ) -> Result<Option<crate::brief::LastGroup>> {
         self.read_groups(|conn, path| {
             let summary = if refuse_newer(conn, path)? >= 11 { "summary" } else { "NULL" };
             conn.query_row(
@@ -394,7 +397,7 @@ impl Store {
     }
 
     /// One group by exact id or unique prefix.
-    pub fn group(&self, id: &str) -> Result<Group> {
+    pub(in crate::store) fn group(&self, id: &str) -> Result<Group> {
         let n = self.group_number(id)?;
         self.read_groups(|conn, path| roster(conn, path, Some(n)))?
             .pop()
@@ -403,7 +406,7 @@ impl Store {
 
     /// Search only stored messages whose session belongs to this group.
     /// The database checks membership in the same read as the messages.
-    pub fn search_group_messages(
+    pub(in crate::store) fn search_group_messages(
         &self,
         group: &str,
         tokens: &[String],

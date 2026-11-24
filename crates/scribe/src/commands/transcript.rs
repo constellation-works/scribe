@@ -126,7 +126,10 @@ pub(in crate::commands) fn resolve_transcript(
     let resolved = if ids.iter().any(|id| id == input.as_str()) {
         input.clone()
     } else {
-        ctx.store().resolve_session_or_typed_with(input, &ids)?
+        ctx.store()
+            .read()
+            .sessions()
+            .resolve_or_typed_with(input, &ids)?
     };
     if ids.iter().any(|id| id == resolved.as_str()) {
         Ok(resolved)
@@ -332,7 +335,7 @@ fn dates(since: Date, until: Option<Date>) -> Result<DateRange, CliError> {
 /// Session ids that already have a record (including a file that did not
 /// parse) or a switch. Those transcripts are not candidates.
 fn cataloged(ctx: &Context) -> Result<BTreeSet<String>, CliError> {
-    let found = ctx.store().list_sessions(&SessionFilter {
+    let found = ctx.store().read().sessions().list(&SessionFilter {
         include_inactive: true,
         ..Default::default()
     })?;
@@ -343,7 +346,7 @@ fn cataloged(ctx: &Context) -> Result<BTreeSet<String>, CliError> {
     for id in &found.skipped_sessions {
         ids.insert(id.to_string());
     }
-    for id in ctx.store().control()?.sessions.keys() {
+    for id in ctx.store().read().sessions().control()?.sessions.keys() {
         ids.insert(id.to_string());
     }
     Ok(ids)
