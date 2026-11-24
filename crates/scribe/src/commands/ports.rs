@@ -3,7 +3,7 @@
 //! from this process's environment.
 
 use crate::app::Context;
-use crate::commands::hook::{group_turns, payload, project};
+use crate::commands::hook::payload;
 use crate::error::CliError;
 #[cfg(unix)]
 use scribe_core::ClaudeCapturePosition;
@@ -115,13 +115,11 @@ impl Transcripts for Context {
     }
 
     fn modified(&self, path: &Path) -> Option<std::time::SystemTime> {
-        std::fs::metadata(path)
-            .and_then(|meta| meta.modified())
-            .ok()
+        scribe_tools::transcript::modified(path)
     }
 
     fn project_of(&self, cwd: &Path) -> Project {
-        project::of(cwd)
+        scribe_tools::project::of(cwd)
     }
 
     fn claude_header(
@@ -142,11 +140,7 @@ impl Transcripts for Context {
     }
 
     fn discovered(&self, provider: Provider) -> Result<Discovered, CliError> {
-        let found = payload::discovered_for(&self.with_provider(provider))?;
-        Ok(Discovered {
-            files: found.files,
-            refused: found.refused,
-        })
+        payload::discovered_for(&self.with_provider(provider))
     }
 
     #[cfg(unix)]
@@ -157,6 +151,6 @@ impl Transcripts for Context {
         session: &SessionId,
         prior: Option<&ClaudeCapturePosition>,
     ) -> Result<Option<ClaudeRead>, Unreadable> {
-        group_turns::claude_window(&self.with_provider(provider), path, session, prior)
+        payload::claude_window(&self.with_provider(provider), path, session, prior)
     }
 }

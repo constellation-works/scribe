@@ -1,4 +1,4 @@
-use crate::commands::hook::project::{MAX_METADATA_BYTES, of, remote_url, repo_name};
+use crate::project::{MAX_METADATA_BYTES, of, remote_url, repo_name};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

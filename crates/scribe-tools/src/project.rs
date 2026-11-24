@@ -9,20 +9,22 @@
 //!
 //! The hooks run this synchronously, and the metadata is local and
 //! workspace-controlled, so each file is read only when it is a regular file
-//! no larger than [`MAX_METADATA_BYTES`] and is not itself a link. Anything
+//! no larger than [`MAX_METADATA_BYTES`] and is not itself a link
+//! ([`fs::open_no_follow`]). Anything
 //! else gives no name, and the basename answers.
 
-use scribe_core::Project;
+use crate::fs::{self, File};
+use scribe_domain::Project;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// The largest Git metadata file read for a project name. A real config or
 /// pointer is far smaller; a larger file is refused rather than read.
-pub(super) const MAX_METADATA_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_METADATA_BYTES: u64 = 64 * 1024;
 
 /// The project for `cwd`. Never fails: when no remote can be read, the cwd's
 /// basename names the project.
-pub(in crate::commands) fn of(cwd: &Path) -> Project {
+pub fn of(cwd: &Path) -> Project {
     remote_name(cwd).map_or_else(
         || Project::sanitized(&basename(cwd)),
         |name| Project::sanitized(&name),
@@ -44,7 +46,7 @@ fn remote_name(cwd: &Path) -> Option<String> {
 /// [`MAX_METADATA_BYTES`] bytes, opened without following a link at its own
 /// name and without waiting on a pipe or device. Any other file is an error.
 fn read_metadata(path: &Path) -> io::Result<String> {
-    let mut file = open_metadata(path)?;
+    let mut file: File = fs::open_no_follow(path)?;
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -62,31 +64,6 @@ fn read_metadata(path: &Path) -> io::Result<String> {
         ));
     }
     String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
-/// Open `path` read-only. `NOFOLLOW` refuses a link at the last name, and
-/// `NONBLOCK` keeps a FIFO from stalling the open; the file type is checked
-/// on the open handle, so a pipe swapped in is refused, not read.
-#[cfg(unix)]
-fn open_metadata(path: &Path) -> io::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags, open};
-    let fd = open(
-        path,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    )?;
-    Ok(std::fs::File::from(fd))
-}
-
-#[cfg(not(unix))]
-fn open_metadata(path: &Path) -> io::Result<std::fs::File> {
-    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the Git metadata file is a link",
-        ));
-    }
-    std::fs::File::open(path)
 }
 
 /// The git directory shared by every worktree of the repository holding
@@ -115,7 +92,7 @@ fn common_dir(cwd: &Path) -> Option<PathBuf> {
 }
 
 /// The `origin` remote's url in a git config, else the first remote's.
-pub(super) fn remote_url(config: &str) -> Option<String> {
+pub(crate) fn remote_url(config: &str) -> Option<String> {
     let mut section: Option<String> = None;
     let mut first: Option<String> = None;
     for line in config.lines().map(str::trim) {
@@ -143,7 +120,7 @@ pub(super) fn remote_url(config: &str) -> Option<String> {
 }
 
 /// The repository name in a remote url: its last path segment, less `.git`.
-pub(super) fn repo_name(url: &str) -> Option<String> {
+pub(crate) fn repo_name(url: &str) -> Option<String> {
     let trimmed = url.trim_end_matches('/');
     let last = trimmed.rsplit(['/', ':', '\\']).next()?;
     let name = last.strip_suffix(".git").unwrap_or(last);

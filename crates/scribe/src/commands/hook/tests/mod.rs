@@ -2,5 +2,4 @@
 
 pub(super) mod group_add;
 mod payload;
-mod project;
 mod user_prompt_submit;

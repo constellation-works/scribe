@@ -30,7 +30,6 @@ mod codex;
 mod group_add;
 pub(super) mod group_turns;
 pub(super) mod payload;
-pub(super) mod project;
 mod session_end;
 mod session_start;
 mod stop;
