@@ -172,7 +172,7 @@ fn ended(ctx: &Context, session: &SessionId) -> Result<bool, CliError> {
 /// group it joins. A join does not need the transcript: one that is missing or
 /// fails its check joins with no earlier turns, as it always has.
 fn earlier_turns(ctx: &Context, session: &SessionId) -> Result<Vec<NewMessage>, CliError> {
-    let Some(path) = payload::locate(ctx, session)? else {
+    let Some(path) = payload::locate_own(ctx, session)? else {
         return Ok(Vec::new());
     };
     match payload::read_checked(ctx, &path, session) {
@@ -295,7 +295,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             let (ended, predecessor) = match latest {
                 Some(previous) if !replace && previous != &caller => {
                     let predecessor = if ctx.provider() == Provider::ClaudeCode {
-                        let path = payload::locate(ctx, &caller)?;
+                        let path = payload::locate_own(ctx, &caller)?;
                         match hook::cleared_predecessor(ctx, path.as_deref(), &caller) {
                             ClearedPredecessor::One(parent) if &parent == previous => Some(parent),
                             ClearedPredecessor::None
