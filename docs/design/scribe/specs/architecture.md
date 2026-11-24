@@ -215,7 +215,7 @@ is not decided (open-item-19) and this spec does not decide it.
 Until then:
 
 - `core/providers/` holds everything about calling a model: the `Models`
-  port, the request and answer shapes now in `scribe-domain/src/models.rs`,
+  port, the request and answer shapes now in `providers/models.rs`,
   and the adapters now in `crates/scribe/src/models.rs` and `models/codex.rs`
   with their process supervision.
 - Only `providers/` spawns a process. Only the five callers' flows import
@@ -328,10 +328,10 @@ request.
 | `memory/mod`, `memory/profile` | memory items, profile shapes | `apps/memory/rules` |
 | `message` | `Message` rows | `apps/session/rules` |
 | `transcript`, `transcript/codex` | the parsed message shape | `tools/transcript/` |
-| `text`, `verbatim` | — | `tools/text` |
+| `text`, `verbatim`, `claim`, `trigger` | — | `tools/text` (the hashes to the store's `digest`) |
 | `capture` | — | marker scanning to `tools/markers`; settling rules to `apps/hook/rules` |
 | `annotation` | mark shapes | `apps/mark/rules` |
-| `pass`, `pass/repair`, `claim`, `trigger`, `instruction` | — | `apps/session/rules/` (window building to `tools/window`) |
+| `pass`, `pass/repair`, `instruction` | — | `apps/session/rules/` (window building to `tools/window`) |
 | `voice` | — | `tools/markers` if it only classifies text, else `apps/hook/rules` |
 | `brief` | — | `apps/brief/rules` |
 | `consistency` | — | `apps/consistency/rules` |

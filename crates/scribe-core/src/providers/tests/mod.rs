@@ -2,3 +2,4 @@
 
 mod codex_models;
 mod models;
+mod schema;

@@ -82,14 +82,15 @@ expect pass check-dependency-direction.sh "$near" "a grouped import of names tha
 
 # The Models port may not depend on its callers.
 port=$(tree port-clean)
-printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-domain/src/models.rs"
+mkdir -p "$port/crates/scribe-core/src/providers"
+printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-core/src/providers/models.rs"
 expect pass check-dependency-direction.sh "$port" "a port using a lower-level module"
-printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-domain/src/models.rs"
+printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-core/src/providers/models.rs"
 expect pass check-dependency-direction.sh "$port" "a nested name that is not a caller module"
 for module in memory group; do
-  printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-domain/src/models.rs"
+  printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-core/src/providers/models.rs"
   expect fail check-dependency-direction.sh "$port" "a port importing $module"
-  printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-domain/src/models.rs"
+  printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-core/src/providers/models.rs"
   expect fail check-dependency-direction.sh "$port" "a port importing $module in a group"
 done
 

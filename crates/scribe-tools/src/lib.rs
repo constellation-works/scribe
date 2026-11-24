@@ -28,6 +28,7 @@ pub mod markers;
 pub mod origin;
 pub mod payload;
 pub mod project;
+pub mod text;
 pub mod transcript;
 pub mod window;
 
@@ -38,5 +39,5 @@ mod tests;
 // `codex`, `markers` and `control` name them by, and the control parser and
 // Codex rollout at the root paths they had in the domain.
 use markers::control;
-use scribe_domain::{SessionId, Speaker, entry, record, session, text};
+use scribe_domain::{SessionId, Speaker, entry, proposal, record, session};
 use transcript::codex;

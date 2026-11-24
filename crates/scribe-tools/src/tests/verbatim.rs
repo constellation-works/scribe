@@ -1,4 +1,4 @@
-use crate::verbatim::{MIN_QUOTE_CHARS, contains, normalize};
+use crate::text::verbatim::{MIN_QUOTE_CHARS, contains, normalize};
 
 #[test]
 fn whitespace_runs_and_line_endings_normalize_to_one_space() {

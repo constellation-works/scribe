@@ -20,7 +20,7 @@ use super::Memory;
 use crate::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, Revision, Writer, codec};
 use crate::error::refusal;
 use crate::error::{Error, Result};
-use crate::models::{MemoryContext, PendingContext};
+use crate::{MemoryContext, PendingContext};
 use crate::{Milestone, NowItem, Pending, ProfileView, Refusal, Stem};
 use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};
 use std::path::{Path, PathBuf};
@@ -184,7 +184,7 @@ thread_local! {
 }
 
 fn sha256(text: &str) -> String {
-    crate::text::prompt_sha256(text)
+    crate::digest::prompt_sha256(text)
 }
 
 fn now_op(path: &Path, item: &NowItem) -> Result<FileOp> {

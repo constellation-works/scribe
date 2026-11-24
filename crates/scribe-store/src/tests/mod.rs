@@ -7,6 +7,7 @@ pub(crate) use crate::testing::private_tempdir;
 pub(crate) use scribe_domain::fixtures::{T0, entry, session};
 
 mod audit;
+mod digest;
 mod fsio;
 mod migrated;
 mod redact;

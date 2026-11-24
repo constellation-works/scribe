@@ -1,4 +1,4 @@
-use crate::text as capture;
+use crate::digest as capture;
 
 #[test]
 fn the_prompt_hash_is_lowercase_sha256_hex() {

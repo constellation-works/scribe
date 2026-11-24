@@ -312,3 +312,23 @@ pub struct ProfileView {
     /// The day of its last revision; `None` for a file no revision wrote.
     pub as_of: Option<Date>,
 }
+
+/// A `now` item or milestone as a model reads it: stem, date and title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryContext {
+    /// Its file stem.
+    pub stem: String,
+    /// Its date, `YYYY-MM-DD`.
+    pub date: String,
+    /// Its title.
+    pub title: String,
+}
+
+/// A pending candidate as the session model reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingContext {
+    /// `pending-<n>`.
+    pub id: String,
+    /// What it is about.
+    pub subject: String,
+}
