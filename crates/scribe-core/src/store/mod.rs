@@ -74,6 +74,8 @@ pub use init::{
 };
 mod rebuild;
 mod redact;
+pub mod repo;
+pub use repo::{Snapshot, Tx};
 #[cfg(feature = "test-support")]
 mod seed;
 mod sessions;
@@ -526,7 +528,7 @@ impl Store {
         now: time::OffsetDateTime,
         provider: crate::Provider,
     ) -> Result<control::Linked> {
-        self.write(|| {
+        self.write_step(|| {
             self.apply_session_link(
                 session,
                 link,
@@ -623,7 +625,7 @@ impl Store {
     ) -> Result<(SessionRecord, ActiveOutcome)> {
         check_active_author(request)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let mut loaded = self.load_sessions()?;
             let mut record = match loaded.take(id) {
                 Some(record) => record?,
@@ -654,7 +656,7 @@ impl Store {
             return Ok(Vec::new());
         }
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let loaded = self.load_sessions()?;
             let mut out = Vec::with_capacity(requests.len());
             for (id, request) in requests {
@@ -798,7 +800,7 @@ impl Store {
         if !self.root_exists()? {
             return Ok(Vec::new());
         }
-        self.write(|| {
+        self.write_step(|| {
             let (mut entries, _) = self.load_entries()?;
             entries.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
             let mut filled = Vec::new();
@@ -826,7 +828,7 @@ impl Store {
     /// a change is likely.
     pub fn update_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
         self.prepare_dir(&self.root)?;
-        self.write(|| self.change_control(change))
+        self.write_step(|| self.change_control(change))
     }
 
     /// [`Store::update_control`] for a caller that holds the lock.
@@ -1003,7 +1005,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<PassWritten> {
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             // Compare the revision the pass loaded with the stored one before
             // any write, so a rebuild that finished while the model ran is
             // never overwritten by this stale pass. A link keeps `updated`, so
@@ -1153,7 +1155,7 @@ impl Store {
         if consistency::reapply(&proposals, &mut probe, now).is_empty() {
             return Ok(report);
         }
-        self.write(|| {
+        self.write_step(|| {
             let proposals = self.proposals()?;
             let (mut entries, _) = self.load_entries()?;
             let done = consistency::reapply(&proposals, &mut entries, now);
@@ -1185,7 +1187,7 @@ impl Store {
             return Ok(Vec::new());
         }
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let mut proposals = self.proposals()?;
             let (entries, _) = self.load_entries()?;
             let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
@@ -1221,7 +1223,7 @@ impl Store {
         now: time::OffsetDateTime,
     ) -> Result<Settled> {
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             if let Settle::ForgetSession(id) = action {
                 return Ok(match self.forget_session_locked(id, now)? {
                     sessions::SessionForgetOutcome::Forgotten(forgot) => {

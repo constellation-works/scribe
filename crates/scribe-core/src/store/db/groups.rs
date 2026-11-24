@@ -478,7 +478,7 @@ impl Store {
             ));
         }
         redactor.group(&mut draft);
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("open group in", &path, e);
@@ -534,7 +534,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<String> {
         check_project_slug(slug, redactor)?;
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_forgotten(session)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
@@ -589,7 +589,7 @@ impl Store {
                 "project group backfill takes only the named session's user turns",
             ));
         }
-        self.write(|| {
+        self.write_step(|| {
             for addition in additions {
                 self.refuse_forgotten(&addition.session)?;
             }
@@ -671,7 +671,7 @@ impl Store {
             crate::check_content(role)?;
         }
         check_own_user_turns(join.session, join.earlier_turns)?;
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_forgotten(join.session)?;
             let n = self.group_number(join.group)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
@@ -773,7 +773,7 @@ impl Store {
     }
 
     fn leave_group_inner(&self, session: &SessionId, keep_turns: bool) -> Result<String> {
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("leave group in", &path, e);
@@ -826,7 +826,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<String> {
         check_project_slug(slug, redactor)?;
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("move group member in", &path, e);
@@ -866,7 +866,7 @@ impl Store {
 
     /// Record that a start could not inspect its transcript yet.
     pub fn defer_ancestry(&self, session: &SessionId) -> Result<bool> {
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             conn.execute(
@@ -898,7 +898,7 @@ impl Store {
         if !self.has_deferred_ancestry(session)? {
             return Ok(false);
         }
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             conn.execute(
@@ -960,7 +960,7 @@ impl Store {
         let Some(parent) = predecessor else {
             return Ok(SeatStart::Unjoined);
         };
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_forgotten(child)?;
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
@@ -1007,7 +1007,7 @@ impl Store {
             check_own_user_turns(session, turns)?;
         }
         let n = self.group_number(id)?;
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("backfill group turns in", &path, e);
@@ -1083,7 +1083,7 @@ impl Store {
         if next_turns(&before, messages).is_empty() {
             return Ok(0);
         }
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("store group turns in", &path, e);
@@ -1124,7 +1124,7 @@ impl Store {
         if before.cursor.as_deref() == Some(last.message.as_str()) {
             return Ok(0);
         }
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?

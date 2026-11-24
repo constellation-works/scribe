@@ -1091,7 +1091,7 @@ impl crate::Store {
             ));
         }
         let value = redactor.mask(value);
-        self.write(|| {
+        self.write_step(|| {
             let conn = super::open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let sql = if field == "project" { "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" } else { "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL" };

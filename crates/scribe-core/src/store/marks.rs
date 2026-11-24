@@ -105,7 +105,7 @@ impl Store {
         {
             return Ok(0);
         }
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_forgotten(session)?;
             let mut marks = self.all_marks()?;
             let mut opened = 0;
@@ -147,7 +147,7 @@ impl Store {
             return Ok(Vec::new());
         }
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let mut marks = self.all_marks()?;
             let (mut entries, skipped) = self.load_entries()?;
             let mut ids: Vec<EntryId> = entries.iter().map(|e| e.id.clone()).collect();

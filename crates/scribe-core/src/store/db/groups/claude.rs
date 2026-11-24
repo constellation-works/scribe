@@ -69,7 +69,7 @@ impl Store {
         batch: ClaudeGroupTurns,
         redactor: &Redactor,
     ) -> Result<Option<usize>> {
-        self.write(|| {
+        self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
             let fail = |e| db_error("store Claude group progress in", &path, e);

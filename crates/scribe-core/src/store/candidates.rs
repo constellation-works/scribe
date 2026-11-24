@@ -260,7 +260,7 @@ impl Store {
         if crate::proposal::close_retired_tag_candidates(&mut probe, &config.tags, now).is_empty() {
             return Ok(Vec::new());
         }
-        self.write(|| {
+        self.write_step(|| {
             let config = self.config()?;
             let mut proposals = self.proposals()?;
             let closed =
@@ -345,7 +345,7 @@ impl Store {
         {
             return Ok(ReapplyReport::default());
         }
-        self.write(|| {
+        self.write_step(|| {
             let mut proposals = self.proposals()?;
             let mut report = ReapplyReport::default();
             let mut changed = false;

@@ -2177,7 +2177,7 @@ fn schema_seventeen_replaces_trial_registrations_and_preserves_trial_rows() {
         updated: T0,
     });
     store
-        .write(|| {
+        .write(|_| {
             for entry in &entries {
                 store.write_entry(entry, true)?;
             }

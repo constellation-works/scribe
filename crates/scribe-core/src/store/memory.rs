@@ -410,7 +410,7 @@ impl Store {
     /// its own so two processes never replay one at once.
     pub(super) fn apply_open_journals(&self) -> Result<()> {
         Self::crash_after_commit(&self.memory_dir())?;
-        self.write(|| {
+        self.write_step(|| {
             self.prepare_subdir(&self.memory_dir())?;
             let conn = db::open_writer(&self.root, self.lock_wait)?;
             let mut writer = Writer::new(&conn, &self.root);
@@ -878,7 +878,7 @@ impl Store {
     ) -> Result<(NowItem, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let path = self.memory_dir();
             let stem = bare(id).to_owned();
             let ((item, changed), _) = self.memory_write(now, |_, files| {
@@ -996,7 +996,7 @@ impl Store {
             ));
         }
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let stem = bare(id).to_owned();
             let (shown, journal) = self.memory_write(now, |_, files| {
                 let (shown, op) = if let Some(item) =
@@ -1042,7 +1042,7 @@ impl Store {
     /// `revision_not_found`, and store failures.
     pub fn restore_profile(&self, n: i64, now: OffsetDateTime) -> Result<Option<i64>> {
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let (_, journal) = self.memory_write(now, |writer, files| {
                 let revision = writer.revision(n)?.ok_or_else(|| {
                     refusal(
@@ -1078,7 +1078,7 @@ impl Store {
     /// A session or entry file that does not parse, and store failures.
     pub fn profile_inputs(&self, now: OffsetDateTime) -> Result<ProfileInputs> {
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let config = self.config()?;
             let (entries, skipped) = self.load_entries()?;
             if let Some(bad) = skipped.into_iter().next() {
@@ -1229,7 +1229,7 @@ impl Store {
         now: OffsetDateTime,
     ) -> Result<RefreshWritten> {
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
         if let Some(forgotten) = super::db::sessions::read_forgotten(&self.root)?
             && inputs.sessions.iter().any(|session| forgotten.keys().any(|id| id.as_str() == session.id))
         {

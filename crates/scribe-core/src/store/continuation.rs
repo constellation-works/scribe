@@ -57,7 +57,7 @@ impl Store {
         if self.continuation_entry(selection)?.is_none() {
             return Ok(None);
         }
-        self.write(|| {
+        self.write_step(|| {
             let Some(entry) = self.continuation_entry(selection)? else {
                 return Ok(None);
             };
