@@ -6895,7 +6895,10 @@ joining session's own typed turns from the first line of its transcript, in the
 same transaction as the membership, and sets the capture cursor to the last of
 them (see **Stored turns**). A `--replace` or clear successor backfills its own
 transcript only, never its predecessor's, and a transcript that is absent or
-fails its check joins with no earlier turns. A retried join, which changes
+fails its check joins with no earlier turns. The join time is taken before the
+transcript is read, so a join whose snapshot held no eligible turn, and so has
+no cursor, still stores the first typed turn appended before the membership
+committed. A retried join, which changes
 nothing, stores nothing. Closed groups accept no new members. `group leave` removes the caller’s position and drops a seat when
 its chain is empty.
 
