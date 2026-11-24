@@ -120,7 +120,14 @@ pub(in crate::commands) fn resolve_transcript(
     };
     let files = payload::files_for(ctx)?;
     let ids: Vec<String> = files.into_iter().map(|(id, _)| id.to_string()).collect();
-    let resolved = ctx.store().resolve_session_or_typed_with(input, &ids)?;
+    // An exact local filename already identifies the transcript. Keep this
+    // direct read independent of catalog metadata such as group rosters; only
+    // aliases need store resolution.
+    let resolved = if ids.iter().any(|id| id == input.as_str()) {
+        input.clone()
+    } else {
+        ctx.store().resolve_session_or_typed_with(input, &ids)?
+    };
     if ids.iter().any(|id| id == resolved.as_str()) {
         Ok(resolved)
     } else {
