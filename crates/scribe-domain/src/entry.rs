@@ -576,9 +576,9 @@ impl fmt::Display for OutcomeState {
 /// The bounded excerpt of the chat before a typed `#scribe` line under an
 /// action tag: the turns since the previous `#scribe` line of the session,
 /// oldest first, then the prompt itself (docs/design/scribe/2_design.md
-/// §4.6). Its size is capped by [`crate::capture::WINDOW_TURNS`] and
-/// [`crate::capture::WINDOW_CHARS`]; turns past the cap are dropped from the
-/// oldest end and `truncated` says so.
+/// §4.6), capped at 40 turns and 12,000 characters; turns past the cap
+/// were dropped from the oldest end and `truncated` says so. No new entry
+/// gets one since ORB-27911 step 2a; stored windows stay readable.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Window {
@@ -603,7 +603,7 @@ pub struct WindowTurn {
     /// When it was sent.
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
-    /// Its text, cut to [`crate::capture::WINDOW_TURN_CHARS`].
+    /// Its text, cut to 4,000 characters.
     pub text: String,
     /// Whether `text` was cut.
     pub cut: bool,

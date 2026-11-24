@@ -1,9 +1,7 @@
-use super::T0;
 use crate::capture::{self, Parsed, Refusal};
 use crate::consistency::Settle;
-use crate::entry::{EntryId, Speaker};
+use crate::entry::EntryId;
 use crate::proposal::ProposalId;
-use crate::transcript::Message;
 
 /// `(line, code)` of each settling line of `prompt`: `settle`,
 /// or the refusal's code.
@@ -149,99 +147,6 @@ fn the_prompt_hash_is_lowercase_sha256_hex() {
         capture::prompt_sha256("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
-}
-
-fn turn_message(uuid: &str, role: Speaker, minutes: i64, text: &str) -> Message {
-    Message {
-        uuid: uuid.to_owned(),
-        role,
-        at: T0 + time::Duration::minutes(minutes),
-        blocks: vec![text.to_owned()],
-    }
-}
-
-#[test]
-fn an_action_window_holds_the_turns_since_the_last_scribe_line_then_the_prompt() {
-    let prompt = "#scribe standard: name the unit in every size";
-    let messages = [
-        turn_message("u-0", Speaker::User, 0, "much earlier"),
-        turn_message(
-            "u-1",
-            Speaker::User,
-            1,
-            "#scribe preferences: ship on fridays",
-        ),
-        turn_message("a-1", Speaker::Assistant, 2, "Recorded."),
-        turn_message("u-2", Speaker::User, 3, "the size field has no unit"),
-        turn_message("a-2", Speaker::Assistant, 4, "  "),
-        turn_message("a-3", Speaker::Assistant, 5, "Bytes, then."),
-    ];
-    let at = T0 + time::Duration::minutes(6);
-    let window = capture::action_window(&messages, &capture::prompt_sha256(prompt), prompt, at);
-    let view: Vec<(Option<&str>, Speaker, &str)> = window
-        .turns
-        .iter()
-        .map(|t| (t.message.as_deref(), t.role, t.text.as_str()))
-        .collect();
-    assert_eq!(
-        view,
-        [
-            (Some("a-1"), Speaker::Assistant, "Recorded."),
-            (Some("u-2"), Speaker::User, "the size field has no unit"),
-            (Some("a-3"), Speaker::Assistant, "Bytes, then."),
-            (None, Speaker::User, prompt),
-        ],
-        "after the last #scribe line, empty turns dropped, the prompt last"
-    );
-    assert_eq!(window.turns[3].at, at);
-    assert!(!window.truncated);
-    assert_eq!(window.omitted, 0);
-
-    // A retried hook finds the prompt in the transcript: it and what
-    // follows are not counted twice.
-    let mut retried = messages.to_vec();
-    retried.push(turn_message("u-3", Speaker::User, 6, prompt));
-    retried.push(turn_message("a-4", Speaker::Assistant, 7, "later reply"));
-    let again = capture::action_window(&retried, &capture::prompt_sha256(prompt), prompt, at);
-    assert_eq!(again, window);
-}
-
-#[test]
-fn an_action_window_over_the_cap_drops_its_oldest_turns_and_says_so() {
-    let prompt = "#scribe remind: tidy the sizes";
-    let messages: Vec<Message> = (0..60)
-        .map(|n| {
-            turn_message(
-                &format!("m-{n}"),
-                Speaker::Assistant,
-                n,
-                &format!("turn {n}"),
-            )
-        })
-        .collect();
-    let window = capture::action_window(&messages, &capture::prompt_sha256(prompt), prompt, T0);
-    assert_eq!(window.turns.len(), capture::WINDOW_TURNS);
-    assert!(window.truncated);
-    assert_eq!(window.omitted, 61 - 40);
-    assert_eq!(
-        window.turns[0].message.as_deref(),
-        Some("m-21"),
-        "newest kept"
-    );
-    assert_eq!(window.turns.last().unwrap().text, prompt);
-
-    // The character cap: each turn is cut to its own cap first, then the
-    // oldest go until the total fits.
-    let long = "x".repeat(capture::WINDOW_TURN_CHARS + 10);
-    let messages: Vec<Message> = (0..5)
-        .map(|n| turn_message(&format!("m-{n}"), Speaker::User, n, &long))
-        .collect();
-    let window = capture::action_window(&messages, &capture::prompt_sha256(prompt), prompt, T0);
-    let chars: usize = window.turns.iter().map(|t| t.text.chars().count()).sum();
-    assert!(chars <= capture::WINDOW_CHARS, "{chars}");
-    assert_eq!(window.turns.len(), 3, "two cut turns and the prompt fit");
-    assert!(window.turns[0].cut && !window.turns[2].cut);
-    assert_eq!(window.omitted, 3);
 }
 
 #[test]

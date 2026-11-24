@@ -48,7 +48,7 @@ pub(crate) struct Cli {
 /// Flags accepted before or after any subcommand (STD-01 R4).
 #[derive(Debug, Args)]
 pub(crate) struct GlobalArgs {
-    /// Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+    /// Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
     #[arg(long, global = true, value_name = "PROVIDER", help_heading = GLOBAL)]
     pub(crate) provider: Option<scribe_core::Provider>,
     /// Data directory [default: $SCRIBE_ROOT, else ~/.scribe]

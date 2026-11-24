@@ -20,7 +20,7 @@ Options:
 
 Global options:
       --provider <PROVIDER>
-          Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+          Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
 
       --root <DIR>
           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]

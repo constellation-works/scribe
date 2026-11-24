@@ -2678,11 +2678,11 @@ for them.
 ## An action entry's window is capped at 40 turns and 12,000 characters
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`)
+**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`; removed by ORB-27911)
 
 > **Superseded in part, 2026-11-24 ([ORB-27911]):** a `#scribe` marker no
-> longer writes an entry, so no new entry gets a window; stored windows
-> stay readable
+> longer writes an entry, so no new entry gets a window, and
+> `action_window` is removed; stored windows stay readable
 > ([see below](#the-consistency-scan-and-stop-call-no-model)).
 
 The window keeps the turns since the previous `#scribe` line, so a

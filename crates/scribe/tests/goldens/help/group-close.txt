@@ -11,7 +11,7 @@ Options:
   -V, --version        Print version
 
 Global options:
-      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
       --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
       --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json                 Shorthand for --format json
