@@ -7073,11 +7073,12 @@ not consumed them; §18.10 resolves it before anything ships.
 
 They are two records because they have different readers and lives. An item
 is a queue entry that should leave his view once carried out; a decision is a
-reference that `ask` cites for months. An answered item that settles
+reference that `ask` cites for months. An answered choice that settles
 something lasting is **closed by naming the decision** written for it
 (`--decision`); one that settles nothing lasting is closed with a note saying
-so. An item never turns into a decision in place, so its id stays valid in
-every message and handoff that named it.
+why. A completed action item can close without an answer or lasting decision,
+with a note recording what was done. An item never turns into a decision in
+place, so its id stays valid in every message and handoff that named it.
 
 A choice about one piece of work stays on its Orbit task, with Daniel's words
 quoted, as [ORB-25980] decided. Neither record replaces that.
@@ -7210,26 +7211,34 @@ and every other record is kept. A forgotten session takes no answer: the
 check runs again inside the write, so an answer racing the forget cannot
 restore what it erased.
 
-**Closing.** The asker closes once it has carried the answer out:
+**Closing.** The asker closes a choice after answering it and carrying out its
+result, or closes an action once the action is complete:
 
 ```sh
 scribe entry close open-item-<n> --author <model> \
-  (--decision decision-<m> | --note '<what was done; nothing lasting>')
+  [--decision decision-<m>] [--note '<why no decision, or what action was done>']
 ```
 
-- A choice item closes only when answered (`not_answered`). An action item
-  closes answered or not, with a note of what was seen done.
+- Supply at least one of `--decision` or `--note`. A choice item cannot close
+  while unanswered (`not_answered`). If its answer yields no lasting
+  decision, `--note` is required and says why; if it yields a decision,
+  `--decision` names that decision.
+- An action item (zero options) can close without an answer once the asker has
+  confirmed the action is complete. When no lasting decision resulted,
+  `--note` is required and records what was done. This note is valid for an
+  action item even when no answer or decision exists; the skill must not
+  restrict it to choices about one task. If the action also yields a lasting
+  decision, `--decision` names it and an optional `--note` can record what
+  was carried out.
 - `--decision` must name an active decision that `--settles` this item, so
-  the link is two-way. `--note` is the explicit "no lasting decision"; the
-  skill says to use it only for a choice about one task, whose words then go
-  on that task. That is the check open-item-6 needed.
+  the link is two-way. When `--decision` is given without `--note`, the note
+  reads `settled by decision-<m>`.
 - Answered is not closed: his words stand on the item until the asker acts,
   and the brief keeps showing it as `answered`.
 - `entry answer` and `entry close` refuse any entry not under `open-item`
   (`not_open_item`) and a closed or withdrawn item (`item_settled`). A
   `--decision` that is not an active decision settling the item is
-  `invalid_decision`. `--note` may accompany `--decision`; without it the
-  note reads `settled by decision-<m>`.
+  `invalid_decision`.
 
 Daniel's 2026-11-23 words had scribe "record the decision and mark it
 closed" when he checks in. The aide does record both in that turn when it can
