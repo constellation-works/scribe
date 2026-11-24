@@ -244,8 +244,9 @@ fn usage(e: SearchError) -> CliError {
 }
 
 /// The `scribe search` command that lists the messages a hint counts: the
-/// effective store root, the same filters, then the literal terms after `--`.
-fn message_command(
+/// effective store root, the same filters as shell words, then the literal
+/// terms after `--`. It replays in a POSIX shell as the search ran.
+pub(super) fn message_command(
     root: &std::path::Path,
     query: &SearchQuery,
     group: Option<&str>,
@@ -257,10 +258,10 @@ fn message_command(
         String::from("search --kind message"),
     ];
     if let Some(project) = &query.project {
-        words.push(format!("--project {project}"));
+        words.push(flag_words("--project", project.as_str()));
     }
     if let Some(group) = group {
-        words.push(format!("--group {}", shell_word(group)));
+        words.push(flag_words("--group", group));
     }
     words.extend(query.topics.iter().map(|topic| format!("--topic {topic}")));
     words.extend(dates.criteria());
@@ -270,6 +271,17 @@ fn message_command(
     words.push(String::from("--"));
     words.push(shell_word(&query.terms));
     words.join(" ")
+}
+
+/// `--flag value` as shell words for a value that may hold any label
+/// character. A value that starts with a dash is attached with `=`, since
+/// clap reads a dash-leading word after `--flag` as another option.
+fn flag_words(flag: &str, value: &str) -> String {
+    if value.starts_with('-') {
+        format!("{flag}={}", shell_word(value))
+    } else {
+        format!("{flag} {}", shell_word(value))
+    }
 }
 
 /// `text` as one shell word: bare when a shell reads it as itself, else
