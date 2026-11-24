@@ -830,7 +830,7 @@ impl<E: PortError> Job<'_, E> {
             } else {
                 super::PassWrite::Settle(self.switch.final_pass)
             };
-            let pass_memory = crate::PassMemory {
+            let pass_memory = crate::apps::memory::WindowMemory {
                 drafts: memory_drafts,
                 signal: signal
                     .zip(record.scribed_through.clone())

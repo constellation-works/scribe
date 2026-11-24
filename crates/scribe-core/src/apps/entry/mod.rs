@@ -9,6 +9,7 @@
 mod add;
 mod answer;
 mod close;
+mod erase;
 mod forget;
 mod instruction;
 mod list;
@@ -21,6 +22,7 @@ mod verify;
 mod written;
 
 pub use add::{AddInput, RecordFields};
+pub use erase::erase_session_documents;
 pub use instruction::Instruction;
 pub use list::{ListInput, Listed};
 pub use pickup::PickupInput;

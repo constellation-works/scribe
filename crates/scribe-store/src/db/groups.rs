@@ -15,7 +15,7 @@ use crate::checks::group::number;
 use crate::checks::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
-use crate::{Error, Project, Redactor, Result, SessionId, Store, WriteRefusal};
+use crate::{Error, Label, Project, Redactor, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -278,21 +278,15 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
     Ok(groups)
 }
 
-/// Seat `session` in group `n` under an automatic name that no member of the
-/// group holds, so a join never displaces anyone.
+/// Seat `session` in group `n` under `seat`, a member seat the caller
+/// chose so that a join never displaces anyone.
 fn seat_member(
     conn: &Connection,
     n: i64,
     session: &SessionId,
+    seat: &str,
     now: OffsetDateTime,
 ) -> rusqlite::Result<()> {
-    let mut query =
-        conn.prepare("SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)")?;
-    let seat = crate::group::automatic_seat(session, |name| {
-        query.query_row(params![n, name], |r| r.get(0))
-    })?;
-    drop(query);
-    let seat = seat.as_str();
     conn.execute(
         "INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')",
         params![n, seat],
@@ -811,10 +805,26 @@ impl GroupRows<'_> {
         insert_project_group(self.conn, slug, project, now, opener).map_err(|e| self.fail(e))
     }
 
-    /// Seat `session` in group `n` under an automatic seat name no member
-    /// holds.
-    pub fn seat_member(&self, n: i64, session: &SessionId, now: OffsetDateTime) -> Rows<()> {
-        seat_member(self.conn, n, session, now).map_err(|e| self.fail(e))
+    /// Whether group `n` has a seat named `name`.
+    pub fn seat_exists(&self, n: i64, name: &str) -> Rows<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM group_seats WHERE group_id=?1 AND name=?2)",
+                params![n, name],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Seat `session` in group `n` under the new member seat `seat`.
+    pub fn seat_member(
+        &self,
+        n: i64,
+        session: &SessionId,
+        seat: &Label,
+        now: OffsetDateTime,
+    ) -> Rows<()> {
+        seat_member(self.conn, n, session, seat.as_str(), now).map_err(|e| self.fail(e))
     }
 
     /// Set `session`'s capture cursor to `message`.

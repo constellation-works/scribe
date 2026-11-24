@@ -65,14 +65,15 @@ mod db;
 pub use db::documents::Imported;
 pub use db::fsio;
 pub use db::locks::SessionLock;
+pub use db::write::ImportFacts;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
 pub use repository::ids::resolve_prefix;
 pub use repository::memory::{
-    MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
-    PassMemory, ProfileRevision,
+    MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
+    PROFILE_FILE, ProfileRevision,
 };
 pub use repository::memory::{bare, not_found};
 pub use repository::sessions::{
@@ -100,12 +101,12 @@ use crate::session::{ControlState, SessionFilter, SessionId, SessionRecord};
 use scribe_domain::tag::{self};
 use scribe_domain::{
     Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
-    Project, ProposalId, ProposalKind, ProposalState, Related, RelatedKind, SessionError,
-    SessionStatus, Speaker, StoreTag, TagDef, TagName, TagTable, WriteRefusal,
+    Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
+    StoreTag, TagDef, TagName, TagTable, WriteRefusal,
 };
 use scribe_domain::{
-    action, annotation, brief, capture, checks, config, consistency, entry, error, group, handoff,
-    instruction, message, models, proposal, record, redact, session,
+    action, annotation, brief, capture, checks, config, entry, error, group, handoff, instruction,
+    message, models, proposal, record, redact, session,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;

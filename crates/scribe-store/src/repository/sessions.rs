@@ -14,17 +14,18 @@
 
 use super::Sessions;
 use super::ids::resolve;
+use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
 use crate::checks::refusal;
+use crate::db::MemoryCommit;
 use crate::db::sessions::{self as rows, SessionTx};
-use crate::db::write::Move;
 use crate::db::{self, codec};
 use crate::error::{Error, Result};
 use crate::message::NewMessage;
 use crate::record::Listing;
 use crate::session::{self as session_mod, Child};
 use crate::{
-    CONTROL_FILE, ControlState, DB_FILE, Imported, MemoryWritten, PassMemory, RECORD_EXT, Redactor,
-    Related, SESSIONS_DIR, SessionFilter, SessionId, SessionRecord, Skipped, Store, fsio,
+    CONTROL_FILE, ControlState, DB_FILE, MemoryWritten, RECORD_EXT, Redactor, Related,
+    SESSIONS_DIR, SessionFilter, SessionId, SessionRecord, Skipped, Store, fsio,
 };
 use scribe_domain::WriteRefusal;
 use std::collections::{BTreeMap, BTreeSet};
@@ -101,24 +102,25 @@ impl Sessions<'_> {
     }
 
     /// Commit one pass window in one transaction: `record`, its `messages`,
-    /// the memory planned from `memory` (drafts already checked, with the
-    /// `sensitive` refusals the check made, reported first), and the
-    /// switches as `change` leaves them.
+    /// the memory `memory` plans (the caller's planner, run inside this
+    /// transaction), and the switches as `change` leaves them.
     ///
     /// # Errors
     ///
-    /// The store's write errors.
-    pub fn commit_window(
+    /// The planner's error, and the store's write errors.
+    pub fn commit_window<F>(
         &self,
         record: Option<&SessionRecord>,
         messages: &[NewMessage],
-        memory: Option<&PassMemory>,
-        sensitive: &[scribe_domain::memory::Refusal],
+        memory: MemoryStep<F>,
         redactor: &Redactor,
         change: impl FnOnce(&mut ControlState),
-    ) -> Result<MemoryWritten> {
+    ) -> Result<MemoryWritten>
+    where
+        F: FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, MemoryWritten)>,
+    {
         self.store
-            .commit_window(record, messages, memory, sensitive, redactor, change)
+            .commit_window(record, messages, memory, redactor, change)
     }
 
     /// Erase the session's rows, archives, documents and memory; `number`
@@ -133,8 +135,9 @@ impl Sessions<'_> {
         id: &SessionId,
         number: Option<NonZeroU64>,
         now: OffsetDateTime,
+        documents: impl FnOnce() -> Result<bool>,
     ) -> Result<SessionErasure> {
-        self.store.erase_session(id, number, now)
+        self.store.erase_session(id, number, now, documents)
     }
 
     /// The session an id, a unique prefix or an `s-<n>` names, also counting
@@ -552,26 +555,28 @@ impl Store {
 
     /// Commit one pass window in one `scribe.db` transaction: the record (its
     /// cursor advanced), the window's `messages`, the memory rows and
-    /// journal planned from `memory`, and the switches as `change` leaves
-    /// them; the memory files follow the journal (2_design.md §15.6, §15.7).
-    pub(crate) fn commit_window(
+    /// journal `memory` plans, and the switches as `change` leaves them;
+    /// the memory files follow the journal (2_design.md §15.6, §15.7).
+    pub(crate) fn commit_window<F>(
         &self,
         record: Option<&SessionRecord>,
         messages: &[crate::message::NewMessage],
-        memory: Option<&PassMemory>,
-        sensitive: &[scribe_domain::memory::Refusal],
+        memory: MemoryStep<F>,
         redactor: &Redactor,
         change: impl FnOnce(&mut ControlState),
-    ) -> Result<MemoryWritten> {
+    ) -> Result<MemoryWritten>
+    where
+        F: FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, MemoryWritten)>,
+    {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         // Memory is planned first (any open journal replayed, `m-<n>` items
         // migrated); its rows and journal commit with the record below.
-        let (memory_commit, memory_written) = match (memory, record) {
-            (Some(memory), Some(record)) => {
+        let (memory_commit, memory_written) = match memory {
+            MemoryStep::Skip => (db::MemoryCommit::default(), MemoryWritten::default()),
+            step @ (MemoryStep::Replay | MemoryStep::Plan(_)) => {
                 let mut writer = db::Writer::new(&conn, &self.root);
-                self.stage_window_memory(&mut writer, memory, sensitive, record)?
+                self.window_memory(&mut writer, step)?
             }
-            _ => (db::MemoryCommit::default(), MemoryWritten::default()),
         };
         let tx = db::sessions::SessionTx::begin(&conn, &self.root)?;
         let mut state = tx.control()?;
@@ -965,23 +970,6 @@ impl Store {
         codec::check_stamp(&path, &fsio::read(&path)?)
     }
 
-    /// `scribe store migrate`: import the file store's `pre-sqlite-*` and
-    /// `pre-issue-*` archives into `scribe.db` in one transaction, then
-    /// remove them.
-    ///
-    /// # Errors
-    ///
-    /// `migrate_blocked` while any session is switched on, while any rebuild
-    /// checkpoint file exists, or when there is nothing to import;
-    /// `store_corrupt` for a file store whose records never moved; store
-    /// failures.
-    pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Imported> {
-        self.transaction_as(Move::ByHand, now, || {
-            self.with_conn(|_, _| Ok(()))?;
-            Ok::<_, Error>(self.moved_now().unwrap_or_default())
-        })
-    }
-
     /// Every rebuild checkpoint file of a file store,
     /// `sessions/<yyyy>/<mm>/.<id>.rebuild.md`, by session.
     pub(crate) fn checkpoint_files(&self) -> Result<Vec<(SessionId, PathBuf)>> {
@@ -1174,6 +1162,7 @@ impl Store {
         id: &SessionId,
         number: Option<NonZeroU64>,
         now: OffsetDateTime,
+        documents: impl FnOnce() -> Result<bool>,
     ) -> Result<SessionErasure> {
         let (erased, already, changed, files) = self.with_conn(|conn, path| {
             if number.is_none() {
@@ -1186,7 +1175,7 @@ impl Store {
                     id: id.clone(),
                     path: path.to_path_buf(),
                 })?;
-            changed |= self.erase_session_documents(id, now)?;
+            changed |= documents()?;
             changed |= self.erase_session_memory(id, now)?;
             changed |= archive_changed;
             if changed || files > 0 {

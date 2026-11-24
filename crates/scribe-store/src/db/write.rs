@@ -33,11 +33,11 @@
 //!   write drains into the table. So a command refused for a locked store
 //!   waits once, and its line is kept.
 
-use crate::checks::admin;
 use crate::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use crate::error::{Error, Result};
 use crate::repository::audit::{self, AuditEvent};
-use crate::{Store, fsio};
+use crate::session::{ControlState, SessionId};
+use crate::{Imported, Store, fsio};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -88,10 +88,59 @@ pub(crate) enum Move {
     ByHand,
 }
 
+/// The check `store migrate` runs before its import, inside its write
+/// ([`Store::import_file_store`]).
+pub(crate) type ImportCheck = Box<dyn FnOnce(&ImportFacts<'_>) -> Result<()>>;
+
+/// What `store migrate`'s check reads, inside its write and before
+/// anything is imported. Each read is made when asked for.
+pub struct ImportFacts<'a> {
+    pub(crate) store: &'a Store,
+    pub(crate) conn: &'a Connection,
+    pub(crate) leftovers: &'a [String],
+}
+
+impl ImportFacts<'_> {
+    /// Whether anything is left to import: items only a file store holds,
+    /// or a `pre-sqlite-*`/`pre-issue-*` archive not yet in the tables.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn pending(&self) -> Result<bool> {
+        let db = self.store.root.join(DB_FILE);
+        let mut pending = !self.leftovers.is_empty();
+        for name in self.store.archive_dirs()? {
+            pending |= !db::archive::imported(self.conn, &db, &name)?;
+        }
+        Ok(pending)
+    }
+
+    /// The sessions' switches.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn control(&self) -> Result<ControlState> {
+        self.store.control()
+    }
+
+    /// Every rebuild checkpoint file of a file store, by session.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn checkpoint_files(&self) -> Result<Vec<(SessionId, PathBuf)>> {
+        self.store.checkpoint_files()
+    }
+}
+
 /// The write transaction of this thread, until its command ends.
 struct Pending {
     root: PathBuf,
     mode: Move,
+    /// `store migrate`'s check, until its move runs it.
+    check: Option<ImportCheck>,
     /// When the write began: it dates the archive import.
     now: OffsetDateTime,
     open: Option<Open>,
@@ -148,17 +197,40 @@ impl Store {
         &self,
         f: impl FnOnce() -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
-        self.transaction_as(Move::AtWrite, OffsetDateTime::now_utc(), f)
+        self.transaction_as(Move::AtWrite, None, OffsetDateTime::now_utc(), f)
     }
 
-    /// [`Store::transaction`] making `mode`'s move, dated `now`.
+    /// `scribe store migrate`'s write: import the file store's
+    /// `pre-sqlite-*` and `pre-issue-*` archives into `scribe.db` in one
+    /// transaction, then remove them. `check` runs inside it first, under
+    /// its lock and before anything is imported, and its refusal leaves the
+    /// store as it was.
+    ///
+    /// # Errors
+    ///
+    /// `check`'s refusal; `store_corrupt` for a file store whose records
+    /// never moved; store failures.
+    pub fn import_file_store(
+        &self,
+        now: OffsetDateTime,
+        check: impl FnOnce(&ImportFacts<'_>) -> Result<()> + 'static,
+    ) -> Result<Imported> {
+        self.transaction_as(Move::ByHand, Some(Box::new(check)), now, || {
+            self.with_conn(|_, _| Ok(()))?;
+            Ok::<_, Error>(self.moved_now().unwrap_or_default())
+        })
+    }
+
+    /// [`Store::transaction`] making `mode`'s move, dated `now`; `check`
+    /// is `store migrate`'s.
     pub(crate) fn transaction_as<T, E: From<Error>>(
         &self,
         mode: Move,
+        check: Option<ImportCheck>,
         now: OffsetDateTime,
         f: impl FnOnce() -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
-        let (value, cleanup) = self.transaction_with_cleanup(mode, now, f)?;
+        let (value, cleanup) = self.transaction_with_cleanup(mode, check, now, f)?;
         cleanup?;
         Ok(value)
     }
@@ -168,6 +240,7 @@ impl Store {
     fn transaction_with_cleanup<T, E: From<Error>>(
         &self,
         mode: Move,
+        check: Option<ImportCheck>,
         now: OffsetDateTime,
         f: impl FnOnce() -> Result<T, E>,
     ) -> Result<(T, Result<()>), E> {
@@ -182,6 +255,7 @@ impl Store {
                         return false;
                     }
                     pending.mode = Move::ByHand;
+                    pending.check = check;
                     pending.now = now;
                     true
                 });
@@ -202,6 +276,7 @@ impl Store {
                 p.replace(Some(Pending {
                     root: self.root.clone(),
                     mode,
+                    check,
                     now,
                     open: None,
                     after: After::default(),
@@ -264,7 +339,7 @@ impl Store {
         &self,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<(T, Result<()>)> {
-        self.transaction_with_cleanup(Move::AtWrite, OffsetDateTime::now_utc(), || {
+        self.transaction_with_cleanup(Move::AtWrite, None, OffsetDateTime::now_utc(), || {
             self.write_step(f)
         })
     }
@@ -304,9 +379,9 @@ impl Store {
                 conn: Rc::clone(&conn),
                 scope,
             });
-            Some((pending.mode, pending.now))
+            Some((pending.mode, pending.check.take(), pending.now))
         });
-        let Some((mode, now)) = begun else {
+        let Some((mode, check, now)) = begun else {
             // Not reachable: `write` always runs inside `transaction`.
             scope::rollback_outer(&conn);
             return Err(Error::corrupt(
@@ -315,7 +390,7 @@ impl Store {
             ));
         };
         self.check_stamp()?;
-        let moved = self.import_at_write(mode, now)?;
+        let moved = self.import_at_write(mode, check, now)?;
         PENDING.with(|p| {
             if let Some(pending) = p.borrow_mut().as_mut() {
                 pending.moved = Some(moved);
@@ -479,22 +554,5 @@ impl Store {
             self.after(|a| a.spooled.push(file));
         }
         Ok(inserted)
-    }
-
-    /// Refuse `store migrate` before anything is imported: when there is
-    /// no archive to import, while a session is on, or while a rebuild
-    /// checkpoint file waits in a leftover `sessions/`.
-    pub(crate) fn refuse_import(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
-        let db = self.root.join(DB_FILE);
-        let mut pending = !leftovers.is_empty();
-        for name in self.archive_dirs()? {
-            pending |= !db::archive::imported(conn, &db, &name)?;
-        }
-        admin::check_migrate_pending(pending)?;
-        admin::check_migrate_none_on(&self.control()?)?;
-        let checkpoints = self.checkpoint_files()?;
-        admin::check_migrate_no_checkpoint(
-            checkpoints.first().map(|(id, path)| (id, path.as_path())),
-        )
     }
 }

@@ -731,7 +731,9 @@ fn forget_session(
         Err(error) => return Err(error),
     };
     let number = tx.sessions().numbers()?.get(&id).copied();
-    let erased = tx.sessions().erase(&id, number, now)?;
+    let erased = tx.sessions().erase(&id, number, now, || {
+        crate::apps::entry::erase_session_documents(tx, &id, now)
+    })?;
     let number = tx.sessions().numbers()?.get(&id).copied();
     Ok(if erased.already {
         SessionForgetOutcome::Already {

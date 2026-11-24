@@ -18,15 +18,11 @@
 
 use super::Memory;
 use crate::checks::refusal;
-use crate::db::{
-    self, FileOp, HistoryRow, Journal, MemoryCommit, PendingRow, Revision, Writer, codec,
-};
+use crate::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, Revision, Writer, codec};
 use crate::error::{Error, Result};
 use crate::models::{MemoryContext, PendingContext};
 use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};
-use scribe_domain::memory::{
-    self, Draft, Milestone, NowItem, PassChange, ProfileView, Refusal, Stem,
-};
+use scribe_domain::memory::{Milestone, NowItem, Pending, ProfileView, Refusal, Stem};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
@@ -155,15 +151,18 @@ pub struct MemoryWritten {
     pub refused: Vec<Refusal>,
 }
 
-/// The memory a pass window writes with its record.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PassMemory {
-    /// The checked elements, tied to their turns.
-    pub drafts: Vec<Draft>,
-    /// The window's signal: its last message id and 0–3.
-    pub signal: Option<(String, u8)>,
-    /// The session's last pass: its pending candidates are dropped.
-    pub final_pass: bool,
+/// What a pass window's write does with memory
+/// ([`crate::repository::Sessions::commit_window`]). The caller decides
+/// which; the store runs it inside the window's transaction.
+pub enum MemoryStep<F> {
+    /// The window writes no memory.
+    Skip,
+    /// Nothing to plan, but a journal a crash left open is still applied:
+    /// every pass window is a write.
+    Replay,
+    /// Plan with `F` against this write's rows and the files as the open
+    /// journals leave them; its rows and journal commit with the record.
+    Plan(F),
 }
 
 /// The memory files a write reads inside its transaction.
@@ -182,15 +181,6 @@ thread_local! {
     /// Tests: fail the next memory write after its journal commits and
     /// before any file is touched, as a crash there would.
     pub static CRASH_AFTER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Record that `item` cites `cites`, so a forget of it deletes them.
-fn link(commit: &mut MemoryCommit, item: &str, cites: &[(SessionId, String)]) {
-    for (session, message) in cites {
-        commit
-            .links
-            .push((item.to_owned(), session.to_string(), message.clone()));
-    }
 }
 
 fn sha256(text: &str) -> String {
@@ -681,124 +671,58 @@ impl Store {
         Ok(())
     }
 
-    /// Plan a pass window's memory under the lock the caller holds, for
-    /// the session `record` (§15.5), after any open journal is replayed:
-    /// each draft's quote checked again
-    /// against its turn and its texts against the redactor, then planned
-    /// against the current files and this session's pending candidates
-    /// ([`memory::plan`]). A file whose content would not change is not
-    /// written, so a replayed window writes nothing. The final pass drops
-    /// the session's pending candidates. The pass commits the returned rows
-    /// and journal in its own transaction, with the record.
-    pub(crate) fn stage_window_memory(
+    /// A pass window's memory step under the lock the caller holds, after
+    /// any open journal is replayed: `Plan` runs the caller's planner
+    /// against this write's rows and the current files. The pass commits
+    /// the returned rows and journal in its own transaction, with the
+    /// record.
+    pub(crate) fn window_memory<F>(
         &self,
         writer: &mut Writer<'_>,
-        pass: &PassMemory,
-        sensitive: &[Refusal],
-        record: &crate::SessionRecord,
-    ) -> Result<(MemoryCommit, MemoryWritten)> {
-        if pass.drafts.is_empty()
-            && sensitive.is_empty()
-            && pass.signal.is_none()
-            && !pass.final_pass
-        {
-            // Nothing to plan, but a journal a crash left open is still
-            // applied: every pass window is a write.
-            if !writer.open_journals()?.is_empty() && !self.defer_journals() {
-                self.prepare_subdir(&self.memory_dir())?;
-                self.replay(writer)?;
-            }
-            return Ok((MemoryCommit::default(), MemoryWritten::default()));
-        }
-        let session = record.id.clone();
-        let path = self.memory_dir();
-        let files = self.prepare_memory(writer)?;
-        let files = &files;
-        let planned = (|| -> Result<(MemoryCommit, MemoryWritten)> {
-            let mut written = MemoryWritten {
-                refused: sensitive.to_vec(),
-                ..MemoryWritten::default()
-            };
-            let drafts = &pass.drafts;
-            let pending = writer.pending(&session)?;
-            let (changes, refused) =
-                memory::plan(drafts, &files.now, &files.milestones, &pending, &session);
-            written.refused.extend(refused);
-            let mut commit = MemoryCommit::default();
-            for change in changes {
-                match change {
-                    PassChange::Now(item, cites) => {
-                        link(&mut commit, item.stem.as_str(), &cites);
-                        if !files.now.contains(&item) {
-                            written
-                                .written
-                                .push(format!("memory:{NOW_DIR}/{}", item.stem));
-                            commit.ops.push(now_op(&path, &item)?);
-                        }
-                    }
-                    PassChange::Milestone(item, cites) => {
-                        link(&mut commit, item.stem.as_str(), &cites);
-                        if !files.milestones.contains(&item) {
-                            written
-                                .written
-                                .push(format!("memory:{MILESTONES_DIR}/{}", item.stem));
-                            commit.ops.push(milestone_op(&path, &item)?);
-                        }
-                    }
-                    PassChange::AddPending {
-                        message,
-                        subject,
-                        text,
-                    } => {
-                        // The last pass keeps nothing it would drop at once.
-                        if !pass.final_pass {
-                            written.pending += 1;
-                            commit.pending_add.push(PendingRow {
-                                session: session.clone(),
-                                message,
-                                subject,
-                                text,
-                                created: record.updated,
-                            });
-                        }
-                    }
-                    PassChange::DropPending(id) => commit.pending_drop.push(id),
+        step: MemoryStep<F>,
+    ) -> Result<(MemoryCommit, MemoryWritten)>
+    where
+        F: FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, MemoryWritten)>,
+    {
+        let plan = match step {
+            MemoryStep::Skip => return Ok((MemoryCommit::default(), MemoryWritten::default())),
+            MemoryStep::Replay => {
+                if !writer.open_journals()?.is_empty() && !self.defer_journals() {
+                    self.prepare_subdir(&self.memory_dir())?;
+                    self.replay(writer)?;
                 }
+                return Ok((MemoryCommit::default(), MemoryWritten::default()));
             }
-            if pass.final_pass && (!pending.is_empty() || !commit.pending_drop.is_empty()) {
-                commit.pending_clear = Some(session.clone());
-            }
-            if let Some((through, signal)) = &pass.signal {
-                commit
-                    .signals
-                    .push((session.clone(), through.clone(), (*signal).min(3)));
-            }
-            Ok((commit, written))
-        })()?;
-        Ok(planned)
+            MemoryStep::Plan(plan) => plan,
+        };
+        let dir = self.memory_dir();
+        let files = self.prepare_memory(writer)?;
+        plan(
+            &MemoryRows {
+                writer: &*writer,
+                dir: &dir,
+            },
+            &files,
+        )
     }
 
-    /// A pass window's memory written on its own, for tests: planned and
+    /// A pass window's memory step written on its own, for tests: run and
     /// committed through one journal, as the pass's transaction does.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn write_window_memory(
+    pub(crate) fn write_window_memory<F>(
         &self,
-        pass: &PassMemory,
-        redactor: &crate::Redactor,
-        record: &crate::SessionRecord,
-    ) -> Result<MemoryWritten> {
+        step: MemoryStep<F>,
+        now: OffsetDateTime,
+    ) -> Result<MemoryWritten>
+    where
+        F: FnOnce(&MemoryRows<'_>, &MemoryFiles) -> Result<(MemoryCommit, MemoryWritten)>,
+    {
         self.prepare_dir(&self.root)?;
         self.prepare_subdir(&self.memory_dir())?;
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let mut writer = Writer::new(&conn, &self.root);
-        let (drafts, sensitive) =
-            crate::checks::memory::check_sensitive_drafts(&pass.drafts, redactor);
-        let pass = PassMemory {
-            drafts,
-            ..pass.clone()
-        };
-        let (commit, written) = self.stage_window_memory(&mut writer, &pass, &sensitive, record)?;
-        self.commit_memory(&mut writer, &commit, record.updated)?;
+        let (commit, written) = self.window_memory(&mut writer, step)?;
+        self.commit_memory(&mut writer, &commit, now)?;
         drop(writer);
         drop(conn);
         self.stamp_format()?;
@@ -965,6 +889,15 @@ impl MemoryRows<'_> {
     /// The store's read errors.
     pub fn user_text(&self, session: &str) -> Result<String> {
         self.writer.user_text(session)
+    }
+
+    /// `session`'s pending (undated) candidates.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn pending(&self, session: &SessionId) -> Result<Vec<Pending>> {
+        self.writer.pending(session)
     }
 
     /// The history rows of these kinds.
