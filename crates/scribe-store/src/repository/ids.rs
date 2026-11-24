@@ -63,6 +63,12 @@ pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<Option<String>> {
     Ok(resolve(input, ids)?.map(|i| ids[i].clone()))
 }
 
+/// The number of a group id `g-<n>`, when it is one exactly.
+pub fn number(id: &str) -> Option<i64> {
+    let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
+    (n > 0 && format!("g-{n}") == id).then_some(n)
+}
+
 fn ambiguous<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Error {
     let mut candidates: Vec<&str> = candidates.collect();
     candidates.sort_unstable();

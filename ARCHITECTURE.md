@@ -142,8 +142,9 @@ went to the store's `error.rs`, beside `Error`. The agent-author check went
 to `apps/tag/rules.rs`, and the free-text and reason checks to
 `apps/entry/rules.rs`, the lowest app that uses them. The session-write
 checks went to `apps/session/rules.rs`. `checks::group::number`, the
-`g-<n>` parser, went to the store's `contracts/group.rs`, and the store root
-re-exports it as `group_number`.
+`g-<n>` parser, went to the store's `repository/ids.rs` beside
+`resolve_prefix`, where the store keeps id-format parsing; contracts hold
+shapes only. The store root re-exports it as `group_number`.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

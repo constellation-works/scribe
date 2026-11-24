@@ -12,9 +12,3 @@ pub struct LastGroup {
     /// Summary produced at close, if still retained.
     pub summary: Option<String>,
 }
-
-/// The number of a group id `g-<n>`, when it is one exactly.
-pub fn number(id: &str) -> Option<i64> {
-    let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
-    (n > 0 && format!("g-{n}") == id).then_some(n)
-}
