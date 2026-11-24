@@ -1,6 +1,7 @@
 //! `scribe tag show`: one tag's settings and capture rules. Read-only: no
 //! lock, no audit, no write.
 
+use super::ConfigReads;
 use crate::runtime::Ctx;
 use crate::{Result, TagDef};
 

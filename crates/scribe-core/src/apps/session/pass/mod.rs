@@ -14,6 +14,7 @@ use crate::apps::memory::{WindowMemory, plan_window};
 use crate::apps::proposal::{
     checked_outcome, has_context_and_subject, open_under, pass_entry, written_from,
 };
+use crate::apps::tag::ConfigReads;
 use crate::pass::{
     MAX_CANDIDATES, MAX_COLLECTED, MAX_OPEN_CANDIDATES, admission, candidate_says, claim_covers,
     covering_claim, entry_says, own_span,

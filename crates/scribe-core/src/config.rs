@@ -5,7 +5,8 @@
 //! defaults. A bad key or value is refused at load, naming it, never
 //! defaulted (STD-02 R28; docs/design/scribe/4_decisions.md, "Environment
 //! settings fall back rather than refuse"). This module parses text; the
-//! store reads the file (STD-02 R5).
+//! store reads the file (STD-02 R5) and [`load`] turns its text into a
+//! [`Config`]. The tag app merges the store tags in (`apps/tag`).
 //!
 //! ```toml
 //! [tags.preferences]
@@ -66,31 +67,6 @@
 //! paths = ["codebases/scribe"]
 //! ```
 
-/// The default characters of message content in one window (2_design.md §5.3).
-pub const WINDOW_CHARS: usize = 15_000;
-
-/// The default number of messages in one window.
-pub const WINDOW_MESSAGES: usize = 40;
-
-/// Bounds on each consecutive model window, configured under `[catalog]`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WindowLimits {
-    /// The most messages in one call.
-    pub messages: std::num::NonZeroUsize,
-    /// The most Unicode characters of message content in one call.
-    pub chars: std::num::NonZeroUsize,
-}
-
-impl Default for WindowLimits {
-    fn default() -> Self {
-        Self {
-            messages: std::num::NonZeroUsize::new(WINDOW_MESSAGES)
-                .unwrap_or(std::num::NonZeroUsize::MIN),
-            chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
-        }
-    }
-}
-
 /// Default windows before sealing an open segment.
 pub const SEGMENT_WINDOWS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(3) {
     Some(n) => n,
@@ -107,6 +83,7 @@ use crate::tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, Rule, RuleOrigin,
     TagDef, TagError, TagTable,
 };
+pub use scribe_tools::window::{WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
@@ -1049,4 +1026,62 @@ fn project_line(text: &str, slug: &str) -> Option<usize> {
     needles
         .iter()
         .find_map(|needle| text.find(needle).map(|at| line_of(text, at)))
+}
+
+/// The configuration `config.toml`'s text (`Tags::config_text`) holds, or the
+/// defaults when there is none. A bad key or value is refused, naming it.
+pub(crate) fn load(text: Option<(std::path::PathBuf, String)>) -> crate::Result<Config> {
+    let Some((path, text)) = text else {
+        return Ok(Config::default());
+    };
+    let config = Config::parse(&text).map_err(|source| crate::Error::Config {
+        path,
+        source: Box::new(source),
+    })?;
+    // Keys this build no longer reads: logged once per process, however
+    // often a command loads the config.
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !config.warnings.is_empty() && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        for warning in &config.warnings {
+            tracing::warn!("{warning}");
+        }
+    }
+    Ok(config)
+}
+
+/// The store's [`Redactor`](crate::Redactor) built from a [`Config`], at the
+/// call it had in the store (`Redactor::from_config`).
+pub trait RedactorFromConfig {
+    /// A redactor for the variables `config` names, their values looked up
+    /// with `lookup` (the process environment, in the CLI).
+    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self;
+}
+
+impl RedactorFromConfig for crate::Redactor {
+    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self {
+        Self::new(
+            config
+                .secret_names()
+                .into_iter()
+                .filter_map(|name| lookup(name).map(|value| (name.to_owned(), value))),
+        )
+    }
+}
+
+/// The `[redact] env` names in `config` whose value `lookup` cannot supply
+/// (absent or empty). The model credentials are not included: they are
+/// alternatives, so one may legitimately be unset. A caller that persists
+/// free text refuses to write while this is non-empty, rather than store
+/// text it was told to mask but cannot (STD-05 R13).
+#[must_use]
+pub fn unresolved_redact_env(
+    config: &Config,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    config
+        .redact_env
+        .iter()
+        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
+        .cloned()
+        .collect()
 }

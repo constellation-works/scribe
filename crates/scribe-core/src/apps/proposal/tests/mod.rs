@@ -2,6 +2,7 @@
 //! (STD-02 R19).
 
 mod candidates;
+mod retired;
 mod rules;
 
 pub(crate) use scribe_domain::fixtures::entry;

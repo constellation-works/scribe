@@ -5,6 +5,7 @@
 
 use super::HookError;
 use super::verbs::GroupVerbs;
+use crate::apps::tag::ConfigReads;
 use crate::control::is_control;
 use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, PortError, Unreadable};

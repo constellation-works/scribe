@@ -2,6 +2,7 @@
 //! state and notices.
 
 use crate::action::{self, ActionState, Pickup};
+use crate::apps::tag::ConfigReads;
 use crate::runtime::Ctx;
 use crate::runtime::errors::WriteError;
 use crate::{Entry, TagTable};

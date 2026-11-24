@@ -4,5 +4,3 @@ mod control;
 mod markers;
 mod project;
 mod transcript;
-
-pub(crate) use scribe_domain::fixtures::tags_with_idea;

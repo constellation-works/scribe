@@ -6,6 +6,7 @@
 //! ports and composition report, and every app error maps into.
 
 use crate::SessionId;
+use crate::apps::tag::ConfigReads;
 use std::path::PathBuf;
 
 /// Why a read did not run.

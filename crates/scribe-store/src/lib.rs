@@ -2,7 +2,7 @@
 //! everything that touches disk.
 //!
 //! The business logic is in `scribe-domain`, with no I/O (`entry`, `tag`,
-//! `session`, `proposal`, `config`, `verbatim`); this crate is the only one
+//! `session`, `proposal`, `verbatim`); this crate is the only one
 //! that reads or writes the data root, so a second backend replaces this
 //! crate and nothing else. `scribe-core` re-exports it as its `store`
 //! module. It is split by responsibility:
@@ -99,7 +99,7 @@ pub use repository::{Snapshot, Tx};
 #[cfg(feature = "test-support")]
 mod seed;
 
-pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
+pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 
 // The store's own tests reach the audit record shape at its old path.
 #[cfg(test)]
@@ -107,7 +107,6 @@ use repository::audit;
 // The domain at the paths this code had as scribe-core's `store` module.
 #[cfg(test)]
 use crate as store;
-use crate::config::Config;
 use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::proposal::Proposal;
 use crate::session::{ControlState, SessionId, SessionRecord};
@@ -115,16 +114,19 @@ use scribe_domain::tag::{self};
 use scribe_domain::{
     Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
     Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
-    StoreTag, TagDef, TagTable,
+    StoreTag, TagTable,
 };
-use scribe_domain::{config, entry, handoff, models, proposal, record, session, text};
-// The domain names the redaction tests (`tests/redact.rs`) reach at the
-// crate root, as they did in the domain.
-#[cfg(test)]
+use scribe_domain::{entry, handoff, models, proposal, record, session, text};
+// The domain names the redaction tests (`tests/redact.rs`) and their
+// shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
+// in the domain.
+#[cfg(any(test, feature = "test-support"))]
 use scribe_domain::{
     Admitted, AnswerIn, AuthorName, Decision, EntryCandidate, ItemAnswer, ItemClosure, OpenItem,
-    Outcome, OutcomeState, Window, WindowTurn,
+    Outcome, OutcomeState,
 };
+#[cfg(test)]
+use scribe_domain::{Window, WindowTurn};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

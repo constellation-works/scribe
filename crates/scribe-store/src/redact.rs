@@ -5,7 +5,7 @@
 //! Before the store writes an entry, a session record or a proposal, every
 //! free-text field in [`REDACTED_FIELDS`] passes [`Redactor`], which masks the
 //! live values of the configured credential variables
-//! ([`crate::Config::secret_names`]) and high-confidence credential shapes
+//! (`Config::secret_names`, in scribe-core) and high-confidence credential shapes
 //! (STD-05 R14): an `Authorization: Bearer …` token, `ghp_`/`github_pat_`,
 //! `sk-ant-`/`sk-`, `AKIA…` and `xox[bp]-` tokens, and PEM private-key
 //! blocks. It matches values and shapes, not words, so a sentence about a
@@ -15,7 +15,6 @@
 //! carry no free text at all. No I/O: the caller reads the environment and
 //! hands the values in (STD-02 R3).
 
-use crate::config::Config;
 use crate::entry::Entry;
 use crate::proposal::Proposal;
 use crate::session::{SEGMENT_HEADING_CHARS, SessionRecord};
@@ -102,17 +101,6 @@ impl Redactor {
         Self { secrets }
     }
 
-    /// A redactor for the variables `config` names, their values looked up
-    /// with `lookup` (the process environment, in the CLI).
-    pub fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self {
-        Self::new(
-            config
-                .secret_names()
-                .into_iter()
-                .filter_map(|name| lookup(name).map(|value| (name.to_owned(), value))),
-        )
-    }
-
     /// `text` with every configured value replaced by `[redacted:<NAME>]`
     /// and every high-confidence credential shape replaced by a labelled
     /// marker such as `[redacted:github-token]`.
@@ -180,24 +168,6 @@ impl Redactor {
     pub fn proposal(&self, proposal: &mut Proposal) {
         self.mask_all(proposal_fields(proposal));
     }
-}
-
-/// The `[redact] env` names in `config` whose value `lookup` cannot supply
-/// (absent or empty). The model credentials are not included: they are
-/// alternatives, so one may legitimately be unset. A caller that persists
-/// free text refuses to write while this is non-empty, rather than store
-/// text it was told to mask but cannot (STD-05 R13).
-#[must_use]
-pub fn unresolved_redact_env(
-    config: &Config,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Vec<String> {
-    config
-        .redact_env
-        .iter()
-        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
-        .cloned()
-        .collect()
 }
 
 /// The shortest tail after a credential prefix that counts as a credential.
@@ -411,7 +381,7 @@ pub fn entry_fields(entry: &mut Entry) -> Vec<(&'static str, &mut String)> {
 
 /// The free-text fields of a session record; each term and each segment
 /// is two fields.
-pub(super) fn session_fields(record: &mut SessionRecord) -> Vec<(&'static str, &mut String)> {
+pub fn session_fields(record: &mut SessionRecord) -> Vec<(&'static str, &mut String)> {
     let mut fields = vec![
         ("session.title", &mut record.title),
         ("session.summary", &mut record.summary),
@@ -433,7 +403,7 @@ pub(super) fn session_fields(record: &mut SessionRecord) -> Vec<(&'static str, &
 }
 
 /// The free-text fields of a proposal; each quote is one field.
-pub(super) fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mut String)> {
+pub fn proposal_fields(proposal: &mut Proposal) -> Vec<(&'static str, &mut String)> {
     let mut fields = vec![("proposal.reason", &mut proposal.reason)];
     if let Some(instruction) = &mut proposal.instruction
         && let Some(quote) = &mut instruction.quote

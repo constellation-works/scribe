@@ -3,6 +3,7 @@
 //! parses, calls [`run`] and renders the [`PassReport`].
 
 use super::PassVerbs;
+use crate::apps::tag::ConfigReads;
 use crate::control;
 use crate::models::SessionRequest;
 use crate::runtime::audit::PersistedAudit;

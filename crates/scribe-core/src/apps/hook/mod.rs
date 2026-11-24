@@ -19,6 +19,8 @@ mod session_end;
 mod session_start;
 mod stdin;
 mod stop;
+#[cfg(test)]
+mod tests;
 mod user_prompt_submit;
 
 pub use codex::{CodexInput, CodexStop, refused};

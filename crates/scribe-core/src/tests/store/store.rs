@@ -263,6 +263,7 @@ mod cites {
     use crate::store::Store;
     use crate::store::tests::private_tempdir;
     use crate::testing::StoreTestInternals;
+    use crate::testing::ViewTestReads;
     use std::fs;
     use time::macros::datetime;
 

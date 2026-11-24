@@ -4,6 +4,7 @@
 use super::verbs::CloseGroupOutcome;
 use super::verbs::GroupVerbs;
 use super::{Error as GroupError, checked_transcript};
+use crate::apps::tag::ConfigReads;
 use crate::group::{GroupCloser, GroupConsent};
 use crate::runtime::{AuditNotes, Ctx, PortError};
 use crate::{Config, Models, Provider, SessionId, WriteRefusal};

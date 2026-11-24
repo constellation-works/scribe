@@ -6,9 +6,33 @@
 //! its request from them.
 
 use crate::transcript::{Message, user_turn};
-use scribe_domain::config::{WINDOW_MESSAGES, WindowLimits};
 use scribe_domain::entry::Speaker;
 use scribe_domain::models::{CUT_MARK, PassMessage};
+
+/// The default characters of message content in one window (2_design.md §5.3).
+pub const WINDOW_CHARS: usize = 15_000;
+
+/// The default number of messages in one window.
+pub const WINDOW_MESSAGES: usize = 40;
+
+/// Bounds on each consecutive model window, configured under `[catalog]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowLimits {
+    /// The most messages in one call.
+    pub messages: std::num::NonZeroUsize,
+    /// The most Unicode characters of message content in one call.
+    pub chars: std::num::NonZeroUsize,
+}
+
+impl Default for WindowLimits {
+    fn default() -> Self {
+        Self {
+            messages: std::num::NonZeroUsize::new(WINDOW_MESSAGES)
+                .unwrap_or(std::num::NonZeroUsize::MIN),
+            chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
+        }
+    }
+}
 
 /// The session's messages as a pass reads them, in transcript order.
 /// Daniel's turns are [`user_turn`].

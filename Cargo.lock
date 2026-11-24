@@ -406,6 +406,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "toml",
  "tracing",
 ]
 
@@ -418,8 +419,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "time",
- "toml",
- "tracing",
  "unicode-normalization",
 ]
 

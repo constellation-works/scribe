@@ -172,7 +172,7 @@ done
 DOMAIN_RINGS='
 base:       record text verbatim provider
 records:    session entry handoff tag proposal
-rules:      trigger voice claim models config
+rules:      trigger voice claim models
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -501,14 +501,15 @@ for retired in \
   crates/scribe-domain/src/transcript.rs \
   crates/scribe-domain/src/transcript \
   crates/scribe-domain/src/origin.rs \
-  crates/scribe-domain/src/control.rs; do
+  crates/scribe-domain/src/control.rs \
+  crates/scribe-domain/src/config.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain
 # and its store/ module scribe-store; scribe-core keeps apps/, runtime/,
 # tests/ and lib.rs. A module file under scribe-core with one of these names is a copy
 # that should be in the crate below.
-for module in action activity annotation ask brief capture checks claim config consistency \
+for module in action activity annotation ask brief capture checks claim consistency \
   control entry error group handoff instruction memory message models origin pass proposal \
   provider record redact search session tag text transcript trigger verbatim voice \
   store testing; do

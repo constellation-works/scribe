@@ -8,7 +8,6 @@
 //! cause stays on [`std::error::Error::source`], so a surface can print the
 //! whole chain once without repeating it.
 
-use crate::config::ConfigError;
 use crate::entry::EntryId;
 use crate::session::{LinkError, SessionId};
 use std::io;
@@ -106,9 +105,9 @@ pub enum Error {
     Config {
         /// The config file.
         path: PathBuf,
-        /// What was wrong, naming the key.
+        /// What was wrong, naming the key (`ConfigError`, in scribe-core).
         #[source]
-        source: ConfigError,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
     /// `scribe.db` refused an operation that is not a lock timeout or a
     /// damaged file (2_design.md §15.7).

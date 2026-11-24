@@ -43,6 +43,7 @@ use crate::apps::group;
 use crate::apps::group::HookError;
 use crate::apps::group::refusal;
 use crate::apps::session;
+use crate::apps::tag::ConfigReads;
 use crate::capture::{self, Parsed, Turn};
 use crate::message::NewMessage;
 use crate::runtime::Ctx;

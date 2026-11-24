@@ -4,6 +4,7 @@
 //! tag without changing config.toml.
 
 mod add;
+mod config;
 mod list;
 pub mod rules;
 mod show;
@@ -13,6 +14,7 @@ mod update;
 mod verbs;
 
 pub use add::TagAddInput;
+pub use config::ConfigReads;
 pub use list::{TagList, list_tags};
 pub use rules::check_agent_author;
 pub use show::Shown;

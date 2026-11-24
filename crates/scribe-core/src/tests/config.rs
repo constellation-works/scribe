@@ -514,3 +514,24 @@ fn bad_capture_rules_are_refused_naming_the_field() {
     );
     assert!(Config::parse(&many).is_err());
 }
+
+#[test]
+fn unresolved_redact_env_names_only_the_unset_redact_names() {
+    use crate::config::unresolved_redact_env;
+    let config = Config::parse("[redact]\nenv = [\"GITHUB_TOKEN\", \"EXTRA_TOKEN\"]\n").unwrap();
+    assert_eq!(
+        unresolved_redact_env(&config, |name| {
+            (name == "GITHUB_TOKEN").then(|| String::from("a long enough value"))
+        }),
+        ["EXTRA_TOKEN"]
+    );
+    assert_eq!(
+        unresolved_redact_env(&config, |_| Some(String::new())),
+        ["GITHUB_TOKEN", "EXTRA_TOKEN"],
+        "an empty value counts as unset"
+    );
+    assert!(
+        unresolved_redact_env(&Config::default(), |_| None).is_empty(),
+        "the default credentials are alternatives, not [redact] env names"
+    );
+}

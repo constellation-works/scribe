@@ -5,6 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use scribe_core::RedactorFromConfig;
 use scribe_core::TagVerbs;
 use scribe_core::testing::StoreTestReads;
 use scribe_core::testing::ViewTestReads;

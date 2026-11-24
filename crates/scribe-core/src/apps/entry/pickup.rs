@@ -1,6 +1,7 @@
 //! Pickup verbs: a consumer's note on an action entry (2_design.md §4.6).
 
 use crate::action::{self, Pickup};
+use crate::apps::tag::ConfigReads;
 
 use super::written::{EntryWritten, written};
 use crate::apps::tag::check_agent_author;

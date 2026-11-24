@@ -26,6 +26,7 @@ pub use turns::{claude as claude_turns, codex as codex_turns, past as past_turns
 pub use verbs::{CloseGroupOutcome, GroupVerbs};
 
 use crate::apps::session::{self, ModelsOnce};
+use crate::apps::tag::ConfigReads;
 use crate::composition::Context;
 use crate::group::{GroupAdded, GroupAddition, SeatStart};
 use crate::message::NewMessage;
