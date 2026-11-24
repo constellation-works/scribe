@@ -748,8 +748,11 @@ Four crates, specified in [specs/architecture.md](./specs/architecture.md):
   until Orbit jobs replace them.
 - `scribe-store`: `db/`, one repository per record, and `contracts/` with
   record shapes only.
-- `scribe-tools`: pure parsing (transcripts, windows, markers, hook
-  payloads), importing only the store's contracts.
+- `scribe-tools`: the functions hooks and activities are built from, each
+  subject whole in one place (finding, reading and parsing transcripts,
+  windows, markers, hook payloads). It has its own `fs` module and uses
+  `scribe-store` as needed; a tool that writes takes the caller's `Tx`, and
+  it never names `scribe-core`.
 
 `scribe-domain` dissolves into those three homes.
 
@@ -758,7 +761,16 @@ instead of per app; contracts limited to record shapes, with each app's
 types and rules in the core; `runtime` limited to the context, resolution,
 errors and audit; and `tools` as a pure library below the core instead of
 the surface Orbit activities call, because the hooks parse transcripts.
-Daniel: "I meant activity calls, but let's go with yours."
+Daniel: "I meant activity calls, but let's go with yours." He then widened
+`tools`:
+
+> "allow tools to have its own fs module or import from scribe-store as
+> needed. instead of creating logics spread across multiple places"
+
+So `tools` stays a library below the core, but it is not pure: it reads
+files through its own `fs` module and uses the store, so that one subject
+(a transcript: finding, reading, parsing, cutting a window) is not split
+between a reader in the core and a parser elsewhere.
 
 ### Alternatives
 
@@ -767,6 +779,11 @@ Daniel: "I meant activity calls, but let's go with yours."
   Stop and capture hooks parse transcripts, so parsing must sit below the
   apps; whatever an activity calls that reads or writes records is an
   ordinary CLI command mapped to an app.
+- `tools` as a pure library over bytes and text, importing only the
+  store's contracts (the chief's first revision). Replaced by Daniel's
+  amendment, because it split each subject between a reader in the core and
+  a parser in `tools`. He also offered leaving `tools` out; the chief kept
+  it, so the hooks and future activities share one home for that code.
 - Repositories per app, as sketched. Rejected because apps and records do
   not line up: the session app writes sessions, messages, proposals, entries
   and memory.
@@ -778,7 +795,8 @@ Daniel: "I meant activity calls, but let's go with yours."
   `exec`; apps call each other only through `run` or what `mod.rs`
   re-exports, in an order the guard script holds.
 - Departures from the crates, "one repository per record", "contracts hold
-  shapes only" or "tools are pure" go back to Daniel.
+  shapes only" or the tools' limits (writes take the caller's `Tx`; no
+  `scribe-core` import) go back to Daniel.
 - ORB-27921 migrates in the spec's steps 2–6, none changing behaviour;
   ORB-27911 keeps the deletions.
 - Cost: a second full move of every file within a day of ORB-27707, which

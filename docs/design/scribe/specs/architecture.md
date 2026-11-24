@@ -1,6 +1,6 @@
 ---
 type: design
-summary: "Spec: architecture — four crates (scribe, scribe-core, scribe-store, scribe-tools), apps with one exec each, runtime and composition in core, repositories per record, record shapes as store contracts, pure tools, and the migration from the domain/store/core/CLI split"
+summary: "Spec: architecture — four crates (scribe, scribe-core, scribe-store, scribe-tools), apps with one exec each, runtime and composition in core, repositories per record, record shapes as store contracts, tools that keep each subject whole (transcript finding, reading and parsing), and the migration from the domain/store/core/CLI split"
 last_validated: 2026-11-24
 ---
 
@@ -44,7 +44,7 @@ Four failures in the code at `763052c`:
 ```
 scribe  ->  scribe-core  ->  scribe-store
                  |                ^
-                 +-> scribe-tools-+   (contracts only)
+                 +-> scribe-tools-+
 ```
 
 | Crate | Owns | Internal dependencies | Banned |
@@ -52,7 +52,7 @@ scribe  ->  scribe-core  ->  scribe-store
 | `scribe` (binary) | Argument declarations, the mapping from arguments to an app command, rendering, exit codes. The only stdout, stderr and terminal access. | `scribe-core` | `rusqlite`, `scribe-store`, `scribe-tools` |
 | `scribe-core` | The apps, the runtime they share, and composition. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts`). The only crate that touches the data root. | none | `clap`, `tracing-subscriber`, any terminal crate |
-| `scribe-tools` | Pure functions over bytes and text: transcript parsing, window building, marker and payload parsing. | `scribe-store` (its `contracts` module only) | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix`, `std::fs`, `std::net`, `std::process`, `std::env` |
+| `scribe-tools` | The functions that hooks and activities need, each subject whole in one place: finding, reading and parsing transcripts, window building, marker and payload parsing. It has its own `fs` module and uses `scribe-store` as needed. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `std::net`, `std::process`, `std::env` |
 
 `scribe-domain` is deleted. Its contents go to three places by kind
 ([Where each current file goes](#where-each-current-file-goes)).
@@ -120,7 +120,7 @@ apps/
     rules.rs         this app's pure rules (rules/ when it outgrows one file)
 runtime/
   mod.rs             Runtime, Ctx
-  host.rs            clock, transcript discovery and reads: the real ports
+  host.rs            the real clock; the transcript port's implementation is in scribe-tools
   resolve.rs         id and session resolution
   errors.rs          Error, read and write error mapping
   audit.rs           the audit guard around a mutating command
@@ -148,7 +148,7 @@ providers/           interim: the Models port, its shapes and adapters
 - A flow has three steps, in this order:
   1. **load** what it needs from one `store.read()` snapshot into a plain
      input value;
-  2. **plan** with pure functions from the app's `rules` and `scribe-tools`;
+  2. **plan** with the app's pure `rules` and with `scribe-tools`;
   3. **commit** in one `store.write(|tx| …)`, re-running inside the closure
      any check that must be atomic with the write.
 
@@ -168,7 +168,8 @@ providers/           interim: the Models port, its shapes and adapters
   ```
 - There is no `apps/common`, `apps/shared` or `apps/util`. Code two apps need
   goes to the lower of the two in the order above, to `runtime` if it is about
-  the context (ids, errors, audit), or to `scribe-tools` if it is pure parsing.
+  the context (ids, errors, audit), or to `scribe-tools` if it is about
+  transcripts, windows, markers or payloads.
 
 ### Runtime
 
@@ -181,8 +182,9 @@ sees it.
   `transcripts`, `redaction`. The port traits (`Clock`, `Transcripts`,
   `Redaction`, `AuditNotes`) stay as they are in `cases/ctx.rs`, so the
   existing fakes keep working.
-- `runtime/host.rs` holds the real implementations that the binary supplies
-  today from `commands/ports.rs`.
+- The real implementations that the binary supplies today from
+  `commands/ports.rs` leave it: the clock to `runtime/host.rs`, and transcript
+  discovery and reads to `scribe-tools`, beside the parsing they feed.
 - `runtime` holds four subjects and no others: the context, id resolution,
   error mapping and the audit guard. A function belongs here only if it is
   about one of them. "Two apps use it" is not a reason.
@@ -199,8 +201,9 @@ sees it.
 - Composition picks the data directory, reads `config.toml`, opens the
   `Store`, and builds the redactor.
 - Outside `composition.rs`, nothing in the core reads an environment variable
-  or discovers a path. Outside `composition.rs` and `runtime/host.rs`,
-  nothing in the core touches a file that is not reached through the store.
+  or discovers a path. Outside `composition.rs` and `providers/`, nothing in
+  the core touches a file: it reaches the data root through the store and
+  every other file through `scribe-tools`.
 
 ### Providers (interim)
 
@@ -260,10 +263,16 @@ Invariants:
 
 ## `scribe-tools`
 
-Pure functions. Bytes, text or a contract value in; a value out.
+The functions hooks and activities are built from. One subject is whole in one
+place: everything about a transcript (finding the file, reading it, parsing
+it, cutting a window from it) is here, not split between a reader in the core
+and a parser elsewhere. Daniel, 2026-11-24: "allow tools to have its own fs
+module or import from scribe-store as needed. instead of creating logics
+spread across multiple places".
 
 ```
-transcript/claude.rs, codex.rs   transcript bytes -> messages
+fs.rs                            the crate's only file access
+transcript/                      discovery, reads, claude.rs and codex.rs parsing
 window.rs                        the turns a pass or a capture looks at
 markers.rs                       `#scribe` markers, settling lines, `/scribe` commands
 payload.rs                       hook payloads -> typed events
@@ -272,17 +281,23 @@ text.rs                          tokens, normalization, verbatim comparison
 
 Invariants:
 
-- No I/O, no clock, no environment, no randomness: the same input gives the
-  same output. A function that needs the time takes it as an argument.
-- It imports `scribe_store::contracts` and nothing else from the store. It
-  never receives a `Store`, a `Snapshot` or a `Tx`.
-- It decides nothing about a record's lifecycle and returns no refusal about
-  one. "Is this line a marker" is a tool; "may this entry be approved" is an
+- File access goes through `fs.rs`; no other module in the crate names
+  `std::fs`. It reads no environment variable and discovers no root: the
+  caller passes resolved paths, which composition produced.
+- It may use `scribe-store`: the contracts, and a repository where the
+  function's job needs one (a transcript cursor, for example). A tool that
+  writes takes the caller's `Tx`; it never calls `store.write` itself, so a
+  flow still commits in one transaction.
+- No clock and no randomness: a function that needs the time takes it as an
+  argument.
+- A tool is a function an app calls. Which command runs, in what order, and
+  what is refused stay in the app: "is this line a marker" and "read this
+  transcript from the cursor" are tools; "may this entry be approved" is an
   app rule.
-- It exists below the core because the Stop and capture hooks parse
-  transcripts, so parsing must be reachable from an app. Whatever an Orbit
-  activity calls that reads or writes records is an ordinary command mapped
-  to an app, and that app uses these functions.
+- It never names `scribe-core`. It sits below the core because the Stop and
+  capture hooks read transcripts, so that code must be reachable from an
+  app. Whatever an Orbit activity calls is an ordinary command mapped to an
+  app, and that app uses these functions.
 - When a model step leaves scribe, the pure halves of that flow (building
   the input a job hands its agent, checking the shape of what the agent
   returns) move here. Their names and shapes wait for open-item-19.
@@ -369,7 +384,7 @@ becomes `mod.rs`; the rest become flow files named for their command
 |---|---|
 | `app.rs` | `scribe-core/src/composition.rs` |
 | `models.rs`, `models/codex.rs` | `scribe-core/src/providers/` |
-| `commands/ports.rs` | `scribe-core/src/runtime/host.rs` |
+| `commands/ports.rs` | the clock to `scribe-core/src/runtime/host.rs`; transcript discovery and reads to `scribe-tools/src/transcript/` |
 | `audit_middleware.rs` | `scribe-core/src/runtime/audit.rs` |
 | `commands/hook/payload.rs` | `scribe-tools/src/payload.rs` |
 | `commands/hook/project.rs`, `group_add.rs`, `group_turns*`, `codex.rs`, `stop.rs`, `session_*.rs`, `user_prompt_submit.rs` | whatever is not argument mapping goes to `apps/hook/` |
@@ -386,12 +401,13 @@ holds:
 - the app order: an app imports only apps below it, and only through
   `apps::<app>::` paths that `mod.rs` exports;
 - no `apps/common`, `apps/shared` or `apps/util`;
-- only `composition.rs` names `std::env`; only `composition.rs`,
-  `runtime/host.rs` and `providers/` name `std::fs`; only `providers/` names
+- in the core, only `composition.rs` names `std::env`, only `composition.rs`
+  and `providers/` name `std::fs`, and only `providers/` names
   `std::process`;
 - only the five listed flows import `providers`;
 - the binary names no `scribe_store` and no `scribe_tools` path;
-- `scribe-tools` names no store path but `scribe_store::contracts`;
+- in `scribe-tools`, only `fs.rs` names `std::fs`, nothing names
+  `scribe_core`, and nothing calls `Store::write`;
 - in the store: `contracts/` imports no `db` or `repository`; only `db/` uses
   `rusqlite`; no `fn check_` under `contracts/`.
 
@@ -415,9 +431,9 @@ Daniel's approval (his rule of 2026-11-23); guards go in the script.
    in `ARCHITECTURE.md` is one row.
 4. **Store layout.** `db/`, `repository/` and an empty `contracts/`; use-case
    types leave `lib.rs`; `init.rs` moves to `admin`.
-5. **Dissolve `scribe-domain`.** Shapes to `contracts/`, pure parsing to the
-   new `scribe-tools` crate, rules to their apps, `config` and `error` to the
-   core. One record family per pull request (entry, session, proposal, …) so
+5. **Dissolve `scribe-domain`.** Shapes to `contracts/`; transcript, window,
+   marker and payload code to the new `scribe-tools` crate; rules to their
+   apps; `config` and `error` to the core. One record family per pull request (entry, session, proposal, …) so
    each is reviewable; the crate is deleted in the last one.
 6. **Docs and guards.** `ARCHITECTURE.md` rewritten from this spec, the
    script updated, `AGENTS.md` pointers and the paths in the other specs
@@ -435,6 +451,6 @@ sequences them. Step 5 is easier after ORB-27911, since less code moves.
   keeps (open-item-19).
 
 A departure from the crates, from "one repository per record", from
-"contracts hold shapes only" or from "tools are pure" goes back to Daniel
+"contracts hold shapes only" or from the tools' limits (a tool that
+writes takes the caller's `Tx`; tools never name `scribe-core`) goes back to Daniel
 through the captain.
-
