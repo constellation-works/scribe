@@ -104,8 +104,9 @@ stderr also carries, in every mode, one notice when a list is empty (where
 records come from, or `no <noun> match <filters>` naming the flags) or cut
 (`showing N of M matching <noun>; raise or drop --limit to see the rest`).
 (S11) `scribe search` names its terms first among the filters (`no records
-match "<terms>" --kind session`), and when hidden records also matched it
-adds `<n> hidden record(s) also match: superseded or retired entries, or
+match "<terms>" --kind session`; with `--tag` the tag follows the kind, as
+`no records match "<terms>" --tag <tag>`), and when hidden records also
+matched it adds `<n> hidden record(s) also match: superseded or retired entries, or
 inactive sessions; --include-hidden shows them`.
 (ORB-27628) A default `scribe search` (no `--kind`) that finds no entry or
 session, while stored messages match the same filters, ends its stderr, in

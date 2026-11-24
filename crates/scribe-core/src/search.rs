@@ -18,7 +18,7 @@
 //! No I/O (STD-02 R5).
 
 use crate::ask::{self, Corpus, Doc, Origin, RecordKind};
-use crate::entry::Entry;
+use crate::entry::{Entry, TagName};
 use crate::message::MessageSearch;
 use crate::record::{Author, DateRange, Project, Topic};
 use crate::session::{Segment, SessionRecord};
@@ -50,6 +50,10 @@ pub struct SearchQuery {
     pub terms: String,
     /// Only this kind of record.
     pub kind: Option<RecordKind>,
+    /// Only entries filed under this tag, by its exact name as `entry list`
+    /// matches it. Sessions and messages carry no tag, so a set tag keeps
+    /// none of them.
+    pub tag: Option<TagName>,
     /// Only records of this project.
     pub project: Option<Project>,
     /// Only units carrying every one of these topics (a segment carries its
@@ -178,7 +182,8 @@ pub fn messages(
         let Some(project) = record.map(|r| &r.project).or(m.group_project.as_ref()) else {
             continue;
         };
-        let keeps = query.project.as_ref().is_none_or(|p| project == p)
+        let keeps = query.tag.is_none()
+            && query.project.as_ref().is_none_or(|p| project == p)
             && query
                 .topics
                 .iter()
@@ -229,13 +234,16 @@ pub fn messages(
 
 fn keeps_entry(query: &SearchQuery, entry: &Entry) -> bool {
     query.kind.is_none_or(|k| k == RecordKind::Entry)
+        && query.tag.as_ref().is_none_or(|t| &entry.tag == t)
         && query.project.as_ref().is_none_or(|p| &entry.project == p)
         && query.topics.iter().all(|t| entry.topics.contains(t))
         && query.dates.contains(entry.created)
 }
 
 fn keeps_unit(query: &SearchQuery, record: &SessionRecord, segment: Option<&Segment>) -> bool {
-    let kind_and_project = query.kind.is_none_or(|k| k == RecordKind::Session)
+    // A session carries no tag, so a set tag keeps no session or segment.
+    let kind_and_project = query.tag.is_none()
+        && query.kind.is_none_or(|k| k == RecordKind::Session)
         && query.project.as_ref().is_none_or(|p| &record.project == p);
     kind_and_project
         && match segment {

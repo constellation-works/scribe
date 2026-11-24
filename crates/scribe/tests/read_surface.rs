@@ -252,6 +252,83 @@ fn search_filters_narrow_and_the_limit_cuts() {
 }
 
 #[test]
+fn search_tag_keeps_one_tags_entries_combined_with_the_other_filters() {
+    let fx = Fixture::new();
+    fx.seed();
+    // decisions-2 is the active decisions entry, decisions-1 superseded and
+    // hidden; preferences-1 is another tag and mentions no merge.
+    let tagged = ok_json(&fx, &["search", "merge", "--tag", "decisions"]);
+    assert_eq!(ids(&tagged, "hits", "cite"), ["decisions-2"]);
+    assert_eq!(tagged["hits"][0]["kind"], "entry");
+    assert_eq!(tagged["total"], 1);
+    let shown = ok_json(
+        &fx,
+        &["search", "merge", "--tag", "decisions", "--include-hidden"],
+    );
+    let mut cites = ids(&shown, "hits", "cite");
+    cites.sort();
+    assert_eq!(cites, ["decisions-1", "decisions-2"]);
+    // The date and project filters still apply under the tag.
+    let before = ok_json(
+        &fx,
+        &[
+            "search",
+            "merge",
+            "--tag",
+            "decisions",
+            "--until",
+            "2026-10-31",
+            "--include-hidden",
+        ],
+    );
+    assert_eq!(ids(&before, "hits", "cite"), ["decisions-1"]);
+    let other_project = ok(
+        &fx,
+        &[
+            "search",
+            "merge",
+            "--tag",
+            "decisions",
+            "--project",
+            "orbit",
+        ],
+    );
+    assert!(other_project.stdout.is_empty());
+    // The echoed criteria name the tag, and no message count is offered for
+    // a tag: messages carry none.
+    let none = ok(&fx, &["search", "merge", "--tag", "rituals"]);
+    assert!(none.stdout.is_empty());
+    let notice = text(&none.stderr);
+    assert!(
+        notice.contains("no records match \"merge\" --tag rituals"),
+        "{notice}"
+    );
+    assert!(!notice.contains("stored message"), "{notice}");
+}
+
+#[test]
+fn search_tag_refuses_a_session_or_message_kind_in_one_line() {
+    let fx = Fixture::new();
+    fx.seed();
+    for kind in ["session", "message"] {
+        let args = ["search", "merge", "--tag", "decisions", "--kind", kind];
+        let error = usage_error(&fx, &args);
+        assert_eq!(error["code"], "usage_error", "{kind}: {error}");
+        let message = error["error"].as_str().unwrap();
+        assert!(
+            message.starts_with("--tag filters entries only"),
+            "{message}"
+        );
+        // The same refusal in text mode is one line on stderr, nothing on stdout.
+        let out = run(&fx, &args);
+        assert_eq!(out.status.code(), Some(2), "{kind}: {}", text(&out.stderr));
+        assert!(out.stdout.is_empty());
+        let line = text(&out.stderr);
+        assert_eq!(line.trim_end().lines().count(), 1, "{line}");
+    }
+}
+
+#[test]
 fn search_refuses_terms_with_no_searchable_word_and_bad_dates() {
     let fx = Fixture::new();
     fx.seed();

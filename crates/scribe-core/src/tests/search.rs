@@ -16,6 +16,7 @@ fn query(terms: &str) -> SearchQuery {
     SearchQuery {
         terms: terms.to_owned(),
         kind: None,
+        tag: None,
         project: None,
         topics: Vec::new(),
         dates: DateRange::default(),
@@ -104,6 +105,35 @@ fn hidden_records_are_counted_and_kept_only_on_request_and_forgotten_never() {
     assert_eq!(found.hits[0].active, None);
     assert_eq!(found.hits[1].active, Some(false));
     assert_eq!(found.hidden_matches, 0);
+}
+
+#[test]
+fn tag_keeps_only_entries_under_that_name_and_no_session() {
+    // `noted` takes the tag from the id: `decisions-1` is filed under decisions.
+    let decision = noted("decisions-1", "merge agent PRs with a merge commit");
+    let mut superseded = noted("decisions-2", "merge agent PRs with a merge commit");
+    superseded.status = EntryStatus::Superseded;
+    let pref = noted("preferences-1", "merge agent PRs with a merge commit");
+    let mut r = session("s-1", T0);
+    r.summary = String::from("merge agent PRs");
+    let entries = [decision, superseded, pref];
+    let sessions = [r];
+    let tagged = |tag: &str| {
+        let mut q = query("merge");
+        q.tag = Some(tag.parse().unwrap());
+        run(&q, &entries, &sessions)
+    };
+    let found = tagged("decisions");
+    assert_eq!(cites(&found), ["decisions-1"]);
+    assert_eq!(found.total, 1);
+    // The superseded entry under the same tag is hidden, and counted.
+    assert_eq!(found.hidden_matches, 1);
+    assert!(tagged("rituals").hits.is_empty());
+    // A tag with an entry of the other kind keeps nothing: sessions carry no tag.
+    let mut q = query("merge");
+    q.tag = Some("decisions".parse().unwrap());
+    q.kind = Some(RecordKind::Session);
+    assert!(run(&q, &entries, &sessions).hits.is_empty());
 }
 
 #[test]

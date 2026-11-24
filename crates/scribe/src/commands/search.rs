@@ -13,7 +13,7 @@ use crate::output::{HitPayload, Output, Records};
 use clap::Args;
 use scribe_core::ask::{Corpus, RecordKind};
 use scribe_core::search::{self, DEFAULT_LIMIT, Found, SearchError, SearchQuery};
-use scribe_core::{EntryFilter, Project, SessionFilter, Topic};
+use scribe_core::{EntryFilter, Project, SessionFilter, TagName, Topic};
 use std::num::NonZeroUsize;
 
 pub(super) const SEARCH_EXAMPLES: &str = "\
@@ -31,6 +31,7 @@ Examples:
   scribe search \"merge queue\"
   scribe search release --kind session --since 2026-11-01
   scribe search \"merge queue\" --kind message
+  scribe search \"merge queue\" --tag decisions
   scribe search \"store format\" --project scribe --topic store --limit 5
   scribe search \"api\" --json | jq -r '.hits[].cite'";
 
@@ -55,6 +56,10 @@ pub(crate) struct SearchArgs {
     /// Only this kind of record [default: entries and sessions]
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) kind: Option<KindArg>,
+
+    /// Only entries filed under this tag, by its name as `tag list` prints it; sessions and messages carry no tag [default: any]
+    #[arg(long, value_name = "TAG")]
+    pub(crate) tag: Option<TagName>,
 
     /// Only records of this project (a repository slug, or global) [default: any]
     #[arg(long, value_name = "PROJECT")]
@@ -88,6 +93,12 @@ pub(super) fn audit(_args: &SearchArgs) -> Option<AuditMeta> {
 
 /// Run `search`.
 pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
+    // A tag names an entry, so a session or message kind can never match it.
+    if args.tag.is_some() && matches!(args.kind, Some(KindArg::Session | KindArg::Message)) {
+        return Err(CliError::Usage(String::from(
+            "--tag filters entries only: sessions and messages carry no tag; drop --kind session or --kind message",
+        )));
+    }
     let limit = args
         .limit
         .or(NonZeroUsize::new(DEFAULT_LIMIT))
@@ -99,6 +110,7 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
             KindArg::Session => RecordKind::Session,
             KindArg::Message => RecordKind::Message,
         }),
+        tag: args.tag,
         project: args.project,
         topics: args.topic,
         dates: args.dates.range()?,
@@ -150,8 +162,9 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     // A default search that finds no entry or session says when stored
     // messages match, since a line the user typed is only ever a message.
     // The count uses the same filters, so the command lists those messages.
+    // A tag leaves messages out too: they carry none, so they never stand in.
     let mut message_matches = None;
-    if query.kind.is_none() && found.total == 0 {
+    if query.kind.is_none() && query.tag.is_none() && found.total == 0 {
         let message_query = SearchQuery {
             kind: Some(RecordKind::Message),
             ..query.clone()
@@ -167,6 +180,9 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
     let mut criteria = vec![format!("{:?}", query.terms)];
     if let Some(kind) = query.kind {
         criteria.push(format!("--kind {}", kind.as_str()));
+    }
+    if let Some(tag) = &query.tag {
+        criteria.push(format!("--tag {tag}"));
     }
     if let Some(project) = &query.project {
         criteria.push(format!("--project {project}"));
