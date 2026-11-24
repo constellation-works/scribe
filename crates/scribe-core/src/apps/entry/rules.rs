@@ -22,9 +22,12 @@
 //!   entry, proposal and group apps use it; entry is the lowest.
 //! - Which typed turns are kept in `scribe.db` ([`message`]): the
 //!   instruction check's group capture and the session pass both use it.
+//! - Whose words an entry holds and how a line names them ([`voice`]): the
+//!   entry, proposal and search apps use it; entry is the lowest.
 
 pub mod instruction;
 pub mod message;
+pub mod voice;
 
 use crate::apps::tag::check_agent_author;
 use crate::entry::{Entry, EntryId, EntryStatus, TagName, is_decision_or_item};

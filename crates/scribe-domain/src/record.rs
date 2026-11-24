@@ -261,7 +261,7 @@ impl Author {
     /// scribe's retired-tag cleanup, closing open candidates whose tag is no
     /// longer in the tag table (2_design.md §11.3).
     #[must_use]
-    pub(crate) fn tag_retired() -> Self {
+    pub fn tag_retired() -> Self {
         Self {
             kind: AuthorKind::Scribe,
             name: AuthorName(String::from("tag-retired")),

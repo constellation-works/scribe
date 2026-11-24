@@ -148,7 +148,15 @@ pub mod pass {
     pub use crate::apps::session::rules::pass::*;
     pub use scribe_tools::window::*;
 }
-pub(crate) use scribe_domain::proposal;
+/// `proposal` at its old path: the proposal shapes (the store's contracts)
+/// and the proposal app's rules over them (`apps/proposal`).
+pub(crate) mod proposal {
+    pub use crate::apps::proposal::rules::proposals::*;
+    pub use scribe_store::{
+        Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
+        ProposalError, ProposalId, ProposalKind, ProposalState, Quote, SUBJECT_CHARS,
+    };
+}
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
 pub mod providers;
@@ -181,10 +189,15 @@ pub mod text {
     pub use scribe_store::digest::{bytes_sha256, prompt_sha256};
     pub use scribe_tools::text::*;
 }
-pub use scribe_domain::voice;
 pub use scribe_tools::text::trigger;
 pub use scribe_tools::text::verbatim;
 pub use scribe_tools::transcript;
+pub mod voice {
+    //! Compat path: the prompt half is `config::voice`, the entry half
+    //! `apps::entry::rules::voice`.
+    pub use crate::apps::entry::rules::voice::*;
+    pub use crate::config::voice::*;
+}
 
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::entry::EntryVerbs;

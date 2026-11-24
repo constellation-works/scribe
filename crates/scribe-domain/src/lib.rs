@@ -3,11 +3,10 @@
 //! Entries ([`Entry`], [`EntryId`], [`TagName`], [`Cite`]) are in `entry`;
 //! the tag table ([`TagTable`]) in `tag`; session records, the on/off state
 //! and the due rule ([`SessionRecord`], its log of [`Segment`]s,
-//! [`ControlState`], [`Cadence`]) in `session`; proposals ([`Proposal`]) in
-//! `proposal`; the shared metadata ([`Project`], [`Topic`], [`Related`],
+//! [`ControlState`], [`Cadence`]) in `session`; the shared metadata ([`Project`], [`Topic`], [`Related`],
 //! [`Author`]) in `record`; the rules
 //! that select and judge records in their modules. The typed `Error` is the store's (`scribe-store`'s
-//! `error`).
+//! `error`), and so are proposals (`scribe-store`'s `contracts::proposal`).
 //!
 //! The modules sit in three rings, each importing only its own and the ones
 //! before it: base, records, rules (ARCHITECTURE.md;
@@ -20,12 +19,10 @@
 
 pub mod entry;
 pub mod handoff;
-pub mod proposal;
 pub mod provider;
 pub mod record;
 pub mod session;
 pub mod tag;
-pub mod voice;
 pub use provider::Provider;
 
 pub use entry::{
@@ -35,11 +32,6 @@ pub use entry::{
     WindowTurn,
 };
 pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
-pub use proposal::{
-    Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
-    ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
-    SUBJECT_CHARS, close_retired_tag_candidates, context_stands_alone,
-};
 pub use record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
     RelatedKind, Topic, Topics, parse_day,

@@ -25,10 +25,10 @@
 pub mod control;
 
 use scribe_domain::entry::{EntryId, TagName};
-use scribe_domain::proposal::ProposalId;
 use scribe_domain::record::{Topic, Topics};
 use scribe_domain::session::SessionId;
 use scribe_domain::tag::TagTable;
+use scribe_store::ProposalId;
 use std::fmt;
 
 /// The marker that opens a `#scribe` line, or marks a turn anywhere in a

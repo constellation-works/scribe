@@ -2,6 +2,7 @@
 //! (STD-02 R19).
 
 mod candidates;
+mod proposals;
 mod retired;
 mod rules;
 

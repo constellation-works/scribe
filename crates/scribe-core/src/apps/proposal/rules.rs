@@ -30,6 +30,7 @@
 //! Pure functions over loaded records: no I/O (STD-02 R5).
 
 pub mod candidates;
+pub mod proposals;
 
 use crate::apps::entry::{SettleRefusal, Settled, forget};
 use crate::entry::{Cite, Entry, EntryId, EntryStatus};

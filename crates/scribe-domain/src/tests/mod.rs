@@ -5,7 +5,6 @@
 
 mod entry;
 mod handoff;
-mod proposal;
 mod record;
 mod session;
 mod tag;

@@ -39,5 +39,5 @@ mod tests;
 // `codex`, `markers` and `control` name them by, and the control parser and
 // Codex rollout at the root paths they had in the domain.
 use markers::control;
-use scribe_domain::{SessionId, Speaker, entry, proposal, record, session};
+use scribe_domain::{SessionId, Speaker, entry, record, session};
 use transcript::codex;
