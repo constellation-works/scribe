@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656]
 ---
 
 # scribe — Design
@@ -6996,8 +6996,9 @@ and its closing summary when available.
 
 Designed in [ORB-27638] and approved by Daniel on 2026-11-23. The
 records, `entry add` and decision corrections are implemented in
-[ORB-27655] (format 31). The sequence in §18.11 tracks the remaining
-delivery. It reverses, for
+[ORB-27655] (format 31), and the settling verbs (`entry answer`, `entry
+close`, `entry list --state`, the derived `state`) in [ORB-27656]. The
+sequence in §18.11 tracks the remaining delivery. It reverses, for
 decisions that outlive one task, the 2026-11-20 choice that scribe ships no
 decision tag ([4_decisions.md](./4_decisions.md#decisions-that-outlive-a-task-are-scribe-records-and-open-items-wait-for-daniel-in-scribe)).
 
@@ -7176,8 +7177,11 @@ scribe entry answer open-item-<n> --author <model> \
   --quote '<his words>' --related session:<where he typed>
 ```
 
-The quote is checked as in §18.3, short whole turns included. It is his
-answer, so `ask` and `entry show` attribute it to him. An action item (no
+The quote is checked as in §18.3, short whole turns included, and the
+latest typed turn holding it gives the answer's time. It is his
+answer, so `ask` and `entry show` attribute it to him. Until the item
+closes, a later answer replaces an earlier one (he may change his mind
+before the asker acts); the same words again change nothing. An action item (no
 options) may be answered too ("done", "not now"), or closed without an
 answer once the asker sees it done. An item whose `answer_in` is
 `session:<id>` can still be answered elsewhere; the answer is recorded, and
@@ -7200,7 +7204,10 @@ scribe entry close open-item-<n> --author <model> \
 - Answered is not closed: his words stand on the item until the asker acts,
   and the brief keeps showing it as `answered`.
 - `entry answer` and `entry close` refuse any entry not under `open-item`
-  (`not_open_item`) and a closed or withdrawn item (`item_settled`).
+  (`not_open_item`) and a closed or withdrawn item (`item_settled`). A
+  `--decision` that is not an active decision settling the item is
+  `invalid_decision`. `--note` may accompany `--decision`; without it the
+  note reads `settled by decision-<m>`.
 
 Daniel's 2026-11-23 words had scribe "record the decision and mark it
 closed" when he checks in. The aide does record both in that turn when it can
@@ -7359,7 +7366,7 @@ store with shipped decisions.
    migration; `entry add` flags, the checks of §18.3 and §18.4 (verbatim with
    short whole turns, rationale and reason, options count, supersede rules,
    size), the marker refusal, the `doc:` related kind; goldens.
-3. **Settling** (scribe): `entry answer`, `entry close`, `entry list
+3. **Settling** (scribe, [ORB-27656]): `entry answer`, `entry close`, `entry list
    --state`, the derived `state`; refusals; goldens.
 4. **Reading** (scribe): the `## Open items` brief part and JSON, the
    `systemMessage` count, `search` labels, `ask` attribution and the
@@ -7429,6 +7436,8 @@ store with shipped decisions.
 - [ORB-27638] — designed §18: the `decision` and `open-item` records, their
   checks and states, `entry answer` and `entry close`, the brief's open
   items, and the intake rename (proposed, not built).
+- [ORB-27656] — §18.11 step 3: `entry answer`, `entry close`, `entry list
+  --state` and the derived open-item `state`, with their refusals.
 - [ORB-27561] — the 2026-11-23 formation, in which the decision and
   open-item trial ran.
 - [ORB-27563] — the scribe captain's assignment that day; Daniel's words on

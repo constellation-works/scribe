@@ -75,8 +75,9 @@ pub mod voice;
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
-    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, ItemAnswer, ItemClosure, NewEntry,
-    OpenItem, Outcome, OutcomeState, Speaker, TagName, Window, WindowTurn,
+    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, InvalidItemState, ItemAnswer,
+    ItemClosure, ItemState, NewEntry, OpenItem, Outcome, OutcomeState, Speaker, TagName, Window,
+    WindowTurn,
 };
 pub use error::{Error, Result, WriteRefusal};
 pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
@@ -105,8 +106,9 @@ pub use store::{
     PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs,
     ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR,
     SessionForget, SessionList, SessionView, Skipped, Store, TagList, check_agent_author,
-    check_content, check_description, check_handoff_related, check_reason, init_project,
-    init_project_with_skill_files, integration_hooks, resolve_prefix, unresolved_redact_env,
+    check_content, check_description, check_handoff_related, check_reason, check_unsettled_item,
+    init_project, init_project_with_skill_files, integration_hooks, resolve_prefix,
+    unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,

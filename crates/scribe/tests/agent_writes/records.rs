@@ -787,3 +787,318 @@ fn decision_corrections_keep_the_decider_and_check_the_revised_options_and_ratio
         "record_fields",
     );
 }
+
+fn settle(fx: &Fixture, verb: &str, id: &str, args: &[&str]) -> std::process::Output {
+    fx.run(
+        &[
+            &["entry", verb, id, "--author", "0-chief", "--json"][..],
+            args,
+        ]
+        .concat(),
+    )
+}
+
+fn states(fx: &Fixture, states: &[&str]) -> Vec<String> {
+    let mut args = vec!["entry", "list", "--json"];
+    for state in states {
+        args.extend(["--state", state]);
+    }
+    json(&fx.ok(&args).stdout)["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["id"].as_str().unwrap(),
+                e["state"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn open_items_are_answered_with_checked_words_then_closed_by_their_decision() {
+    let fx = Fixture::new();
+    let session = decision_transcript(
+        &fx,
+        &[
+            ("user", "1"),
+            ("user", "Go with the stable API for now."),
+            ("assistant", "I recommend option 2."),
+        ],
+    );
+    let choice = [
+        "--asked-by",
+        "orbit-0-capt",
+        "--blocked",
+        "Publishing the release",
+        "--option",
+        "Use the stable API",
+        "--option",
+        "Use the experimental API",
+        "--recommended",
+        "1",
+        "--why",
+        "Compatibility tests cover it.",
+        "--related",
+        "task:ORB-42",
+        "Which API should the release use?",
+    ];
+    assert!(add_record(&fx, "open-item", &choice).status.success());
+    assert_eq!(states(&fx, &["open"]), ["open-item-1 open"]);
+
+    // The words must be the user's, typed in a named session.
+    for (quote, related, code) in [
+        ("I recommend option 2.", session.as_str(), "quote_not_found"),
+        ("stable", session.as_str(), "quote_not_found"),
+        ("2", session.as_str(), "quote_not_found"),
+        ("1", "session:missing-transcript", "quote_not_found"),
+        ("1", "task:ORB-42", "quote_required"),
+    ] {
+        assert_record_refusal(
+            settle(
+                &fx,
+                "answer",
+                "open-item-1",
+                &["--quote", quote, "--related", related],
+            ),
+            code,
+        );
+    }
+    // A choice is not closed before it is answered.
+    assert_record_refusal(
+        settle(&fx, "close", "open-item-1", &["--note", "Shipped"]),
+        "not_answered",
+    );
+
+    let answered = settle(
+        &fx,
+        "answer",
+        "open-item-1",
+        &["--quote", "1", "--related", &session],
+    );
+    assert!(answered.status.success(), "{answered:?}");
+    let body = json(&answered.stdout);
+    assert_eq!(body["state"], "answered");
+    assert_eq!(body["status"], "active");
+    assert_eq!(body["item"]["answer"]["words"], "1");
+    assert_eq!(body["item"]["answer"]["session"], DECISION_SESSION);
+    assert_eq!(body["item"]["answer"]["at"], "2026-11-10T01:00:00Z");
+    assert_eq!(body["item"]["answer"]["recorded_by"], "0-chief");
+    // The same words again change nothing; newer words replace them.
+    let again = settle(
+        &fx,
+        "answer",
+        "open-item-1",
+        &["--quote", "1", "--related", &session],
+    );
+    assert!(again.status.success());
+    assert!(text(&again.stderr).contains("nothing changed"), "{again:?}");
+    let newer = settle(
+        &fx,
+        "answer",
+        "open-item-1",
+        &["--quote", "Go with the stable API", "--related", &session],
+    );
+    assert_eq!(
+        json(&newer.stdout)["item"]["answer"]["words"],
+        "Go with the stable API"
+    );
+    assert_eq!(states(&fx, &["answered"]), ["open-item-1 answered"]);
+    assert!(states(&fx, &["open"]).is_empty());
+
+    // --decision must name an active decision that settles this item.
+    let decide = |settles: &str| {
+        add_record(
+            &fx,
+            "decision",
+            &[
+                "--decided-by",
+                "orbit-0-capt",
+                "--rationale",
+                "The user chose it.",
+                "--related",
+                "task:ORB-42",
+                "--settles",
+                settles,
+                "Ship the stable API",
+            ],
+        )
+    };
+    assert!(
+        add_record(
+            &fx,
+            "open-item",
+            &[
+                "--asked-by",
+                "0-chief",
+                "--blocked",
+                "nothing",
+                "Restart the dashboard"
+            ],
+        )
+        .status
+        .success()
+    );
+    assert!(decide("open-item-2").status.success());
+    for decision in ["decision-1", "decision-9", "open-item-2"] {
+        assert_record_refusal(
+            settle(&fx, "close", "open-item-1", &["--decision", decision]),
+            "invalid_decision",
+        );
+    }
+    assert!(decide("open-item-1").status.success());
+    let closed = settle(&fx, "close", "open-item-1", &["--decision", "decision-2"]);
+    assert!(closed.status.success(), "{closed:?}");
+    let body = json(&closed.stdout);
+    assert_eq!(body["state"], "closed");
+    assert_eq!(body["status"], "retired");
+    assert_eq!(body["item"]["closed"]["decision"], "decision-2");
+    assert_eq!(body["item"]["closed"]["by"], "0-chief");
+    assert_eq!(body["item"]["answer"]["words"], "Go with the stable API");
+
+    // A closed item takes neither verb again.
+    assert_record_refusal(
+        settle(
+            &fx,
+            "answer",
+            "open-item-1",
+            &["--quote", "1", "--related", &session],
+        ),
+        "item_settled",
+    );
+    assert_record_refusal(
+        settle(&fx, "close", "open-item-1", &["--note", "Again"]),
+        "item_settled",
+    );
+    // Only open items are answered or closed.
+    assert_record_refusal(
+        settle(
+            &fx,
+            "answer",
+            "decision-1",
+            &["--quote", "1", "--related", &session],
+        ),
+        "not_open_item",
+    );
+    assert_record_refusal(
+        settle(&fx, "close", "decision-1", &["--note", "Done"]),
+        "not_open_item",
+    );
+
+    // An action item closes without an answer; a retired one is withdrawn.
+    assert_record_refusal(
+        settle(&fx, "close", "open-item-2", &["--note", " "]),
+        "invalid_text",
+    );
+    let usage = settle(&fx, "close", "open-item-2", &[]);
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+    assert!(
+        settle(
+            &fx,
+            "close",
+            "open-item-2",
+            &["--note", "Restarted; nothing lasting"]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        add_record(
+            &fx,
+            "open-item",
+            &[
+                "--asked-by",
+                "0-chief",
+                "--blocked",
+                "nothing",
+                "Rotate the key"
+            ],
+        )
+        .status
+        .success()
+    );
+    fx.ok(&[
+        "entry",
+        "retire",
+        "open-item-3",
+        "--author",
+        "0-chief",
+        "--reason",
+        "The question went away",
+    ]);
+    assert_record_refusal(
+        settle(&fx, "close", "open-item-3", &["--note", "Done"]),
+        "item_settled",
+    );
+    assert_eq!(
+        states(&fx, &["closed", "withdrawn"]),
+        [
+            "open-item-1 closed",
+            "open-item-2 closed",
+            "open-item-3 withdrawn"
+        ]
+    );
+    let bad = fx.run(&["entry", "list", "--state", "pending"]);
+    assert_eq!(bad.status.code(), Some(2), "{bad:?}");
+    // Other entries carry no state.
+    assert_eq!(
+        json(&fx.ok(&["entry", "show", "decision-1", "--json"]).stdout)["state"],
+        serde_json::Value::Null
+    );
+
+    // Audited by id and code, never by the words.
+    let lines: Vec<serde_json::Value> = support::audit_lines(&fx.root())
+        .into_iter()
+        .filter(|l| l["command"] == "entry answer" || l["command"] == "entry close")
+        .filter(|l| l["target"] == "open-item-1")
+        .map(|l| serde_json::json!([l["command"], l["status"], l["error_code"]]))
+        .collect();
+    assert!(
+        lines.contains(&serde_json::json!(["entry answer", "success", null]))
+            && lines.contains(&serde_json::json!([
+                "entry close",
+                "failure",
+                "not_answered"
+            ]))
+            && lines.contains(&serde_json::json!(["entry close", "success", null])),
+        "{lines:?}"
+    );
+    let audit = support::audit_text(&fx.root());
+    assert!(!audit.contains("Go with the stable API"));
+    assert!(!audit.contains("Restarted; nothing lasting"));
+}
+
+#[test]
+fn an_answer_typed_outside_the_named_session_is_recorded_with_a_notice() {
+    let fx = Fixture::new();
+    let session = decision_transcript(&fx, &[("user", "yes, restart it")]);
+    let elsewhere = "session:5f0c3c1e-2b7a-4d7e-9a43-0c6f1d2e3b4a";
+    let added = add_record(
+        &fx,
+        "open-item",
+        &[
+            "--asked-by",
+            "orbit-0-capt",
+            "--blocked",
+            "nothing",
+            "--answer-in",
+            elsewhere,
+            "Restart the dashboard",
+        ],
+    );
+    assert!(added.status.success(), "{added:?}");
+    let out = settle(
+        &fx,
+        "answer",
+        "open-item-1",
+        &["--quote", "yes, restart it", "--related", &session],
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        text(&out.stderr).contains("must also type it in that session"),
+        "{out:?}"
+    );
+    assert_eq!(json(&out.stdout)["state"], "answered");
+}

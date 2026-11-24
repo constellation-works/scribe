@@ -1,0 +1,3 @@
+ID           STATUS  PROJECT  TOPICS  CREATED     CONTENT                            AUTHOR      AGE  STATE
+open-item-1  active  scribe   -       2026-11-10  Which API should the release use?  agent:opus    -  answered
+open-item-2  active  scribe   -       2026-11-10  Restart the dashboard              agent:opus    -  open

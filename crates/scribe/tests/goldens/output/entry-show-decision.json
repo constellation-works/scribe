@@ -53,5 +53,6 @@
     "settles": "open-item-1"
   },
   "item": null,
+  "state": null,
   "removal_instruction": null
 }

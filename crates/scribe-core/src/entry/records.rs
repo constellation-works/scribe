@@ -161,3 +161,83 @@ pub struct ItemClosure {
     /// What was done.
     pub note: String,
 }
+
+/// Where an open item stands, derived from its status and fields
+/// (2_design.md §18.4). A trial entry without an `item` object reads
+/// active as `open` and retired as `closed`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ItemState {
+    /// Active, with no recorded answer.
+    Open,
+    /// Active, with the user's answer recorded.
+    Answered,
+    /// Retired by `entry close` once carried out.
+    Closed,
+    /// Retired without a closure: the question went away or was wrong.
+    Withdrawn,
+}
+
+impl ItemState {
+    /// Every state's name, in lifecycle order.
+    pub const NAMES: [&'static str; 4] = ["open", "answered", "closed", "withdrawn"];
+
+    /// The state's name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Answered => "answered",
+            Self::Closed => "closed",
+            Self::Withdrawn => "withdrawn",
+        }
+    }
+
+    /// The state of `entry`, or `None` when it is not filed under `open-item`.
+    #[must_use]
+    pub fn of(entry: &super::Entry) -> Option<Self> {
+        use super::EntryStatus;
+        if entry.tag.as_str() != OPEN_ITEM_TAG {
+            return None;
+        }
+        let item = entry.item.as_ref();
+        Some(match entry.status {
+            EntryStatus::Active if item.is_some_and(|i| i.answer.is_some()) => Self::Answered,
+            EntryStatus::Active => Self::Open,
+            EntryStatus::Retired if item.is_none_or(|i| i.closed.is_some()) => Self::Closed,
+            EntryStatus::Retired | EntryStatus::Superseded | EntryStatus::Forgotten => {
+                Self::Withdrawn
+            }
+        })
+    }
+
+    /// Whether the item is still waiting to be carried out.
+    #[must_use]
+    pub fn is_settled(self) -> bool {
+        matches!(self, Self::Closed | Self::Withdrawn)
+    }
+}
+
+impl fmt::Display for ItemState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// An unknown open-item state name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("expected open, answered, closed or withdrawn")]
+pub struct InvalidItemState;
+
+impl FromStr for ItemState {
+    type Err = InvalidItemState;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "open" => Ok(Self::Open),
+            "answered" => Ok(Self::Answered),
+            "closed" => Ok(Self::Closed),
+            "withdrawn" => Ok(Self::Withdrawn),
+            _ => Err(InvalidItemState),
+        }
+    }
+}

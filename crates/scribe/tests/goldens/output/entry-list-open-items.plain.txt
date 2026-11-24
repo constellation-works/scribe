@@ -1,0 +1,2 @@
+open-item-1	active	scribe	-	2026-11-10T01:00:00Z	Which API should the release use?	agent:opus	-	answered
+open-item-2	active	scribe	-	2026-11-10T01:00:00Z	Restart the dashboard	agent:opus	-	open

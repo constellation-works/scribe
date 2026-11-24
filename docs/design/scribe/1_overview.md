@@ -144,7 +144,7 @@ candidates since 2026-11-17.
 | The session pass writes findings itself, verbatim, with no proposal or approval | [ORB-25983] | filed, not landed |
 | The session pass captures his ideas and what became of them, and links near ones | [ORB-25987] | filed, not landed |
 | `preferences` keep his typed approval: agents act on them, so a wrong one costs more | none | unchanged |
-| Amended 2026-11-23: a decision that outlives a task is a `decision` record again; open items join it | [ORB-27638], [ORB-27655] | Records and entry writes built |
+| Amended 2026-11-23: a decision that outlives a task is a `decision` record again; open items join it | [ORB-27638], [ORB-27655], [ORB-27656] | Records, entry writes and the settling verbs (`entry answer`, `entry close`, `entry list --state`) built |
 
 Two things the principle asks for that no task covers yet:
 

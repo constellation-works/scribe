@@ -12,7 +12,10 @@
 
 mod records;
 
-pub use records::{AnswerIn, Decision, InvalidAnswerIn, ItemAnswer, ItemClosure, OpenItem};
+pub use records::{
+    AnswerIn, Decision, InvalidAnswerIn, InvalidItemState, ItemAnswer, ItemClosure, ItemState,
+    OpenItem,
+};
 pub(crate) use records::{DECISION_TAG, OPEN_ITEM_TAG, is_decision_or_item};
 
 use crate::record::{
@@ -594,6 +597,8 @@ pub struct EntryFilter {
     pub author: Option<AuthorName>,
     /// Only entries written through this channel.
     pub author_kind: Option<AuthorKind>,
+    /// Only open items in one of these derived states (none set: any entry).
+    pub states: Vec<ItemState>,
     /// At most this many of the matching entries.
     pub limit: Option<NonZeroUsize>,
 }
@@ -611,6 +616,8 @@ impl EntryFilter {
             && self.after.is_none_or(|after| entry.created > after)
             && self.author.as_ref().is_none_or(|a| &entry.author.name == a)
             && self.author_kind.is_none_or(|k| entry.author.kind == k)
+            && (self.states.is_empty()
+                || ItemState::of(entry).is_some_and(|state| self.states.contains(&state)))
     }
 
     /// Apply the filter to `entries`, oldest first (by `created`, then id),

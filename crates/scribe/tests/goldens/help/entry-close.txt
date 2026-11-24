@@ -1,0 +1,26 @@
+Close an open item once carried out, with its decision or a note
+
+Usage: scribe entry close [OPTIONS] --author <AUTHOR> <--decision <ID>|--note <NOTE>> <ID>
+
+Arguments:
+  <ID>  The open item's id or a unique prefix (at least four characters)
+
+Options:
+      --author <AUTHOR>  Agent name of the asker closing it
+      --decision <ID>    The active decision written for this item with --settles
+      --note <NOTE>      What was done, when no lasting decision came of it (at most 300 characters)
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+The asker closes an item once it has carried the answer out. A choice closes
+only once answered; an action item closes answered or not.
+
+Examples:
+  scribe entry close <id> --author opus --decision <id>
+  scribe entry close <id> --author opus --note 'Restarted; nothing lasting'

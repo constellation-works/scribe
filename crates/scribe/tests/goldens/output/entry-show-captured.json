@@ -61,5 +61,6 @@
   "handoff_mode": null,
   "decision": null,
   "item": null,
+  "state": null,
   "removal_instruction": null
 }

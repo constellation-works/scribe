@@ -1,0 +1,26 @@
+Record the user's checked answer to an open item
+
+Usage: scribe entry answer [OPTIONS] --author <AUTHOR> --quote <QUOTE> --related <REF> <ID>
+
+Arguments:
+  <ID>  The open item's id or a unique prefix (at least four characters)
+
+Options:
+      --author <AUTHOR>  Agent name of the session recording the answer
+      --quote <QUOTE>    The user's answer, verbatim from a typed turn of theirs in a related session
+      --related <REF>    The session the user typed the answer in, as session:<id> (a unique prefix is accepted); repeatable
+  -h, --help             Print help
+  -V, --version          Print version
+
+Global options:
+      --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; model routing for global ask/consistency [default: claude-code; allowed: claude-code, codex]
+      --root <DIR>           Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+      --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
+      --json                 Shorthand for --format json
+
+The quote is checked as a decision's is: verbatim in a typed turn of the user's
+in a named session on this host; a quote under eight characters must be the
+whole turn. A later answer replaces an earlier one until the item closes.
+
+Examples:
+  scribe entry answer <id> --author opus --quote '<their words>' --related session:<id>
