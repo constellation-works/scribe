@@ -5,11 +5,11 @@
 //! model (ORB-27911 step 2a).
 
 use crate::activity::{self, ActiveRoute, SetActive};
-use crate::cases::audit::PersistedAudit;
 use crate::cases::proposal::ProposalVerbs;
 use crate::cases::session::SessionVerbs;
-use crate::cases::{Ctx, PortError};
 use crate::consistency::{self, ReapplyReport};
+use crate::runtime::audit::PersistedAudit;
+use crate::runtime::{Ctx, PortError};
 use crate::{Config, EntryFilter, Proposal, Provider, Redactor, SessionFilter, SessionId, Store};
 
 /// The command path in the audit log.

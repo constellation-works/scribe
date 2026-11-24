@@ -32,9 +32,10 @@
 
 use crate::annotation::{self, AGENT_HANDOFF, Mark};
 use crate::capture::{self, Turn};
-use crate::cases::hook::{HookError, HookOutcome, chain, is_control, quote, refusal};
+use crate::cases::hook::{HookError, HookOutcome, chain, quote, refusal};
 use crate::cases::mark::MarkVerbs;
-use crate::cases::{Ctx, PortError, TranscriptState};
+use crate::control::is_control;
+use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};
 use crate::{Label, TagTable};
 use crate::{MODEL_FAILED, MarkChange, MarkKey, MarkResult, Provider, SessionId, Speaker};

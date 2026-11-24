@@ -42,6 +42,7 @@
 pub use scribe_domain::action;
 pub use scribe_domain::activity;
 pub use scribe_domain::annotation;
+pub mod apps;
 pub use scribe_domain::brief;
 pub use scribe_domain::capture;
 pub mod cases;
@@ -63,6 +64,7 @@ pub use scribe_domain::pass;
 pub(crate) use scribe_domain::proposal;
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
+pub mod runtime;
 pub use scribe_domain::search;
 pub(crate) use scribe_domain::session;
 #[cfg(not(test))]

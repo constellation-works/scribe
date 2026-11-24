@@ -2,7 +2,7 @@
 //! §14.5).
 
 use crate::annotation::{MarkRecord, MarkState};
-use crate::cases::session::SessionVerbs;
+use crate::runtime::resolve::refuse_forgotten;
 use crate::{MarkChange, MarkKey, MarkResult, Result, SessionId, Store};
 use time::OffsetDateTime;
 
@@ -33,7 +33,7 @@ impl MarkVerbs for Store {
             let mut out = Vec::with_capacity(updates.len());
             let mut changed = false;
             for (key, change) in updates {
-                self.refuse_forgotten(&key.session)?;
+                refuse_forgotten(self, &key.session)?;
                 let at = marks
                     .iter()
                     .position(|m| m.session == key.session && m.is(&key.message, key.marker));
@@ -79,13 +79,13 @@ impl MarkVerbs for Store {
 /// # Errors
 ///
 /// An ambiguous or too-short prefix, or a store error.
-pub fn list<E: crate::cases::PortError>(
-    ctx: &crate::cases::Ctx<'_, E>,
+pub fn list<E: crate::runtime::PortError>(
+    ctx: &crate::runtime::Ctx<'_, E>,
     provider: crate::Provider,
     session: Option<&SessionId>,
 ) -> Result<(Option<SessionId>, Vec<MarkRecord>)> {
     let session = session
-        .map(|id| crate::cases::resolve::session_or_typed(ctx, provider, id))
+        .map(|id| crate::runtime::resolve::session_or_typed(ctx, provider, id))
         .transpose()?;
     let marks = ctx.store.read().marks().uncataloged(session.as_ref())?;
     Ok((session, marks))

@@ -4,8 +4,9 @@
 //! joins.
 
 use crate::cases::group::GroupVerbs;
-use crate::cases::hook::{HookError, HookOutcome, is_control};
-use crate::cases::{Ctx, PortError, Unreadable};
+use crate::cases::hook::{HookError, HookOutcome};
+use crate::control::is_control;
+use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::{Provider, SessionId, codex::TypedTurn, message, transcript};
 use std::path::Path;
 
@@ -22,7 +23,7 @@ pub fn claude<E: PortError>(
     session: &SessionId,
     path: &Path,
 ) -> Result<Option<HookOutcome>, HookError<E>> {
-    use crate::cases::ClaudeRead;
+    use crate::runtime::ClaudeRead;
     use crate::{Redactor, instruction::ClaudeGroupTurns};
 
     // A concurrent prompt or Stop may commit between the read and write.

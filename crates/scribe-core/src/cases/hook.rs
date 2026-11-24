@@ -3,9 +3,8 @@
 //! text helpers their echoes use. The JSON a hook prints from a
 //! [`HookReply`] (Claude Code's hook protocol) is rendered by the CLI.
 
-use crate::cases::PortError;
 use crate::cases::catalog::CatalogError;
-use crate::control;
+use crate::runtime::PortError;
 use crate::{Error, SessionId};
 
 /// The code of a payload whose transcript failed the provenance check.
@@ -122,54 +121,6 @@ pub fn chain(err: &Error) -> String {
         source = cause.source();
     }
     message
-}
-
-/// Normalize only exact typed skill-control invocations. Injected skill text
-/// never reaches this function: host content provenance is checked first.
-#[must_use]
-pub fn command_text(original: &str) -> String {
-    let text = original.trim();
-    let args = text.strip_prefix("$scribe ").or_else(|| {
-        let (label, rest) = text.split_once("](")?;
-        if !matches!(label, "[$scribe]" | "[$scribe:scribe]")
-            && !matches!(label, "[$scribe" | "[$scribe:scribe")
-        {
-            return None;
-        }
-        let (path, args) = rest.split_once(") ")?;
-        if !path.ends_with("/scribe/SKILL.md") {
-            return None;
-        }
-        Some(args)
-    });
-    if let Some(args) = args.filter(|s| !s.contains('\n')) {
-        let candidate = format!("/scribe {args}");
-        if matches!(
-            control::parse(&candidate),
-            Some(
-                control::Switch::On
-                    | control::Switch::Off
-                    | control::Switch::Status
-                    | control::Switch::Link { .. }
-                    | control::Switch::Catalog(_)
-                    | control::Switch::Group(_)
-                    | control::Switch::GroupAdd { .. }
-                    | control::Switch::GroupMove { .. }
-                    | control::Switch::GroupRemove(_)
-                    | control::Switch::SessionUpdate { .. }
-            )
-        ) {
-            return candidate;
-        }
-    }
-    original.to_owned()
-}
-
-/// Whether a typed Codex input is a session control, `/scribe …` or its
-/// `$scribe …` skill form.
-#[must_use]
-pub fn is_control(text: &str) -> bool {
-    control::parse(&command_text(text)).is_some()
 }
 
 /// A refusal outcome against `session`.

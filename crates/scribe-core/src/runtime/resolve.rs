@@ -1,8 +1,24 @@
 //! Resolving ids the user typed across the store and the provider
-//! transcripts on disk (ORB-27707 step 3d).
+//! transcripts on disk (ORB-27707 step 3d), and refusing a session id
+//! `#scribe forget` erased.
 
-use crate::cases::{Ctx, PortError};
-use crate::{Provider, Related, RelatedKind, SessionId};
+use crate::checks::forgotten_refusal;
+use crate::runtime::{Ctx, PortError};
+use crate::{Provider, Related, RelatedKind, Result, SessionId, Store};
+
+/// Refuse `id` when `#scribe forget` erased it, before any model call or
+/// write on its behalf: a forgotten session takes no write (`session_forgotten`).
+/// Reads only.
+///
+/// # Errors
+///
+/// `session_forgotten` for a forgotten session, or a store read error.
+pub fn refuse_forgotten(store: &Store, id: &SessionId) -> Result<()> {
+    if store.read().sessions().is_forgotten(id)? {
+        return Err(forgotten_refusal(id, "nothing is written to it"));
+    }
+    Ok(())
+}
 
 /// The session ids of `provider` transcripts on disk, for resolving
 /// prefixes of uncataloged sessions alongside the store's own ids. If

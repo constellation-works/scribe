@@ -162,6 +162,54 @@ pub fn parse(prompt: &str) -> Option<Switch> {
     })
 }
 
+/// Normalize only exact typed skill-control invocations. Injected skill text
+/// never reaches this function: host content provenance is checked first.
+#[must_use]
+pub fn command_text(original: &str) -> String {
+    let text = original.trim();
+    let args = text.strip_prefix("$scribe ").or_else(|| {
+        let (label, rest) = text.split_once("](")?;
+        if !matches!(label, "[$scribe]" | "[$scribe:scribe]")
+            && !matches!(label, "[$scribe" | "[$scribe:scribe")
+        {
+            return None;
+        }
+        let (path, args) = rest.split_once(") ")?;
+        if !path.ends_with("/scribe/SKILL.md") {
+            return None;
+        }
+        Some(args)
+    });
+    if let Some(args) = args.filter(|s| !s.contains('\n')) {
+        let candidate = format!("/scribe {args}");
+        if matches!(
+            parse(&candidate),
+            Some(
+                Switch::On
+                    | Switch::Off
+                    | Switch::Status
+                    | Switch::Link { .. }
+                    | Switch::Catalog(_)
+                    | Switch::Group(_)
+                    | Switch::GroupAdd { .. }
+                    | Switch::GroupMove { .. }
+                    | Switch::GroupRemove(_)
+                    | Switch::SessionUpdate { .. }
+            )
+        ) {
+            return candidate;
+        }
+    }
+    original.to_owned()
+}
+
+/// Whether a typed Codex input is a session control, `/scribe …` or its
+/// `$scribe …` skill form.
+#[must_use]
+pub fn is_control(text: &str) -> bool {
+    parse(&command_text(text)).is_some()
+}
+
 /// The words after `on` (`--from <id> [--type <type>]`) or after `link`
 /// (`<id> [--type <type>]`), in any order; `None` when they do not parse.
 /// The type defaults to `spawned_from`.

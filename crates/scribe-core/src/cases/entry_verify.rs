@@ -3,8 +3,8 @@
 //! open item's answer, each read from the named sessions' transcripts on
 //! this host before the store lock.
 
-use crate::cases::write_error::WriteError;
-use crate::cases::{Ctx, PortError, TranscriptState, Unreadable};
+use crate::runtime::errors::WriteError;
+use crate::runtime::{Ctx, PortError, TranscriptState, Unreadable};
 use crate::{Provider, Related, RelatedKind, SessionId, WriteRefusal, instruction};
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -17,7 +17,7 @@ fn refusal<E>(kind: WriteRefusal, message: String) -> WriteError<E> {
 }
 
 /// `session`'s `provider` transcript on this host, among those
-/// [`Transcripts::files`](crate::cases::Transcripts::files) lists.
+/// [`Transcripts::files`](crate::runtime::Transcripts::files) lists.
 fn locate<E: PortError>(
     ctx: &Ctx<'_, E>,
     provider: Provider,

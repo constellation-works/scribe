@@ -23,9 +23,9 @@ pub(in crate::commands) fn claude_window(
     path: &Path,
     session: &SessionId,
     prior: Option<&scribe_core::ClaudeCapturePosition>,
-) -> Result<Option<scribe_core::cases::ClaudeRead>, payload::Unreadable> {
+) -> Result<Option<scribe_core::runtime::ClaudeRead>, payload::Unreadable> {
     use payload::Unreadable;
-    use scribe_core::cases::{ClaudeRead, ClaudeWindow};
+    use scribe_core::runtime::{ClaudeRead, ClaudeWindow};
 
     let Some((mut file, meta)) = payload::open_checked(ctx, path, session)? else {
         return Ok(None);

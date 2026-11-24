@@ -4,8 +4,8 @@
 use crate::cases::continuation::{self, ClearedPredecessor};
 use crate::cases::group::GroupVerbs;
 use crate::cases::group_cmd::{GroupError, earlier_turns, ended, redactor};
-use crate::cases::{Ctx, PortError};
 use crate::group::{JoinGroup, automatic_seat};
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Label, Provider, SessionId};
 
 /// What `group join` runs.

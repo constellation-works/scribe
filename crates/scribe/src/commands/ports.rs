@@ -1,4 +1,4 @@
-//! The CLI's side of the use cases' ports ([`scribe_core::cases::Ctx`]):
+//! The CLI's side of the use cases' ports ([`scribe_core::runtime::Ctx`]):
 //! the clock, the provider transcripts on this host and the redactor, all
 //! from this process's environment.
 
@@ -8,8 +8,8 @@ use crate::error::CliError;
 #[cfg(unix)]
 use scribe_core::ClaudeCapturePosition;
 #[cfg(unix)]
-use scribe_core::cases::ClaudeRead;
-use scribe_core::cases::{
+use scribe_core::runtime::ClaudeRead;
+use scribe_core::runtime::{
     AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, TranscriptState, Transcripts,
     Unreadable,
 };

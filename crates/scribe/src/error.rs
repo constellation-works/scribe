@@ -245,9 +245,9 @@ impl From<scribe_core::cases::consistency_scan::ScanError<CliError>> for CliErro
 
 /// `ask`'s errors, each the variant it was before the flow moved.
 /// The record writes' errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::write_error::WriteError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::write_error::WriteError<CliError>) -> Self {
-        use scribe_core::cases::write_error::WriteError;
+impl From<scribe_core::runtime::errors::WriteError<CliError>> for CliError {
+    fn from(err: scribe_core::runtime::errors::WriteError<CliError>) -> Self {
+        use scribe_core::runtime::errors::WriteError;
         match err {
             WriteError::Core(e) => Self::Core(e),
             WriteError::Port(e) => e,
@@ -259,9 +259,9 @@ impl From<scribe_core::cases::write_error::WriteError<CliError>> for CliError {
 }
 
 /// The reads' errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::read_error::ReadError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::read_error::ReadError<CliError>) -> Self {
-        use scribe_core::cases::read_error::ReadError;
+impl From<scribe_core::runtime::errors::ReadError<CliError>> for CliError {
+    fn from(err: scribe_core::runtime::errors::ReadError<CliError>) -> Self {
+        use scribe_core::runtime::errors::ReadError;
         match err {
             ReadError::Core(e) => Self::Core(e),
             ReadError::Port(e) => e,

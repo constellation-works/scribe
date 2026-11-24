@@ -14,7 +14,7 @@ use crate::error::CliError;
 use scribe_core::SessionId;
 /// What the provenance check found, and why [`read_checked`] gave no bytes
 /// for a transcript that exists: the core port's types.
-pub(in crate::commands) use scribe_core::cases::{TranscriptState as Transcript, Unreadable};
+pub(in crate::commands) use scribe_core::runtime::{TranscriptState as Transcript, Unreadable};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::io::Read;

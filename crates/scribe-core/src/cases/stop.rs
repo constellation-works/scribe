@@ -30,9 +30,9 @@ use crate::cases::annotation::{self, AnnotationInput};
 use crate::cases::entry::EntryVerbs;
 use crate::cases::group_turns;
 use crate::cases::hook::{HookError, HookOutcome, HookReply, PROVENANCE_FAILED};
-use crate::cases::session::SessionVerbs;
-use crate::cases::{Ctx, PortError, TranscriptState};
 use crate::control::{self, Since};
+use crate::runtime::resolve::refuse_forgotten;
+use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::transcript::{self, Message};
 use crate::{Cite, Label, Provider, SessionId, Speaker, pass};
 use std::path::Path;
@@ -75,7 +75,7 @@ pub fn run<E: PortError>(
         block: None,
         outcomes: Vec::new(),
     };
-    if let Err(error) = ctx.store.refuse_forgotten(&session) {
+    if let Err(error) = refuse_forgotten(ctx.store, &session) {
         if error.code() == "session_forgotten" {
             return Ok(reply);
         }
@@ -98,7 +98,7 @@ pub fn run<E: PortError>(
     // Group turn capture commits immediately because `hook stop` is stepwise;
     // keep it audited if a later step returns `Err`.
     let mut persisted =
-        crate::cases::audit::PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now());
+        crate::runtime::audit::PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now());
     let mut outcomes: Vec<HookOutcome> = if provider == Provider::ClaudeCode {
         group_turns::claude(ctx, provider, &session, transcript_path)?
             .into_iter()

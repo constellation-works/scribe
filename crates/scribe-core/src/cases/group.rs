@@ -6,7 +6,6 @@
 mod capture;
 mod close;
 
-use crate::cases::session::SessionVerbs;
 use crate::checks::group::{check_additions, check_join, check_new_group, check_project_slug};
 use crate::checks::refusal;
 use crate::group::{
@@ -15,6 +14,7 @@ use crate::group::{
 };
 use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
+use crate::runtime::resolve::refuse_forgotten;
 use crate::{
     AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, CloseGroupOutcome, Error, Project,
     Redactor, Result, SessionId, Store, WriteRefusal,
@@ -194,7 +194,7 @@ impl GroupVerbs for Store {
     ) -> Result<String> {
         check_project_slug(slug, redactor)?;
         self.write(|tx| {
-            self.refuse_forgotten(session)?;
+            refuse_forgotten(self, session)?;
             tx.groups().rows("join project group in", |rows| {
                 let held = rows.project_membership(session)?;
                 if let Some((_, name)) = held {
@@ -230,7 +230,7 @@ impl GroupVerbs for Store {
         check_additions(additions)?;
         self.write(|tx| {
             for addition in additions {
-                self.refuse_forgotten(&addition.session)?;
+                refuse_forgotten(self, &addition.session)?;
             }
             tx.groups().rows("add to project group in", |rows| {
                 let existing = rows.open_project(slug)?;
@@ -291,7 +291,7 @@ impl GroupVerbs for Store {
     fn join_group(&self, join: JoinGroup<'_>, redactor: &Redactor) -> Result<bool> {
         check_join(&join)?;
         self.write(|tx| {
-            self.refuse_forgotten(join.session)?;
+            refuse_forgotten(self, join.session)?;
             let n = tx.groups().number(join.group)?;
             tx.groups().rows("join group in", |rows| {
                 let seat = join.seat.as_str();
@@ -469,7 +469,7 @@ impl GroupVerbs for Store {
             return Ok(SeatStart::Unjoined);
         };
         self.write(|tx| {
-            self.refuse_forgotten(child)?;
+            refuse_forgotten(self, child)?;
             tx.groups().rows("inherit group seat in", |rows| {
                 if let Some(hold) = rows.held_seat(child)? {
                     return Ok(SeatStart::AlreadySeated(hold));

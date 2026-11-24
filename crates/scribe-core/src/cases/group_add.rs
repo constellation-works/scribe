@@ -20,9 +20,9 @@
 use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookError, HookOutcome, HookPortError, HookReply};
 use crate::cases::user_prompt_submit::EVENT;
-use crate::cases::{Ctx, Discovered};
 use crate::group::{Added, GroupAddition};
 use crate::message::NewMessage;
+use crate::runtime::{Ctx, Discovered};
 use crate::{Provider, SessionId, Store};
 use std::path::Path;
 

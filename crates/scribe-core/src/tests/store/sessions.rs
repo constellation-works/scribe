@@ -9,6 +9,7 @@ use crate::entry::{Cite, Speaker};
 use crate::error::Error;
 use crate::memory::{Checked, Draft, ElementKind, NowKind};
 use crate::message::NewMessage;
+use crate::runtime::resolve::refuse_forgotten;
 use crate::session::{SessionFilter, SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, codec, db};
@@ -471,7 +472,7 @@ fn session_forget_retires_single_source_memory_and_keeps_other_occurrences() {
             .is_err()
     );
     assert_eq!(
-        store.refuse_forgotten(&first.id).unwrap_err().code(),
+        refuse_forgotten(&store, &first.id).unwrap_err().code(),
         "session_forgotten"
     );
     assert_eq!(

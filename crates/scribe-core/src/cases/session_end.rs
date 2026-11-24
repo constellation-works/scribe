@@ -7,8 +7,8 @@
 //! `control.json`, nothing is written and nothing is audited. The pass
 //! itself runs later from `scribe session pass`. It prints nothing.
 
-use crate::cases::Ctx;
 use crate::cases::hook::{HookError, HookOutcome, HookReply};
+use crate::runtime::Ctx;
 use crate::{SessionId, control};
 
 /// The hook event this runs for.

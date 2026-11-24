@@ -2,9 +2,9 @@
 //! one, under its own lock (2_design.md §15.7).
 
 use crate::cases::pass::{PassPayload, PassReport, distill, short_reason, window_warnings};
-use crate::cases::session::SessionVerbs;
-use crate::cases::{Ctx, PortError, TranscriptState, Unreadable};
 use crate::checks::{forgotten_refusal, refuse_busy};
+use crate::runtime::resolve::refuse_forgotten;
+use crate::runtime::{Ctx, PortError, TranscriptState, Unreadable};
 use crate::{
     Author, AuthorName, Config, Models, Provider, SegmentOrigin, SegmentState, SessionId,
     SessionStatus, check_agent_author, pass, transcript,
@@ -48,7 +48,7 @@ impl RebuildVerbs for Store {
         }
         let guard = self.session_lock(&format!("rebuild-{}.lock", record.id), "session rebuild")?;
         // Forget may have completed while acquisition was waiting.
-        self.refuse_forgotten(&record.id)?;
+        refuse_forgotten(self, &record.id)?;
         Ok(guard)
     }
 
@@ -186,7 +186,7 @@ pub fn run<E: PortError, M: Models>(
     let store = ctx.store;
     let id = store.read().sessions().resolve(input)?;
     // Refused before the confirm check, the transcript and any model call.
-    store.refuse_forgotten(&id)?;
+    refuse_forgotten(store, &id)?;
     let mut original = store.read().sessions().get(&id)?.record;
     let provider: Provider = original
         .provider

@@ -5,9 +5,9 @@
 use crate::cases::entry::EntryVerbs;
 use crate::cases::instruction_check::{self, Instruction};
 use crate::cases::proposal::ProposalVerbs;
-use crate::cases::write_error::{WriteError, redactor};
-use crate::cases::{Ctx, PortError};
 use crate::instruction::{Act, Target};
+use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Proposal, ProposalChange, ProposalKind, WriteRefusal};
 
 /// What `proposal add` runs.

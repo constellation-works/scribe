@@ -33,7 +33,7 @@ use crate::audit_middleware::{AuditGuard, AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
-pub(crate) use scribe_core::cases::RunLimits;
+pub(crate) use scribe_core::runtime::RunLimits;
 use scribe_core::{DateRange, Skipped};
 use time::Date;
 
@@ -231,7 +231,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
         );
         extra.extend(groups.iter().map(|g| g.opener.clone()));
     }
-    scribe_core::cases::resolve::short_ids(&ctx.core(), ctx.provider(), extra)
+    scribe_core::runtime::resolve::short_ids(&ctx.core(), ctx.provider(), extra)
 }
 
 /// Run one command, auditing it if it is audited.

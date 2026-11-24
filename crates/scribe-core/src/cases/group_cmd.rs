@@ -3,9 +3,9 @@
 
 use crate::cases::group_turns;
 use crate::cases::hook::HookError;
-use crate::cases::{Ctx, PortError, Unreadable, resolve};
 use crate::message::NewMessage;
 use crate::models::ModelError;
+use crate::runtime::{Ctx, PortError, Unreadable, resolve};
 use crate::{Provider, Related, SessionId, transcript};
 use std::path::PathBuf;
 
@@ -60,7 +60,7 @@ impl<E> From<HookError<E>> for GroupError<E> {
     }
 }
 
-/// `session`'s `provider` transcript ([`crate::cases::Transcripts::files`]).
+/// `session`'s `provider` transcript ([`crate::runtime::Transcripts::files`]).
 pub(crate) fn locate<E: PortError>(
     ctx: &Ctx<'_, E>,
     provider: Provider,

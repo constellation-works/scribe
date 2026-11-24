@@ -1,12 +1,70 @@
-//! What every use case's `run(ctx, input)` runs against (ORB-27707 step 3):
-//! the store and the ports the CLI fills, so core reads no environment and
-//! discovers no transcript itself.
+//! What every app runs against (docs/design/scribe/specs/architecture.md,
+//! §Runtime): the context, id resolution, error mapping and the audit lines a
+//! use case owes, and no other subject.
+//!
+//! [`Ctx`] is the store and the ports the CLI fills, so core reads no
+//! environment and discovers no transcript itself. [`Runtime`] is what an
+//! app's `exec` receives.
+//!
+//! Until migration step 3 the binary implements the ports and builds the
+//! [`Runtime`] from its parts, so this module is public; step 3 moves
+//! composition and the port implementations into core and makes it
+//! `pub(crate)`.
+
+pub mod audit;
+pub mod errors;
+pub mod resolve;
 
 #[cfg(unix)]
 use crate::ClaudeCapturePosition;
 use crate::{Config, Project, Provider, Redactor, SessionId, Store};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
+
+/// What an app's `exec` runs against. Until migration step 3 the binary
+/// builds it from the store and the ports it implements
+/// ([`Runtime::from_parts`]); step 3 replaces that with `Runtime::start`,
+/// which owns them.
+pub struct Runtime<'a, E> {
+    ctx: Ctx<'a, E>,
+}
+
+impl<'a, E> Runtime<'a, E> {
+    /// A runtime over `store` and the binary's ports.
+    #[must_use]
+    pub fn from_parts(
+        store: &'a Store,
+        clock: &'a dyn Clock,
+        transcripts: &'a dyn Transcripts<Error = E>,
+        redaction: &'a dyn Redaction<Error = E>,
+    ) -> Self {
+        Self {
+            ctx: Ctx {
+                store,
+                clock,
+                transcripts,
+                redaction,
+            },
+        }
+    }
+
+    /// The context a flow receives.
+    #[expect(dead_code, reason = "the first app's exec calls it (ORB-27921 step 2)")]
+    pub(crate) fn ctx(&self) -> Ctx<'a, E> {
+        let Ctx {
+            store,
+            clock,
+            transcripts,
+            redaction,
+        } = self.ctx;
+        Ctx {
+            store,
+            clock,
+            transcripts,
+            redaction,
+        }
+    }
+}
 
 /// The store and the ports a use case runs against. The CLI builds one per
 /// command; `E` is its port error, handed back unchanged.
