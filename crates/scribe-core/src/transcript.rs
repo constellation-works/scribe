@@ -772,10 +772,25 @@ pub fn user_turn(message: &Message) -> Option<UserTurn> {
     (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
 }
 
+/// Built-in settings commands whose args are a value Claude Code writes into a
+/// setting (`/model claude-haiku-5-5`), not words Daniel says. Their args are
+/// never his turn: a typed `/model` and one the desktop app writes when another
+/// session changes the model leave the same line, so origin cannot tell them
+/// apart.
+const SETTINGS_COMMANDS: &[&str] = &[
+    "/config",
+    "/effort",
+    "/fast",
+    "/model",
+    "/output-style",
+    "/permissions",
+];
+
 /// The args of a slash command Daniel typed, when `text` is one: the text
 /// inside its `<command-args>` tag, trimmed. Claude Code writes the command's
 /// name and args as tags, but the args are his own words. `/clear` and
-/// `/compact`, a command with no args and a `/scribe` control line give none.
+/// `/compact`, a settings command ([`SETTINGS_COMMANDS`]), a command with no
+/// args and a `/scribe` control line give none.
 #[must_use]
 pub fn slash_command_args(text: &str) -> Option<&str> {
     let start = text.trim_start();
@@ -783,7 +798,7 @@ pub fn slash_command_args(text: &str) -> Option<&str> {
         return None;
     }
     let name = between(text, "<command-name>", "</command-name>")?.trim();
-    if matches!(name, "/clear" | "/compact") {
+    if matches!(name, "/clear" | "/compact") || SETTINGS_COMMANDS.contains(&name) {
         return None;
     }
     let args = between(text, "<command-args>", "</command-args>")?.trim();

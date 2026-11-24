@@ -511,6 +511,36 @@ fn group_turns_store_his_slash_command_args_and_queued_words_only() {
 }
 
 #[test]
+fn group_turns_do_not_store_a_settings_command_args_on_either_path() {
+    // The `/model` line the desktop app writes when another session changes
+    // the model: its origin fields are all null, so the origin guard passes it.
+    let bytes = [
+        claude_line(
+            "u-model",
+            "user",
+            "<command-message>model</command-message>\n<command-name>/model</command-name>\n<command-args>claude-haiku-5-5</command-args>",
+            json!({"entrypoint": "claude-desktop"}),
+        ),
+        slash("u-formation", "duo scribe", desktop_human()),
+    ]
+    .concat();
+    // Join and backfill read the transcript through this batch function.
+    let turns = crate::instruction::claude_group_turns(bytes.as_bytes(), &session());
+    let texts: Vec<&str> = turns.iter().map(|turn| turn.text.as_str()).collect();
+    assert_eq!(texts, ["duo scribe"]);
+    // The Stop hook's live capture reads the same lines through the batch parse.
+    let resolved = crate::instruction::ClaudeGroupTurns::parse(bytes.as_bytes(), &session())
+        .resolve(|_| Ok::<_, std::convert::Infallible>(crate::instruction::ClaudeSeen::default()))
+        .unwrap();
+    let texts: Vec<&str> = resolved
+        .turns
+        .iter()
+        .map(|turn| turn.text.as_str())
+        .collect();
+    assert_eq!(texts, ["duo scribe"]);
+}
+
+#[test]
 fn a_claude_transcript_marks_his_typed_words_and_its_entry_points() {
     let bytes = [
         claude_line("u-1", "user", "approve p-4 please", json!({"entrypoint": "cli"})),
