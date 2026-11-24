@@ -14,6 +14,9 @@ Options:
           
           [possible values: entry, session, message]
 
+      --tag <TAG>
+          Only entries filed under this tag, by its name as `tag list` prints it; sessions and messages carry no tag [default: any]
+
       --project <PROJECT>
           Only records of this project (a repository slug, or global) [default: any]
 
@@ -70,5 +73,6 @@ Examples:
   scribe search "merge queue"
   scribe search release --kind session --since 2026-11-01
   scribe search "merge queue" --kind message
+  scribe search "merge queue" --tag decisions
   scribe search "store format" --project scribe --topic store --limit 5
   scribe search "api" --json | jq -r '.hits[].cite'

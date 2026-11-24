@@ -1531,7 +1531,8 @@ exits 0.
 - `session list` lists session records. A session switched on before its
   first pass has no record yet and is not listed;
   `/scribe status` in that session reports it as on with no record yet.
-- `entry list --tag` matches a tag's name, not its aliases.
+- `entry list --tag` matches a tag's name, not its aliases; `scribe search
+  --tag` does the same.
 
 ## Codex ingestion state (format 7)
 

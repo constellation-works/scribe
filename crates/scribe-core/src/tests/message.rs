@@ -106,6 +106,7 @@ fn query(terms: &str) -> SearchQuery {
     SearchQuery {
         terms: terms.to_owned(),
         kind: Some(crate::ask::RecordKind::Message),
+        tag: None,
         project: None,
         topics: Vec::new(),
         dates: DateRange::default(),

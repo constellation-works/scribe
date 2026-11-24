@@ -173,7 +173,7 @@ tool. Agents with a shell use the CLI, and one skill teaches it
 
 | Want | Command | Model |
 |---|---|---|
-| Words to look for | `scribe search "<terms>" [--kind entry\|session\|discussion] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
+| Words to look for | `scribe search "<terms>" [--kind entry\|session\|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
 | Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
 | One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
 | An answer in prose | `scribe question ask "<question>"`, or the `scribe.ask` MCP tool | decision model |
@@ -1990,7 +1990,7 @@ are built in S12.
 ### 6.8 `scribe search`
 
 Designed for S11. `scribe search "<terms>" [--kind
-entry|session|discussion] [--project <p>] [--topic <t>]… [--since <date>]
+entry|session|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>]
 [--until <date>] [--include-hidden] [--limit <n>]` runs §6.2's filtering,
 tokenizing and BM25 ranking with the §6.7 units and weights, and stops
 there: no lookup classifier, no Orbit tasks, no model. It is the fast,
@@ -2025,6 +2025,14 @@ the count and the `--kind message` command that lists them, and `--json`
 carries the count as `message_matches`
 ([output contract](./specs/output-contract.md)). The default kinds stay,
 since message scores are not comparable with entry and session scores.
+
+`--tag <tag>` (ORB-27683) keeps only the entries filed under that tag, by
+its exact name as `entry list --tag` matches it: an alias does not match
+([store spec, known gaps](./specs/store.md)). It combines with the query and
+the other filters, under the same visibility rules. It implies entries:
+`--kind session` or `--kind message` with it is a usage error (exit 2), and a
+search with a tag never falls back to stored messages, since they carry no
+tag. The echoed criteria name it as `--tag <tag>`, after `--kind`.
 
 ## 7. Consistency routine
 
