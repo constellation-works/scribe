@@ -2,6 +2,8 @@
 //! the store and the ports the CLI fills, so core reads no environment and
 //! discovers no transcript itself.
 
+#[cfg(unix)]
+use crate::ClaudeCapturePosition;
 use crate::{Config, Project, Provider, Redactor, SessionId, Store};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -96,6 +98,45 @@ pub trait Transcripts {
 
     /// The project a working directory belongs to.
     fn project_of(&self, cwd: &Path) -> Project;
+
+    /// Check `path` as `session`'s `provider` transcript and read its
+    /// complete records after `prior`, the capture's saved position (from
+    /// the start when it no longer matches); `None` when there is no file
+    /// yet.
+    ///
+    /// # Errors
+    ///
+    /// [`Unreadable`].
+    #[cfg(unix)]
+    fn claude_window(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+        prior: Option<&ClaudeCapturePosition>,
+    ) -> Result<Option<ClaudeRead>, Unreadable>;
+}
+
+/// One read of a Claude transcript's new records
+/// ([`Transcripts::claude_window`]).
+#[cfg(unix)]
+pub enum ClaudeRead {
+    /// The file changed during the read (cut short, truncated or rewritten
+    /// in place): read it again.
+    Retry,
+    /// The new complete records, or `None` when there are none.
+    Window(Option<ClaudeWindow>),
+}
+
+/// A Claude transcript's new complete records and where they end.
+#[cfg(unix)]
+pub struct ClaudeWindow {
+    /// The records' bytes.
+    pub bytes: Vec<u8>,
+    /// Whether the read resumed from the saved position.
+    pub resumed: bool,
+    /// Where the records end, for the next read.
+    pub position: ClaudeCapturePosition,
 }
 
 /// Whether a transcript that passed its checks is there yet.

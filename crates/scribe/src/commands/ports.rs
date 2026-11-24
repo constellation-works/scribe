@@ -3,8 +3,12 @@
 //! from this process's environment.
 
 use crate::app::Context;
-use crate::commands::hook::{payload, project};
+use crate::commands::hook::{group_turns, payload, project};
 use crate::error::CliError;
+#[cfg(unix)]
+use scribe_core::ClaudeCapturePosition;
+#[cfg(unix)]
+use scribe_core::cases::ClaudeRead;
 use scribe_core::cases::{
     Clock, Ctx, PortError, Redaction, TranscriptState, Transcripts, Unreadable,
 };
@@ -79,5 +83,16 @@ impl Transcripts for Context {
 
     fn project_of(&self, cwd: &Path) -> Project {
         project::of(cwd)
+    }
+
+    #[cfg(unix)]
+    fn claude_window(
+        &self,
+        provider: Provider,
+        path: &Path,
+        session: &SessionId,
+        prior: Option<&ClaudeCapturePosition>,
+    ) -> Result<Option<ClaudeRead>, Unreadable> {
+        group_turns::claude_window(&self.with_provider(provider), path, session, prior)
     }
 }

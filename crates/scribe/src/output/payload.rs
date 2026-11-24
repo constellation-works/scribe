@@ -1723,35 +1723,7 @@ pub(crate) struct TranscriptPayload {
     pub(crate) user_first_turns: Option<Vec<String>>,
 }
 
-/// The reply a Claude Code hook prints: text for the user
-/// (`systemMessage`) and for the main agent (`additionalContext`), plus what
-/// the audit log records for the run. Its JSON shape is Claude Code's hook
-/// protocol, so it is the same in every output mode.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HookReply {
-    /// The hook event, such as `UserPromptSubmit`.
-    pub(crate) event: &'static str,
-    /// Shown to the user; `None` prints no reply at all.
-    pub(crate) message: Option<String>,
-    /// Shown to the main agent beside the prompt.
-    pub(crate) context: Option<String>,
-    /// Block the prompt with this reason, shown to the user: a `/scribe`
-    /// command is answered here and never reaches the model.
-    pub(crate) block: Option<String>,
-    /// One per record written or refused, and one per run that stored a group
-    /// member's new turns, for the audit log; empty when the hook changed
-    /// nothing.
-    pub(crate) outcomes: Vec<HookOutcome>,
-}
-
-/// One write or refusal a hook run made.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HookOutcome {
-    /// The record it acted on: an entry id, or `session:<id>` for a refusal.
-    pub(crate) target: Option<String>,
-    /// The stable code of a refusal; `None` for a write.
-    pub(crate) error_code: Option<&'static str>,
-}
+pub(crate) use scribe_core::cases::hook::{HookOutcome, HookReply};
 
 /// The JSON a hook prints (Claude Code's hook output).
 #[derive(Serialize)]

@@ -8,18 +8,15 @@
 //! lack the model credential a login shell exports, so a marker can fail
 //! in a hook and still be cataloged by `retry` from a shell.
 
-use super::hook::annotation;
-use super::hook::payload::{self, StopPayload, Transcript};
 use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Records};
 use clap::{Args, Subcommand};
-use scribe_core::MarkVerbs;
+use scribe_core::Config;
 use scribe_core::SessionId;
-use scribe_core::SessionVerbs;
-use scribe_core::models::ModelError;
+use scribe_core::cases::mark_retry::{self, MarkRetried, MarkRetryInput};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -136,61 +133,15 @@ fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
 /// stderr.
 fn retry(args: &RetryArgs, ctx: &Context) -> Result<Output, CliError> {
     let session = super::resolve_session_or_typed(ctx, &args.session)?;
-    ctx.store().refuse_forgotten(&session)?;
-    let path = payload::locate(ctx, &session)?
-        .ok_or_else(|| CliError::TranscriptMissing(session.clone()))?;
-    match payload::check(ctx, &path, &session) {
-        Ok(Transcript::Present) => {}
-        Ok(Transcript::Missing) => return Err(CliError::TranscriptMissing(session)),
-        Err(reason) => {
-            return Err(CliError::TranscriptRefused {
-                id: session,
-                reason,
-            });
-        }
-    }
-    let now = ctx.now();
-    ctx.store().reopen_marks(&session, now)?;
-    // No hook payload names a cwd here: the transcript's own stands in for
-    // a line that does not carry one.
-    let cwd = payload::read_for(ctx, &path)
-        .ok()
-        .and_then(|bytes| scribe_core::transcript::cwd(&bytes));
-    let stop = StopPayload {
-        session_id: session.to_string(),
-        transcript_path: path,
-        cwd,
-    };
-    let cataloged = annotation::run(&stop, &session, ctx, usize::MAX, |config| {
-        ctx.models(config)
-    })?;
-    let touched: Vec<_> = ctx
-        .store()
-        .read()
-        .marks()
-        .of_session(&session)?
-        .into_iter()
-        .filter(|m| m.at >= now)
-        .collect();
-    let failed: Vec<&String> = cataloged
-        .echoes
-        .iter()
-        .filter(|echo| echo.starts_with("scribe: could not catalog"))
-        .collect();
-    if !failed.is_empty() {
-        return Err(CliError::Model(ModelError::Failed(format!(
-            "{} #scribe marker(s) of {session} still not cataloged — {}",
-            failed.len(),
-            failed
-                .iter()
-                .map(|echo| {
-                    echo.trim_start_matches("scribe: could not catalog #scribe in your message — ")
-                        .trim_start_matches("the model failed: ")
-                })
-                .collect::<Vec<_>>()
-                .join("; ")
-        ))));
-    }
+    let MarkRetried { touched, echoes } = mark_retry::run(
+        &ctx.core(),
+        MarkRetryInput {
+            session: &session,
+            provider: ctx.provider(),
+            host: ctx.host(),
+            models: |config: &Config| ctx.models(config),
+        },
+    )?;
     let total = touched.len();
     let mut output = list_output(
         Records::Marks(touched),
@@ -203,7 +154,7 @@ fn retry(args: &RetryArgs, ctx: &Context) -> Result<Output, CliError> {
         },
     );
     if let Output::List { notices, .. } = &mut output {
-        notices.extend(cataloged.echoes);
+        notices.extend(echoes);
     }
     Ok(output)
 }
