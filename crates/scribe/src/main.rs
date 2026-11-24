@@ -20,10 +20,6 @@ mod output;
 
 use std::process::ExitCode;
 
-/// The resolved context every command runs against: composition's, with
-/// this binary's error as its ports' error until the core maps errors
-/// itself (ORB-27921 step 3, PR 4).
-
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     let cli = match cli::Cli::parse_args(&args) {
