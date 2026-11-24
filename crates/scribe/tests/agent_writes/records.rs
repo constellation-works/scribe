@@ -137,6 +137,49 @@ fn user_decisions_check_both_quotes_and_allow_short_whole_turns() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn decision_stops_before_unreadable_later_transcript() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new();
+    let first = decision_transcript(&fx, &[("user", "yes"), ("user", "because")]);
+    let later = decision_transcript_in(&fx, LATER_SESSION, "2026-11-11T02:00:00Z", &[]);
+    let path = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{LATER_SESSION}.jsonl"));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Privileged test runners may still read mode-000 files.
+    if std::fs::File::open(&path).is_ok() {
+        return;
+    }
+    let decide = |reason| {
+        add_record(
+            &fx,
+            "decision",
+            &[
+                "--decided-by",
+                "user",
+                "--related",
+                &first,
+                "--related",
+                &later,
+                "--related",
+                "repo:scribe",
+                "--quote",
+                "yes",
+                "--reason-quote",
+                reason,
+                "A decision",
+            ],
+        )
+    };
+    let complete = decide("because");
+    assert!(complete.status.success(), "{complete:?}");
+    assert_record_refusal(decide("missing"), "io_error");
+}
+
 #[test]
 fn decision_creation_refuses_bad_fields_and_enforces_the_combined_size() {
     let fx = Fixture::new();
