@@ -3,11 +3,12 @@
 //! The config is read here too: the tags it defines route first.
 
 use super::Tags;
+use crate::WriteRefusal;
 use crate::db::{self, docs};
 use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::{CONFIG_FILE, Config, Store, StoreTag, TagDef, fsio};
-use scribe_domain::{TagTable, WriteRefusal};
+use scribe_domain::TagTable;
 
 impl Tags<'_> {
     /// The config, with the store tags merged in.

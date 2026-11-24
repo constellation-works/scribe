@@ -8,7 +8,8 @@
 //! [`Author`]) in `record`; `config.toml` ([`Config`]) in `config`; the
 //! model request and answer shapes in [`models`]; the rules
 //! that select and judge records (capture, claims, the pass, instructions)
-//! in their modules; and the typed [`Error`].
+//! in their modules. The typed `Error` is the store's (`scribe-store`'s
+//! `error`).
 //!
 //! The modules sit in four rings, each importing only its own and the ones
 //! before it: base, records, transcript, rules (ARCHITECTURE.md;
@@ -23,7 +24,6 @@ pub mod claim;
 pub mod config;
 pub mod control;
 pub mod entry;
-pub mod error;
 pub mod handoff;
 pub mod memory;
 pub mod message;
@@ -49,7 +49,6 @@ pub use entry::{
     ItemClosure, ItemState, NewEntry, OpenItem, Outcome, OutcomeState, Speaker, TagName, Window,
     WindowTurn,
 };
-pub use error::{Error, Result, WriteRefusal};
 pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
 pub use proposal::{
     Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,

@@ -119,7 +119,7 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `models`, `config`, `error`, `memory`, `message` |
+| 4. rules | `trigger`, `voice`, `claim`, `models`, `config`, `memory`, `message` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -195,6 +195,13 @@ The core's root re-exports them as `crate::capture` and `crate::instruction`.
 `verbatim` stays in the domain's base ring, because `claim` imports it. It
 goes to `tools/text` with `claim` and `text` in PR 5-13.
 
+PR 5-10 moved `error` whole to the store's `error.rs`, beside `refusal` and
+`forgotten_refusal`. Every store call returns that `Error`, and the store
+cannot name the core. The store root exports `Error`, `Result` and
+`WriteRefusal`. The core's `crate::error` names the store's module, so
+`runtime/errors.rs` maps the same type to codes and the core's paths are
+unchanged.
+
 `redact` went whole to the store's `redact.rs` in PR 5-7. The store root
 re-exports `Redactor`, `REDACTED_FIELDS`, `MIN_SECRET_CHARS` and
 `unresolved_redact_env` as before. `Redactor::from_config` and
@@ -215,13 +222,12 @@ ORB-27707 where an import forces it:
   `transcript` imports only the records ring (`control::parse`, `entry`,
   `session`) and base (`origin`, `text`, `record`).
 - **`config` is in rules, not a ring of its own after transcript.** It imports
-  `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, and
-  `error` imports it back, so it cannot sit after rules.
+  `trigger::MAX_TRIGGERS` and `voice::{UserName, Instructions}`, both in
+  rules.
 - **Modules the lists did not name:**
   - `origin` is in base and imports nothing;
   - `control` is in records, since it imports `session`;
-  - `error` (imports `config::ConfigError`) and `models` (imports
-    `voice`) are in rules.
+  - `models` (imports `voice`) is in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.
 
