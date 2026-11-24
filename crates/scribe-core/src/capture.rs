@@ -364,7 +364,9 @@ pub fn prompt_hashes(message: &crate::transcript::Message) -> Vec<String> {
     hashes
 }
 
-pub use crate::origin::{OriginClaims, agent_originated, present_value};
+pub use crate::origin::{
+    OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
+};
 pub use crate::text::{bytes_sha256, prompt_sha256};
 
 // --- markers (§14.1) ---------------------------------------------------------

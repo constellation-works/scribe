@@ -1,20 +1,16 @@
 //! Quote-checked group opening, caller-bound seat membership and roster reads.
 
-use super::hook::{self, ClearedPredecessor, payload};
 use super::{ListNotice, list_output};
 use crate::app::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
-use scribe_core::GroupVerbs;
-use scribe_core::group::{GroupCloser, GroupConsent, JoinGroup, NewGroup, automatic_seat};
-use scribe_core::{
-    AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,
-    WriteRefusal, message::NewMessage, transcript,
-};
-
-const CLOSE_COMMAND: &str = "group close";
+use scribe_core::cases::group_close::{CLOSE_COMMAND, GroupCloseInput};
+use scribe_core::cases::group_join::GroupJoinInput;
+use scribe_core::cases::group_open::GroupOpenInput;
+use scribe_core::cases::{group_backfill, group_close, group_join, group_leave, group_open};
+use scribe_core::{AuthorName, Config, Label, Project, Provider, Related, SessionId};
 
 pub(super) const EXAMPLES: &str = "Examples:
   scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
@@ -148,73 +144,9 @@ fn caller(ctx: &Context) -> Result<SessionId, CliError> {
         })
 }
 
-/// Missing or unverifiable evidence leaves the seat occupied. A predecessor
-/// can be from either provider in this host's store. Only the predecessor's
-/// own transcript is checked: another session's duplicate id elsewhere in the
-/// tree is not evidence about it, while a duplicate of the predecessor's own
-/// id still refuses.
-fn ended(ctx: &Context, session: &SessionId) -> Result<bool, CliError> {
-    let mut found = false;
-    for provider in [Provider::ClaudeCode, Provider::Codex] {
-        let view = ctx.with_provider(provider);
-        if let Some(path) = payload::locate_own(&view, session)? {
-            found = true;
-            let old = payload::read_checked(&view, &path, session)
-                .ok()
-                .flatten()
-                .and_then(|bytes| transcript::survey(&bytes).ended)
-                .is_some_and(|last| transcript::is_day_old(last, ctx.now()));
-            if !old {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(found)
-}
-
-/// The caller's typed turns from the start of its own transcript, for the
-/// group it joins. A join does not need the transcript: one that is missing or
-/// fails its check joins with no earlier turns, as it always has.
-fn earlier_turns(ctx: &Context, session: &SessionId) -> Result<Vec<NewMessage>, CliError> {
-    let Some(path) = payload::locate_own(ctx, session)? else {
-        return Ok(Vec::new());
-    };
-    match payload::read_checked(ctx, &path, session) {
-        Ok(Some(bytes)) => hook::typed_turns(ctx, session, &bytes),
-        Ok(None) => Ok(Vec::new()),
-        Err(payload::Unreadable::Refused(reason)) => {
-            tracing::warn!(%session, %reason, "group join stores no earlier turns: transcript refused");
-            Ok(Vec::new())
-        }
-        Err(payload::Unreadable::Io(source)) => Err(CliError::Read {
-            what: path.display().to_string(),
-            source,
-        }),
-    }
-}
-
-/// The caller's transcript bytes once the provenance check passes. `Ok(None)`
-/// is evidence that is missing or refused, which the caller refuses without a
-/// model call. A discovery or read I/O failure is an error, so its diagnostic
-/// and `io_error` audit code survive instead of reading as missing evidence.
-fn checked_transcript(ctx: &Context, session: &SessionId) -> Result<Option<Vec<u8>>, CliError> {
-    let Some(path) = payload::locate(ctx, session)? else {
-        return Ok(None);
-    };
-    match payload::read_checked(ctx, &path, session) {
-        Ok(bytes) => Ok(bytes),
-        Err(payload::Unreadable::Refused(_)) => Ok(None),
-        Err(payload::Unreadable::Io(source)) => Err(CliError::Read {
-            what: path.display().to_string(),
-            source,
-        }),
-    }
-}
-
 pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
     let store = ctx.store();
-    let mut notices = Vec::new();
-    let (id, changed) = match command {
+    let (id, changed, notices) = match command {
         GroupCommand::Open {
             title,
             kind,
@@ -223,44 +155,20 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             quote,
         } => {
             let session = caller(ctx)?;
-            ctx.note_instruction_session(session.as_str());
-            let quote = quote.filter(|q| !q.trim().is_empty()).ok_or_else(|| {
-                scribe_core::Error::AgentWrite {
-                    kind: WriteRefusal::QuoteRequired,
-                    message: "pass --quote with the user's own words from this session".into(),
-                }
-            })?;
-            let path = payload::locate(ctx, &session)?;
-            let bytes = path
-                .and_then(|p| payload::read_checked(ctx, &p, &session).ok().flatten())
-                .ok_or_else(|| scribe_core::Error::AgentWrite {
-                    kind: WriteRefusal::QuoteNotFound,
-                    message: format!(
-                        "cannot verify a typed quote in session {session} on this host"
-                    ),
-                })?;
-            let consent = GroupConsent::verify(session, ctx.provider(), &bytes, &quote)?;
-            ctx.note_instruction_message(consent.message());
-            let draft = NewGroup {
-                title,
-                kind,
-                project,
-                related: super::resolve_relateds(ctx, &related)?,
-            };
-            // The opener's earlier typed turns are group record from its first
-            // line. A transcript that cannot be read as turns stores none.
-            let earlier = hook::typed_turns(ctx, consent.session(), &bytes)?;
-            let opened = store.open_group(
-                draft,
-                &consent,
-                &earlier,
-                ctx.now(),
-                &ctx.redactor(&ctx.config()?)?,
+            let opened = group_open::run(
+                &ctx.core(),
+                GroupOpenInput {
+                    session,
+                    title,
+                    kind,
+                    project,
+                    related,
+                    quote,
+                    provider: ctx.provider(),
+                    notes: ctx,
+                },
             )?;
-            for id in opened.still_open {
-                notices.push(format!("warning: group {id} is still open in this project"));
-            }
-            (opened.id, true)
+            (opened.id, true, opened.notices)
         }
         GroupCommand::Join {
             id,
@@ -269,212 +177,58 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             role,
             replace,
         } => {
-            let caller = caller(ctx)?;
-            let group = store.read().groups().get(&id)?;
-            let seat = match seat {
-                Some(seat) => seat,
-                None if group.slug.is_some() => {
-                    // A retry keeps the seat this session already holds, even
-                    // when the short name it first missed has since been freed.
-                    match group.seats.iter().find(|s| s.transcripts.contains(&caller)) {
-                        Some(held) => Label::sanitized(&held.name, "member"),
-                        None => automatic_seat(&caller, |name| {
-                            Ok::<_, std::convert::Infallible>(
-                                group.seats.iter().any(|s| s.name == name),
-                            )
-                        })
-                        .unwrap_or_else(|e| match e {}),
-                    }
-                }
-                None => return Err(CliError::Usage("pass --as for a named seat".into())),
-            };
-            let seat_exists = group.seats.iter().any(|s| s.name == seat.as_str());
-            let role = role
-                .or_else(|| (group.slug.is_some() && !seat_exists).then(|| "member".to_owned()));
-            let latest = group
-                .seats
-                .iter()
-                .find(|s| s.name == seat.as_str())
-                .and_then(|s| s.transcripts.last());
-            let (ended, predecessor) = match latest {
-                Some(previous) if !replace && previous != &caller => {
-                    let predecessor = if ctx.provider() == Provider::ClaudeCode {
-                        let path = payload::locate_own(ctx, &caller)?;
-                        match hook::cleared_predecessor(ctx, path.as_deref(), &caller) {
-                            ClearedPredecessor::One(parent) if &parent == previous => Some(parent),
-                            ClearedPredecessor::None
-                            | ClearedPredecessor::One(_)
-                            | ClearedPredecessor::Multiple(_) => None,
-                        }
-                    } else {
-                        None
-                    };
-                    let ended = if predecessor.is_none() && ended(ctx, previous)? {
-                        Some(previous)
-                    } else {
-                        None
-                    };
-                    (ended, predecessor)
-                }
-                _ => (None, None),
-            };
-            // Taken before the transcript is read, so a first turn appended
-            // after an empty snapshot is not dated before the membership.
-            let snapshot_at = ctx.now();
-            let earlier = earlier_turns(ctx, &caller)?;
-            let join = JoinGroup {
-                group: &group.id,
-                session: &caller,
-                seat: &seat,
-                author: &author,
-                role: role.as_deref(),
-                replace,
-                ended,
-                predecessor: predecessor.as_ref(),
-                earlier_turns: &earlier,
-                snapshot_at,
-            };
-            let changed = store.join_group(join, &ctx.redactor(&ctx.config()?)?)?;
-            if !changed {
-                notices.push("session already holds this seat".into());
-            }
-            (group.id, changed)
-        }
-        GroupCommand::Backfill { id } => {
-            let group = store.read().groups().get(&id)?;
-            if group.closed.is_some() {
-                return Err(scribe_core::Error::AgentWrite {
-                    kind: WriteRefusal::GroupMembership,
-                    message: "the group is already closed".into(),
-                }
-                .into());
-            }
-            let mut report = crate::output::GroupBackfill {
-                group: group.id.clone(),
-                members: Vec::new(),
-                stored: 0,
-                skipped: 0,
-            };
-            let mut batches = Vec::new();
-            for seat in &group.seats {
-                let Some(session) = seat.transcripts.last() else {
-                    continue;
-                };
-                let mut turns = None;
-                for provider in [Provider::ClaudeCode, Provider::Codex] {
-                    let view = ctx.with_provider(provider);
-                    if let Ok(Some(path)) = payload::locate(&view, session)
-                        && let Ok(Some(bytes)) = payload::read_checked(&view, &path, session)
-                        && let Ok(found) = hook::typed_turns(&view, session, &bytes)
-                    {
-                        turns = Some(found);
-                        break;
-                    }
-                }
-                let unavailable = turns.is_none();
-                let turns = turns.unwrap_or_default();
-                report.members.push(crate::output::GroupBackfillMember {
-                    seat: seat.name.clone(),
-                    session: session.to_string(),
-                    stored: 0,
-                    skipped: 0,
-                    transcript_unavailable: unavailable,
-                });
-                batches.push((session.clone(), turns));
-            }
-            let counts =
-                store.backfill_group_turns(&group.id, &batches, &ctx.redactor(&ctx.config()?)?)?;
-            for ((member, (_, turns)), stored) in
-                report.members.iter_mut().zip(&batches).zip(counts)
-            {
-                member.stored = stored;
-                member.skipped = turns.len() - stored;
-                report.stored += stored;
-                report.skipped += member.skipped;
-            }
-            return Ok(Output::GroupBackfill(report));
-        }
-        GroupCommand::Leave => (store.leave_group(&caller(ctx)?)?, true),
-        GroupCommand::Close { id, quote } => {
             let session = caller(ctx)?;
-            ctx.note_instruction_session(session.as_str());
-            let now = ctx.now();
-            let started = std::time::Instant::now();
-            let config = ctx.config()?;
-            let models = ctx.models(&config);
-            // Resolve the alias once: consent, close and audit all bind to this
-            // canonical id, so a slug reused after a close cannot redirect them.
-            let group = store.read().groups().get(&id)?;
-            let consent = match quote {
-                None => None,
-                Some(quote) if quote.trim().is_empty() => {
-                    return Err(scribe_core::Error::AgentWrite {
-                        kind: WriteRefusal::QuoteRequired,
-                        message: "pass --quote with the user's own words from this session".into(),
-                    }
-                    .into());
-                }
-                Some(quote) => {
-                    let bytes = checked_transcript(ctx, &session)?.ok_or_else(|| {
-                        scribe_core::Error::AgentWrite {
-                            kind: WriteRefusal::QuoteNotFound,
-                            message: format!(
-                                "cannot verify a typed quote in session {session} on this host"
-                            ),
-                        }
-                    })?;
-                    let consent = GroupConsent::verify_close(
-                        session.clone(),
-                        ctx.provider(),
-                        &bytes,
-                        &quote,
-                        &group.id,
-                    )?;
-                    ctx.note_instruction_message(consent.message());
-                    Some(consent)
-                }
-            };
-            let closer = consent
-                .as_ref()
-                .map_or(GroupCloser::Session(&session), GroupCloser::Quoted);
-            let outcome = store.close_group_with_outcome(
-                &group.id,
-                closer,
-                now,
-                &ctx.redactor(&config)?,
-                |evidence| -> Result<_, CliError> {
-                    if checked_transcript(ctx, &session)?.is_none() {
-                        return Err(scribe_core::Error::AgentWrite {
-                            kind: WriteRefusal::GroupMembership,
-                            message: format!(
-                                "cannot verify the transcript of session {session} on this host"
-                            ),
-                        }
-                        .into());
-                    }
-                    Ok(models.group_summary(&config.models.ask, evidence)?)
-                },
-                |group_id| scribe_core::AuditEvent {
-                    at: now,
-                    command: CLOSE_COMMAND.to_owned(),
-                    status: scribe_core::AuditStatus::Success,
-                    target: Some(group_id.to_owned()),
-                    error_code: None,
-                    author: None,
-                    instruction_session: Some(session.as_str().to_owned()),
-                    instruction_message: consent.as_ref().map(|c| c.message().to_owned()),
-                    issue: None,
-                    duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            let joined = group_join::run(
+                &ctx.core(),
+                GroupJoinInput {
+                    session,
+                    id,
+                    seat,
+                    author,
+                    role,
+                    replace,
+                    provider: ctx.provider(),
                 },
             )?;
-            if matches!(&outcome, CloseGroupOutcome::Closed { .. }) {
-                ctx.note_audit_committed();
-            }
-            let (id, changed) = outcome.into_result()?;
-            if !changed {
-                notices.push("group is already closed".into());
-            }
-            (id, changed)
+            (joined.id, joined.changed, joined.notices)
+        }
+        GroupCommand::Backfill { id } => {
+            let report = group_backfill::run(&ctx.core(), &id, ctx.provider())?;
+            return Ok(Output::GroupBackfill(crate::output::GroupBackfill {
+                group: report.group,
+                members: report
+                    .members
+                    .into_iter()
+                    .map(|m| crate::output::GroupBackfillMember {
+                        seat: m.seat,
+                        session: m.session,
+                        stored: m.stored,
+                        skipped: m.skipped,
+                        transcript_unavailable: m.transcript_unavailable,
+                    })
+                    .collect(),
+                stored: report.stored,
+                skipped: report.skipped,
+            }));
+        }
+        GroupCommand::Leave => {
+            let session = caller(ctx)?;
+            (group_leave::run(&ctx.core(), &session)?, true, Vec::new())
+        }
+        GroupCommand::Close { id, quote } => {
+            let session = caller(ctx)?;
+            let closed = group_close::run(
+                &ctx.core(),
+                GroupCloseInput {
+                    session,
+                    id,
+                    quote,
+                    provider: ctx.provider(),
+                    models: |config: &Config| ctx.models(config),
+                    notes: ctx,
+                },
+            )?;
+            (closed.id, closed.changed, closed.notices)
         }
         GroupCommand::Show { id } => {
             return Ok(Output::Show {

@@ -163,6 +163,52 @@ impl OriginClaims {
     }
 }
 
+/// The origin claims a hook prompt payload carries (§4.1): `isMeta` and each
+/// origin field, a present JSON value or `None`. A claim is a claim, not
+/// authority (STD-05 R1), used only to refuse agent turns.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PromptClaims<'a> {
+    /// `isMeta` is `true`.
+    pub is_meta: bool,
+    /// `source`.
+    pub source: Option<&'a serde_json::Value>,
+    /// `promptSource`.
+    pub prompt_source_camel: Option<&'a serde_json::Value>,
+    /// `prompt_source`.
+    pub prompt_source: Option<&'a serde_json::Value>,
+    /// `origin`.
+    pub origin: Option<&'a serde_json::Value>,
+    /// `promptOrigin`.
+    pub prompt_origin_camel: Option<&'a serde_json::Value>,
+    /// `prompt_origin`.
+    pub prompt_origin: Option<&'a serde_json::Value>,
+    /// `turnOrigin`.
+    pub turn_origin_camel: Option<&'a serde_json::Value>,
+    /// `turn_origin`.
+    pub turn_origin: Option<&'a serde_json::Value>,
+}
+
+/// Whether a hook prompt with these `claims` was written by an agent or the
+/// harness rather than plainly typed: `isMeta`, the claims
+/// ([`OriginClaims`]), or the prompt text. The one rule for the prompt hook
+/// and for a Codex turn replayed through it.
+#[must_use]
+pub fn prompt_agent_originated(claims: &PromptClaims<'_>, prompt: &str) -> bool {
+    if claims.is_meta {
+        return true;
+    }
+    let mut origin = OriginClaims::default();
+    origin.push_claim(claims.source);
+    origin.push_prompt_source(claims.prompt_source_camel);
+    origin.push_prompt_source(claims.prompt_source);
+    origin.push_origin(claims.origin);
+    origin.push_claim(claims.prompt_origin_camel);
+    origin.push_claim(claims.prompt_origin);
+    origin.push_turn_origin(claims.turn_origin_camel);
+    origin.push_turn_origin(claims.turn_origin);
+    origin.is_agent_originated(prompt)
+}
+
 /// The fields of one Claude Code transcript line the origin guard reads beside
 /// its text (§4.1): the line's kind, uuid and entry point, and every origin
 /// claim it carries. A claim field keeps an explicit JSON `null` as present,

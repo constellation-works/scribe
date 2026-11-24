@@ -3,9 +3,9 @@
 //! transcript reader stays here, as the transcripts port's adapter.
 
 use super::payload;
-use crate::{app::Context, error::CliError, output::HookOutcome};
+use crate::{app::Context, error::CliError};
 use scribe_core::cases::group_turns as case;
-use scribe_core::{SessionId, codex::TypedTurn, message};
+use scribe_core::{SessionId, message};
 use std::path::Path;
 
 #[cfg(unix)]
@@ -55,15 +55,6 @@ pub(in crate::commands) fn claude_window(
     }))))
 }
 
-/// Capture `session`'s typed Codex `turns`.
-pub(super) fn codex(
-    ctx: &Context,
-    session: &SessionId,
-    turns: &[TypedTurn],
-) -> Result<Option<HookOutcome>, CliError> {
-    Ok(case::codex(&ctx.core(), ctx.provider(), session, turns)?)
-}
-
 /// The typed turns of a past session whose transcript is at `path`
 /// ([`case::past`]).
 pub(super) fn past(
@@ -72,14 +63,4 @@ pub(super) fn past(
     path: &Path,
 ) -> Result<Option<Vec<message::NewMessage>>, CliError> {
     Ok(case::past(&ctx.core(), ctx.provider(), session, path)?)
-}
-
-/// The typed turns in an already checked transcript of `session`
-/// ([`case::typed_turns`]).
-pub(in crate::commands) fn typed_turns(
-    ctx: &Context,
-    session: &SessionId,
-    bytes: &[u8],
-) -> Result<Vec<message::NewMessage>, CliError> {
-    Ok(case::typed_turns(ctx.provider(), session, bytes)?)
 }
