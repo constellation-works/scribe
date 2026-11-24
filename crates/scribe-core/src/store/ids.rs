@@ -8,7 +8,7 @@
 //! Resolution reads only: no lock, no write.
 
 use super::Store;
-use super::agent::refusal;
+use crate::checks::refusal;
 use crate::{Error, Result, SessionId, WriteRefusal};
 
 /// The shortest prefix accepted, in characters.

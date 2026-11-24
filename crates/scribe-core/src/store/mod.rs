@@ -82,9 +82,10 @@ mod write;
 pub use rebuild::RebuildGuard;
 pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget};
 
-pub use agent::{check_agent_author, check_content, check_handoff_related, check_reason};
+pub use crate::checks::entry::check_handoff_related;
+pub use crate::checks::records::check_unsettled_item;
+pub use crate::checks::{check_agent_author, check_content, check_reason};
 pub use audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
-pub use entry_records::check_unsettled_item;
 pub use ids::resolve_prefix;
 pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_REDACTION};
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
@@ -557,7 +558,7 @@ impl Store {
                     .get(id)
                     .is_some_and(|c| c.provider != provider)
                 {
-                    return Err(agent::refusal(
+                    return Err(crate::checks::refusal(
                         crate::WriteRefusal::HandoffSession,
                         "session belongs to another transcript provider",
                     ));
@@ -725,7 +726,7 @@ impl Store {
         let (table, mut warnings) = config
             .tags
             .merge_store(&stored)
-            .map_err(|e| agent::refusal(crate::WriteRefusal::TagConflict, e.to_string()))?;
+            .map_err(|e| crate::checks::refusal(crate::WriteRefusal::TagConflict, e.to_string()))?;
         warnings.extend(config.tag_warnings);
         let configured = &config.tags;
         let (entries, skipped) = self.load_entries()?;
@@ -1399,7 +1400,7 @@ fn check_active_author(request: &SetActive) -> Result<()> {
         SetActive::Deactivate { by, .. } | SetActive::Activate { by, .. } => by,
     };
     if by.kind == crate::AuthorKind::Agent {
-        agent::check_agent_author(&by.name)?;
+        crate::checks::check_agent_author(&by.name)?;
     }
     Ok(())
 }

@@ -2,8 +2,8 @@
 //! intake and the session-start hook make over them
 //! (docs/design/scribe/2_design.md §4.6).
 use super::Store;
-use super::agent::{check_agent_author, refusal};
 use crate::action::{self, Pickup};
+use crate::checks::{check_agent_author, refusal};
 use crate::{Author, AuthorName, EntryStatus, Related, Result, TagName, WriteRefusal};
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
