@@ -837,7 +837,7 @@ impl From<&Proposal> for ProposalPayload {
 /// (2_design.md §15.3).
 pub(crate) const OLDER_CLAIM: &str = "older claim";
 
-/// What a claim says, for the outputs and the popup (2_design.md §15.3):
+/// What a claim says, for the outputs (2_design.md §15.3):
 /// its context paragraph, or an older claim's one-line statement labelled
 /// [`OLDER_CLAIM`]; `None` for a claim opened before statements.
 pub(crate) fn claim_context(candidate: &scribe_core::EntryCandidate) -> Option<String> {
@@ -1977,24 +1977,6 @@ impl Output {
     }
 }
 
-/// The rows of one popup list view: sessions, entries, proposals or
-/// transcripts, or one notice row when the list is empty or failed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PopupRows {
-    /// The record kind every row carries: `session`, `entry`, `proposal` or
-    /// `transcript`.
-    pub(crate) kind: &'static str,
-    /// The records to list; `None` when `notice` stands in for them.
-    pub(crate) records: Option<Records>,
-    /// The one row shown instead of records (an empty or failed list).
-    pub(crate) notice: Option<String>,
-    /// The current year, so a date of another year shows its year.
-    pub(crate) year: i32,
-    /// Whether the popup's terminal wants color (still off under `NO_COLOR`
-    /// and `TERM=dumb`).
-    pub(crate) color: bool,
-}
-
 /// Result of backfilling the current holders of a group.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct GroupBackfill {
@@ -2063,10 +2045,4 @@ pub(crate) enum Output {
     Scan(Box<ScanReport>),
     /// A plugin tool call's envelope.
     Plugin(PluginReply),
-    /// `tmux` ran its popup, which owned the terminal; nothing to render.
-    Popup,
-    /// The rows of one popup list view (the popup's hidden `tmux rows`).
-    PopupRows(PopupRows),
-    /// The popup's preview of one record (the hidden `tmux preview`).
-    PopupPreview(Record),
 }

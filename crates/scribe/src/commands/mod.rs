@@ -5,7 +5,7 @@
 //! (STD-02 R24): today the audit log, through [`crate::audit_middleware`].
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`,
-//! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`, `tmux.rs`); a noun that
+//! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`); a noun that
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
@@ -26,7 +26,6 @@ mod search;
 mod session;
 mod store;
 mod tag;
-mod tmux;
 mod transcript;
 
 use crate::app::Context;
@@ -47,7 +46,6 @@ pub(crate) use proposal::ProposalCommand;
 pub(crate) use session::SessionCommand;
 pub(crate) use store::StoreCommand;
 pub(crate) use tag::TagCommand;
-pub(crate) use tmux::TmuxArgs;
 
 /// Top-level nouns.
 #[derive(Debug, Subcommand)]
@@ -116,11 +114,6 @@ pub(crate) enum Command {
     /// Runs a provider hook to record #scribe lines and settle proposals, switch /scribe on and off, mark session passes due, and report open proposals.
     #[command(subcommand, after_help = hook::HOOK_EXAMPLES)]
     Hook(HookCommand),
-    /// Browse sessions, entries and proposals in an fzf popup
-    ///
-    /// Browses sessions, entries, proposals and backfill candidates in an fzf popup, writing nothing.
-    #[command(after_help = tmux::EXAMPLES)]
-    Tmux(TmuxArgs),
     /// Serve the Orbit plugin's tools (the plugin backend runs this)
     #[command(subcommand, after_help = plugin::PLUGIN_EXAMPLES)]
     Plugin(PluginCommand),
@@ -146,7 +139,6 @@ impl Command {
             | Self::Brief(_)
             | Self::Store(_)
             | Self::Export(_)
-            | Self::Tmux(_)
             | Self::Plugin(_) => AuditSubject::default(),
         }
     }
@@ -174,9 +166,9 @@ impl Command {
             Self::Store(command) => command.audit(),
             Self::Tag(command) => command.audit(),
             Self::Hook(command) => command.audit(),
-            // Read-only: the popup only lists and shows, the brief only
-            // reads, and an export writes nothing to the store (STD-01 R31).
-            Self::Tmux(_) | Self::Brief(_) | Self::Export(_) => None,
+            // Read-only: the brief only reads, and an export writes nothing
+            // to the store (STD-01 R31).
+            Self::Brief(_) | Self::Export(_) => None,
             Self::Plugin(command) => command.audit(),
         }
     }
@@ -210,12 +202,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
                     | Record::Transcript(_)
             )
         }
-        Output::Init(_)
-        | Output::Hook(_)
-        | Output::Plugin(_)
-        | Output::Popup
-        | Output::PopupRows(_)
-        | Output::PopupPreview(_) => false,
+        Output::Init(_) | Output::Hook(_) | Output::Plugin(_) => false,
     };
     if !prints_sessions {
         return scribe_core::ShortIds::default();
@@ -323,7 +310,6 @@ fn dispatch(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
-        Command::Tmux(args) => tmux::run(args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
     }
 }

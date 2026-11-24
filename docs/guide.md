@@ -439,20 +439,6 @@ commands and the reason are in the
 The package ships the same skill, which teaches the CLI above. The skill is
 for sessions on the machine where the data directory lives.
 
-## tmux popup
-
-`scribe tmux` browses sessions, entries, proposals and backfill candidates in
-an `fzf` popup. It only reads, and it needs `fzf` on `PATH`. The preview, the
-keys and the backfill window are in `scribe tmux --help`. Bind a key in
-`~/.tmux.conf`:
-
-```tmux
-bind-key S display-popup -E -w 90% -h 85% scribe tmux
-```
-
-An empty list, or a list that fails, is one notice row instead of a failed
-popup.
-
 ## Settings
 
 | Setting | Flag | Environment | Default |

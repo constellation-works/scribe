@@ -262,16 +262,12 @@ ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (co
 # The model adapter is composed by app.rs and knows nothing of the surface (R2).
 ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
 ban "$CLI/models" 'crate::(cli|commands|output|audit_middleware)' "model transport modules must not import surface modules"
-# The popup adapter is composed by commands/tmux.rs and knows nothing of the surface.
-ban "$CLI/popup.rs"  'crate::(cli|commands|output|audit_middleware)' "popup.rs (the tmux popup adapter) must not import surface modules"
 # The model adapter spawns supervised processes through models.rs's
 # supervisor, so process-group supervision, the cleared environment and the
-# budget live in one place (STD-03 R11-R15, STD-05 R10). popup.rs runs the
-# interactive popup, which owns the terminal and so cannot be supervised
-# that way (decision: the tmux popup).
+# budget live in one place (STD-03 R11-R15, STD-05 R10).
 for path in "$CLI"/*; do
-  case "$(basename "$path")" in models.rs | models | popup.rs | tests) continue ;; esac
-  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs and popup.rs spawn processes: reach a model through the Models port, the popup through popup.rs"
+  case "$(basename "$path")" in models.rs | models | tests) continue ;; esac
+  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs spawns processes: reach a model through the Models port"
 done
 
 # Rendering is derived from payloads only; it never reaches back up (R1).

@@ -10,7 +10,7 @@ Every data command renders one typed payload in the mode the sink resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
-S11's read surface, S12's writes, S13's skill and tmux popup (now the `scribe tmux` subcommand), and S14's
+S11's read surface, S12's writes, S13's skill (its tmux popup removed by ORB-27911), and S14's
 transcript list and session catalog are built. Parts marked *(S14)* add
 fields, columns, commands and codes and do not rename or retype earlier
 ones.
@@ -23,7 +23,7 @@ in `--json`, the plain `author` column, `--author-kind user` (`daniel`
 still accepted), the error code `user_only` (was `daniel_only`), and the
 labels `user_turns`, `user_first_turns`, `USER_TURNS` and `user_asked`
 (were `daniel_turns`, `daniel_first_turns`, `DANIEL_TURNS` and
-`daniel_asked`). The only readers, the skill and the tmux popup, ship in
+`daniel_asked`). The only reader, the skill, ships in
 the same package. The text below keeps the older tokens where it
 describes formats before 23.
 
@@ -601,9 +601,7 @@ a handoff's `session:` reference),
 `open-item` or a `require_evidence` tag), `needs_redaction` (a checked
 decision, spoken-instruction or annotation quote that redaction would alter), `not_agent_note`
 (`entry update --content` on an approved claim rather than a direct agent
-note), for `tmux` `fzf_missing` and
-`tmux_failed` (exit 1; `tmux` renders no payload, its popup owns the
-terminal), for `session pass`
+note), for `session pass`
 `session_pass_failed` and `session_not_on`, and for `question
 ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
 `model_malformed`. A hook's refusals

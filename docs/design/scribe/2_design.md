@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, backfill by name and the tmux popup work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
@@ -332,58 +332,9 @@ Mac. Box workers still cannot read scribe
 
 ### 1.2 The tmux popup
 
-Daniel: "we need a very simple desktop UI or tmux UI for humans. perhaps
-tmux will be better - having another desktop app will be cumbersome."
-`scribe tmux` runs the popup from inside the binary: a POSIX shell script
-of about 150 lines, embedded at build time and run with `sh -c`, over
-`fzf`. Nothing else is installed (an earlier standalone script had to be put
-on `PATH` and never was), and its child commands run the executable that
-was started, not whichever `scribe` is first on `PATH`. It needs `fzf` on
-`PATH` and adds no Rust dependency. Bound to a tmux key, it opens a popup:
-
-```tmux
-bind-key S display-popup -E -w 90% -h 85% scribe tmux
-```
-
-- It lists sessions first (`session list`); `ctrl-s`, `ctrl-e`, `ctrl-p`
-  and `ctrl-b` reload the list with sessions, active entries, open
-  proposals or backfill candidates (`transcript list --since <30 days
-  ago>`, [§5.8](#58-cataloging-a-past-session)). Rows are for reading, not
-  for ids: a start date (`MM-DD`, or `YYYY-MM-DD` when the year is not the
-  current one), then for a session its status (`open` green, `final`
-  dimmed), its title and its project (dimmed), newest started first;
-  an entry shows its tag and the first line of its text, a proposal its
-  state and what it proposes, a candidate its project and first prompt.
-  Inactive sessions (after `alt-a`) are dimmed. A list that is empty or fails is
-  one notice row (id `-`) that says which ("no active entries; alt-a shows
-  every status", "no open proposals"); its preview says the same and Enter and
-  `ctrl-y` do nothing on it. The id is a hidden first
-  field of the row (`kind<TAB>id<TAB>display`, fzf `--with-nth=3`) so the
-  preview, Enter and `ctrl-y` act on the same record; topics follow the
-  columns past any terminal width, where `--no-hscroll` never shows them but
-  fzf still searches them. Rows are built in Rust, from the same list
-  commands' records, by a hidden `scribe tmux rows <view>` mode.
-- The preview pane is a hidden `scribe tmux preview <kind> <id>`: for a
-  session its title and summary, then goals, next steps, metadata and log;
-  for an entry its text followed by the same metadata as `entry show`;
-  for a proposal what it proposes, its reason, then its fields; a
-  candidate is `transcript show --format table`. Enter opens the whole
-  record with `--format table` (`--log` for a session), because `show`
-  prints only its list line when stdout is not a terminal.
-- Enter opens the full record in `$PAGER` (else `less`).
-  On a candidate, Enter puts `/scribe catalog <id>` in the tmux paste
-  buffer and says so; typed into a Claude Code prompt, it catalogs the
-  session as Daniel's ([§5.8](#58-cataloging-a-past-session)).
-- `ctrl-y` copies the id: `tmux set-buffer`, and `pbcopy` when present.
-- `alt-a` toggles inactive sessions and hidden entries (adds
-  `--include-inactive` to the session list and drops `--status active`
-  from the entry list).
-- Without `fzf` it exits 1 with an install hint (`fzf_missing`).
-
-It reads only: `Command::audit` is `None`, it never opens the store, and it
-passes the data directory to its children as `SCRIBE_ROOT` (and drops
-`SCRIBE_FORMAT`, which would reshape the lists it parses). A real TUI is
-built only if this proves too small ([3_vision.md](./3_vision.md)).
+Removed by ORB-27911 ([the removal decision](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)):
+`scribe tmux`, its embedded fzf script and `popup.rs` are gone. Daniel
+reads the store with the CLI's list and show commands.
 
 ## 2. Layering
 
@@ -429,7 +380,7 @@ port, its referent request and answer, and `ModelError`), form 3 in
 name it as the only module that spawns a process. The config's model ids
 are `ModelIds`, so the port alone is `Models`.
 
-S8–S14 add no crate and no process-spawning module, except that `tmux` (the tmux popup) adds `popup.rs`, the adapter that runs its embedded script on the caller's terminal. In the core, `session`
+S8–S14 add no crate and no process-spawning module (the tmux popup's `popup.rs` was one until ORB-27911 removed it). In the core, `session`
 gains the header, the `Segment` log and the sealing rule; `record` gains
 `Author` (`{kind, name}`) and the date and related filters of `Listing`;
 `activity` (new, no I/O) holds the `active` flag, the age rule and the
@@ -1763,7 +1714,7 @@ daniel_turns, first_prompt}`: `daniel_turns` counts Daniel's typed turns
 only long sessions show, and `first_prompt` is his first turn cut to 300
 characters. It reads transcripts and writes nothing: no lock, no audit.
 `scribe transcript show <id>` prints one row with Daniel's first five
-turns, each cut to 300 characters, for the tmux preview.
+turns, each cut to 300 characters.
 
 Project. Most sessions start from the constellation root (463 of 947
 transcripts on the Mac), so the cwd alone does not say which project a
@@ -2302,9 +2253,6 @@ none.
 - **Rebuilds and catalogs cost model calls.** A long session is dozens of
   windows; rebuild and catalog run them with no deadline from the CLI.
   Daniel runs them a few at a time.
-- **The tmux popup needs fzf.** Without it `scribe-tmux` prints how to
-  install it and exits 1. Copying to the system clipboard needs `pbcopy`
-  (macOS); elsewhere the id goes to the tmux buffer only.
 
 ## 10. Slice plan
 
@@ -2671,7 +2619,7 @@ entries a 1.0× base weight (the existing named-tag boost still applies).
 When agent evidence is packed, answers use checked quotes with source
 labels instead of forwarding potentially misattributed model prose.
 
-**S13 — The skill and the tmux popup.** Depends on S11 and S12.
+**S13 — The skill and the tmux popup (the popup removed by ORB-27911).** Depends on S11 and S12.
 
 - `plugin/claude-code/skills/scribe/SKILL.md` ships in the Claude Code
   package and `claude plugin validate` accepts it; it teaches the commands

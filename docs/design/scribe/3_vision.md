@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: vision
 type: design
-summary: Where the scribe plugin may go after its slices — more providers (Claude Code and Codex only, decided 2026-11-21), cross-host stores, better retrieval, an opt-in import of orbit-office decisions, a real TUI if the tmux popup proves too small — and what it deliberately leaves out.
+summary: Where the scribe plugin may go after its slices — more providers (Claude Code and Codex only, decided 2026-11-21), cross-host stores, better retrieval, an opt-in import of orbit-office decisions, a view for humans now the tmux popup is removed — and what it deliberately leaves out.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
@@ -48,12 +48,9 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
    the underlying transcript lines instead, which would mean keeping a
    parsed copy of each opted-in transcript?
 
-7. **A real TUI.** The tmux popup ([2_design.md §1.2](./2_design.md#12-the-tmux-popup))
-   is a 60-line fzf script. If Daniel finds himself wanting to act from it
-   (activate, deactivate, catalog, settle) rather than read and copy ids,
-   or to see a session's log beside its links, a ratatui TUI is the next
-   step, at the cost of new dependencies. Build it only if the popup proves
-   too small.
+7. **A view for humans.** The tmux popup was removed (ORB-27911): Daniel
+   called it "just bad way to do things". If a human view is wanted again,
+   it starts from what he needs to see, not from the popup.
 8. **Box workers and the agent surface.** The `scribe` skill serves Mac
    sessions only. If box workers need scribe, does that wait for a
    cross-host store (question 2), or does the skill learn to reach the Mac
@@ -112,8 +109,8 @@ the model, has checked against the record.
   item describes; it never binds an agent. A recurring `working` item
   reaches `preferences` only as a candidate he approves
   ([4_decisions.md](./4_decisions.md#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval)).
-- A desktop or web UI. The CLI, the SessionStart line and, from S13, the
-  tmux popup are the views ([4_decisions.md](./4_decisions.md#humans-browse-scribe-in-a-tmux-popup-over-fzf)).
+- A desktop or web UI. The CLI and the SessionStart line are the views
+  (the tmux popup was one until [ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 - Scanning or cataloging sessions on scribe's own initiative. Backfill
   catalogs only sessions Daniel names.
 

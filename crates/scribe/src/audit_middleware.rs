@@ -417,7 +417,7 @@ fn target_of(output: &Output) -> Option<String> {
         // `mark_result`.
         Output::Hook(_) | Output::Pass(_) | Output::Scan(_) => None,
         // Read-only: never audited (`plugin call`).
-        Output::Plugin(_) | Output::Popup | Output::PopupRows(_) | Output::PopupPreview(_) => None,
+        Output::Plugin(_) => None,
     }
 }
 

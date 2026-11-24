@@ -19,7 +19,6 @@ mod error;
 mod help;
 mod models;
 mod output;
-mod popup;
 
 use std::process::ExitCode;
 
