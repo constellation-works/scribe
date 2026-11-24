@@ -4,6 +4,7 @@ use crate::session::SessionFilter;
 use crate::store::db;
 use crate::store::{AuditEvent, AuditStatus, Store};
 use crate::{EntryVerbs, ProposalVerbs};
+use crate::{PassVerbs, RebuildVerbs, SessionVerbs};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -252,6 +253,7 @@ fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
 }
 
 mod cites {
+    use crate::EntryVerbs;
     use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
     use crate::error::Error;
     use crate::store::tests::private_tempdir;

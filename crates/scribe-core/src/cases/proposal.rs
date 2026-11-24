@@ -335,7 +335,7 @@ impl ProposalVerbs for Store {
     fn settle(&self, action: &Settle, cite: &Cite, now: time::OffsetDateTime) -> Result<Settled> {
         self.write(|tx| {
             if let Settle::ForgetSession(id) = action {
-                return Ok(match self.forget_session_locked(id, now)? {
+                return Ok(match crate::cases::session::forget_session(tx, id, now)? {
                     SessionForgetOutcome::Forgotten(forgot) => Settled::SessionForgotten(forgot),
                     SessionForgetOutcome::Already {
                         id: resolved,

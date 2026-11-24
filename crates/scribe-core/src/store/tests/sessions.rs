@@ -13,6 +13,7 @@ use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{ExportFormat, PassMemory, PassWrite, Redactor, Store, codec, db};
 use crate::tests::{T0, session};
 use crate::{EntryVerbs, ProposalVerbs};
+use crate::{PassVerbs, RebuildVerbs};
 use std::fs;
 use std::path::Path;
 use time::macros::date;

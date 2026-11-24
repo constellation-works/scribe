@@ -51,8 +51,6 @@ mod archive;
 mod audit;
 mod candidates;
 mod codec;
-mod continuation;
-pub use continuation::HandoffSelection;
 mod db;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
@@ -80,7 +78,10 @@ mod sessions;
 mod tags;
 mod write;
 pub use rebuild::RebuildGuard;
-pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget, SessionForgetOutcome};
+pub use sessions::{
+    ExportFormat, Exported, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
+    SessionForgetOutcome,
+};
 
 pub use crate::checks::entry::check_handoff_related;
 pub use crate::checks::records::check_unsettled_item;
@@ -91,15 +92,13 @@ pub use marks::{COVERED, MODEL_FAILED, MarkChange, MarkKey, MarkResult, NEEDS_RE
 pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor, unresolved_redact_env};
 pub use tags::check_description;
 
-use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;
-use crate::control;
-use crate::entry::{Cite, Entry, EntryFilter, EntryId};
+use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::record::Listing;
 use crate::session::{
-    self as session_mod, Child, ControlState, SessionFilter, SessionId, SessionLink, SessionRecord,
+    self as session_mod, Child, ControlState, SessionFilter, SessionId, SessionRecord,
 };
 use crate::tag::{self, TagSummary};
 use std::collections::{BTreeMap, BTreeSet};
@@ -242,7 +241,7 @@ impl CloseGroupOutcome {
     }
 }
 
-/// How [`Store::write_pass_window`] leaves the switch.
+/// How [`crate::PassVerbs::write_pass_window`] leaves the switch.
 #[derive(Clone, Copy, Debug)]
 pub enum PassWrite {
     /// An intermediate window. Force the session due.
@@ -255,7 +254,7 @@ pub enum PassWrite {
     CatalogFinal,
 }
 
-/// What [`Store::write_pass_window`] wrote under the store lock.
+/// What [`crate::PassVerbs::write_pass_window`] wrote under the store lock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PassWritten {
     /// The updated session record, when one was written.
@@ -486,7 +485,7 @@ impl Store {
 
     /// Where the sessions are, for a not-found error: `scribe.db` once they
     /// moved there, else `sessions/`.
-    fn sessions_place(&self) -> Result<PathBuf> {
+    pub(super) fn sessions_place(&self) -> Result<PathBuf> {
         Ok(
             if self.root_exists()? && db::sessions::read_moved(&self.root)? {
                 self.root.join(DB_FILE)
@@ -494,213 +493,6 @@ impl Store {
                 self.root.join(SESSIONS_DIR)
             },
         )
-    }
-
-    /// Link `session` to another session, under the store lock
-    /// ([`control::link`]): when `on`, switch it on too. A new link is
-    /// added to the session's record when it has one (its other fields,
-    /// `updated` included, unchanged), else kept on its switch until the
-    /// first pass writes the record. Refused links write nothing.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Link`] for a refused link; a store error otherwise. The
-    /// session's own record failing to parse is [`Error::Corrupt`].
-    pub fn link_session(
-        &self,
-        session: &SessionId,
-        link: &SessionLink,
-        on: bool,
-        now: time::OffsetDateTime,
-    ) -> Result<control::Linked> {
-        self.link_session_for_provider(session, link, on, now, crate::Provider::ClaudeCode)
-    }
-
-    /// Link and stamp the origin provider under the same store lock.
-    pub fn link_session_for_provider(
-        &self,
-        session: &SessionId,
-        link: &SessionLink,
-        on: bool,
-        now: time::OffsetDateTime,
-        provider: crate::Provider,
-    ) -> Result<control::Linked> {
-        self.write_step(|| {
-            self.apply_session_link(
-                session,
-                link,
-                control::LinkSwitch::Manual { on },
-                now,
-                provider,
-            )
-        })
-    }
-
-    fn apply_session_link(
-        &self,
-        session: &SessionId,
-        link: &SessionLink,
-        mode: control::LinkSwitch,
-        now: time::OffsetDateTime,
-        provider: crate::Provider,
-    ) -> Result<control::Linked> {
-        let loaded = self.load_sessions()?;
-        for id in [session, &link.session] {
-            if loaded.forgotten.contains_key(id) {
-                return Err(db::sessions::forgotten_refusal(id, "it cannot be linked"));
-            }
-        }
-        if matches!(mode, control::LinkSwitch::Inherit) {
-            for id in [session, &link.session] {
-                if loaded
-                    .control
-                    .get(id)
-                    .is_some_and(|c| c.provider != provider)
-                {
-                    return Err(crate::checks::refusal(
-                        crate::WriteRefusal::HandoffSession,
-                        "session belongs to another transcript provider",
-                    ));
-                }
-            }
-        }
-        let mut own: Option<SessionRecord> = None;
-        let mut graph: BTreeMap<SessionId, Vec<SessionLink>> = BTreeMap::new();
-        for record in loaded.records {
-            graph.insert(record.id.clone(), record.links.clone());
-            if &record.id == session {
-                own = Some(record);
-            }
-        }
-        for (id, bad) in loaded.skipped {
-            match id {
-                Some(id) if &id == session => return Err(bad.error),
-                // Known by id, its links unreadable.
-                Some(id) => {
-                    graph.entry(id).or_default();
-                }
-                None => {}
-            }
-        }
-        // A refused link changes nothing, so nothing is written.
-        self.sessions_tx(|tx| {
-            let mut state = tx.control()?;
-            let before = state.clone();
-            let linked = control::apply_link(&mut state, &graph, session, link, mode, now)?;
-            if let Some(control) = state.sessions.get_mut(session) {
-                control.provider = provider;
-            }
-            if state != before {
-                tx.put_control(&before, &state)?;
-            }
-            if linked.write_record
-                && let Some(mut record) = own
-            {
-                record.links.push(link.clone());
-                tx.put_record(&record)?;
-            }
-            Ok(linked)
-        })
-    }
-
-    /// Change one session's `active` or `keep_active` under the store lock
-    /// ([`activity::set_active`]), its reason masked by `redactor`. Only
-    /// `active`, `keep_active` and `active_change` change (`updated`
-    /// included stays), and the record is written only when something
-    /// changed. Returns the record as it now stands and what changed.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::SessionNotFound`] when no record has the id; a store error
-    /// otherwise.
-    pub fn set_active(
-        &self,
-        id: &SessionId,
-        request: &SetActive,
-        now: time::OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<(SessionRecord, ActiveOutcome)> {
-        check_active_author(request)?;
-        self.prepare_dir(&self.root)?;
-        self.write_step(|| {
-            let mut loaded = self.load_sessions()?;
-            let mut record = match loaded.take(id) {
-                Some(record) => record?,
-                None => {
-                    return Err(Error::SessionNotFound {
-                        id: id.clone(),
-                        path: self.sessions_place()?,
-                    });
-                }
-            };
-            let outcome = self.apply_active(&mut record, request, now, redactor)?;
-            Ok((record, outcome))
-        })
-    }
-
-    /// Apply the routine's deactivations under one store lock, each
-    /// checked again against the record on disk (a session pinned or
-    /// already deactivated since the scan read it is left alone). A
-    /// missing or unreadable record fails only its own request; the other
-    /// requests continue. Returns each outcome in request order.
-    pub fn set_active_many(
-        &self,
-        requests: &[(SessionId, SetActive)],
-        now: time::OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<Vec<Result<ActiveOutcome>>> {
-        if requests.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.prepare_dir(&self.root)?;
-        self.write_step(|| {
-            let loaded = self.load_sessions()?;
-            let mut out = Vec::with_capacity(requests.len());
-            for (id, request) in requests {
-                let mut record = match loaded.records.iter().find(|r| &r.id == id) {
-                    Some(record) => record.clone(),
-                    None => {
-                        out.push(Err(
-                            match loaded.skipped.iter().find(|(s, _)| s.as_ref() == Some(id)) {
-                                Some((_, bad)) => {
-                                    Error::corrupt(bad.path.clone(), bad.error.to_string())
-                                }
-                                None => Error::SessionNotFound {
-                                    id: id.clone(),
-                                    path: self.sessions_place()?,
-                                },
-                            },
-                        ));
-                        continue;
-                    }
-                };
-                out.push(self.apply_active(&mut record, request, now, redactor));
-            }
-            Ok(out)
-        })
-    }
-
-    /// Apply `request` to `record` and write it back when it changed. The
-    /// caller holds the lock.
-    fn apply_active(
-        &self,
-        record: &mut SessionRecord,
-        request: &SetActive,
-        now: time::OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<ActiveOutcome> {
-        check_active_author(request)?;
-        let outcome = activity::set_active(record, request, now);
-        if outcome.changed() {
-            if let Some(change) = record.active_change.as_mut() {
-                change.reason = redactor.mask(&change.reason);
-                if let Some(cite) = change.cite.as_mut() {
-                    *cite = redactor.mask(cite);
-                }
-            }
-            self.sessions_tx(|tx| tx.put_record(record).map(|_| ()))?;
-        }
-        Ok(outcome)
     }
 
     /// The on/off state and Codex cursors, from `scribe.db`; empty before
@@ -778,45 +570,6 @@ impl Store {
             .collect())
     }
 
-    /// Whether any entry from `session` still waits for its cite's message
-    /// uuid. Reads only, so the `Stop` hook, which runs after every reply,
-    /// can return without locking or writing when nothing waits.
-    pub fn has_unfilled_cites(&self, session: &SessionId) -> Result<bool> {
-        Ok(self.load_entries()?.0.iter().any(|e| unfilled(e, session)))
-    }
-
-    /// Under the store lock, fill the cite's message uuid of every entry
-    /// from `session` that has none yet with what `find` returns for its
-    /// cite; `updated` becomes `now`. Returns the ids filled, oldest first.
-    pub fn fill_cite_messages(
-        &self,
-        session: &SessionId,
-        now: time::OffsetDateTime,
-        find: impl Fn(&Cite) -> Option<String>,
-    ) -> Result<Vec<EntryId>> {
-        if !self.root_exists()? {
-            return Ok(Vec::new());
-        }
-        self.write_step(|| {
-            let (mut entries, _) = self.load_entries()?;
-            entries.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
-            let mut filled = Vec::new();
-            for mut entry in entries.into_iter().filter(|e| unfilled(e, session)) {
-                let Some(cite) = entry.cite.as_mut() else {
-                    continue;
-                };
-                let Some(message) = find(cite) else {
-                    continue;
-                };
-                cite.message = Some(message);
-                entry.updated = now;
-                self.write_entry(&entry, false)?;
-                filled.push(entry.id);
-            }
-            Ok(filled)
-        })
-    }
-
     /// Change the on/off state under the store lock: `change` gets the
     /// current state and its result is returned. `control.json` is
     /// rewritten only when the state changed. The data directory is created
@@ -852,284 +605,48 @@ impl Store {
             .join(format!("{}{RECORD_EXT}", record.id))
     }
 
-    /// Finish a session pass under the store lock: write `record` (when the
-    /// pass produced one) whole with [`fsio::write_atomic`], its free text
-    /// masked by `redactor`, then settle the session's switch with
-    /// [`control::settle`]. Returns the record as written.
-    ///
-    /// `expected` is the `updated` revision the pass loaded (`None` when it
-    /// loaded no record). Under the lock it is compared with the record on
-    /// disk before anything is written; a mismatch refuses the write with
-    /// [`Error::RecordChanged`], leaving the record on disk unchanged and
-    /// the session due, so the next run starts from that record. This
-    /// mirrors [`Store::finish_rebuild`].
-    pub fn settle_pass(
+    /// Commit one pass window in one `scribe.db` transaction: the record (its
+    /// cursor advanced), the window's `messages`, the memory rows and
+    /// journal planned from `memory`, and the switches as `change` leaves
+    /// them; the memory files follow the journal (2_design.md §15.6, §15.7).
+    pub(super) fn commit_window(
         &self,
-        session: &SessionId,
-        record: Option<SessionRecord>,
-        ran_final: bool,
-        expected: Option<time::OffsetDateTime>,
-        redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
-        self.write_pass(
-            session,
-            record,
-            PassWrite::Settle(ran_final),
-            expected,
-            redactor,
-        )
-    }
-
-    /// Persist one intermediate window under the store lock, redacted and
-    /// atomically replaced. Keep the pass due until its last window settles.
-    /// `expected` is checked as in [`Store::settle_pass`].
-    pub fn checkpoint_pass(
-        &self,
-        record: SessionRecord,
-        expected: Option<time::OffsetDateTime>,
-        redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
-        let session = record.id.clone();
-        self.write_pass(
-            &session,
-            Some(record),
-            PassWrite::Checkpoint,
-            expected,
-            redactor,
-        )
-    }
-
-    /// The last window of a live `session catalog`: write the record and
-    /// leave the switch on and due, clearing retry backoff, so the hooks
-    /// carry on. `expected` is checked as in [`Store::settle_pass`].
-    pub fn checkpoint_catalog(
-        &self,
-        record: SessionRecord,
-        expected: Option<time::OffsetDateTime>,
-        redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
-        let session = record.id.clone();
-        self.write_pass(
-            &session,
-            Some(record),
-            PassWrite::CatalogLive,
-            expected,
-            redactor,
-        )
-    }
-
-    /// The last window of an ended `session catalog`, under one lock: write
-    /// the record, settle the pass as final, and switch the session off so
-    /// no hook passes it again. A crash cannot leave it on but not due.
-    pub fn settle_catalog_final(
-        &self,
-        session: &SessionId,
-        record: Option<SessionRecord>,
-        expected: Option<time::OffsetDateTime>,
-        redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
-        self.write_pass(session, record, PassWrite::CatalogFinal, expected, redactor)
-    }
-
-    /// Write a checked pass window and its candidates under the same lock.
-    /// Candidates are persisted first, so an interruption retries safely.
-    /// Then one `scribe.db` transaction commits the record (its cursor
-    /// advanced), the window's `messages`, the memory rows and journal and
-    /// the switch; the memory files follow the journal (2_design.md §15.6,
-    /// §15.7). Retired-tag open candidates are closed before caps are
-    /// counted, duplicates and each claim's trigger (a trigger of its tag
-    /// fires in its turn, under the config read under the lock) are checked
-    /// here.
-    #[allow(clippy::too_many_arguments)]
-    pub fn write_pass_window(
-        &self,
-        record: SessionRecord,
-        expected: Option<time::OffsetDateTime>,
-        kind: PassWrite,
-        candidates: &[crate::pass::PassClaim],
-        memory: Option<&PassMemory>,
+        record: Option<&SessionRecord>,
         messages: &[crate::message::NewMessage],
+        memory: Option<&PassMemory>,
         redactor: &Redactor,
-    ) -> Result<PassWritten> {
-        let session = record.id.clone();
-        self.write_pass_candidates(
-            &session,
-            Some(record),
-            kind,
-            expected,
-            PassParts {
-                candidates,
-                memory,
-                messages,
-                run_candidates: true,
-            },
-            redactor,
-        )
-    }
-
-    fn write_pass(
-        &self,
-        session: &SessionId,
-        record: Option<SessionRecord>,
-        kind: PassWrite,
-        expected: Option<time::OffsetDateTime>,
-        redactor: &Redactor,
-    ) -> Result<Option<SessionRecord>> {
-        Ok(self
-            .write_pass_candidates(
-                session,
-                record,
-                kind,
-                expected,
-                PassParts {
-                    candidates: &[],
-                    memory: None,
-                    messages: &[],
-                    run_candidates: false,
-                },
-                redactor,
-            )?
-            .record)
-    }
-
-    fn write_pass_candidates(
-        &self,
-        session: &SessionId,
-        record: Option<SessionRecord>,
-        kind: PassWrite,
-        expected: Option<time::OffsetDateTime>,
-        parts: PassParts<'_>,
-        redactor: &Redactor,
-    ) -> Result<PassWritten> {
-        self.prepare_dir(&self.root)?;
-        self.write_step(|| {
-            // Compare the revision the pass loaded with the stored one before
-            // any write, so a rebuild that finished while the model ran is
-            // never overwritten by this stale pass. A link keeps `updated`, so
-            // a linked record still matches and its links are merged below.
-            let mut loaded = self.load_sessions()?;
-            let current = loaded.take(session).transpose()?;
-            if current.as_ref().map(|c| c.updated) != expected {
-                return Err(Error::RecordChanged {
-                    id: session.clone(),
-                });
+        change: impl FnOnce(&mut ControlState),
+    ) -> Result<MemoryWritten> {
+        let conn = db::open_writer(&self.root, self.lock_wait)?;
+        // Memory is planned first (any open journal replayed, `m-<n>` items
+        // migrated); its rows and journal commit with the record below.
+        let (memory_commit, memory_written) = match (memory, record) {
+            (Some(memory), Some(record)) => {
+                let mut writer = db::Writer::new(&conn, &self.root);
+                self.plan_pass_memory(&mut writer, memory, redactor, record)?
             }
-            let pending = loaded
-                .control
-                .get(session)
-                .map(|c| c.pending_links.clone())
-                .unwrap_or_default();
-            let mut record = record;
-            let mut claims = candidates::ClaimsWritten::default();
-            if let Some(record) = record.as_mut() {
-                // A link written while the model ran, or one waiting on the
-                // switch for the first record, is kept: never lost to a pass.
-                if let Some(current) = &current {
-                    for sealed in current
-                        .log
-                        .iter()
-                        .filter(|s| s.state == crate::SegmentState::Sealed)
-                    {
-                        if record.segment(sealed.n.get()) != Some(sealed) {
-                            return Err(Error::SealedSegmentChanged {
-                                id: session.clone(),
-                                n: sealed.n.get(),
-                            });
-                        }
-                    }
-                    merge_links(&mut record.links, &current.links);
-                }
-                merge_links(&mut record.links, &pending);
-                redactor.session(record);
-                // A changed redaction configuration cannot rewrite sealed history.
-                if let Some(current) = current {
-                    for sealed in current
-                        .log
-                        .into_iter()
-                        .filter(|s| s.state == crate::SegmentState::Sealed)
-                    {
-                        if let Some(segment) = record.log.iter_mut().find(|s| s.n == sealed.n) {
-                            *segment = sealed;
-                        }
-                    }
-                }
-                if parts.run_candidates {
-                    claims = self.open_pass_candidates(record, parts.candidates, redactor)?;
-                }
-            }
-            // The closures, written entries, record, messages, memory rows and
-            // journal and the switch all commit in this one transaction, so a
-            // later failure leaves none of them.
-            let conn = db::open_writer(&self.root, self.lock_wait)?;
-            // Memory is planned first (any open journal replayed, `m-<n>` items
-            // migrated); its rows and journal commit with the record below.
-            let (memory_commit, memory_written) = match (parts.memory, &record) {
-                (Some(memory), Some(record)) => {
-                    let mut writer = db::Writer::new(&conn, &self.root);
-                    self.plan_pass_memory(&mut writer, memory, redactor, record)?
-                }
-                _ => (db::MemoryCommit::default(), MemoryWritten::default()),
-            };
-            let tx = db::sessions::SessionTx::begin(&conn, &self.root)?;
-            let mut state = tx.control()?;
-            let before = state.clone();
-            // An explicit pass can start when not due. Publish the obligation
-            // with the checkpoint, so interruption cannot strand its remainder.
-            // A live catalog also clears retry backoff: the hooks take it from
-            // here.
-            if matches!(kind, PassWrite::Checkpoint | PassWrite::CatalogLive)
-                && let Some(control) = state.sessions.get_mut(session).filter(|c| c.on)
+            _ => (db::MemoryCommit::default(), MemoryWritten::default()),
+        };
+        let tx = db::sessions::SessionTx::begin(&conn, &self.root)?;
+        let mut state = tx.control()?;
+        let before = state.clone();
+        if let Some(record) = record {
+            tx.put_record(record)?;
+            tx.upsert_messages(messages, redactor)?;
+            // A pass forgets nothing, so it erases no message. The files
+            // follow the journal after the commit.
+            if !memory_commit.is_empty()
+                && tx.stage_memory(&memory_commit, record.updated)?.0.is_some()
             {
-                control.due = true;
-                if matches!(kind, PassWrite::CatalogLive) {
-                    control.consecutive_failures = 0;
-                    control.retry_after = None;
-                }
+                self.defer_journals();
             }
-            if let Some(record) = &record {
-                tx.put_record(record)?;
-                tx.upsert_messages(parts.messages, redactor)?;
-                if !memory_commit.is_empty() {
-                    // A pass forgets nothing, so it erases no message. The
-                    // files follow the journal after the commit.
-                    if tx.stage_memory(&memory_commit, record.updated)?.0.is_some() {
-                        self.defer_journals();
-                    }
-                }
-                // Only once the record holds them: the links are stored once.
-                if !pending.is_empty()
-                    && let Some(control) = state.sessions.get_mut(session)
-                {
-                    control.pending_links.retain(|l| !pending.contains(l));
-                }
-            }
-            match kind {
-                PassWrite::Settle(ran_final) => {
-                    control::settle(&mut state, session, ran_final);
-                }
-                PassWrite::CatalogFinal => {
-                    // Settle and switch off together. Off does not record a time.
-                    control::settle(&mut state, session, true);
-                    let _ = control::switch(
-                        &mut state,
-                        session,
-                        &control::Switch::Off,
-                        time::OffsetDateTime::UNIX_EPOCH,
-                    );
-                }
-                PassWrite::Checkpoint | PassWrite::CatalogLive => {}
-            }
-            if state != before {
-                tx.put_control(&before, &state)?;
-            }
-            tx.commit()?;
-            Ok(PassWritten {
-                record,
-                closed_candidates: claims.closed,
-                written_entries: claims.written,
-                memory: memory_written,
-            })
-        })
+        }
+        change(&mut state);
+        if state != before {
+            tx.put_control(&before, &state)?;
+        }
+        tx.commit()?;
+        Ok(memory_written)
     }
 
     /// Keep a pass window's messages in `scribe.db` (2_design.md §15.7),
@@ -1213,46 +730,6 @@ impl Store {
     fn root_exists(&self) -> Result<bool> {
         fsio::inspect_dir(&self.root)
     }
-}
-
-/// The parts of a pass window besides its record.
-struct PassParts<'a> {
-    /// Claims to open.
-    candidates: &'a [crate::pass::PassClaim],
-    /// The window's memory, planned and committed with the record.
-    memory: Option<&'a PassMemory>,
-    /// The window's messages, upserted with the record.
-    messages: &'a [crate::message::NewMessage],
-    /// Whether to open `candidates` (and close retired-tag ones).
-    run_candidates: bool,
-}
-
-/// The routine's own routes carry a scribe author; an agent author here
-/// is a CLI write verb, which may not use a reserved name.
-fn check_active_author(request: &SetActive) -> Result<()> {
-    let by = match request {
-        SetActive::Deactivate { by, .. } | SetActive::Activate { by, .. } => by,
-    };
-    if by.kind == crate::AuthorKind::Agent {
-        crate::checks::check_agent_author(&by.name)?;
-    }
-    Ok(())
-}
-
-fn merge_links(links: &mut Vec<SessionLink>, more: &[SessionLink]) {
-    for link in more {
-        if !links.contains(link) {
-            links.push(link.clone());
-        }
-    }
-}
-
-/// Whether `entry` is from `session` and still waits for its message uuid.
-fn unfilled(entry: &Entry, session: &SessionId) -> bool {
-    entry
-        .cite
-        .as_ref()
-        .is_some_and(|c| &c.session == session && c.message.is_none())
 }
 
 /// Names that can be records: not hidden. A writer stages its temporary file

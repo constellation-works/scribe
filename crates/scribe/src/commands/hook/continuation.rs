@@ -4,6 +4,7 @@
 use super::payload;
 use crate::app::Context;
 use crate::output::{HookOutcome, HookReply};
+use scribe_core::SessionVerbs;
 use scribe_core::{HandoffSelection, Provider, SessionId};
 use std::path::Path;
 

@@ -456,12 +456,7 @@ pub(super) fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Resul
     )
 }
 
-pub(in crate::store) fn forgotten_refusal(id: &SessionId, what: &str) -> Error {
-    refusal(
-        WriteRefusal::SessionForgotten,
-        format!("session {id} was forgotten (#scribe forget); {what}"),
-    )
-}
+pub(in crate::store) use crate::checks::forgotten_refusal;
 
 /// What [`forget`] erased.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

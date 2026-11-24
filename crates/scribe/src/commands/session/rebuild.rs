@@ -7,6 +7,7 @@ use crate::commands::hook::payload::{self, Transcript};
 use crate::error::CliError;
 use crate::output::{Output, PassPayload, PassReport};
 use clap::Args;
+use scribe_core::RebuildVerbs;
 use scribe_core::{
     Author, AuthorName, Config, Models, SegmentOrigin, SegmentState, SessionId, SessionStatus,
     pass, transcript,

@@ -31,6 +31,7 @@
 use super::payload::{self, PromptPayload};
 use crate::app::Context;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::SessionVerbs;
 use scribe_core::control::{self, Change, Switch};
 use scribe_core::{Author, SessionControl, SessionId, SessionLink, SessionRecord};
 use time::OffsetDateTime;

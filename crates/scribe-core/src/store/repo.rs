@@ -15,7 +15,8 @@
 
 use super::audit::AuditEvent;
 use super::{
-    EntryList, MemoryShown, MemoryView, Redactor, SessionList, SessionView, Skipped, Store,
+    EntryList, LoadedSessions, MemoryShown, MemoryView, MemoryWritten, PassMemory, Redactor,
+    SessionErasure, SessionList, SessionView, Skipped, Store,
 };
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
@@ -194,6 +195,128 @@ impl Entries<'_> {
 }
 
 impl Sessions<'_> {
+    /// Every session scribe knows: records, unreadable rows, numbers,
+    /// switches and tombstones.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn loaded(&self) -> Result<LoadedSessions> {
+        self.store.load_sessions()
+    }
+
+    /// Where the sessions are kept, for a not-found error to name.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn place(&self) -> Result<std::path::PathBuf> {
+        self.store.sessions_place()
+    }
+
+    /// The database file, for an error to name.
+    #[must_use]
+    pub fn db_path(&self) -> std::path::PathBuf {
+        self.store.root.join(super::DB_FILE)
+    }
+
+    /// The rebuild checkpoint of `original`'s session, if any.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn checkpoint(&self, original: &SessionRecord) -> Result<Option<SessionRecord>> {
+        self.store.checkpoint_of(original)
+    }
+
+    /// Keep `record` as its session's rebuild checkpoint; `false` when the
+    /// session has no row.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn keep_checkpoint(&self, record: &SessionRecord) -> Result<bool> {
+        self.store.keep_checkpoint(record)
+    }
+
+    /// Write a rebuilt `record` and drop its checkpoint, together.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn put_rebuilt(&self, record: &SessionRecord) -> Result<()> {
+        self.store.put_rebuilt(record)
+    }
+
+    /// Change the switches and write a record in one session transaction:
+    /// `f` changes the state and returns the record to write, if any. The
+    /// switches are written only when they changed.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn change<T>(
+        &self,
+        f: impl FnOnce(&mut ControlState) -> Result<(T, Option<SessionRecord>)>,
+    ) -> Result<T> {
+        self.store.change_sessions(f)
+    }
+
+    /// Commit one pass window in one transaction: `record`, its `messages`,
+    /// the memory planned from `memory`, and the switches as `change` leaves
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn commit_window(
+        &self,
+        record: Option<&SessionRecord>,
+        messages: &[NewMessage],
+        memory: Option<&PassMemory>,
+        redactor: &Redactor,
+        change: impl FnOnce(&mut ControlState),
+    ) -> Result<MemoryWritten> {
+        self.store
+            .commit_window(record, messages, memory, redactor, change)
+    }
+
+    /// Erase the session's rows, archives, documents and memory; `number`
+    /// is its `s-<n>`, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`] when it has no row, and the store's write
+    /// errors.
+    pub fn erase(
+        &self,
+        id: &SessionId,
+        number: Option<NonZeroU64>,
+        now: OffsetDateTime,
+    ) -> Result<SessionErasure> {
+        self.store.erase_session(id, number, now)
+    }
+
+    /// The session an id, a unique prefix or an `s-<n>` names, also counting
+    /// sessions known only through a handoff.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`], `id_ambiguous`, and the store's read
+    /// errors.
+    pub fn resolve_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_handoff(input)
+    }
+
+    /// Whether a group seats `id`.
+    ///
+    /// # Errors
+    ///
+    /// The store's errors.
+    pub fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
+        self.store.has_group_membership(id)
+    }
+
     /// One session's record and its log ([`Store::session`]).
     ///
     /// # Errors

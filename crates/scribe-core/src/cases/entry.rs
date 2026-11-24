@@ -13,7 +13,9 @@ use crate::checks::{
     check_agent_author, check_reason, refusal, required, required_message, required_reason,
     unknown_tag,
 };
-use crate::entry::{AgentEntry, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG, is_decision_or_item};
+use crate::entry::{
+    AgentEntry, Cite, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG, is_decision_or_item,
+};
 use crate::record::patch;
 use crate::{
     Author, AuthorKind, AuthorName, ContentFrom, Decision, Entry, EntryId, EntryStatus, Error,
@@ -150,6 +152,21 @@ pub trait EntryVerbs {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Entry, bool)>;
+
+    /// Whether any entry from `session` still waits for its cite's message
+    /// uuid. Reads only, so the `Stop` hook, which runs after every reply,
+    /// can return without locking or writing when nothing waits.
+    fn has_unfilled_cites(&self, session: &SessionId) -> Result<bool>;
+
+    /// Under the store lock, fill the cite's message uuid of every entry
+    /// from `session` that has none yet with what `find` returns for its
+    /// cite; `updated` becomes `now`. Returns the ids filled, oldest first.
+    fn fill_cite_messages(
+        &self,
+        session: &SessionId,
+        now: time::OffsetDateTime,
+        find: impl Fn(&Cite) -> Option<String>,
+    ) -> Result<Vec<EntryId>>;
 }
 
 impl EntryVerbs for Store {
@@ -658,6 +675,45 @@ impl EntryVerbs for Store {
             Ok((entry, true))
         })
     }
+
+    fn has_unfilled_cites(&self, session: &SessionId) -> Result<bool> {
+        Ok(self
+            .read()
+            .entries()
+            .all()?
+            .0
+            .iter()
+            .any(|e| unfilled(e, session)))
+    }
+
+    fn fill_cite_messages(
+        &self,
+        session: &SessionId,
+        now: time::OffsetDateTime,
+        find: impl Fn(&Cite) -> Option<String>,
+    ) -> Result<Vec<EntryId>> {
+        if !self.read().exists()? {
+            return Ok(Vec::new());
+        }
+        self.write(|tx| {
+            let (mut entries, _) = tx.entries().all()?;
+            entries.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+            let mut filled = Vec::new();
+            for mut entry in entries.into_iter().filter(|e| unfilled(e, session)) {
+                let Some(cite) = entry.cite.as_mut() else {
+                    continue;
+                };
+                let Some(message) = find(cite) else {
+                    continue;
+                };
+                cite.message = Some(message);
+                entry.updated = now;
+                tx.entries().put(&entry, false)?;
+                filled.push(entry.id);
+            }
+            Ok(filled)
+        })
+    }
 }
 
 /// Validate decision links while holding the transaction that writes them.
@@ -718,4 +774,12 @@ fn check_settling_decision(tx: &Tx<'_>, decision: &EntryId, item: &EntryId) -> R
         return Err(invalid());
     }
     Ok(())
+}
+
+/// Whether `entry` is from `session` and still waits for its message uuid.
+fn unfilled(entry: &Entry, session: &SessionId) -> bool {
+    entry
+        .cite
+        .as_ref()
+        .is_some_and(|c| &c.session == session && c.message.is_none())
 }

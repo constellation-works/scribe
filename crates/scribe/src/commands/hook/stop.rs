@@ -30,6 +30,7 @@ use super::payload::{self, StopPayload, Transcript};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::EntryVerbs;
 use scribe_core::annotation::MAX_TURNS_PER_STOP;
 use scribe_core::control::{self, Since};
 use scribe_core::transcript::{self, Message};
