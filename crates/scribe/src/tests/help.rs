@@ -121,7 +121,7 @@ fn narrow_terminal_wraps_under_the_shared_column() {
     let first = lines.next().unwrap();
     // The row ends at the next command. A continuation is indented to the
     // description column, which is deeper than the two-space command indent.
-    let lines = lines.take_while(|line| !line.starts_with("  ") || line.starts_with("   "));
+    let lines = lines.take_while(|line| line.starts_with("   "));
     let block = std::iter::once(first)
         .chain(lines)
         .collect::<Vec<_>>()

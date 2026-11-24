@@ -2177,7 +2177,13 @@ Daniel wrote, an agent could hide his words.
 ## Humans browse scribe in a tmux popup over fzf
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe/src/commands/tmux.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13)
+**Code anchors:** `crates/scribe/src/commands/tmux.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13; removed by ORB-27911)
+
+> **Superseded, 2026-11-24 ([ORB-27911]):** Daniel: "delete tmux:
+> codebases/scribe/crates/scribe/src/popup.sh,
+> codebases/scribe/crates/scribe/src/popup.rs. this is just bad way to do
+> things". `scribe tmux`, its script and `popup.rs` are removed
+> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 
 ### Context
 
@@ -4887,6 +4893,7 @@ removed. A store whose records never moved is refused, not read.
 Supersedes [ask is the only tool advertised to agents](#ask-is-the-only-tool-advertised-to-agents),
 [The plugin backend serves `ask` alone until S6](#the-plugin-backend-serves-ask-alone-until-s6)
 and [`ask` reads Orbit tasks through `orbit tool run`](#ask-reads-orbit-tasks-through-orbit-tool-run),
+[Humans browse scribe in a tmux popup over fzf](#humans-browse-scribe-in-a-tmux-popup-over-fzf),
 and in part [ask ranks in memory with no persisted index](#ask-ranks-in-memory-with-no-persisted-index)
 and [Haiku for capture-side work, a decision model for ask](#haiku-for-capture-side-work-a-decision-model-for-ask).
 

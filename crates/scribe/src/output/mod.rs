@@ -8,7 +8,6 @@
 
 mod color;
 mod payload;
-mod popup;
 mod printable;
 mod render;
 mod sink;
@@ -20,10 +19,9 @@ pub(crate) use payload::{
     BatchFailure, BriefPayload, CoveredPayload, DeactivatedPayload, DeactivationFailure,
     EntryPayload, ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin,
     MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload,
-    Output, PassFailure, PassReport, PluginError, PluginReply, PopupRows, ProposalPayload,
-    ReappliedPayload, Record, Records, RefreshPayload, RevisionPayload, ScanReport,
-    SessionHandoffsPayload, SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow,
-    WarningPayload,
+    Output, PassFailure, PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload,
+    Record, Records, RefreshPayload, RevisionPayload, ScanReport, SessionHandoffsPayload,
+    SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 #[cfg(test)]
 pub(crate) use payload::{HookOutcome, HookReply};
@@ -89,10 +87,7 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>)
             | Output::GroupBackfill(_)
             | Output::Hook(_)
             | Output::Scan(_)
-            | Output::Plugin(_)
-            | Output::Popup
-            | Output::PopupRows(_)
-            | Output::PopupPreview(_) => Ok(()),
+            | Output::Plugin(_) => Ok(()),
         }
     });
     match result {
@@ -208,16 +203,13 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         // Machine output: the encoder escapes control characters itself,
         // and quotes stay verbatim.
         Output::Hook(_) | Output::Plugin(_) => None,
-        Output::PopupRows(rows) => Some(rows.color),
         Output::Init(_)
         | Output::List { .. }
         | Output::Show { .. }
         | Output::Written { .. }
         | Output::Pass(_)
         | Output::GroupBackfill(_)
-        | Output::Scan(_)
-        | Output::Popup
-        | Output::PopupPreview(_) => Some(sink.color),
+        | Output::Scan(_) => Some(sink.color),
     };
     let mut out: Box<dyn Write> = match color {
         Some(color) if sink.mode != sink::OutputMode::Json => {
@@ -250,12 +242,6 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
         Output::Scan(report) => render::scan(&mut out, sink, shorts, report)?,
         Output::Plugin(reply) => render::plugin(&mut out, reply)?,
-        Output::Popup => {}
-        Output::PopupRows(rows) => {
-            let color = rows.color && sink::resolve_color(true, &sink::SinkEnv::from_process());
-            popup::rows(&mut out, rows, color)?;
-        }
-        Output::PopupPreview(record) => popup::preview(&mut out, record)?,
     }
     out.flush()
 }

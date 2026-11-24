@@ -19,7 +19,7 @@ scribe-domain  <-  scribe-store  <-  scribe-core  <-  scribe
 | `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives and the audit record. The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
 | `scribe-core` | The use cases (`cases/`): each loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
-| `scribe` (binary) | Arguments, dispatch, the audit guard, rendering, and the adapters for models and the tmux popup. | `scribe-core` | `rusqlite` |
+| `scribe` (binary) | Arguments, dispatch, the audit guard, rendering, and the model adapter. | `scribe-core` | `rusqlite` |
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
@@ -50,7 +50,7 @@ no dev-dependency on `scribe-core`. Its other tests are in `scribe-store`.
 
 | Tier | Unit | Owns | May depend on |
 |------|------|------|---------------|
-| Composition | `scribe::app`, `::models`, `::popup` | Resolves roots and configuration, builds the `Store` and the adapters for models and the tmux popup. | `scribe-core` |
+| Composition | `scribe::app`, `::models` | Resolves roots and configuration, builds the `Store` and the model adapter. | `scribe-core` |
 | Surface | `scribe::cli`, `::commands`, `::output`, `::audit_middleware` | Argument declarations, dispatch, the audit guard around mutating commands, rendering, and the only stdout, stderr and terminal access. | composition, `scribe-core` |
 
 ## Rings inside `scribe-domain`
@@ -114,8 +114,8 @@ includes any file added later.
 - A port imports none of the modules that call it; the `Models` port does not import `memory` or `group`.
 - In `scribe-store`, `fsio.rs` imports no business module and nothing else from the store. `codec.rs` and `audit.rs` do no file I/O. `archive.rs` reads the file store's archives through `fsio.rs` and reaches their tables through `db/archive.rs`.
 - In `scribe-store`, only `db.rs` and `db/` use `rusqlite` (and `testing.rs`, test support).
-- `app.rs`, `models.rs` with `models/` and `popup.rs` import no `cli`, `commands`, `output` or `audit_middleware`.
-- Only `models.rs` with `models/` (the model transports) and `popup.rs` spawn processes.
+- `app.rs` and `models.rs` with `models/` import no `cli`, `commands`, `output` or `audit_middleware`.
+- Only `models.rs` with `models/` (the model transports) spawns processes.
 - `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.
 - `commands/` writes no file (`std::fs::write`, `create`, `rename`, `remove`, `copy`, `set_permissions`, `OpenOptions`); every write goes through the store.
 - Only `output/` touches stdout or stderr, asks whether a stream is a terminal, or reads the color and format variables.

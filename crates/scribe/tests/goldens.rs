@@ -71,7 +71,6 @@ const HELP: &[(&str, &[&str])] = &[
     ("transcript", &["transcript", "--help"]),
     ("transcript-list", &["transcript", "list", "--help"]),
     ("transcript-show", &["transcript", "show", "--help"]),
-    ("tmux", &["tmux", "--help"]),
     ("consistency", &["consistency", "--help"]),
     ("consistency-scan", &["consistency", "scan", "--help"]),
     ("mark", &["mark", "--help"]),

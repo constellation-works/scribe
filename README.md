@@ -69,7 +69,7 @@ scribe group show <slug> --json
 
 ## Learn more
 
-- [Guide](docs/guide.md) — Claude Code, Codex and Orbit install, the commands, the data directory, and the tmux popup.
+- [Guide](docs/guide.md) — Claude Code, Codex and Orbit install, the commands, and the data directory.
 - [Overview](docs/design/scribe/1_overview.md) — what scribe is for.
 - [Design](docs/design/scribe/2_design.md) — how the pieces work.
 - [Store and configuration](docs/design/scribe/specs/store.md) — directory layout and every config key.
