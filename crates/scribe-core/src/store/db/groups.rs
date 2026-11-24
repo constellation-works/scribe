@@ -10,13 +10,16 @@ pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
+use crate::checks::group::{
+    check_additions, check_join, check_new_group, check_own_user_turns, check_project_slug, number,
+};
 use crate::checks::refusal;
 use crate::group::{
     Added, Group, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, Seat,
     SeatHold, SeatStart,
 };
 use crate::message::NewMessage;
-use crate::{Error, Project, Redactor, RelatedKind, Result, SessionId, Store, WriteRefusal};
+use crate::{Error, Project, Redactor, Result, SessionId, Store, WriteRefusal};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -279,37 +282,6 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
     Ok(groups)
 }
 
-fn number(id: &str) -> Option<i64> {
-    let n = id.strip_prefix("g-")?.parse::<i64>().ok()?;
-    (n > 0 && format!("g-{n}") == id).then_some(n)
-}
-
-/// A project group slug: lowercase letters, digits and interior hyphens, not a
-/// group id, and free of configured sensitive text.
-fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
-    if slug.is_empty()
-        || slug.len() > 64
-        || !slug
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        || slug.starts_with('-')
-        || slug.ends_with('-')
-        || number(slug).is_some()
-    {
-        return Err(refusal(
-            WriteRefusal::InvalidText,
-            "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
-        ));
-    }
-    if redactor.mask(slug) != slug {
-        return Err(refusal(
-            WriteRefusal::InvalidText,
-            "group slug contains sensitive text",
-        ));
-    }
-    Ok(())
-}
-
 /// Seat `session` in group `n` under an automatic name that no member of the
 /// group holds, so a join never displaces anyone.
 fn seat_member(
@@ -458,25 +430,7 @@ impl Store {
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<OpenedGroup> {
-        if !consent.authorizes_open() {
-            return Err(refusal(
-                WriteRefusal::GroupMembership,
-                "the quoted consent was given for another operation, not opening a group",
-            ));
-        }
-        check_own_user_turns(consent.session(), earlier_turns)?;
-        crate::check_content(&draft.title)?;
-        crate::check_content(&draft.kind)?;
-        if draft
-            .related
-            .iter()
-            .any(|r| r.kind() == RelatedKind::Session)
-        {
-            return Err(refusal(
-                WriteRefusal::GroupMembership,
-                "group references accept task:, pr: and repo:; use group join for a session",
-            ));
-        }
+        check_new_group(&draft, consent, earlier_turns)?;
         redactor.group(&mut draft);
         self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
@@ -577,18 +531,7 @@ impl Store {
         redactor: &Redactor,
     ) -> Result<GroupAdded> {
         check_project_slug(slug, redactor)?;
-        if additions.iter().any(|addition| {
-            addition.turns.as_ref().is_some_and(|turns| {
-                turns.iter().any(|turn| {
-                    turn.session != addition.session || turn.role != crate::Speaker::User
-                })
-            })
-        }) {
-            return Err(refusal(
-                WriteRefusal::GroupMembership,
-                "project group backfill takes only the named session's user turns",
-            ));
-        }
+        check_additions(additions)?;
         self.write_step(|| {
             for addition in additions {
                 self.refuse_forgotten(&addition.session)?;
@@ -666,11 +609,7 @@ impl Store {
     /// Append a member, or return false on retry. An ended transcript is named
     /// explicitly so a stale liveness check cannot authorize a different replacement.
     pub fn join_group(&self, join: JoinGroup<'_>, redactor: &Redactor) -> Result<bool> {
-        crate::check_agent_author(join.author)?;
-        if let Some(role) = join.role {
-            crate::check_content(role)?;
-        }
-        check_own_user_turns(join.session, join.earlier_turns)?;
+        check_join(&join)?;
         self.write_step(|| {
             self.refuse_forgotten(join.session)?;
             let n = self.group_number(join.group)?;
@@ -1143,20 +1082,6 @@ impl Store {
             Ok(0)
         })
     }
-}
-
-/// A backfill takes only the named session's own user turns.
-fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
-    if turns
-        .iter()
-        .any(|m| &m.session != session || m.role != crate::Speaker::User)
-    {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "group backfill takes only the member's own user turns",
-        ));
-    }
-    Ok(())
 }
 
 fn write_captured_turns(

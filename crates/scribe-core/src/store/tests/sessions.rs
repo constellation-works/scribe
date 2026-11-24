@@ -2,6 +2,7 @@
 //! numbers and the pass as one transaction.
 
 use super::{SESSION_BODY, Seed, on_disk, private_tempdir, seed, session_text};
+use crate::SessionVerbs;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Speaker};
