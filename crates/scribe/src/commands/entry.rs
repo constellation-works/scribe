@@ -484,19 +484,27 @@ fn answer(args: &AnswerArgs, ctx: &Context) -> Result<Output, CliError> {
         at,
         recorded_by: args.author.clone(),
     };
-    // An answer recorded here is not an approval in the session that must
-    // act (§18.8): say so when the item names another session.
-    let notice = match target.item.as_ref().map(|item| &item.answer_in) {
-        Some(scribe_core::AnswerIn::Session(only)) if *only != answer.session => Some(format!(
-            "{} asks for its answer in session:{only}, whose auto mode accepts only what is typed there; the user must also type it in that session",
-            target.id
-        )),
-        _ => None,
-    };
     let redactor = ctx.redactor(&ctx.store().config()?)?;
     let (entry, changed) = ctx
         .store()
         .answer_open_item(&args.id, answer, ctx.now(), &redactor)?;
+    // An answer recorded here is not an approval in the session that must
+    // act (§18.8). Base the reminder on the choice that remains stored: an
+    // older answer may have been ignored by the store.
+    let notice = entry
+        .item
+        .as_ref()
+        .and_then(|item| match (&item.answer_in, &item.answer) {
+            (scribe_core::AnswerIn::Session(only), Some(answer))
+                if *only != answer.session =>
+            {
+                Some(format!(
+                    "{} asks for its answer in session:{only}, whose auto mode accepts only what is typed there; the user must also type it in that session",
+                    entry.id
+                ))
+            }
+            _ => None,
+        });
     let mut output = written_with_action(ctx, entry, changed)?;
     if let (Some(notice), Output::Written { notices, .. }) = (notice, &mut output) {
         notices.push(notice);
