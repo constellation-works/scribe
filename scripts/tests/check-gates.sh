@@ -199,6 +199,15 @@ expect fail check-store-format-claims.py \
 expect fail check-store-format-claims.py \
   "$(format_tree claims-bad-kind 30 <<<"${claims_clean/at <!-- current-stamp -->30/at <!-- current-stmap -->30}")" \
   "a marker of an unknown kind"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-fraction-format 30 <<<"${claims_clean/writes format <!-- current-format -->30/writes format <!-- current-format -->30.1}")" \
+  "a marked current-format claim that is a fraction (30.1) of FORMAT"
+expect fail check-store-format-claims.py \
+  "$(format_tree claims-fraction-stamp 30 <<<"${claims_clean/at <!-- current-stamp -->30/at <!-- current-stamp -->30.1}")" \
+  "a marked current-stamp claim that is a fraction (30.1) of FORMAT"
+expect pass check-store-format-claims.py "$(format_tree claims-punctuated 30 <<<'The code writes format <!-- current-format -->30. Reads formats 1–<!-- current-format -->30.
+Stamps `control.json` at <!-- current-stamp -->30-build.')" \
+  "marked claims followed by sentence punctuation or a build hyphen"
 expect fail check-store-format-claims.py "$(format_tree claims-unmarked 30 <<<'The code writes format 30.')" \
   "a spec with no marked claim"
 expect fail check-store-format-claims.py "$(tree claims-absent)" "a tree with no format.rs or store spec"
