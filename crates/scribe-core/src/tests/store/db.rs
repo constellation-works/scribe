@@ -509,7 +509,7 @@ fn concurrent_writer_processes_all_commit_under_wal_and_busy_timeout() {
             std::process::Command::new(&exe)
                 .args([
                     "--exact",
-                    "store::tests::db::child_writes_windows",
+                    "tests::store::db::child_writes_windows",
                     "--nocapture",
                     "--test-threads",
                     "1",
