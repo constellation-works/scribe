@@ -232,7 +232,7 @@ impl Store {
     /// write it joins or one of its own (the first write moves any files
     /// in first). A write that refuses leaves everything where it was.
     pub(super) fn sessions_tx<T>(&self, f: impl FnOnce(&SessionTx<'_>) -> Result<T>) -> Result<T> {
-        self.write(|| {
+        self.write_step(|| {
             let conn = db::open_writer(&self.root, self.lock_wait)?;
             let tx = SessionTx::begin(&conn, &self.root)?;
             let out = f(&tx)?;

@@ -109,7 +109,7 @@ impl Store {
         }
         self.refuse_forgotten(&answer.session)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             // Checked again inside the write: a forget committed after the
             // check above must not be followed by a fresh answer write.
             self.refuse_forgotten(&answer.session)?;
@@ -170,7 +170,7 @@ impl Store {
             }
         };
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let mut entry = self.resolve_entry(id)?;
             let state = check_unsettled_item(&entry)?;
             let choice = entry.item.as_ref().is_some_and(|i| !i.options.is_empty());

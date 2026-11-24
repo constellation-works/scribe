@@ -110,7 +110,7 @@ impl Store {
     pub fn add_agent_tag(&self, mut tag: StoreTag, redactor: &Redactor) -> Result<StoreTag> {
         check_agent_author(&tag.author.name)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             self.check_new_tag(&tag)?;
             tag.author.kind = AuthorKind::Agent;
             tag.updated_by = None;
@@ -178,7 +178,7 @@ impl Store {
     ) -> Result<(StoreTag, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let configured = self.config_only()?.tags;
             if configured.resolve(name.as_str()).is_some() {
                 return Err(refusal(

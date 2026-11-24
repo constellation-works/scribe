@@ -58,7 +58,7 @@ impl Store {
         mut record: SessionRecord,
         redactor: &Redactor,
     ) -> Result<SessionRecord> {
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_busy(&record.id)?;
             self.session(&record.id)?;
             redactor.session(&mut record);
@@ -85,7 +85,7 @@ impl Store {
         expected: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<Option<SessionRecord>> {
-        self.write(|| {
+        self.write_step(|| {
             self.refuse_busy(&record.id)?;
             let current = self.session(&record.id)?.record;
             if current.updated != expected {

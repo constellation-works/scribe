@@ -174,7 +174,7 @@ impl Store {
         check_agent_author(&author)?;
         required(&draft.content)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
         let config = self.config()?;
         let tag = config
             .tags
@@ -330,7 +330,7 @@ impl Store {
     ) -> Result<(Entry, bool)> {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let mut entry = self.resolve_entry(id)?;
             let before = entry.clone();
             // Any agent may edit an agent note while it is active (author names
@@ -413,7 +413,7 @@ impl Store {
         check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
         let mut entry = self.resolve_entry(id)?;
         if entry.author.kind != AuthorKind::Agent && instruction.is_none() {
             return Err(refusal(
@@ -471,7 +471,7 @@ impl Store {
         check_agent_author(&author)?;
         required_message(instruction)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
             let target = self.resolve_entry(id)?;
             if target.status == EntryStatus::Forgotten {
                 return Ok((target, false));
@@ -528,7 +528,7 @@ impl Store {
         check_agent_author(&author)?;
         required_reason(reason)?;
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
         let older = self.resolve_entry(older)?;
         let newer = newer.map(|id| self.resolve_entry(id)).transpose()?;
         if kind == ProposalKind::Candidate || (kind == ProposalKind::Supersedes) != newer.is_some()
@@ -631,7 +631,7 @@ impl Store {
             required_reason(reason)?;
         }
         self.prepare_dir(&self.root)?;
-        self.write(|| {
+        self.write_step(|| {
         let mut proposals = self.proposals()?;
         let ids: Vec<String> = proposals.iter().map(|p| p.id.to_string()).collect();
         let i = self.proposal_index(id, &ids)?;

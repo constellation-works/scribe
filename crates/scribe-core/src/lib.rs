@@ -108,11 +108,17 @@ pub use store::{
     MarkResult, MemoryShown, MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR,
     PROFILE_FILE, PROPOSALS_FILE, PassMemory, PassWrite, PassWritten, ProfileInputs,
     ProfileRevision, REDACTED_FIELDS, RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR,
-    SessionForget, SessionList, SessionView, Skipped, Store, TagList, check_agent_author,
-    check_content, check_description, check_handoff_related, check_reason, check_unsettled_item,
-    init_project, init_project_with_skill_files, integration_hooks, resolve_prefix,
-    unresolved_redact_env,
+    SessionForget, SessionList, SessionView, Skipped, Snapshot, Store, TagList, Tx,
+    check_agent_author, check_content, check_description, check_handoff_related, check_reason,
+    check_unsettled_item, init_project, init_project_with_skill_files, integration_hooks,
+    resolve_prefix, unresolved_redact_env,
 };
+/// The store's repositories, one per record kind ([`Snapshot`], [`Tx`]).
+pub mod repo {
+    pub use crate::store::{
+        Audit, Entries, Groups, Marks, Memory, Messages, Pickups, Proposals, Sessions, Tags,
+    };
+}
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
     MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,

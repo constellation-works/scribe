@@ -236,7 +236,16 @@ impl Store {
     /// Run `f` as one store write: inside the command's transaction when
     /// there is one, else in a transaction of its own. A refusal rolls back
     /// everything `f` wrote.
-    pub(super) fn write<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn write_step<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.step(f)
+    }
+
+    /// [`Store::write_step`] for any error a store error converts into: the
+    /// same lock, transaction and savepoint ([`Store::write`] runs on it).
+    pub(super) fn step<T, E: From<Error>>(
+        &self,
+        f: impl FnOnce() -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
         self.transaction(|| {
             let conn = self.begin()?;
             let step = scope::Tx::begin(&conn, &self.root.join(DB_FILE), "write to")?;
@@ -252,7 +261,9 @@ impl Store {
         &self,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<(T, Result<()>)> {
-        self.transaction_with_cleanup(Move::AtWrite, OffsetDateTime::now_utc(), || self.write(f))
+        self.transaction_with_cleanup(Move::AtWrite, OffsetDateTime::now_utc(), || {
+            self.write_step(f)
+        })
     }
 
     /// Whether a write transaction is pending on this thread for this
@@ -343,7 +354,7 @@ impl Store {
         &self,
         f: impl FnOnce(&Connection, &Path) -> Result<T>,
     ) -> Result<T> {
-        self.write(|| {
+        self.write_step(|| {
             let conn = self.begin()?;
             f(&conn, &self.root.join(DB_FILE))
         })
