@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: catchers — the [tags.<tag>.capture] fields (from, route, triggers, criteria, not, max_open), how the session pass applies them, the shipped preferences and standard catchers, and example catchers (orbit, todo, issue, idea) that are config only"
-last_validated: 2026-11-21
+last_validated: 2026-11-23
 ---
 
 # Spec: Catchers
@@ -162,9 +162,10 @@ not = "A direction to act now; a preference; a question of fact."
 
 ## Stored issues become `issue` entries
 
-The first write that takes the store lock converts every
-`issues/issue-<n>.md` to one entry under `issue`, with no model call
-(§15.11):
+From phase 2 to phase 7 the first write that took the store lock converted
+every `issues/issue-<n>.md` to one entry under `issue`, with no model call
+(§15.11). Phase 8 removes the conversion; see the end of this section.
+The conversion made:
 
 | Entry field | From the issue |
 |---|---|
@@ -176,13 +177,17 @@ The first write that takes the store lock converts every
 | project, host | the first occurrence's |
 | cite | none: an issue kept no prompt hash, so the request's session is in `related` instead |
 
-A forgotten issue has no text left and writes nothing. Each file then moves
-to `pre-issue-<YYYY-MM-DD>/` in the data root. Forgetting an imported entry
-also erases its legacy issue file, including its old cause, fix and occurrence
-text. The erasure follows the source even when import assigned a different
-entry id. A file that does not parse
-stays in `issues/` with a warning and is tried on the next write; while any
-entry is unreadable, nothing converts. A run that finds the entry already
-written (same tag, content and quote) only moves the file, so running it
-again changes nothing. Stored `issue` entries read like any other tag's
-entries with or without `[tags.issue]` in config.
+A forgotten issue had no text left and wrote nothing. Each file then moved
+to `pre-issue-<YYYY-MM-DD>/` in the data root. A file that did not parse
+stayed in `issues/` with a warning and was tried on the next write. Stored
+`issue` entries read like any other tag's entries with or without
+`[tags.issue]` in config.
+
+Since phase 8 nothing converts. The next store write imports each
+`pre-issue-<YYYY-MM-DD>/` directory into `scribe.db`'s archive tables as
+records of kind `issue`, then removes it; an `issues/` directory still at
+the root is archived as kind `other`. No entry is made from either
+([store.md](store.md#the-file-stores-archives-in-scribedb-phase-8)).
+Forgetting an imported `issue` entry also erases its archived `pre-issue-*`
+source: every archived issue record whose body holds the entry's verified
+quote, with its old cause, fix and occurrence text.

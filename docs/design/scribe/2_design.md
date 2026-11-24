@@ -6072,6 +6072,7 @@ with phase 4):
 | `codex_cursors` | per rollout | `control.json`'s `codex_cursors` |
 | `now_pending`, `memory_history`, `profile_revisions`, `profile_cursor` | §15.5, §15.6 | nothing (new) |
 | `audit` | every field of today's line (format 5), one row per write | `audit.jsonl` |
+| `archives`, `archive_records` | (phase 8) one row per imported `pre-sqlite-<date>/` or `pre-issue-<date>/` directory, and one per file in it (one per line of its `audit.jsonl`): the archive, the path, the line, the kind (`session`, `checkpoint`, `entry`, `issue`, `claims`, `control`, `tags`, `marks`, `pickups`, `audit` or `other`) and the record as JSON | the `pre-sqlite-<date>/` and `pre-issue-<date>/` directories |
 
 **Messages.**
 
@@ -6120,10 +6121,15 @@ with phase 4):
   `session:deleted` as the source. He can erase an entry with `#scribe
   forget <entry-id>`. Memory loses the session's occurrences. Items with
   no remaining occurrence retire.
-- Scribe erases the matching contents of its `pre-sqlite-*` archives
-  after commit. Legacy audit events that name the session keep their audit
-  fields and lose extra fields that can hold free text. Forgetting an
-  imported issue entry also erases its original `pre-issue-*` source file.
+- In the same transaction, scribe erases the session from the archive
+  tables (phase 8): its archived record and checkpoint go; archived
+  switches, cursors and marks drop it; archived entries and claims that
+  cite it lose the cite and its quotes. Legacy audit events that name the
+  session keep their audit fields and lose extra fields that can hold
+  free text. An `entry forget` erases the entry's text the same way, and
+  forgetting an imported issue entry also erases its archived `pre-issue-*`
+  source. Unrelated archived records are kept. An archive still on disk
+  when a forget runs is erased as the next write imports it.
   Subsequent exports read the erased store, and an earlier
   export to a caller's directory is a copy the caller controls. The
   provider owns the transcript and the hook's reply confirms it was left
@@ -6161,7 +6167,9 @@ with phase 4):
     already on disk (§11.3).
 - **Upgrades.** `store/format.rs::UPGRADES` and its 21 steps give way to a
   numbered list of SQL migrations keyed on `user_version`, each run in its
-  own transaction.
+  own transaction. Phase 8 removes `format.rs`; what is left of it, the
+  current-format codecs of an export and the row checks, is
+  `store/codec.rs`.
 - **Reads.** Reads still take no lock and write nothing (STD-01 R31).
   - Every reader opens the database read-only (`SQLITE_OPEN_READ_ONLY`).
   - In WAL mode a read-only open needs the `-wal` and `-shm` files to
@@ -6195,22 +6203,40 @@ so no kind is ever unreadable outside the binary.
 
 **Migration.**
 
-- `scribe store migrate` reads a format-22 (or older) file store with
-  today's decoders and writes `scribe.db` in one transaction. It checks the
-  row count per kind against the files, then moves the old files to
-  `~/.scribe/pre-sqlite-<date>/`. They are kept, never deleted by scribe
-  except when `#scribe forget` or `entry forget` erases a session or entry
-  from them. Finder metadata files (`.DS_Store` and `._*`) are ignored by
-  the import and retained with the legacy files; they are never read as
-  records.
-- It is refused while any session is switched on, and while any rebuild
-  checkpoint `.<id>.rebuild.md` exists: the user resumes the rebuild
-  (`session rebuild`) or discards it first, so no partial record is
-  imported. It is also refused on a store that already has `scribe.db`.
-- Every new build runs it at its first write and refuses to write a file
-  store.
-- The file decoders stay for the 30-day compatibility window, then go with
-  `format.rs`.
+- Phases 6–7: `scribe store migrate` read a format-22 (or older) file store
+  with that build's decoders and wrote `scribe.db` in one transaction. It
+  checked the row count per kind against the files, then moved the old
+  files to `~/.scribe/pre-sqlite-<date>/` (and phase 2 had moved converted
+  issues to `pre-issue-<date>/`). Every build from phase 6 ran the move at
+  its first write.
+- Phase 8 keeps no compatibility window: no release shipped a file store
+  (Daniel: "no need for compatibility window. we haven't had any release
+  yet."). Instead of keeping the decoders for the archives, the build
+  imports each archive once into the archive tables of the store's own
+  `scribe.db` ([4_decisions.md](./4_decisions.md#the-file-stores-archives-move-into-scribedb-once)),
+  then removes the files:
+  - The import reads no record format. A Markdown file is kept as its
+    frontmatter (as JSON) and its body; a JSON document and an audit line
+    as JSON; anything else as text. A file that does not parse is kept as
+    text, so nothing is lost.
+  - It checks the count per kind against the files in the transaction,
+    then removes the directory after the commit. An archive already
+    imported is only removed, never imported again, so a forget made
+    since stays made.
+  - Record files an interrupted move left at the root (`sessions/`,
+    `entries/`, `issues/`, the documents, format-24 `memory/m-<n>.md`
+    items) are archived the same way, as kind `other` where no kind fits.
+  - Finder metadata files (`.DS_Store` and `._*`) are never read as
+    records: the import skips them, those at the root stay, and those
+    inside an archive go with its directory.
+- Every write makes the import, and `scribe store migrate` makes it on
+  demand. It is idempotent: a store with nothing left to import is
+  refused `migrate_blocked`. It is also refused while any session is
+  switched on and while any rebuild checkpoint `.<id>.rebuild.md` exists:
+  the user resumes the rebuild (`session rebuild`) or discards it first.
+- A store whose records never moved into `scribe.db` is refused
+  `store_corrupt` on read and write: this build has no file decoder, so it
+  is migrated with an earlier build first.
 
 ### 15.8 Generic and configurable
 
@@ -6346,9 +6372,19 @@ goldens. Each line gives what the phase does, then what it proves.
    - Proves: an approval and its audit row commit together, and
      `reapply_approved` has nothing to repair. Every `audit.jsonl` line
      reads back from the table, the issue fields of formats 4–5 included.
-8. **Remove the file store** after the 30-day window.
-   - Does: the decoders, `format.rs` and the file-store tests.
-   - Proves: nothing reads a format-22 file.
+8. **Remove the file store.**
+   - Does: imports the `pre-sqlite-<date>/` and `pre-issue-<date>/`
+     archives, and any file an interrupted move left, into the
+     `archives` and `archive_records` tables at the first write (or `store
+     migrate`), checking the count per kind, then removes the files;
+     `forget` erases from the archive tables; removes the decoders,
+     `format.rs` and the file-store tests. No compatibility window: nothing
+     was released.
+   - Proves: nothing reads a format-22 file, and the store holds no
+     `pre-sqlite-*` or `pre-issue-*` file after a write. Forgetting a
+     session or an entry erases its text from the archived records and
+     keeps unrelated archived records and the legacy audit fields. A store
+     migrated in phases 6–7 still loads and exports unchanged.
 
 **Implementation tasks** (titles and scope; none is filed until Daniel
 approves this design; each carries the `scribe` tag):
@@ -6364,7 +6400,7 @@ approves this design; each carries the `scribe` tag):
 | 7 | scribe: memory as profile, now and milestones, with `memory refresh` | `memory/`, `store/memory.rs`, `ProfileRequest`, `memory show` with no id and the brief's memory block, the routine seed, migration of `m-<n>` |
 | 8 | scribe: sessions in SQLite with `s-<n>` ids, and `scribe export` | `session.rs`, `store/` session code, `control.json` fields, `store migrate`, `export` |
 | 9 | scribe: entries, claims, state and audit in SQLite | remaining kinds; lock and `UPGRADES` retired |
-| 10 | scribe: remove the file store after the compatibility window | decoders, `format.rs`, tests |
+| 10 | scribe: remove the file store after the compatibility window | the archive import into `scribe.db`; decoders, `format.rs`, tests |
 
 ### 15.10 Differences from the proposal
 
@@ -6466,7 +6502,7 @@ Daniel's words, with its reason.
 | `sessions/<yyyy>/<mm>/<uuid>.md` (37) | `sessions`, `segments`, `session_links`, `session_terms` rows | phase 6: `s-<n>` by `created` order; UUID into `provider_session`; body sections into columns; `check_log` run on every record before import |
 | `control.json` | switch fields on `sessions`; `codex_cursors` table | phase 6: a switch with no record makes a header-only session row |
 | `proposals.json` (21; 6 open) | `claims` rows; ids kept | phase 7; phase 3 shows open statement-only candidates as `older claim`; the 3 open `finding` candidates stay open, because the Mac's `config.toml` still declares `[tags.finding]`, so the retired-tag cleanup of §11.3 does not close them; they wait for Daniel to settle them or drop the table |
-| `memory/m-<n>.md` | removed; their content seeds the first profile or a `now` file | phase 5: a `profile` or `projects` item becomes a hint to the first refresh; a `now` item with a date in the future, or under 14 days past, becomes a `now` file; a `milestones` item becomes a milestone file; a `working` item is dropped; every item's text and occurrences go to `memory_history` |
+| `memory/m-<n>.md` | removed; their content seeds the first profile or a `now` file | phase 5: a `profile` or `projects` item becomes a hint to the first refresh; a `now` item with a date in the future, or under 14 days past, becomes a `now` file; a `milestones` item becomes a milestone file; a `working` item is dropped; every item's text and occurrences go to `memory_history`. Phase 8 reads none: a store that still holds them archives them unread (kind `other`) at its next write |
 | `m-1` (working: merge right after each task) | dropped from memory; offered as a `preference` claim with its quote | phase 5 opens the claim, since it is a standing rule; Daniel settles it |
 | `m-2` (projects: keep the crew-memory machinery internally) | a hint to the first profile refresh, under Projects | phase 5 |
 | `m-3` (working: run the requeue) | dropped; kept only in `memory_history` | phase 5 |
@@ -6481,7 +6517,8 @@ Daniel's words, with its reason.
 | `sessions/…/.<id>.rebuild.md` (rebuild checkpoints) | `rebuild_checkpoints` rows | phase 6; `store migrate` refuses while one exists, so the user finishes or discards it first |
 | `scribe-init.json`, `.scribe-init.lock` (in the provider's config directory, outside the store) | unchanged | none: they belong to `scribe init`, not the store |
 | `config.toml` | stays the user's file | phase 2 adds `[user]`, `[instructions]`, and warns on `[tags.issue.capture]` route `agent` for 30 days, then refuses it; phase 5 deprecates `[memory]` keys; `from = "daniel"` read as `user` |
-| `store/format.rs::UPGRADES` | replaced by SQL migrations on `user_version` | phase 8 removes it after the window |
+| `store/format.rs::UPGRADES` | replaced by SQL migrations on `user_version` | phase 8 removes it with `format.rs`; the current-format codecs stay in `store/codec.rs` |
+| `pre-sqlite-<date>/`, `pre-issue-<date>/` | imported into the `archives` and `archive_records` tables of `scribe.db` | phase 8, at the first write or `store migrate`; the files are removed after the commit |
 
 ### 15.12 Limits and what is not built until seen
 

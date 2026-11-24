@@ -440,27 +440,21 @@ fn new_commands_from_untyped_origins_and_pasted_blocks_do_not_act() {
 #[test]
 fn typed_session_update_changes_the_record() {
     let setup = Setup::new();
-    let dir = setup.ctx.store().root().join("sessions/2026/11");
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(setup.ctx.store().root()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for path in [
-            setup.ctx.store().root().to_path_buf(),
-            setup.ctx.store().root().join("sessions"),
-            setup.ctx.store().root().join("sessions/2026"),
-            dir.clone(),
-        ] {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        std::fs::set_permissions(
+            setup.ctx.store().root(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
     }
-    std::fs::write(dir.join("s-1.md"), "---\nformat: 1\nkind: session\nid: s-1\nstatus: open\nproject: scribe\ntopics: []\nrelated: []\nterms: []\nprovider: claude-code\nhost: host\ncreated: 2026-11-01T10:00:00Z\nupdated: 2026-11-01T10:00:00Z\ntitle: old title\ncwd: /work\nstarted: 2026-11-01T09:00:00Z\non_since: 2026-11-01T09:00:00Z\nscribed_through: null\npasses: 1\nnext_open: 0\n---\n## Summary\nsum\n\n## Goals\ngoal\n\n## Outcome\nout\n\n## Next\nnone\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir.join("s-1.md"), std::fs::Permissions::from_mode(0o600))
-            .unwrap();
-    }
+    setup
+        .ctx
+        .store()
+        .seed_records(&["---\nformat: 31\nkind: session\nid: s-1\nstatus: open\nactive: true\nkeep_active: false\nactive_change: null\ncataloged_by: null\nrebuilt_by: null\nproject: scribe\ntopics: []\nrelated: []\nlinks: []\nterms: []\nprovider: claude-code\nhost: host\ncreated: 2026-11-01T10:00:00Z\nupdated: 2026-11-01T10:00:00Z\ntitle: old title\ncwd: /work\nstarted: 2026-11-01T09:00:00Z\non_since: 2026-11-01T09:00:00Z\nscribed_through: null\npasses: 1\nnext_open: 0\nlog: []\n---\n## Summary\nsum\n\n## Goals\ngoal\n\n## Next\nnone\n\n## Log\n"])
+        .unwrap();
     for line in [
         "/scribe session update s-1 project water-economy",
         "/scribe session update s-1 title New title",

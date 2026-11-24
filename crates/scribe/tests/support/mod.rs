@@ -159,7 +159,12 @@ impl Fixture {
     }
 }
 
-/// The checked-in fixture store.
+/// The checked-in fixture store: `scribe.db` with its stamps, as a phase-7
+/// build's `store migrate` left the earlier file-store fixture (2_design.md
+/// §15.9). The session `7c2b9d14-…` was switched off for the migrate, then
+/// on again by SQL, and the migrate's audit row was deleted, so the store
+/// holds only the fixture's own records; its `pre-sqlite-*` directory was
+/// not kept. `record_kinds.moved_to` still names it.
 pub fn fixture_store() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/store")
 }
@@ -444,11 +449,12 @@ pub fn make_private(path: &Path) {
     let _ = path;
 }
 
-/// One valid entry file's text, `preferences-<n>`, with `content` as its body.
+/// One valid current-format entry's Markdown, `preferences-<n>`, with
+/// `content` as its body, for [`seed_records`].
 pub fn entry_text(n: usize, content: &str) -> String {
     format!(
         "---
-format: 1
+format: 31
 kind: entry
 id: preferences-{n}
 tag: preferences
@@ -458,13 +464,26 @@ topics: []
 related: []
 provider: claude-code
 host: host
+author: {{kind: user, name: user}}
+updated_by: null
 created: 2026-01-02T03:04:05Z
 updated: 2026-01-02T03:04:05Z
+inactive_since: null
 said: \"#scribe preferences: {content}\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: 2026-01-02T03:04:05Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
 superseded_by: null
 review_after: null
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+removal_instruction: null
+stated_by: null
+outcome: null
 ---
 {content}
 ",
@@ -472,21 +491,32 @@ review_after: null
     )
 }
 
-/// Write a store of `count` decision entries directly, for tests that need
-/// more data than the fixture holds.
+/// Write each current-format Markdown record (an entry or a session
+/// record) into the store at `root` as its `scribe.db` row: no build reads
+/// record files any more (2_design.md §15.9, phase 8).
+pub fn seed_records(root: &Path, records: &[&str]) {
+    if !root.exists() {
+        std::fs::create_dir_all(root).expect("create store root");
+        make_private(root);
+    }
+    scribe_core::Store::open(root)
+        .seed_records(records)
+        .expect("seed records");
+}
+
+/// Write a store of `count` preference entries directly, for tests that
+/// need more data than the fixture holds.
 pub fn write_entries(root: &Path, count: usize) {
-    let dir = root.join("entries").join("preferences");
-    std::fs::create_dir_all(&dir).expect("create entries");
-    for d in [root.to_path_buf(), root.join("entries"), dir.clone()] {
-        make_private(&d);
-    }
-    for n in 1..=count {
-        let path = dir.join(format!("preferences-{n}.md"));
-        let content =
-            format!("decision number {n} with content long enough to fill the pipe quickly");
-        std::fs::write(&path, entry_text(n, &content)).expect("write entry");
-        make_private(&path);
-    }
+    let texts: Vec<String> = (1..=count)
+        .map(|n| {
+            entry_text(
+                n,
+                &format!("decision number {n} with content long enough to fill the pipe quickly"),
+            )
+        })
+        .collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    seed_records(root, &refs);
 }
 
 /// The `idea` catcher that shipped before phase 2 (2_design.md §15.9),

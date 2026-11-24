@@ -218,10 +218,14 @@ procedure.
 
 `--root <dir>`, else `$SCRIBE_ROOT`, else `~/.scribe`. Entries, proposals,
 tags, pickups, annotation marks, the audit log and session records are rows in
-`scribe.db`. A store from before that keeps the old files until its first
-write, or until `scribe store migrate`, moves them in and leaves the files in
-`pre-sqlite-<date>/`. `scribe export <dir>` writes them back out as that file
-shape, or `--as jsonl` for one file per table. Memory stays files under
+`scribe.db`. Earlier builds moved a file store in at its first write and
+kept the old files in `pre-sqlite-<date>/` (and converted issues in
+`pre-issue-<date>/`). This build's first write, or `scribe store migrate`,
+imports those directories into `scribe.db`'s archive tables and removes
+them. It no longer reads a file store: one whose records never moved is
+refused, so migrate it with an earlier build first. `scribe export <dir>`
+writes the records out as Markdown files, or `--as jsonl` for one file per
+table; neither includes the archives. Memory stays files under
 `memory/`. `config.toml` holds configured tags, models, catalog cadence,
 session age and redaction. The layout and every key are in the
 [store spec](design/scribe/specs/store.md).
@@ -233,8 +237,8 @@ lines. Direct writes, session passes and rebuilds, `session deactivate` and
 `session activate`, and consistency scans are audited.
 
 The build writes the store format named `FORMAT` in
-`crates/scribe-core/src/store/format.rs` and reads every older format. What
-each format changed is the store spec.
+`crates/scribe-core/src/store/codec.rs` in exports and stamps, and refuses a
+newer one. What each format changed is the store spec.
 
 ## Project init
 

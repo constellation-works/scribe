@@ -170,13 +170,13 @@ expect fail check-readme-links.py "$(readme_with readme-live-after-code-span '``
 expect fail check-readme-links.py "$(tree readme-absent)" "a repository with no README.md"
 
 # --- check-store-format-claims.py: marked current-format claims in the store spec ---
-# format_tree <name> <FORMAT>: a fixture root whose format.rs declares FORMAT
+# format_tree <name> <FORMAT>: a fixture root whose codec.rs declares FORMAT
 # and whose store spec is read from stdin.
 format_tree() {
   local root
   root=$(tree "$1")
   mkdir -p "$root/crates/scribe-core/src/store" "$root/docs/design/scribe/specs"
-  printf 'pub(super) const FORMAT: u32 = %s;\n' "$2" >"$root/crates/scribe-core/src/store/format.rs"
+  printf 'pub(super) const FORMAT: u32 = %s;\n' "$2" >"$root/crates/scribe-core/src/store/codec.rs"
   cat >"$root/docs/design/scribe/specs/store.md"
   echo "$root"
 }
@@ -210,7 +210,7 @@ Stamps `control.json` at <!-- current-stamp -->30-build.')" \
   "marked claims followed by sentence punctuation or a build hyphen"
 expect fail check-store-format-claims.py "$(format_tree claims-unmarked 30 <<<'The code writes format 30.')" \
   "a spec with no marked claim"
-expect fail check-store-format-claims.py "$(tree claims-absent)" "a tree with no format.rs or store spec"
+expect fail check-store-format-claims.py "$(tree claims-absent)" "a tree with no codec.rs or store spec"
 
 # The published session-ID tables must match the same matrix as CLI tests.
 outcomes=$(tree outcomes)

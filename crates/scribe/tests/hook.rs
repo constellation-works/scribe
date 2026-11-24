@@ -901,25 +901,22 @@ fn write_verbatim(
     line: u32,
     message: Option<&str>,
 ) {
-    let dir = fx.root().join("entries/preferences");
-    std::fs::create_dir_all(&dir).unwrap();
-    for d in [fx.root(), fx.root().join("entries"), dir.clone()] {
-        make_private(&d);
-    }
     let content = said.split_once(": ").map_or(said, |(_, c)| c);
     let sha = scribe_core::capture::prompt_sha256(prompt);
     let message = message.map_or_else(|| String::from("null"), |m| format!("\"{m}\""));
     let text = format!(
-        "---\nformat: 1\nkind: entry\nid: preferences-{n}\ntag: preferences\nstatus: active\n\
+        "---\nformat: 31\nkind: entry\nid: preferences-{n}\ntag: preferences\nstatus: active\n\
          project: scribe\ntopics: []\nrelated: []\nprovider: claude-code\nhost: host\n\
-         created: 2026-01-02T03:04:05Z\nupdated: 2026-01-02T03:04:05Z\nsaid: \"{said}\"\n\
+         author: {{kind: user, name: user}}\nupdated_by: null\n\
+         created: 2026-01-02T03:04:05Z\nupdated: 2026-01-02T03:04:05Z\ninactive_since: null\n\
+         said: \"{said}\"\n\
          content_from: {{kind: instruction}}\n\
          cite: {{session: {SESSION}, message: {message}, at: 2026-01-02T03:04:05Z, prompt_sha256: \"{sha}\", line: {line}, cwd: /work}}\n\
-         superseded_by: null\nreview_after: null\n---\n{content}\n"
+         retirement_reason: null\nsuperseded_by: null\nreview_after: null\nquote: null\n\
+         window: null\nevidence: null\nas_of: null\napproved_by: null\ninstruction: null\n\
+         removal_instruction: null\nstated_by: null\noutcome: null\n---\n{content}\n"
     );
-    let path = dir.join(format!("preferences-{n}.md"));
-    std::fs::write(&path, text).unwrap();
-    make_private(&path);
+    support::seed_records(&fx.root(), &[&text]);
 }
 
 /// An open stale proposal `p-1` on `preferences-1`.
@@ -1242,20 +1239,10 @@ fn write_session(
     updated: &str,
     active: bool,
 ) {
-    let year = &started[0..4];
-    let month = &started[5..7];
-    let dir = fx.root().join(format!("sessions/{year}/{month}"));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut cursor = fx.root();
-    make_private(&cursor);
-    for part in ["sessions", year, month] {
-        cursor = cursor.join(part);
-        make_private(&cursor);
-    }
     let active = if active { "true" } else { "false" };
     let body = format!(
         "---
-format: 4
+format: 31
 kind: session
 id: {id}
 status: open
@@ -1263,6 +1250,7 @@ active: {active}
 keep_active: false
 active_change: null
 cataloged_by: null
+rebuilt_by: null
 project: {project}
 topics: []
 related: []
@@ -1296,55 +1284,50 @@ Keep going.
 Recorded work.
 "
     );
-    let path = dir.join(format!("{id}.md"));
-    std::fs::write(&path, body).unwrap();
-    make_private(&path);
+    support::seed_records(&fx.root(), &[&body]);
 }
 
 fn write_switch_on(fx: &Fixture, session: &str) {
-    std::fs::create_dir_all(fx.root()).unwrap();
-    make_private(&fx.root());
-    let path = fx.root().join("control.json");
     let body = format!(
         r#"{{
-  "format": 1,
+  "format": 31,
   "sessions": {{
-    "{session}": {{"on": true, "since": "2026-11-16T12:00:00Z", "due": false, "final": false}}
+    "{session}": {{"provider": "claude-code", "on": true, "since": "2026-11-16T12:00:00Z", "due": false, "final": false, "consecutive_failures": 0, "retry_after": null, "pending_links": [], "cataloged_by": null}}
   }}
 }}
 "#
     );
-    std::fs::write(&path, body).unwrap();
-    make_private(&path);
+    support::seed_records(&fx.root(), &[&body]);
 }
 
 fn write_open_proposal(fx: &Fixture) {
-    std::fs::create_dir_all(fx.root()).unwrap();
-    make_private(&fx.root());
-    let path = fx.root().join("proposals.json");
-    std::fs::write(
-        &path,
-        r#"{
-  "format": 1,
+    support::seed_records(
+        &fx.root(),
+        &[r#"{
+  "format": 31,
   "proposals": [
     {
       "id": "p-1",
       "kind": "stale",
       "older": "rituals-1",
+      "candidate": null,
       "newer": null,
       "reason": "Past its review date.",
       "quotes": [{"entry": "rituals-1", "text": "run the full gate"}],
       "state": "open",
       "opened_at": "2026-11-16T12:00:00Z",
       "settled_at": null,
-      "settled_by": null
+      "settled_by": null,
+      "author": {"kind": "scribe", "name": "consistency"},
+      "updated_by": null,
+      "settled_author": null,
+      "closed_reason": null,
+      "instruction": null
     }
   ]
 }
-"#,
-    )
-    .unwrap();
-    make_private(&path);
+"#],
+    );
 }
 
 fn start_message(fx: &Fixture, payload: &Value) -> String {
@@ -1466,34 +1449,22 @@ fn session_start_skips_the_reminder_when_no_recent_session_matches() {
 #[cfg(unix)]
 #[test]
 fn session_start_prints_no_reminder_when_the_sessions_cannot_be_read() {
-    use std::os::unix::fs::PermissionsExt;
-
     let fx = Fixture::new();
     let cwd = project_cwd(&fx);
     let now = now_rfc3339();
     write_session(&fx, PREVIOUS, "scribe", &now, &now, true);
     write_open_proposal(&fx);
-    let sessions = fx.root().join("sessions");
-    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o000)).unwrap();
-    struct Restore<'a>(&'a Path);
-    impl Drop for Restore<'_> {
-        fn drop(&mut self) {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o700));
-            }
-        }
-    }
-    let _restore = Restore(&sessions);
+    // A session row whose project is empty cannot be decoded.
+    support::sql(
+        &fx.root(),
+        &format!("UPDATE sessions SET project = '' WHERE provider_session = '{PREVIOUS}'"),
+    );
 
     let message = start_message(&fx, &start_payload(Some(&cwd), CURRENT));
     assert_eq!(
         message, "scribe: 1 proposal to review — scribe proposal list",
         "an unreadable session store adds no continuation, and the hook still starts"
     );
-    // The export reads `sessions/` too, so make it readable first.
-    drop(_restore);
     assert!(audit(&fx).is_empty(), "a failed read is not audited");
 }
 

@@ -1,6 +1,7 @@
-//! Phase 2 of 2_design.md §15.9: stored issue records become `issue`
-//! entries with no model call (§15.11, specs/catchers.md), and the issue
-//! surfaces are gone.
+//! The issue surfaces are gone, and stored issue records are no longer
+//! converted to `issue` entries (2_design.md §15.9, phase 8): a
+//! `pre-issue-*` archive or a leftover `issues/` file is imported into
+//! `archive_records` like any other file.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod support;
@@ -15,121 +16,107 @@ fn json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap()
 }
 
-/// Put the format-23 issue fixture at `issues/issue-1.md`.
-fn place_issue(fx: &Fixture) {
+/// Leave `pre-issue-2026-11-22/issue-1.md`, the archive an issue
+/// conversion left before phase 8.
+fn place_archive(fx: &Fixture) -> std::path::PathBuf {
+    let dir = fx.root().join("pre-issue-2026-11-22");
+    fx.create_private_dir_all(&dir);
+    let file = dir.join("issue-1.md");
+    std::fs::write(&file, ISSUE).unwrap();
+    make_private(&file);
+    dir
+}
+
+fn a_write(fx: &Fixture, words: &str) {
+    // The fixture's config redacts `GITHUB_TOKEN`, so a write needs a value.
+    let out = fx
+        .cmd(&[
+            "entry",
+            "add",
+            "--tag",
+            "preferences",
+            "--author",
+            "opus",
+            words,
+        ])
+        .env("GITHUB_TOKEN", "test-github-token-1234")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+}
+
+#[test]
+fn a_pre_issue_archive_is_imported_as_is_and_makes_no_issue_entry() {
+    let fx = Fixture::new();
+    fx.seed();
+    let dir = place_archive(&fx);
+    a_write(&fx, "Keep the API stable.");
+
+    // No conversion: the issue record is archived whole, and no entry
+    // is made of it.
+    assert!(!dir.exists(), "the write imported and removed the archive");
+    let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
+    assert_eq!(listed["total"], 0, "{listed}");
+    assert!(
+        fx.run(&["entry", "show", "issue-1", "--json"])
+            .status
+            .code()
+            != Some(0),
+        "no issue-1 entry"
+    );
+    let conn = rusqlite::Connection::open(fx.root().join("scribe.db")).unwrap();
+    let (kind, record): (String, String) = conn
+        .query_row(
+            "SELECT kind, record FROM archive_records WHERE path = 'issue-1.md'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "issue");
+    let record: Value = serde_json::from_str(&record).unwrap();
+    assert_eq!(record["front"]["id"], "issue-1");
+    assert_eq!(record["front"]["related"][1], SESSION);
+    assert!(
+        record["body"]
+            .as_str()
+            .unwrap()
+            .contains("Pushes from parallel drains share one token."),
+        "{record}"
+    );
+
+    // A later write imports nothing more.
+    let before: i64 = conn
+        .query_row("SELECT count(*) FROM archive_records", [], |r| r.get(0))
+        .unwrap();
+    a_write(&fx, "Prefer small pull requests.");
+    let after: i64 = conn
+        .query_row("SELECT count(*) FROM archive_records", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_leftover_issues_directory_is_archived_not_converted() {
+    let fx = Fixture::new();
+    fx.seed();
     let dir = fx.root().join("issues");
     fx.create_private_dir_all(&dir);
     let file = dir.join("issue-1.md");
     std::fs::write(&file, ISSUE).unwrap();
     make_private(&file);
-}
-
-/// The files under `pre-issue-<date>/`, with that directory's name.
-fn moved_aside(fx: &Fixture) -> Vec<String> {
-    let mut names = Vec::new();
-    for dir in std::fs::read_dir(fx.root()).unwrap() {
-        let dir = dir.unwrap();
-        let name = dir.file_name().into_string().unwrap();
-        if name.starts_with("pre-issue-") {
-            for file in std::fs::read_dir(dir.path()).unwrap() {
-                let file = file.unwrap().file_name().into_string().unwrap();
-                names.push(format!("{name}/{file}"));
-            }
-        }
-    }
-    names.sort();
-    names
-}
-
-fn a_write(fx: &Fixture, words: &str) {
-    fx.ok(&[
-        "entry",
-        "add",
-        "--tag",
-        "preferences",
-        "--author",
-        "opus",
-        words,
-    ]);
-}
-
-#[test]
-fn a_stored_issue_becomes_an_issue_entry_model_free_and_its_file_moves_aside() {
-    let fx = Fixture::new();
-    place_issue(&fx);
-    // No `claude` on the path: a model call would fail the write.
     a_write(&fx, "Keep the API stable.");
-
-    let entry = json(&fx.ok(&["entry", "show", "issue-1", "--json"]).stdout);
-    assert_eq!(entry["tag"], "issue");
-    assert_eq!(entry["status"], "active");
-    assert_eq!(
-        entry["content"],
-        "GitHub API secondary rate limit during drains\n\
-         Cause: Pushes from parallel drains share one token.\n\
-         Fix: Serialise pushes per token.",
-        "the header knew neither, so the newest occurrence's are used"
-    );
-    assert_eq!(
-        entry["quote"], "can you investigate why the drain keeps failing with HTTP 429",
-        "the first occurrence's verified request"
-    );
-    assert_eq!(entry["related"], serde_json::json!(["task:ORB-1", SESSION]));
-    assert_eq!(entry["author"]["kind"], "agent");
-    assert_eq!(entry["author"]["name"], "opus");
-    assert_eq!(entry["project"], "orbit");
-    assert_eq!(entry["host"], "host-a");
-    assert_eq!(entry["content_from"]["kind"], "agent");
-    assert!(entry["cite"].is_null(), "an issue kept no prompt hash");
-
-    assert!(
-        std::fs::read_dir(fx.root().join("issues"))
-            .unwrap()
-            .next()
-            .is_none(),
-        "issues/ is emptied"
-    );
-    let aside = moved_aside(&fx);
-    assert_eq!(aside.len(), 1, "{aside:?}");
-    assert!(aside[0].ends_with("/issue-1.md"), "{aside:?}");
-    let kept = std::fs::read_to_string(fx.root().join(&aside[0])).unwrap();
-    assert_eq!(kept, ISSUE, "the file is moved, not rewritten");
-
-    // Running again is a no-op: no second entry, nothing moved.
-    let before = support::exported(&fx.root(), "entries/issue/issue-1.md");
-    assert!(before.is_some(), "the issue entry exists");
-    a_write(&fx, "Prefer small pull requests.");
-    assert_eq!(
-        support::exported(&fx.root(), "entries/issue/issue-1.md"),
-        before
-    );
-    assert_eq!(moved_aside(&fx), aside);
-
-    // A crash between the write and the move leaves the file: the next
-    // write finds the entry already there and only moves it.
-    place_issue(&fx);
-    a_write(&fx, "Name the units in sizes.");
+    assert!(!file.exists(), "the write imported the leftover file");
     let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
-    assert_eq!(listed["total"], 1, "{listed}");
-    assert_eq!(
-        support::exported(&fx.root(), "entries/issue/issue-1.md"),
-        before
-    );
-}
-
-#[test]
-fn an_unparsable_issue_file_stays_and_the_write_still_lands() {
-    let fx = Fixture::new();
-    let dir = fx.root().join("issues");
-    fx.create_private_dir_all(&dir);
-    let file = dir.join("issue-1.md");
-    std::fs::write(&file, "---\nformat: 23\nkind: issue\n---\nnot an issue\n").unwrap();
-    make_private(&file);
-    a_write(&fx, "Keep the API stable.");
-    assert!(file.exists(), "left for the next write");
-    assert!(moved_aside(&fx).is_empty());
-    let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
-    assert_eq!(listed["total"], 0);
+    assert_eq!(listed["total"], 0, "no conversion: {listed}");
+    let archived: i64 = rusqlite::Connection::open(fx.root().join("scribe.db"))
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM archive_records WHERE path = 'issues/issue-1.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, 1);
 }
 
 #[test]

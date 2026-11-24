@@ -1,5 +1,7 @@
 //! The store through its public API, against the shared fixture store the
-//! CLI's tests also read. Each test copies it to a fresh owner-only temp root.
+//! CLI's tests also read: `scribe.db` with its stamps, a store a phase-7
+//! `store migrate` left (2_design.md §15.9). Each test copies it to a fresh
+//! owner-only temp root.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -61,6 +63,8 @@ fn probe_tag() -> StoreTag {
 }
 
 /// Every file under `root` with its bytes, for proving reads write nothing.
+/// `scribe.db-shm` is left out: it is SQLite's shared-memory index, whose
+/// read marks every WAL reader sets, not store content.
 fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -69,7 +73,7 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
             let path = item.unwrap().path();
             if path.is_dir() {
                 stack.push(path);
-            } else {
+            } else if !path.ends_with("scribe.db-shm") {
                 out.push((path.clone(), fs::read(&path).unwrap()));
             }
         }
@@ -81,6 +85,10 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 #[test]
 fn the_fixture_reads_whole_and_reading_writes_nothing() {
     let (_dir, store) = store();
+    let db = fs::read(store.root().join("scribe.db")).unwrap();
+    // The first open creates the persisted, empty `-wal` beside the database.
+    store.config().unwrap();
+    store.list_sessions(&SessionFilter::default()).unwrap();
     let before = snapshot(store.root());
     let entries = store.list_entries(&EntryFilter::default()).unwrap();
     assert!(entries.skipped.is_empty(), "{:?}", entries.skipped);
@@ -120,7 +128,7 @@ fn the_fixture_reads_whole_and_reading_writes_nothing() {
         .session(&"7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02".parse().unwrap())
         .unwrap();
     assert_eq!(snapshot(store.root()), before);
-    assert!(!store.audit_path().exists());
+    assert_eq!(fs::read(store.root().join("scribe.db")).unwrap(), db);
 }
 
 #[test]
@@ -158,57 +166,51 @@ fn a_stored_quote_passes_the_verbatim_check_against_its_entry() {
 }
 
 #[test]
-fn a_record_from_a_newer_build_is_refused_not_rewritten() {
+fn a_database_from_a_newer_build_is_refused_not_rewritten() {
     let (_dir, store) = store();
-    let path = store.entry_path(&"decisions-2".parse().unwrap());
-    let text = fs::read_to_string(&path)
+    let path = store.root().join("scribe.db");
+    rusqlite::Connection::open(&path)
         .unwrap()
-        .replace("format: 1", "format: 999");
-    fs::write(&path, &text).unwrap();
+        .pragma_update(None, "user_version", 999)
+        .unwrap();
+    let bytes = fs::read(&path).unwrap();
     let err = store.list_entries(&EntryFilter::default()).unwrap_err();
     assert!(
         matches!(err, Error::NewerFormat { found: 999, .. }),
         "got {err:?}"
     );
     assert_eq!(err.code(), "store_too_new");
-    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    let err = store
+        .add_agent_tag(probe_tag(), &Redactor::default())
+        .unwrap_err();
+    assert_eq!(err.code(), "store_too_new", "got {err:?}");
+    assert_eq!(fs::read(&path).unwrap(), bytes);
 }
 
 #[cfg(unix)]
 #[test]
-fn a_group_writable_root_or_a_linked_record_is_refused() {
+fn a_group_writable_root_or_a_linked_stamp_is_refused() {
     let (_dir, store) = store();
     private(store.root(), 0o770);
     let err = store.list_entries(&EntryFilter::default()).unwrap_err();
     assert_eq!(err.code(), "store_permissions", "got {err:?}");
     private(store.root(), 0o700);
 
-    let path = store.entry_path(&"decisions-2".parse().unwrap());
-    let real = store.root().join("decisions-2.md.real");
+    let path = store.root().join("tags.json");
+    let real = store.root().join("tags.json.real");
     fs::rename(&path, &real).unwrap();
     std::os::unix::fs::symlink(&real, &path).unwrap();
-    let err = store.entry(&"decisions-2".parse().unwrap()).unwrap_err();
+    let err = store
+        .add_agent_tag(probe_tag(), &Redactor::default())
+        .unwrap_err();
     assert_eq!(err.code(), "store_symlink", "got {err:?}");
 }
 
 #[cfg(unix)]
 #[test]
-fn a_write_ignores_finder_metadata_and_moves_legacy_records() {
+fn a_write_ignores_finder_metadata() {
     let (_dir, store) = store();
-    let metadata = [
-        ".DS_Store",
-        "._root",
-        "entries/.DS_Store",
-        "entries/._entries",
-        "entries/preferences/.DS_Store",
-        "entries/preferences/._entry",
-        "sessions/.DS_Store",
-        "sessions/._sessions",
-        "sessions/2026/.DS_Store",
-        "sessions/2026/._year",
-        "sessions/2026/10/.DS_Store",
-        "sessions/2026/10/._session",
-    ];
+    let metadata = [".DS_Store", "._root"];
     for rel in metadata {
         let path = store.root().join(rel);
         fs::write(&path, b"Finder metadata").unwrap();
@@ -235,38 +237,17 @@ fn a_write_ignores_finder_metadata_and_moves_legacy_records() {
             .total,
         2
     );
-
-    let moved = fs::read_dir(store.root())
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("pre-sqlite-")
-        })
-        .expect("the legacy files moved aside")
-        .path();
     for rel in metadata {
-        let original = store.root().join(rel);
-        let archived = moved.join(rel);
-        let path = if rel.starts_with("entries/") || rel.starts_with("sessions/") {
-            archived
-        } else {
-            original
-        };
+        let path = store.root().join(rel);
         assert_eq!(fs::read(path).unwrap(), b"Finder metadata", "{rel}");
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn a_world_readable_record_still_refuses_a_write() {
+fn a_world_readable_database_still_refuses_a_write() {
     let (_dir, store) = store();
-    private(
-        &store.root().join("entries/preferences/preferences-1.md"),
-        0o644,
-    );
+    private(&store.root().join("scribe.db"), 0o644);
 
     let err = store
         .add_agent_tag(probe_tag(), &Redactor::default())

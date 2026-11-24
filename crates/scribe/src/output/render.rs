@@ -701,7 +701,7 @@ pub(crate) fn show(
         (OutputMode::Json, Record::StoreMigrate(r)) => write_json(out, r.as_ref()),
         (OutputMode::Plain, Record::StoreMigrate(r)) => writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.sessions,
             r.switches,
             r.cursors,
@@ -711,7 +711,9 @@ pub(crate) fn show(
             r.tags,
             r.marks,
             r.pickups,
-            r.audit_lines
+            r.audit_lines,
+            r.archives,
+            r.archived
         ),
         (OutputMode::Table, Record::StoreMigrate(r)) => {
             field(out, "sessions", &r.sessions.to_string())?;
@@ -726,7 +728,9 @@ pub(crate) fn show(
             if r.audit_torn > 0 {
                 field(out, "audit torn", &r.audit_torn.to_string())?;
             }
-            field(out, "moved to", r.moved_to.as_deref().unwrap_or("-"))
+            field(out, "moved to", r.moved_to.as_deref().unwrap_or("-"))?;
+            field(out, "archives", &r.archives.to_string())?;
+            field(out, "archived", &r.archived.to_string())
         }
         (OutputMode::Json, Record::Export(r)) => write_json(out, r.as_ref()),
         (OutputMode::Plain, Record::Export(r)) => {

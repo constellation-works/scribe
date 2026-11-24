@@ -96,9 +96,9 @@ pub(crate) enum Command {
     /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
-    /// Move the store's session files into scribe.db
+    /// Import the file store's archives into scribe.db
     ///
-    /// Moves the session files into scribe.db now; every write does it on its own, keeping the old files aside.
+    /// Imports the pre-sqlite-<date>/ and pre-issue-<date>/ archives into scribe.db's archive tables now, then removes them; every write does it on its own.
     #[command(subcommand, after_help = store::EXAMPLES)]
     Store(StoreCommand),
     /// Write every session to a directory as Markdown or JSONL

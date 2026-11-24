@@ -31,7 +31,7 @@ exists today and is reshaped by slice S1.
 | **Verbatim check** | The one quote test: whitespace-collapsed, case-sensitive substring of the source. See [2_design.md §6.4](../2_design.md#64-the-verbatim-check). |
 | **Decision model** | The model `ask` answers with (`models.ask`, Sonnet by default). |
 | **Data directory** | Where the store lives: `--root`, else `SCRIBE_ROOT`, else `~/.scribe`. |
-| **Store format** | The integer `format` in each persisted document; a newer one is refused, an older one is upgraded through `UPGRADES`. See [specs/store.md](../specs/store.md). |
+| **Store format** | The integer `format` (`FORMAT` in `store/codec.rs`) in each exported document and format stamp; a newer one is refused. Phase 8 removed `UPGRADES` and the file decoders: no build reads an older record file, and persisted-shape changes are `scribe.db` migrations. See [specs/store.md](../specs/store.md). |
 | **Audit log** | the `audit` table of `scribe.db` (`<root>/audit.jsonl` before phase 7): one line per mutating command (what ran, on which record, how it ended), identifiers only. |
 | **Payload** *(template)* | The typed record every output mode renders from; its JSON form is the contract. See [specs/output-contract.md](../specs/output-contract.md). |
 | **Sink** *(template)* | The per-invocation resolution of output mode, color and width. |

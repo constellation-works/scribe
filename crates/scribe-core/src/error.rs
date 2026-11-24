@@ -336,14 +336,11 @@ pub enum WriteRefusal {
     /// or has no real date, title or text within bounds.
     ProfileMilestone,
     /// `migrate_blocked`: `store migrate` was refused: a session is switched
-    /// on, a rebuild checkpoint waits, or the sessions already moved.
+    /// on, a rebuild checkpoint waits, or no archive is left to import.
     MigrateBlocked,
     /// `export_target_exists`: `export` was given a directory that is not
     /// empty.
     ExportTargetExists,
-    /// `export_needs_migrate`: `export --as jsonl` of a store whose sessions
-    /// are still files.
-    ExportNeedsMigrate,
     /// `session_forgotten`: a write to a session `#scribe forget` erased
     /// (its record, or switching it on); a forgotten session takes none.
     SessionForgotten,
@@ -453,7 +450,6 @@ impl WriteRefusal {
             Self::ProfileMilestone => "profile_milestone",
             Self::MigrateBlocked => "migrate_blocked",
             Self::ExportTargetExists => "export_target_exists",
-            Self::ExportNeedsMigrate => "export_needs_migrate",
             Self::SessionForgotten => "session_forgotten",
             Self::HandoffShape => "handoff_shape",
             Self::HandoffTooLong => "handoff_too_long",

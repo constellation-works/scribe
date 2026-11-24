@@ -13,6 +13,11 @@ path = "src/lib.rs"
 
 # Domain dependencies only. scripts/check-dependency-direction.sh rejects
 # clap, tracing-subscriber and any other surface crate here.
+[features]
+# `Store::seed_records`, for the CLI's integration tests to stage records in
+# `scribe.db`. Only `scribe`'s dev-dependencies turn it on.
+test-support = []
+
 [dependencies]
 rusqlite = { workspace = true }
 serde = { workspace = true }

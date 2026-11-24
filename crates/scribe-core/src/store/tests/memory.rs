@@ -1,11 +1,10 @@
-use super::private_tempdir;
+use super::{Seed, private_tempdir, seed};
 use crate::error::Error;
-use crate::memory::legacy::{MemoryItem, MemoryStatus, Section};
 use crate::memory::{Checked, Draft, ElementKind, NowKind, profile};
 use crate::models::{ProfileAnswer, ProfileMilestoneAnswer};
 use crate::session::{SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
-use crate::store::{PassMemory, Redactor, Store, db, format};
+use crate::store::{PassMemory, Redactor, Store, db};
 use crate::tests::{T0, session};
 use std::collections::BTreeMap;
 use std::fs;
@@ -178,28 +177,18 @@ fn memory_reads_write_nothing() {
     assert_eq!(tree(store.root()), before);
 }
 
-/// Write session files for `count` sessions, one a day from `from`.
+/// Seed `count` session records, one a day from `from`.
 fn sessions(store: &Store, count: u32, from: OffsetDateTime) {
-    for n in 1..=count {
-        let r = record(n, from + Duration::days(i64::from(n)));
-        let path = store.session_path(&r);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut dir = path.parent().unwrap();
-            while dir != store.root() {
-                fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
-                dir = dir.parent().unwrap();
-            }
-        }
-        fs::write(&path, format::encode_session(&path, &r).unwrap()).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-    }
+    let records = (1..=count)
+        .map(|n| record(n, from + Duration::days(i64::from(n))))
+        .collect();
+    seed(
+        store.root(),
+        &Seed {
+            sessions: records,
+            ..Seed::default()
+        },
+    );
 }
 
 fn with_section(text: &str, heading: &str, body: &str) -> String {
@@ -233,7 +222,7 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     let now = T0 + Duration::days(60);
 
     // The first run reads 40 sessions and leaves 5 for the next.
-    let first = store.profile_inputs(&redactor, now).unwrap();
+    let first = store.profile_inputs(now).unwrap();
     assert_eq!(first.sessions.len(), 40);
     assert_eq!(first.backlog, 5);
     assert_eq!(first.profile, profile::template());
@@ -248,7 +237,7 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     // The user pins a line by hand; the next run sees the edit.
     let pinned = with_section(&built, "Pinned", "- Call me Daniel.");
     fs::write(&file, &pinned).unwrap();
-    let second = store.profile_inputs(&redactor, now).unwrap();
+    let second = store.profile_inputs(now).unwrap();
     assert_eq!(second.sessions.len(), 5, "resumes after the cursor");
     assert_eq!(second.backlog, 0);
     assert_eq!(second.pinned.trim(), "- Call me Daniel.");
@@ -266,10 +255,7 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
         .unwrap_err();
     assert_eq!(err.code(), "profile_pinned");
     assert_eq!(fs::read_to_string(&file).unwrap(), pinned);
-    assert_eq!(
-        store.profile_inputs(&redactor, now).unwrap().sessions.len(),
-        5
-    );
+    assert_eq!(store.profile_inputs(now).unwrap().sessions.len(), 5);
 
     let kept = with_section(&pinned, "Projects", "- orbit.");
     let written = store
@@ -283,7 +269,7 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     );
 
     // Nothing new now; the same answer again writes no revision.
-    let third = store.profile_inputs(&redactor, now).unwrap();
+    let third = store.profile_inputs(now).unwrap();
     assert!(third.nothing_new());
     let again = store
         .write_refresh(&third, &answer(kept.clone()), &redactor, now)
@@ -291,7 +277,7 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     assert_eq!(again.revision, None);
     assert_eq!(store.profile_revision(2).unwrap().content, kept);
     // Restoring revision 1 writes it back as revision 3.
-    assert_eq!(store.restore_profile(1, &redactor, now).unwrap(), Some(3));
+    assert_eq!(store.restore_profile(1, now).unwrap(), Some(3));
     assert_eq!(fs::read_to_string(&file).unwrap(), built);
 }
 
@@ -330,7 +316,7 @@ fn a_refresh_reads_kept_turns_but_not_turns_stored_only_for_a_group() {
     drop(conn);
 
     let now = T0 + Duration::days(60);
-    let inputs = store.profile_inputs(&redactor, now).unwrap();
+    let inputs = store.profile_inputs(now).unwrap();
     let verbatim = inputs.sessions[0].verbatim.as_deref().unwrap();
     assert!(verbatim.contains("kept through the pass"));
     assert!(!verbatim.contains("said only for the group"));
@@ -341,7 +327,7 @@ fn a_refresh_refuses_when_memory_changed_since_its_inputs() {
     let dir = private_tempdir();
     let store = Store::open(dir.path().join("store"));
     let redactor = Redactor::default();
-    let inputs = store.profile_inputs(&redactor, T0).unwrap();
+    let inputs = store.profile_inputs(T0).unwrap();
     let r = record(1, T0);
     store
         .write_pass_memory(
@@ -375,12 +361,10 @@ fn a_passed_now_item_becomes_a_milestone_or_history_after_fourteen_days() {
     );
     store.write_pass_memory(&window, &redactor, &r).unwrap();
     // On 11-19 nothing has passed its 14 days.
-    let early = store
-        .profile_inputs(&redactor, T0 + Duration::days(18))
-        .unwrap();
+    let early = store.profile_inputs(T0 + Duration::days(18)).unwrap();
     assert!(early.passed.is_empty());
     let now = T0 + Duration::days(25);
-    let inputs = store.profile_inputs(&redactor, now).unwrap();
+    let inputs = store.profile_inputs(now).unwrap();
     let passed: Vec<&str> = inputs.passed.iter().map(|n| n.stem.as_str()).collect();
     assert_eq!(passed, ["2026-11-05-release-ships", "2026-11-06-dentist"]);
     let mut promoted = answer(profile::template());
@@ -406,179 +390,63 @@ fn a_passed_now_item_becomes_a_milestone_or_history_after_fourteen_days() {
 }
 
 const LEGACY: &str = "---\nformat: 24\nkind: memory\nid: m-1\nsection: now\nstatus: active\n\
-     statement: Said the release ships on 2026-12-01.\nproject: null\n\
-     event_date: 2026-12-01\nsensitive: false\nsensitive_kind: null\n\
-     acknowledged: null\nretirement_reason: null\n\
-     promoted_from: null\npromotion: null\nmerged_into: null\nsuperseded_by: null\nunrelated_to: []\npreference_proposal: null\n\
-     author: {kind: scribe, name: session-pass}\n\
-     updated_by: {kind: scribe, name: session-pass}\n\
-     created: 2026-11-01T05:40:00Z\nupdated: 2026-11-01T05:40:00Z\n\
-     occurrences: [{n: 1, date: 2026-11-01T05:40:00Z, session: 0b8ef4a6-0c6a-4d77-9c41-000000000001, message: u-1, host: mac, project: scribe, quote: \"the release ships on december 1\", author: {kind: scribe, name: session-pass}}]\n---\n";
+     statement: Said the release ships on 2026-12-01.\n\
+     occurrences: [{n: 1, session: 0b8ef4a6-0c6a-4d77-9c41-000000000001, quote: \"the release ships on december 1\"}]\n---\n";
 
-fn legacy(
-    n: u32,
-    section: Section,
-    status: MemoryStatus,
-    statement: &str,
-    event: Option<Date>,
-) -> MemoryItem {
-    let path = Path::new("memory/m-1.md");
-    let mut item = format::decode_memory(path, LEGACY.as_bytes(), "m-1").unwrap();
-    item.id = format!("m-{n}").parse().unwrap();
-    item.section = section;
-    item.status = status;
-    item.statement = statement.to_owned();
-    item.event_date = event;
-    item
-}
-
+/// A format-24 `m-<n>` item is not read: a read counts it and writes
+/// nothing, and the next write archives it (2_design.md §15.9 phase 8),
+/// where forgetting the session it cites erases it.
 #[test]
-fn format_twenty_four_items_migrate_on_the_first_write() {
+fn format_twenty_four_items_are_counted_then_archived_by_the_next_write() {
     let dir = private_tempdir();
-    let store = Store::open(dir.path().join("store"));
-    let redactor = Redactor::default();
-    let items = [
-        legacy(
-            1,
-            Section::Now,
-            MemoryStatus::Active,
-            "Release ships",
-            Some(date!(2026 - 12 - 01)),
-        ),
-        legacy(
-            2,
-            Section::Milestones,
-            MemoryStatus::Active,
-            "Married",
-            Some(date!(2026 - 06 - 14)),
-        ),
-        legacy(
-            3,
-            Section::Profile,
-            MemoryStatus::Active,
-            "Works on scribe and orbit",
-            None,
-        ),
-        legacy(
-            4,
-            Section::Now,
-            MemoryStatus::Active,
-            "Dentist",
-            Some(date!(2026 - 10 - 01)),
-        ),
-        legacy(5, Section::Now, MemoryStatus::Forgotten, "", None),
-        legacy(
-            6,
-            Section::Working,
-            MemoryStatus::Active,
-            "Prefers short replies",
-            None,
-        ),
-    ];
+    let store = seed(&dir.path().join("store"), &Seed::default());
     let mem = store.root().join("memory");
     fs::create_dir_all(&mem).unwrap();
+    let path = mem.join("m-1.md");
+    fs::write(&path, LEGACY).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(store.root(), fs::Permissions::from_mode(0o700)).unwrap();
         fs::set_permissions(&mem, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    for item in &items {
-        let path = mem.join(format!("{}.md", item.id));
-        fs::write(&path, format::encode_memory(&path, item).unwrap()).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-    }
-    // A read leaves them alone and counts them.
-    let before = tree(store.root());
-    assert_eq!(store.memory_view().unwrap().unmigrated, 6);
-    assert_eq!(tree(store.root()), before);
-
-    let inputs = store.profile_inputs(&redactor, T0).unwrap();
-    let view = store.memory_view().unwrap();
-    assert_eq!(view.unmigrated, 0);
-    for n in 1..=6 {
-        assert!(!mem.join(format!("m-{n}.md")).exists(), "m-{n} removed");
-    }
-    let now: Vec<&str> = view.now.iter().map(|n| n.stem.as_str()).collect();
-    assert_eq!(
-        now,
-        ["2026-12-01-release-ships"],
-        "the expired one is history"
-    );
-    let milestones: Vec<&str> = view.milestones.iter().map(|m| m.stem.as_str()).collect();
-    assert_eq!(milestones, ["2026-06-14-married"]);
-    // The profile item is a hint for the first rebuild.
-    assert_eq!(inputs.hints, ["profile (m-3): Works on scribe and orbit"]);
-}
-
-#[test]
-fn forgetting_a_migrated_item_deletes_the_messages_its_occurrences_cite() {
-    let dir = private_tempdir();
-    let store = Store::open(dir.path().join("store"));
-    let redactor = Redactor::default();
-    let session = "0b8ef4a6-0c6a-4d77-9c41-000000000001";
-    store
-        .write_messages(
-            &[
-                crate::message::NewMessage {
-                    session: session.parse().unwrap(),
-                    message: String::from("u-1"),
-                    role: crate::entry::Speaker::User,
-                    at: T0,
-                    text: String::from("the release ships on december 1"),
-                },
-                crate::message::NewMessage {
-                    session: session.parse().unwrap(),
-                    message: String::from("u-2"),
-                    role: crate::entry::Speaker::User,
-                    at: T0,
-                    text: String::from("the crews run overnight"),
-                },
-            ],
-            &redactor,
-        )
-        .unwrap();
-    let mem = store.root().join("memory");
-    fs::create_dir_all(&mem).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&mem, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let item = legacy(
-        1,
-        Section::Now,
-        MemoryStatus::Active,
-        "Release ships",
-        Some(date!(2026 - 12 - 01)),
-    );
-    let path = mem.join("m-1.md");
-    fs::write(&path, format::encode_memory(&path, &item).unwrap()).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let found = |text: &str| {
-        store
-            .search_messages(&crate::ask::tokens(text))
+    let before = tree(store.root());
+    assert_eq!(store.memory_view().unwrap().unmigrated, 1);
+    assert_eq!(tree(store.root()), before, "a read writes nothing");
+
+    sessions(&store, 1, T0);
+    assert!(!path.exists(), "the write archived the item");
+    let view = store.memory_view().unwrap();
+    assert_eq!(view.unmigrated, 0);
+    assert!(view.now.is_empty(), "an archived item is not migrated");
+    let archived = |needle: &str| -> i64 {
+        rusqlite::Connection::open(store.root().join(db::DB_FILE))
             .unwrap()
-            .matches
-            .len()
+            .query_row(
+                "SELECT count(*) FROM archive_records
+                 WHERE kind = 'other' AND path = 'memory/m-1.md' AND instr(record, ?1) > 0",
+                [needle],
+                |row| row.get(0),
+            )
+            .unwrap()
     };
-    assert_eq!(found("release"), 1);
+    assert_eq!(archived("the release ships on december 1"), 1);
+
+    let cite = crate::entry::Cite {
+        session: id(2),
+        message: Some(String::from("m-1")),
+        at: T0,
+        prompt_sha256: "1".repeat(64),
+        line: 1,
+        cwd: String::from("/work"),
+    };
     store
-        .forget_memory(
-            "2026-12-01-release-ships",
-            "opus".parse().unwrap(),
-            &redactor,
-            T0,
-        )
+        .settle(&crate::consistency::Settle::ForgetSession(id(1)), &cite, T0)
         .unwrap();
-    assert_eq!(found("release"), 0, "the cited turn is gone");
-    assert_eq!(found("crews"), 1, "another turn stays");
+    assert_eq!(
+        archived("the release ships on december 1"),
+        0,
+        "forget erases it"
+    );
 }

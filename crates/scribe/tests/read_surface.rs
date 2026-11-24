@@ -113,6 +113,7 @@ fn brief_reads_only_and_calls_no_model() {
         "claude",
         &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", called.display()),
     );
+    fx.ok(&["session", "list", "--json"]); // the first open creates the WAL
     let before = snapshot(&fx.root());
     let mut cmd = fx.cmd(&["brief", "--project", "constellation-works/scribe", "--json"]);
     let out = cmd.env("PATH", &path).output().unwrap();
@@ -153,6 +154,7 @@ fn brief_sessions_out_of_range_is_a_usage_error() {
 fn search_ranks_the_store_reads_only_and_calls_nothing() {
     let fx = Fixture::new();
     fx.seed();
+    fx.ok(&["session", "list", "--json"]); // the first open creates the WAL
     let before = snapshot(&fx.root());
     let found = ok_json(&fx, &["search", "merge agent PRs"]);
     assert_eq!(snapshot(&fx.root()), before, "search wrote to the store");
@@ -532,9 +534,10 @@ fn a_unique_prefix_names_a_session_and_an_exact_id_wins() {
 fn an_exact_entry_id_wins_over_a_longer_one_it_prefixes() {
     let fx = Fixture::new();
     fx.seed();
-    let path = fx.root().join("entries/preferences/preferences-10.md");
-    std::fs::write(&path, support::entry_text(10, "a tenth preference")).unwrap();
-    make_private(&path);
+    support::seed_records(
+        &fx.root(),
+        &[&support::entry_text(10, "a tenth preference")],
+    );
     assert_eq!(
         ok_json(&fx, &["entry", "show", "preferences-1"])["id"],
         "preferences-1"

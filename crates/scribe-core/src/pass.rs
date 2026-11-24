@@ -61,11 +61,11 @@ pub(crate) use crate::claim::{
 pub use crate::config::{
     MAX_OPEN_CANDIDATES, SEGMENT_WINDOWS, WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits,
 };
+pub(crate) use candidates::admission;
 pub use candidates::{
     MAX_CANDIDATES, MAX_COLLECTED, candidate_drafts, candidate_exclusions, capture_request,
     write_exclusions,
 };
-pub(crate) use candidates::{admission, fire};
 mod repair;
 pub use repair::repair;
 

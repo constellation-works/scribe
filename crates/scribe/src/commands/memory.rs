@@ -225,12 +225,10 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
             record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
         }),
         MemoryCommand::Ack(args) => {
-            let config = ctx.config()?;
-            let redactor = ctx.redactor(&config)?;
             let session = super::resolve_session_or_typed(ctx, &args.session)?;
             let (item, changed) =
                 ctx.store()
-                    .ack_memory(&args.id, session, args.author, &redactor, ctx.now())?;
+                    .ack_memory(&args.id, session, args.author, ctx.now())?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::now(&item))),
                 changed,
@@ -244,22 +242,16 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
                     MemoryPayload::from_shown(&shown).id,
                 ));
             }
-            let config = ctx.config()?;
-            let redactor = ctx.redactor(&config)?;
             let shown = ctx
                 .store()
-                .forget_memory(&args.id, args.author, &redactor, ctx.now())?;
+                .forget_memory(&args.id, args.author, ctx.now())?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
                 true,
             ))
         }
         MemoryCommand::Restore(args) => {
-            let config = ctx.config()?;
-            let redactor = ctx.redactor(&config)?;
-            let written = ctx
-                .store()
-                .restore_profile(args.revision, &redactor, ctx.now())?;
+            let written = ctx.store().restore_profile(args.revision, ctx.now())?;
             let shown = ctx.store().memory_file("profile")?;
             Ok(Output::written(
                 Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
@@ -280,7 +272,7 @@ pub(crate) fn refresh<M: Models>(ctx: &Context, models: &M) -> Result<Output, Cl
     let config = ctx.config()?;
     let redactor = ctx.redactor(&config)?;
     let store = ctx.store();
-    let inputs = store.profile_inputs(&redactor, ctx.now())?;
+    let inputs = store.profile_inputs(ctx.now())?;
     if inputs.nothing_new() {
         return Ok(Output::written(
             Record::MemoryRefresh(Box::new(RefreshPayload {

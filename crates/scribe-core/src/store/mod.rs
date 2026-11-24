@@ -1,5 +1,5 @@
-//! Persistence: the file-backed scribe store and everything that touches
-//! disk.
+//! Persistence: the scribe store (`scribe.db` and the memory files) and
+//! everything that touches disk.
 //!
 //! The rest of the crate is business logic with no I/O (`entry`, `tag`,
 //! `session`, `proposal`, `config`, `verbatim`); this module is the only one
@@ -7,15 +7,18 @@
 //! nothing else. It is split by responsibility:
 //!
 //! - this file, the [`Store`] facade: walk the layout, load, select;
-//! - `format`: the persisted documents, their format versions and upgrades;
+//! - `codec`: the current format's documents, as the export, the memory
+//!   files and rebuild checkpoints hold them, and the row checks;
+//! - `archive`: the file store's archives in `scribe.db`, imported once and
+//!   erased from by `forget` (phase 8);
 //! - `audit`: the audit log's record shape;
 //! - `redact`: the one redactor every persisted free-text field passes;
 //! - `db`: `scribe.db`, the SQLite database of every record kind
 //!   (2_design.md §15.7), the only user of `rusqlite`;
-//! - `write`: a store write as one `scribe.db` transaction, the move of
-//!   any record kind still in files, and audit lines that never wait;
+//! - `write`: a store write as one `scribe.db` transaction, the archive
+//!   import, and audit lines that never wait;
 //! - `documents`: entries, claims, tags, marks, pickups and the audit log,
-//!   read from the database or, before the move, from their files;
+//!   read from the database;
 //! - `fsio`: durable writes, locking and private-state checks, mechanism
 //!   only.
 //!
@@ -28,10 +31,13 @@
 //! <root>/audit-spool/<time>-<pid>-<n>.json  audit lines a busy database could not take yet
 //! <root>/control.json, proposals.json,      empty format stamps, so an older
 //!   tags.json, marks.json, pickups.json       build refuses the store
-//! <root>/pre-sqlite-<date>/                 the files the move took in, kept except on forget
-//! <root>/pre-issue-<date>/<id>.md           issue records moved aside once converted
-//! <root>/locks/                             advisory locks (Codex catalog, rebuild, archive forget)
+//! <root>/locks/                             advisory locks (Codex catalog, rebuild)
 //! ```
+//!
+//! The file store's `pre-sqlite-<date>/` and `pre-issue-<date>/` archives
+//! are imported into `scribe.db` at the first write and then removed; a
+//! file store whose records never moved in is refused, since this build has
+//! no file decoder (2_design.md §15.7, phase 8).
 //!
 //! Reads take no lock and write nothing (STD-01 R31): SQLite's WAL gives a
 //! reader a committed snapshot, and the CLI works on a read-only root. Every
@@ -42,8 +48,10 @@
 //! "One malformed record makes its file corrupt").
 
 mod agent;
+mod archive;
 mod audit;
 mod candidates;
+mod codec;
 mod continuation;
 pub use continuation::HandoffSelection;
 mod db;
@@ -51,11 +59,9 @@ pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
 mod entry_records;
 pub use documents::Moved;
-mod format;
 mod fsio;
 mod ids;
 mod init;
-mod issue_import;
 mod memory;
 pub use memory::{
     MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
@@ -68,6 +74,8 @@ pub use init::{
 };
 mod rebuild;
 mod redact;
+#[cfg(feature = "test-support")]
+mod seed;
 mod sessions;
 mod tags;
 mod write;
@@ -114,6 +122,10 @@ pub const PICKUPS_FILE: &str = "pickups.json";
 /// Each `#scribe` annotation marker's outcome, from format 22
 /// (2_design.md §14.5).
 pub const MARKS_FILE: &str = "marks.json";
+
+/// The legacy issue records' directory: a file store kind removed in
+/// phase 2, refused like the rest of a file store.
+const ISSUES_DIR: &str = "issues";
 
 /// A record file's extension.
 const RECORD_EXT: &str = ".md";
@@ -691,16 +703,18 @@ impl Store {
         Ok(outcome)
     }
 
-    /// The on/off state and Codex cursors: from `scribe.db` once the
-    /// sessions moved there, else `control.json`; empty when neither has
-    /// any.
+    /// The on/off state and Codex cursors, from `scribe.db`; empty before
+    /// the first write. A file store is refused.
     pub fn control(&self) -> Result<ControlState> {
         if !self.root_exists()? {
             return Ok(ControlState::default());
         }
         match db::sessions::read_control(&self.root)? {
             Some(state) => self.check_stamp().map(|()| state),
-            None => self.control_file(),
+            None => {
+                self.refuse_file_store()?;
+                Ok(ControlState::default())
+            }
         }
     }
 
@@ -1237,8 +1251,7 @@ impl Store {
             {
                 // The stored messages first (2_design.md §15.7): they hold the
                 // words the forget removes, and deleting them again is a no-op;
-                // moved `pre-sqlite-*` copies follow the commit via a durable
-                // obligation.
+                // the archive tables are erased in the same write.
                 self.forget_entry_residue(entry, &before_proposals, now)?;
             }
             if proposals != before_proposals {
@@ -1365,47 +1378,6 @@ impl Store {
     fn root_exists(&self) -> Result<bool> {
         fsio::inspect_dir(&self.root)
     }
-
-    /// Every `sessions/<yyyy>/<mm>/<id>.md`, checked but not yet parsed.
-    fn session_files(&self) -> Result<Vec<SessionFile>> {
-        let mut files = Vec::new();
-        let dir = self.root.join(SESSIONS_DIR);
-        if !self.root_exists()? || !fsio::inspect_subdir(&dir)? {
-            return Ok(files);
-        }
-        let digits =
-            |name: &str, len: usize| name.len() == len && name.bytes().all(|b| b.is_ascii_digit());
-        for year in fsio::list_dir(&dir)?.into_iter().filter(|n| digits(n, 4)) {
-            let year_dir = dir.join(&year);
-            if !fsio::inspect_subdir(&year_dir)? {
-                continue;
-            }
-            for month in fsio::list_dir(&year_dir)?
-                .into_iter()
-                .filter(|n| digits(n, 2))
-            {
-                let month_dir = year_dir.join(&month);
-                if !fsio::inspect_subdir(&month_dir)? {
-                    continue;
-                }
-                for name in visible(fsio::list_dir(&month_dir)?) {
-                    let Some(stem) = name.strip_suffix(RECORD_EXT) else {
-                        continue;
-                    };
-                    let path = month_dir.join(&name);
-                    if fsio::inspect_file(&path)? {
-                        files.push(SessionFile {
-                            stem: stem.to_owned(),
-                            year: year.clone(),
-                            month: month.clone(),
-                            path,
-                        });
-                    }
-                }
-            }
-        }
-        Ok(files)
-    }
 }
 
 /// The parts of a pass window besides its record.
@@ -1453,25 +1425,6 @@ fn unfilled(entry: &Entry, session: &SessionId) -> bool {
 /// same way; neither is a record.
 fn visible(names: Vec<String>) -> impl Iterator<Item = String> {
     names.into_iter().filter(|n| !n.starts_with('.'))
-}
-
-/// A session record file found by the walk.
-struct SessionFile {
-    stem: String,
-    year: String,
-    month: String,
-    path: PathBuf,
-}
-
-impl SessionFile {
-    fn load(&self) -> Result<SessionRecord> {
-        format::decode_session(
-            &self.path,
-            &fsio::read(&self.path)?,
-            &self.stem,
-            (&self.year, &self.month),
-        )
-    }
 }
 
 #[cfg(test)]

@@ -447,6 +447,8 @@ fn no_command_writes_anything_not_even_an_audit_line() {
     // STD-01 R31: every command in this slice reads.
     let fx = Fixture::new();
     fx.seed();
+    // The first open creates the persisted, empty `-wal` beside scribe.db.
+    fx.ok(&["tag", "list"]);
     let before = support::snapshot(&fx.root());
     for args in all_reads() {
         fx.ok(&args);
@@ -510,32 +512,19 @@ fn a_corrupt_record_is_skipped_with_a_warning_naming_the_file() {
     // file corrupt": a list goes on without it; showing it fails.
     let fx = Fixture::new();
     fx.seed();
-    let unknown = fx.root().join("entries/decisions/decisions-2.md");
-    let text_with_key = std::fs::read_to_string(&unknown)
-        .unwrap()
-        .replace("review_after: null\n", "review_after: null\ncolour: blue\n");
-    std::fs::write(&unknown, text_with_key).unwrap();
-    let missing = fx.root().join("entries/preferences/preferences-1.md");
-    let without_key: String = std::fs::read_to_string(&missing)
-        .unwrap()
-        .lines()
-        .filter(|l| !l.starts_with("superseded_by:"))
-        .map(|l| format!("{l}\n"))
-        .collect();
-    std::fs::write(&missing, without_key).unwrap();
-
+    // Hand-edited rows: an author that is no author, and Daniel's entry
+    // without the turn it cites.
+    support::sql(
+        &fx.root(),
+        "UPDATE entries SET author = '[]' WHERE id = 'decisions-2'; \
+         UPDATE entries SET cite = NULL WHERE id = 'preferences-1';",
+    );
     let out = fx.ok(&["entry", "list"]);
     assert_eq!(text(&out.stdout).lines().count(), 2);
     let stderr = text(&out.stderr);
     assert_eq!(stderr.lines().count(), 2, "{stderr}");
-    assert!(
-        stderr.contains(unknown.to_str().unwrap()) && stderr.contains("colour"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(missing.to_str().unwrap()) && stderr.contains("superseded_by"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("decisions-2"), "{stderr}");
+    assert!(stderr.contains("preferences-1"), "{stderr}");
 
     let doc = json(&fx.ok(&["entry", "list", "--json"]).stdout);
     assert_eq!(doc["total"], 2);
@@ -554,7 +543,7 @@ fn a_corrupt_record_is_skipped_with_a_warning_naming_the_file() {
     let err = json(&out.stderr);
     assert_eq!(err["code"], "store_corrupt");
     assert!(
-        err["error"].as_str().unwrap().contains("decisions-2.md"),
+        err["error"].as_str().unwrap().contains("decisions-2"),
         "{err}"
     );
 }
@@ -565,21 +554,15 @@ fn a_record_from_a_newer_build_is_refused_whole_and_left_alone() {
     // the store safely.
     let fx = Fixture::new();
     fx.seed();
+    // `control.json` is the stamp every read of scribe.db checks.
     for (file, args) in [
-        (
-            "entries/decisions/decisions-1.md",
-            &["entry", "list", "--json"][..],
-        ),
         ("control.json", &["session", "list", "--json"][..]),
-        ("proposals.json", &["proposal", "list", "--json"][..]),
+        ("control.json", &["proposal", "list", "--json"][..]),
     ] {
         let path = fx.root().join(file);
         let original = std::fs::read_to_string(&path).unwrap();
-        let newer = original.replacen("format: 1", "format: 999", 1).replacen(
-            "\"format\": 1",
-            "\"format\": 999",
-            1,
-        );
+        let newer = original.replacen("\"format\": 31", "\"format\": 999", 1);
+        assert_ne!(newer, original, "{file}");
         std::fs::write(&path, &newer).unwrap();
         let out = fx.run(args);
         assert_eq!(out.status.code(), Some(1), "{file}");
@@ -591,6 +574,28 @@ fn a_record_from_a_newer_build_is_refused_whole_and_left_alone() {
         );
         std::fs::write(&path, original).unwrap();
     }
+    // A database a newer build migrated.
+    support::sql(&fx.root(), "PRAGMA user_version = 999;");
+    let db = fx.root().join("scribe.db");
+    let before = std::fs::read(&db).unwrap();
+    for args in [
+        &["entry", "list", "--json"][..],
+        &[
+            "tag",
+            "add",
+            "probe",
+            "--author",
+            "opus",
+            "--description",
+            "a probe",
+            "--json",
+        ][..],
+    ] {
+        let out = fx.run(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(json(&out.stderr)["code"], "store_too_new", "{args:?}");
+    }
+    assert_eq!(std::fs::read(&db).unwrap(), before, "not rewritten");
 }
 
 #[test]
@@ -645,12 +650,7 @@ mod unix {
         let root = fx.root();
         for (path, loose, fix) in [
             (root.clone(), 0o770, "chmod 700"),
-            (root.join("entries/decisions"), 0o777, "chmod 700"),
-            (
-                root.join("entries/decisions/decisions-1.md"),
-                0o660,
-                "chmod 600",
-            ),
+            (root.join("scribe.db"), 0o660, "chmod 600"),
             (root.join("control.json"), 0o666, "chmod 600"),
         ] {
             chmod(&path, loose);
@@ -683,12 +683,7 @@ mod unix {
         let root = fx.root();
         for (path, loose, fix) in [
             (root.clone(), 0o755, "chmod 700"),
-            (root.join("entries/decisions"), 0o750, "chmod 700"),
-            (
-                root.join("entries/decisions/decisions-1.md"),
-                0o644,
-                "chmod 600",
-            ),
+            (root.join("scribe.db"), 0o644, "chmod 600"),
             (root.join("config.toml"), 0o640, "chmod 600"),
         ] {
             chmod(&path, loose);
@@ -712,18 +707,19 @@ mod unix {
     }
 
     #[test]
-    fn a_linked_record_or_directory_is_refused_and_its_target_left_alone() {
+    fn a_linked_database_or_file_is_refused_and_its_target_left_alone() {
         // STD-05 R7, R9.
         let fx = Fixture::new();
         fx.seed();
-        let entry = fx.root().join("entries/decisions/decisions-2.md");
-        let target = fx.elsewhere("decisions-2.md");
-        fs::rename(&entry, &target).unwrap();
-        symlink(&target, &entry).unwrap();
+        let db = fx.root().join("scribe.db");
+        let target = fx.elsewhere("scribe.db");
+        fs::rename(&db, &target).unwrap();
+        symlink(&target, &db).unwrap();
         let before = fs::read(&target).unwrap();
         for args in [
             &["entry", "list", "--json"][..],
             &["entry", "show", "decisions-2", "--json"][..],
+            &["session", "list", "--json"][..],
             &["tag", "list", "--json"][..],
         ] {
             let out = fx.run(args);
@@ -735,20 +731,13 @@ mod unix {
             );
         }
         assert_eq!(fs::read(&target).unwrap(), before);
-        fs::remove_file(&entry).unwrap();
-        fs::rename(&target, &entry).unwrap();
-
-        let month = fx.root().join("sessions/2026/11");
-        let moved = fx.elsewhere("month");
-        fs::rename(&month, &moved).unwrap();
-        symlink(&moved, &month).unwrap();
-        let out = fx.run(&["session", "list", "--json"]);
-        assert_eq!(out.status.code(), Some(1));
-        assert_eq!(super::json(&out.stderr)["code"], "store_symlink");
+        fs::remove_file(&db).unwrap();
+        fs::rename(&target, &db).unwrap();
 
         let config = fx.root().join("config.toml");
-        fs::remove_file(&config).unwrap();
-        symlink(fx.elsewhere("decisions-2.md"), &config).unwrap();
+        let elsewhere = fx.elsewhere("config.toml");
+        fs::rename(&config, &elsewhere).unwrap();
+        symlink(&elsewhere, &config).unwrap();
         let out = fx.run(&["tag", "list", "--json"]);
         assert_eq!(super::json(&out.stderr)["code"], "store_symlink");
     }
@@ -919,14 +908,14 @@ fn an_inactive_session_is_listed_only_on_request_and_shown_by_id() {
 }
 
 #[test]
-fn a_format_three_store_reads_and_is_never_rewritten_by_a_read() {
-    // STD-03 R10: an older record upgrades in memory; reads leave it alone.
+fn a_format_three_session_a_migration_moved_reads_and_a_read_writes_nothing() {
+    // STD-03 R10: the fixture's format-3 session was upgraded as the
+    // phase-7 `store migrate` moved it into scribe.db; it reads as it did.
     let fx = Fixture::new();
     fx.seed();
-    let path = fx
-        .root()
-        .join("sessions/2026/10/0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01.md");
-    let before = std::fs::read(&path).unwrap();
+    // The first open creates the persisted, empty `-wal` beside scribe.db.
+    fx.ok(&["tag", "list"]);
+    let before = support::snapshot(&fx.root());
     let doc = json(
         &fx.ok(&[
             "session",
@@ -950,5 +939,5 @@ fn a_format_three_store_reads_and_is_never_rewritten_by_a_read() {
     );
     let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
     assert_eq!(entry["author"]["kind"], "user");
-    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(support::snapshot(&fx.root()), before);
 }

@@ -10,7 +10,13 @@
 //!   `expect` with the rebuild report's `windows`, `segments` and
 //!   `warnings`;
 //! - `transcript.jsonl`: the Claude Code transcript;
-//! - `store/` (optional): the seed store copied to the data root;
+//! - `store/` (optional): files copied to the data root, such as
+//!   `config.toml`;
+//! - `seed/` (optional): current-format (`format: 31`) Markdown records and
+//!   JSON documents, written into the root's `scribe.db` before the rebuild
+//!   (no build reads record files). The synthetic recording's were made by
+//!   migrating its earlier file store with an earlier build and exporting
+//!   it with `scribe export --as markdown`;
 //! - `call-NNN.args`, `call-NNN.in`, `call-NNN.out` per model call, from
 //!   `001`: the arguments one per line, the prompt scribe wrote on stdin,
 //!   and the stdout the `claude` CLI printed.
@@ -147,6 +153,20 @@ pub fn rebuild(recording: &Path, mode: Mode) -> Run {
     let store = recording.join("store");
     if store.is_dir() {
         copy_private(&store, &fx.root());
+    }
+    let seed = recording.join("seed");
+    if seed.is_dir() {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&seed)
+            .expect("read seed dir")
+            .map(|item| item.expect("seed entry").path())
+            .collect();
+        files.sort();
+        let texts: Vec<String> = files
+            .iter()
+            .map(|path| std::fs::read_to_string(path).expect("read seed file"))
+            .collect();
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        super::seed_records(&fx.root(), &texts);
     }
     let project = fx.home().join(".claude/projects").join(&meta.project);
     std::fs::create_dir_all(&project).expect("create projects dir");
@@ -462,6 +482,7 @@ const KEEP_KEYS: &[&str] = &[
     "target",
     "command_id",
     "media_type",
+    "provider",
 ];
 
 /// A string value that is an id or a timestamp whatever its key.

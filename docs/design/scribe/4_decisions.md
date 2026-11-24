@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657]
 ---
 
 # scribe — Decisions
@@ -62,7 +62,7 @@ removal from answers.
 ## One Markdown file per record, metadata in YAML frontmatter
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/format.rs::split_frontmatter`, `::decode_entry`, `::decode_session`
+**Code anchors:** `crates/scribe-core/src/store/codec.rs::split_frontmatter`, `::decode_session`, `::encode_entry`; `::decode_entry` is test-support only since phase 8 (ORB-26657)
 
 ### Context
 
@@ -774,7 +774,13 @@ Without `docs/standards/check.sh`, `make standards-check` warns and exits
 ## Store format upgrades are an append-only registry
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/format.rs::UPGRADES`, `::FORMAT`
+**Code anchors:** `crates/scribe-core/src/store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `crates/scribe-core/src/store/codec.rs::FORMAT`
+
+> **Superseded, 2026-11-23 ([ORB-26657]):** the documents live in
+> `scribe.db`, whose shape changes are SQL migrations on `user_version`;
+> phase 8 removed `format.rs` and `UPGRADES` with the file decoders
+> ([see below](#the-file-stores-archives-move-into-scribedb-once)). `FORMAT`
+> is now in `store/codec.rs` and versions an export and the stamps.
 
 ### Context
 
@@ -865,7 +871,7 @@ This supersedes the write-only check recorded above.
 ## One malformed record makes its file corrupt
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load_entries`, `::Skipped`, `crates/scribe-core/src/store/format.rs::decode_frontmatter`
+**Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load_entries`, `::Skipped`, `crates/scribe-core/src/store/codec.rs::parse_frontmatter`
 
 ### Context
 
@@ -981,7 +987,7 @@ Still not exercised: destructive CLI verbs (STD-01@2 §R5; `forget` is a
 ## Frontmatter is parsed by yaml_serde, and config.toml by toml
 
 **Recorded:** 2026-11 · [ORB-21753]
-**Code anchors:** `Cargo.toml` (`yaml_serde`, `toml`, `unicode-normalization`), `crates/scribe-core/src/store/format.rs::decode_frontmatter`, `crates/scribe-core/src/config.rs::Config::parse`
+**Code anchors:** `Cargo.toml` (`yaml_serde`, `toml`, `unicode-normalization`), `crates/scribe-core/src/store/codec.rs::parse_frontmatter`, `crates/scribe-core/src/config.rs::Config::parse`
 
 ### Context
 
@@ -1276,7 +1282,7 @@ The `scribe-session-pass` routine was switched off that day.
 **Recorded:** 2026-11-10 · [ORB-23853] · **Overridable by Daniel**
 **Code anchors:** `scribe-core::pass::window_with_limits`,
 `scribe-core::control::fail`, `Store::checkpoint_pass`,
-`store/format.rs::UPGRADES`, `SessionRequest::prompt`,
+`store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `SessionRequest::prompt`,
 `commands/session/pass.rs`
 
 ### Context
@@ -1682,7 +1688,7 @@ are structured.
 ## A session record is a rewritable header over an append-only log
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/pass.rs`, `store/format.rs` (from S8, S9)
+**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/pass.rs`, `store/codec.rs` (from S8, S9; `store/format.rs` before phase 8, ORB-26657)
 
 ### Context
 
@@ -1786,7 +1792,7 @@ decided, by a fixed size, segments would cut threads in the middle.
 ## Store format 4 carries the log, active and author in one step
 
 **Recorded:** 2026-11-10 · [ORB-23892]
-**Code anchors:** `store/format.rs::UPGRADES` (from S8)
+**Code anchors:** `store/format.rs::UPGRADES` (from S8) (removed in phase 8, ORB-26657)
 
 ### Context
 
@@ -2573,7 +2579,7 @@ sees fresh agent entries it must skip and revisit.
 ## Pickups live in their own document
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe-core/src/store/pickups.rs`, `crates/scribe-core/src/store/format.rs` (`PickupsDocument`)
+**Code anchors:** `crates/scribe-core/src/store/pickups.rs`, `crates/scribe-core/src/store/codec.rs` (`PickupsDocument`)
 
 A consumer must record that it took an entry, and later that the human
 rejected its result, without rewriting the entry (entries are the human's
@@ -2692,7 +2698,7 @@ agent-written under their existing rules. Rebuilds create no proposals.
 ## Findings are scribe entries with no worker
 
 **Recorded:** 2026-11-16 · ORB-25177 · background-agents candidate use 9
-**Code anchors:** `tag.rs`, `entry.rs`, `store/agent.rs`, `store/format.rs`,
+**Code anchors:** `tag.rs`, `entry.rs`, `store/agent.rs`, `store/codec.rs`,
 `pass/candidates.rs`, `ask.rs`, `search.rs`, `skills/scribe/SKILL.md`
 
 Daniel (2026-11-16) asked scribe to catalogue what agents state across
@@ -3549,7 +3555,7 @@ a line that may have been covered is the worse miss.
 ## Stop coverage ends when the entry left active, in whole seconds
 
 **Recorded:** 2026-11 · [ORB-26360]
-**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since`
+**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since` (removed in phase 8, ORB-26657)
 
 ### Context
 
@@ -3660,7 +3666,7 @@ a file Daniel already uses into a store nothing can read.
 
 **Recorded:** 2026-11-21 · [ORB-26244] · **Overridable by Daniel** · built
 **Refines:** §5.3's covered approval ("there is no new closed reason and no format bump") and "An agent settles claims and deletes records on Daniel's checked instruction"
-**Paths:** `crates/scribe-core/src/store/candidates.rs` (`reapply_candidates`), `crates/scribe-core/src/store/mod.rs` (`Store::settle`), `crates/scribe-core/src/store/agent.rs` (`settle_candidate_on_instruction`), `crates/scribe-core/src/store/format.rs` (`instructed_approval`, step 14→15) — design §12.3, §12.7
+**Paths:** `crates/scribe-core/src/store/candidates.rs` (`reapply_candidates`), `crates/scribe-core/src/store/mod.rs` (`Store::settle`), `crates/scribe-core/src/store/agent.rs` (`settle_candidate_on_instruction`), `crates/scribe-core/src/store/format.rs` (`instructed_approval`, step 14→15) (removed in phase 8, ORB-26657) — design §12.3, §12.7
 
 ### Context
 
@@ -3798,7 +3804,7 @@ his word needs.
 
 **Recorded:** 2026-11-21 · [ORB-26503] · **Overridable by Daniel** · built
 **Refines:** "An agent settles claims and deletes records on Daniel's checked instruction" (one `instruction` per entry)
-**Paths:** `crates/scribe-core/src/entry.rs` (`Entry::removal_instruction`), `crates/scribe-core/src/store/agent.rs` (`retire_agent_entry`, `forget_entry`), `crates/scribe-core/src/store/format.rs` (`removal_instruction`, step 17→18; `EntryV16`) — design §12.3, §12.4, §12.7
+**Paths:** `crates/scribe-core/src/entry.rs` (`Entry::removal_instruction`), `crates/scribe-core/src/store/agent.rs` (`retire_agent_entry`, `forget_entry`), `crates/scribe-core/src/store/format.rs` (`removal_instruction`, step 17→18; `EntryV16`) (removed in phase 8, ORB-26657); the check is `store/codec.rs::validate_entry` — design §12.3, §12.4, §12.7
 
 ### Context
 
@@ -3961,7 +3967,7 @@ rewritten.
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** ("your proposal sounds good", 2026-11-22). He confirms it when he approves the design.
 **Would supersede, once approved:** [One Markdown file per record, metadata in YAML frontmatter](#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [ask ranks in memory with no persisted index](#ask-ranks-in-memory-with-no-persisted-index) for messages, and the five sections and switches of [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval). The task that lands each phase adds the `**Superseded by:**` line.
-**Code anchors:** `crates/scribe-core/src/tag.rs::CaptureRules`, `::SHIPPED_CAPTURE`, `crates/scribe-core/src/models.rs::SessionRequest::memory_prompt`, `crates/scribe-core/src/memory/mod.rs::Section`, `crates/scribe-core/src/store/format.rs::UPGRADES`, `crates/scribe-core/src/store/fsio.rs::LockGuard`
+**Code anchors:** `crates/scribe-core/src/tag.rs::CaptureRules`, `::SHIPPED_CAPTURE`, `crates/scribe-core/src/models.rs::SessionRequest::memory_prompt`, `crates/scribe-core/src/memory/mod.rs::Section`, `crates/scribe-core/src/store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `crates/scribe-core/src/store/fsio.rs::LockGuard`
 **Paths:** `docs/design/scribe/2_design.md` §15
 
 ### Context
@@ -4700,3 +4706,61 @@ commands, such as `/formation` and skills, are still his turns.
   so it can set a transcript's first or last message time.
 - Cost: a built-in value command that is not on the list still stores its args
   until it is added.
+
+## The file store's archives move into scribe.db once
+
+**Recorded:** 2026-11-23 · [ORB-26657] · **Overridable by Daniel**
+
+### Context
+
+Phases 6–7 moved the file store into `scribe.db` and kept the old files in
+`pre-sqlite-<date>/` (and converted issues in `pre-issue-<date>/`), never
+deleted, so `#scribe forget` and `entry forget` had to erase from them. That
+kept every file decoder, `format.rs` and its 21 upgrade steps alive for the
+archives alone, and phase 8 was to drop them after a 30-day window. Daniel:
+"go with option 1" (convert the archives into SQLite once, then remove the
+decoders) and "no need for compatibility window. we haven't had any release
+yet."
+
+**Code anchors:** `crates/scribe-core/src/store/archive.rs`,
+`crates/scribe-core/src/store/db/archive.rs::V20`,
+`crates/scribe-core/src/store/documents.rs::Store::import_at_write`.
+
+### Decision
+
+The archives become two tables of the store's own `scribe.db`: `archives`,
+one row per imported directory, and `archive_records`, one row per file (per
+line of an `audit.jsonl`) with its kind and the record as JSON. The import
+decodes no record format: Markdown is kept as frontmatter and body, JSON as
+itself, anything else as text. It runs at the first write, as the phase-6
+move did, and on `store migrate`. It checks the count per kind, and it is
+idempotent (an imported archive is only removed, never re-imported). After
+the commit it removes the files. `forget` erases from the tables in its own
+transaction, by field name, and keeps unrelated records and a legacy audit
+line's audit fields. The decoders, `format.rs` and the file-store tests are
+removed. A store whose records never moved is refused, not read.
+
+### Alternatives
+
+- Keep the decoders for the archives: the decoders and `UPGRADES` stay
+  alive only so forget can read and rewrite files nothing else reads.
+- A separate archive database: a second file to protect, back up and
+  scrub, and a forget that spans two databases cannot commit once.
+- Delete the archives without importing them: loses the only copy of the
+  pre-migration text Daniel may still want to read or export.
+
+### Consequences
+
+- Nothing reads a format-22 file. A forget is one transaction with its
+  archive scrub, so the archive-forget lock and the post-commit file
+  rewrite are gone. A forget recorded while an archive was still files (a
+  forgotten session, a `pending_archive_forgets` row) is replayed when
+  that archive is imported.
+- Format-24 `memory/m-<n>.md` items left in a store are archived unread
+  (kind `other`) instead of migrated into working claims.
+- A store still in files must be migrated with a phase 6–7 build first.
+- The CLI's integration tests stage records with the test-only
+  `Store::seed_records` (feature `test-support`) instead of writing files.
+- Cost: `scribe export` does not write the archived records, so an export
+  of a migrated store stays as it was; reading one takes SQL against
+  `scribe.db`.

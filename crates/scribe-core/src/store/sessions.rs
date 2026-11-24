@@ -1,27 +1,21 @@
-//! Sessions in `scribe.db` (docs/design/scribe/2_design.md §15.7, §15.11,
-//! phase 6): where they are read from, how the files move in, and
-//! `scribe export`.
+//! Sessions in `scribe.db` (docs/design/scribe/2_design.md §15.7, phase 6):
+//! where they are read from, `scribe store migrate`, `scribe export`, and
+//! a session's forget.
 //!
-//! - **Reads.** Once `record_kinds` holds `sessions`, every session read
-//!   comes from the database; before that, from the format-25 files, with
-//!   today's decoders (kept for the 30-day window). A file store's `s-<n>`
-//!   numbers are the ones the move will give: records by `created`, then
-//!   id, and after them the sessions with only a switch, by id.
-//! - **The move.** The first write's transaction moves the sessions in
-//!   ([`Store::import_sessions`]), checking the record count, with the
-//!   other record kinds (`documents.rs`); after the commit the files go to
-//!   `pre-sqlite-<date>/`, which scribe never deletes, and `control.json`
-//!   stays as a format stamp with no sessions, so an older build refuses
-//!   the store instead of starting a second set of files. `scribe store
-//!   migrate` is the same move run by hand, refused while a session is on,
-//!   while a rebuild checkpoint waits, or once everything moved.
+//! - **Reads.** Every session read comes from the database. A file store
+//!   whose sessions never moved in is refused: this build has no file
+//!   decoder (phase 8).
+//! - **Migrate.** `scribe store migrate` imports the file store's archives
+//!   into the archive tables now (`archive.rs`), as the first write does on
+//!   its own; it is refused while a session is on, while a rebuild
+//!   checkpoint file waits, or when there is nothing to import.
 //! - **Locks.** The per-session locks held across model calls (Codex
 //!   ingestion, rebuild) are lock files in `locks/`; they hold no data.
 
 use super::db::sessions::{self as rows, SessionTx};
 use super::write::Move;
 use super::{
-    CONTROL_FILE, Moved, RECORD_EXT, SESSIONS_DIR, Skipped, Store, agent::refusal, db, format, fsio,
+    CONTROL_FILE, Moved, RECORD_EXT, SESSIONS_DIR, Skipped, Store, agent::refusal, codec, db, fsio,
 };
 use crate::WriteRefusal;
 use crate::error::{Error, Result};
@@ -33,9 +27,6 @@ use time::OffsetDateTime;
 
 /// The directory of advisory lock files under the root.
 pub const LOCKS_DIR: &str = "locks";
-
-/// What the moved-aside files directory is called: `pre-sqlite-<date>`.
-pub(super) const MOVED_PREFIX: &str = "pre-sqlite-";
 
 /// Every session scribe knows, from wherever they live.
 #[derive(Debug, Default)]
@@ -77,7 +68,8 @@ pub struct SessionForget {
     pub messages: usize,
     /// Segments deleted.
     pub segments: usize,
-    /// Archived record and checkpoint files scheduled for erasure.
+    /// Archived records of the session (its record and checkpoints in the
+    /// archive tables) erased.
     pub files: usize,
     /// Whether it was switched on, and is now off.
     pub was_on: bool,
@@ -121,14 +113,15 @@ pub struct Exported {
 }
 
 impl Store {
-    /// Every session, read-only: from `scribe.db` once the sessions moved
-    /// there, else from the files.
+    /// Every session, read-only, from `scribe.db`; none before the first
+    /// write. A file store is refused.
     pub(super) fn load_sessions(&self) -> Result<Loaded> {
         if !self.root_exists()? {
             return Ok(Loaded::default());
         }
         let Some(found) = rows::read_sessions(&self.root)? else {
-            return self.load_session_files();
+            self.refuse_file_store()?;
+            return Ok(Loaded::default());
         };
         self.check_stamp()?;
         let mut loaded = Loaded {
@@ -155,144 +148,31 @@ impl Store {
         Ok(loaded)
     }
 
-    /// Every session of a file store, numbered as the move will number
-    /// them.
-    fn load_session_files(&self) -> Result<Loaded> {
-        let mut loaded = Loaded {
-            control: self.control_file()?,
-            ..Loaded::default()
-        };
-        for file in self.session_files()? {
-            match file.load() {
-                Ok(record) => loaded.records.push(record),
-                Err(error @ Error::Corrupt { .. }) => loaded.skipped.push((
-                    file.stem.parse().ok(),
-                    Skipped {
-                        path: file.path,
-                        error,
-                    },
-                )),
-                Err(other) => return Err(other),
-            }
-        }
-        let mut order: Vec<&SessionRecord> = loaded.records.iter().collect();
-        order.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
-        let mut ids: Vec<SessionId> = order.into_iter().map(|r| r.id.clone()).collect();
-        ids.extend(
-            loaded
-                .control
-                .sessions
-                .keys()
-                .filter(|id| !loaded.records.iter().any(|r| &r.id == *id))
-                .cloned(),
-        );
-        for (i, id) in ids.into_iter().enumerate() {
-            if let Some(n) = NonZeroU64::new(u64::try_from(i + 1).unwrap_or(u64::MAX)) {
-                loaded.numbers.insert(id, n);
-            }
-        }
-        Ok(loaded)
-    }
-
-    /// `control.json` as a format-25 store holds it; empty when absent.
-    pub(super) fn control_file(&self) -> Result<ControlState> {
+    /// Refuses a store whose `control.json` stamp is newer than this
+    /// binary: the stamp is all that file holds. Read as plain JSON.
+    pub(super) fn check_stamp(&self) -> Result<()> {
         let path = self.root.join(CONTROL_FILE);
         if !self.root_exists()? || !fsio::inspect_file(&path)? {
-            return Ok(ControlState::default());
+            return Ok(());
         }
-        format::decode_control(&path, &fsio::read(&path)?)
+        codec::check_stamp(&path, &fsio::read(&path)?)
     }
 
-    /// Refuses a store whose `control.json` stamp is newer than this
-    /// binary, after the sessions moved: the stamp is all that file holds.
-    pub(super) fn check_stamp(&self) -> Result<()> {
-        self.control_file().map(drop)
-    }
-
-    /// In the first write's transaction: move the sessions in when they
-    /// are still files (§15.11): every record checked and imported in
-    /// `created` order, then the switch-only sessions, the Codex cursors
-    /// and (at a write) the rebuild checkpoints, checking the record count.
-    /// A store that never had any is marked moved.
-    pub(super) fn import_sessions(&self, mode: Move, now: OffsetDateTime) -> Result<Moved> {
-        let conn = db::open_writer(&self.root, self.lock_wait)?;
-        let tx = SessionTx::begin(&conn, &self.root)?;
-        if tx.moved()? {
-            tx.commit()?;
-            return Ok(Moved::default());
-        }
-        let control = self.control_file()?;
-        let checkpoints = if mode == Move::AtWrite {
-            self.checkpoint_files()?
-        } else {
-            Vec::new()
-        };
-        let mut records = Vec::new();
-        for file in self.session_files()? {
-            // Every record must read (check_log included) before any is
-            // imported: a broken file is fixed or removed by the user.
-            records.push(file.load()?);
-        }
-        records.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
-        for record in &records {
-            tx.put_record(record)?;
-        }
-        tx.put_control(&ControlState::default(), &control)?;
-        let mut imported_checkpoints = 0;
-        for (id, path) in &checkpoints {
-            let record = self.decode_checkpoint_file(id, path)?;
-            let text = encode_checkpoint(path, &record)?;
-            if tx.put_checkpoint(id, &text, now)? {
-                imported_checkpoints += 1;
-            }
-        }
-        if tx.record_count()? != records.len() {
-            return Err(Error::corrupt(
-                rows::db_path(&self.root),
-                format!(
-                    "the move found {} session records but scribe.db holds a different count",
-                    records.len()
-                ),
-            ));
-        }
-        // The directory the session files move to, `None` when there are none
-        // (`record_kinds.moved_to`).
-        let moved_to =
-            (!self.session_files_to_move_aside()?.is_empty()).then(|| moved_dir_name(now));
-        tx.mark_moved(now, moved_to.as_deref())?;
-        tx.commit()?;
-        self.after(|a| a.aside = true);
-        Ok(Moved {
-            sessions: records.len(),
-            switches: control.sessions.len(),
-            cursors: control.codex_cursors.len(),
-            checkpoints: imported_checkpoints,
-            ..Moved::default()
-        })
-    }
-
-    /// `scribe store migrate`: move every record kind still in files into
-    /// `scribe.db` in one transaction.
+    /// `scribe store migrate`: import the file store's `pre-sqlite-*` and
+    /// `pre-issue-*` archives into `scribe.db` in one transaction, then
+    /// remove them.
     ///
     /// # Errors
     ///
     /// `migrate_blocked` while any session is switched on, while any rebuild
-    /// checkpoint exists, or when everything already moved; `store_corrupt`
-    /// naming a record that does not read; store failures.
+    /// checkpoint file exists, or when there is nothing to import;
+    /// `store_corrupt` for a file store whose records never moved; store
+    /// failures.
     pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Moved> {
-        let mut moved = self.transaction_as(Move::ByHand, now, || {
+        self.transaction_as(Move::ByHand, now, || {
             self.with_conn(|_, _| Ok(()))?;
-            let mut moved = self.moved_now().unwrap_or_default();
-            if self.will_move_aside()? {
-                moved.moved_to = Some(moved_dir_name(now));
-            }
-            Ok::<_, Error>(moved)
-        })?;
-        let aside = moved_dir_name(now);
-        if fsio::inspect_subdir(&self.root.join(&aside))? {
-            moved.moved_to = Some(aside);
-        }
-        Ok(moved)
+            Ok::<_, Error>(self.moved_now().unwrap_or_default())
+        })
     }
 
     /// Every rebuild checkpoint file of a file store,
@@ -331,10 +211,6 @@ impl Store {
         Ok(out)
     }
 
-    fn decode_checkpoint_file(&self, id: &SessionId, path: &Path) -> Result<SessionRecord> {
-        format::decode_session_at(path, &fsio::read(path)?, id.as_str(), None)
-    }
-
     /// A lock file under `locks/`, the directory created owner-only when
     /// missing.
     pub(super) fn lock_path(&self, name: &str) -> Result<PathBuf> {
@@ -346,21 +222,11 @@ impl Store {
 
     /// The rebuild checkpoint of `id`, read-only.
     pub(super) fn checkpoint_of(&self, original: &SessionRecord) -> Result<Option<SessionRecord>> {
-        if let Some(text) = rows::read_checkpoint(&self.root, &original.id)? {
-            let path = rows::db_path(&self.root);
-            return format::decode_session_at(&path, text.as_bytes(), original.id.as_str(), None)
-                .map(Some);
-        }
-        if rows::read_moved(&self.root)? {
+        let Some(text) = rows::read_checkpoint(&self.root, &original.id)? else {
             return Ok(None);
-        }
-        let path = self
-            .session_path(original)
-            .with_file_name(format!(".{}.rebuild.md", original.id));
-        if !fsio::inspect_file(&path)? {
-            return Ok(None);
-        }
-        self.decode_checkpoint_file(&original.id, &path).map(Some)
+        };
+        let path = rows::db_path(&self.root);
+        codec::decode_session(&path, text.as_bytes(), original.id.as_str()).map(Some)
     }
 
     /// Run `f` in one session transaction on `scribe.db`, inside the store
@@ -383,8 +249,8 @@ impl Store {
     /// # Errors
     ///
     /// `export_target_exists` for a directory with anything in it;
-    /// `export_needs_migrate` for JSONL of records still in files; I/O and
-    /// store failures.
+    /// `store_corrupt` for a file store whose records never moved into
+    /// `scribe.db`; I/O and store failures.
     pub fn export(&self, target: &Path, as_format: ExportFormat) -> Result<Exported> {
         let mut out = Exported::default();
         let rows = match as_format {
@@ -393,17 +259,12 @@ impl Store {
             ExportFormat::Jsonl => {
                 let db = db::read_export(&self.root, SESSION_EXPORT_TABLES, DOC_EXPORT_TABLES)?;
                 let (spooled, _) = self.spooled_audit()?;
-                if (!db.sessions_moved || !db.docs_moved)
-                    && (self.has_files_to_move_aside()? || !spooled.is_empty())
-                {
-                    return Err(refusal(
-                        WriteRefusal::ExportNeedsMigrate,
-                        "JSONL export reads scribe.db, and this store's records are still files; run `scribe store migrate`, or export --as markdown",
-                    ));
+                if !db.sessions_moved || !db.docs_moved {
+                    self.refuse_file_store()?;
                 }
                 self.check_stamp()?;
                 let mut rows = db.rows;
-                if db.docs_moved && !spooled.is_empty() {
+                if !spooled.is_empty() {
                     let drained: BTreeSet<&str> = rows
                         .iter()
                         .filter(|(table, _)| *table == "audit")
@@ -482,13 +343,13 @@ impl Store {
                         u8::from(record.started.month()),
                         record.id
                     );
-                    let bytes = format::encode_session(&target.join(&rel), record)?;
+                    let bytes = codec::encode_session(&target.join(&rel), record)?;
                     write(rel, &bytes)?;
                 }
                 let path = target.join(CONTROL_FILE);
                 write(
                     CONTROL_FILE.to_owned(),
-                    &format::encode_control(&path, &loaded.control)?,
+                    &codec::encode_control(&path, &loaded.control)?,
                 )?;
                 out.sessions = records.len();
                 out.skipped = loaded.skipped.into_iter().map(|(_, s)| s.path).collect();
@@ -525,12 +386,11 @@ impl Store {
             Err(error) => return Err(error),
         };
         let number = self.session_numbers()?.get(&id).copied();
-        let files = self.moved_files_of(&id)?.len() + self.legacy_files_to_forget(&id)?;
-        let archive_changed = !self.moved_session_documents(&id, number, now)?.is_empty();
-        let (erased, already, changed) = self.with_conn(|conn, path| {
+        let (erased, already, changed, files) = self.with_conn(|conn, path| {
             if number.is_none() {
                 rows::register(conn, path, &id)?;
             }
+            let (files, archive_changed) = super::archive::scrub_session(conn, path, &id, number)?;
             let (erased, already, mut changed) =
                 rows::forget(conn, path, &id, now)?.ok_or_else(|| Error::SessionNotFound {
                     id: id.clone(),
@@ -538,17 +398,18 @@ impl Store {
                 })?;
             changed |= self.forget_session_documents(&id, now)?;
             changed |= self.forget_session_memory(&id, now)?;
+            changed |= archive_changed;
             if changed || files > 0 {
                 db::truncate_wal_of(&self.root, self.lock_wait)?;
             }
-            Ok((erased, already, changed))
+            Ok((erased, already, changed, files))
         })?;
         let number = self.session_numbers()?.get(&id).copied();
         Ok(if already {
             SessionForgetOutcome::Already {
                 id,
                 number,
-                cleaned: changed || files > 0 || archive_changed,
+                cleaned: changed || files > 0,
             }
         } else {
             SessionForgetOutcome::Forgotten(SessionForget {
@@ -560,123 +421,6 @@ impl Store {
                 was_on: erased.was_on,
             })
         })
-    }
-
-    /// A forgotten row is the durable obligation to remove legacy files.
-    /// Replay after every commit, including a restarted migration, so an
-    /// interruption between the database commit and the archive move cannot
-    /// leave a forgotten session in plaintext.
-    ///
-    /// The archive lock is taken only when a moved archive still holds a
-    /// file of a forgotten session, so a store with nothing to erase never
-    /// fails an already-committed write on someone else's lock. The scan
-    /// repeats under the lock before anything is deleted.
-    pub(super) fn clean_forgotten_session_files(&self) -> Result<()> {
-        let Some(forgotten) = rows::read_forgotten(&self.root)? else {
-            return Ok(());
-        };
-        if forgotten.is_empty() {
-            return Ok(());
-        }
-        self.check_stamp()?;
-        let changes = |id: &SessionId,
-                       tombstone: rows::Tombstone|
-         -> Result<Vec<(PathBuf, Option<Vec<u8>>)>> {
-            let mut changes =
-                self.moved_session_documents(id, Some(tombstone.number), tombstone.at)?;
-            changes.extend(
-                self.moved_files_of(id)?
-                    .into_iter()
-                    .map(|path| (path, None)),
-            );
-            Ok(changes)
-        };
-        for (id, tombstone) in forgotten {
-            if changes(&id, tombstone)?.is_empty() {
-                continue;
-            }
-            let lock_path = self.lock_path(super::documents::ARCHIVE_FORGET_LOCK)?;
-            let _lock =
-                fsio::LockGuard::acquire(&lock_path, "forget moved session", self.lock_wait)?;
-            let mut changes = changes(&id, tombstone)?;
-            // Rewrite documents that reference archived handoff ids before
-            // deleting the files that identify them.
-            changes.sort_by_key(|(_, content)| content.is_none());
-            for (path, content) in changes {
-                match content {
-                    Some(bytes) => fsio::write_atomic(&path, &bytes)?,
-                    None => fsio::remove_private(&path)?,
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Archived record and checkpoint files belonging to `id`.
-    fn moved_files_of(&self, id: &SessionId) -> Result<Vec<PathBuf>> {
-        let mut found = Vec::new();
-        for moved in fsio::list_dir(&self.root)? {
-            let moved = self.root.join(&moved);
-            if !moved
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(MOVED_PREFIX))
-                || !fsio::inspect_subdir(&moved)?
-            {
-                continue;
-            }
-            for sessions in fsio::list_dir(&moved)? {
-                let sessions = moved.join(&sessions);
-                if sessions
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| super::documents::is_moved_variant(n, SESSIONS_DIR))
-                    && fsio::inspect_subdir(&sessions)?
-                {
-                    found.extend(Self::session_files_of(&sessions, id)?);
-                }
-            }
-        }
-        Ok(found)
-    }
-
-    /// How many legacy files of `id` the pending write's move will carry
-    /// to `pre-sqlite-<date>/` after its commit, where the cleanup that
-    /// follows deletes them: they are not yet in any archive when the
-    /// forget counts, so [`Self::moved_files_of`] misses them. Zero when
-    /// the write moves nothing aside.
-    fn legacy_files_to_forget(&self, id: &SessionId) -> Result<usize> {
-        let sessions = self.root.join(SESSIONS_DIR);
-        if !self.aside_pending() || !fsio::inspect_subdir(&sessions)? {
-            return Ok(0);
-        }
-        Ok(Self::session_files_of(&sessions, id)?.len())
-    }
-
-    /// `id`'s record and rebuild checkpoint files under
-    /// `<sessions>/<yyyy>/<mm>/`.
-    fn session_files_of(sessions: &Path, id: &SessionId) -> Result<Vec<PathBuf>> {
-        let names = [format!("{id}{RECORD_EXT}"), format!(".{id}.rebuild.md")];
-        let mut found = Vec::new();
-        for year in fsio::list_dir(sessions)? {
-            let year = sessions.join(year);
-            if !fsio::inspect_subdir(&year)? {
-                continue;
-            }
-            for month in fsio::list_dir(&year)? {
-                let month = year.join(month);
-                if !fsio::inspect_subdir(&month)? {
-                    continue;
-                }
-                for name in &names {
-                    let path = month.join(name);
-                    if fsio::inspect_file(&path)? {
-                        found.push(path);
-                    }
-                }
-            }
-        }
-        Ok(found)
     }
 
     /// The `s-<n>` of every session, read-only.
@@ -709,34 +453,7 @@ const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
 
 /// The checkpoint's file text at the current format, as a row holds it.
 pub(super) fn encode_checkpoint(path: &Path, record: &SessionRecord) -> Result<String> {
-    String::from_utf8(format::encode_session(path, record)?).map_err(|e| Error::corrupt(path, e))
-}
-
-/// `pre-sqlite-<yyyy-mm-dd>`.
-pub(super) fn moved_dir_name(now: OffsetDateTime) -> String {
-    let date = now.date();
-    format!(
-        "{MOVED_PREFIX}{:04}-{:02}-{:02}",
-        date.year(),
-        u8::from(date.month()),
-        date.day()
-    )
-}
-
-/// `path`, or `path.<n>` for the first `n` from 2 that is free, so a second
-/// move never replaces what an earlier one kept.
-pub(super) fn unused(path: &Path) -> PathBuf {
-    if std::fs::symlink_metadata(path).is_err() {
-        return path.to_path_buf();
-    }
-    (2..)
-        .map(|n| {
-            let mut name = path.as_os_str().to_owned();
-            name.push(format!(".{n}"));
-            PathBuf::from(name)
-        })
-        .find(|p| std::fs::symlink_metadata(p).is_err())
-        .unwrap_or_else(|| path.to_path_buf())
+    String::from_utf8(codec::encode_session(path, record)?).map_err(|e| Error::corrupt(path, e))
 }
 
 /// Create `target` owner-only, or accept it empty.

@@ -1,32 +1,4 @@
 {
-  "format": 1,
-  "proposals": [
-    {
-      "id": "p-2",
-      "kind": "stale",
-      "older": "rituals-1",
-      "newer": null,
-      "reason": "Past its review date and no session since mentions it.",
-      "quotes": [{"entry": "rituals-1", "text": "run the full gate before every push"}],
-      "state": "rejected",
-      "opened_at": "2026-10-12T06:00:00Z",
-      "settled_at": "2026-10-13T08:00:00Z",
-      "settled_by": {"session": "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01", "message": "9a1b2c3d-0000-4000-8000-000000000005", "at": "2026-10-13T08:00:00Z", "prompt_sha256": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4", "line": 1, "cwd": "/home/user/workspace/orbit"}
-    },
-    {
-      "id": "p-1",
-      "kind": "supersedes",
-      "older": "decisions-1",
-      "newer": "decisions-2",
-      "reason": "The newer decision replaces merge commits with squash merges for agent PRs.",
-      "quotes": [
-        {"entry": "decisions-1", "text": "merge agent PRs with a merge commit"},
-        {"entry": "decisions-2", "text": "squash-merge agent PRs"}
-      ],
-      "state": "open",
-      "opened_at": "2026-11-02T20:00:00Z",
-      "settled_at": null,
-      "settled_by": null
-    }
-  ]
+  "format": 31,
+  "proposals": []
 }

@@ -19,13 +19,12 @@
 //! dates it, and is dropped when the session goes final. [`block`] renders
 //! the `## Profile`, `## Now` and `## Milestones` block that `scribe memory
 //! show` prints and `scribe brief` embeds. The items of formats 19–24
-//! ([`legacy`]) are read once and migrated ([`migrate`], §15.11).
+//! (`memory/m-<n>.md`) are no longer read: a store that still has them
+//! keeps them in its archive tables (2_design.md §15.7, phase 8).
 //!
 //! No I/O (STD-02 R5): the store reads and writes the files and the
 //! database, the CLI reads the transcript and the clock.
 
-pub mod legacy;
-pub mod migrate;
 pub mod profile;
 
 use crate::entry::Speaker;

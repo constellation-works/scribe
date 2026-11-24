@@ -138,24 +138,11 @@ fn approve_claim_in_db(root: &std::path::Path, n: i64) {
 }
 
 /// Stages claims in the shape `proposals.json` held them (`id: "p-N"`,
-/// `candidate: {..}`) as rows of `claims`. The store must already have had
-/// a write: a `proposals.json` seeded after that is ignored, the documents
-/// having moved into `scribe.db`. Before the db exists, the claims are
-/// seeded as the `proposals.json` the first write then imports.
+/// `candidate: {..}`) as rows of `claims`. A store without a `scribe.db`
+/// gets an empty one first: no build reads a `proposals.json` any more.
 fn seed_claims(root: &std::path::Path, proposals: &[Value]) {
     if !root.join("scribe.db").exists() {
-        if !root.exists() {
-            std::fs::create_dir(root).unwrap();
-            make_private(root);
-        }
-        let file = root.join("proposals.json");
-        std::fs::write(
-            &file,
-            json!({"format": 11, "proposals": proposals}).to_string(),
-        )
-        .unwrap();
-        make_private(&file);
-        return;
+        support::seed_records(root, &[]);
     }
     let conn = rusqlite::Connection::open(root.join("scribe.db")).expect("open scribe.db");
     let json_text = |v: &Value| -> Option<String> { (!v.is_null()).then(|| v.to_string()) };
@@ -1081,15 +1068,9 @@ fn forget_first_write_and_repeat_erase_legacy_session_archives() {
         walk(base, &mut out);
         out
     };
-    let original = files(&root.join("sessions"))
-        .into_iter()
-        .find(|p| p.file_name().unwrap() == format!("{id}.md").as_str())
-        .unwrap();
-    let bytes = std::fs::read(&original).unwrap();
-    let checkpoint = original.with_file_name(format!(".{id}.rebuild.md"));
-    std::fs::write(&checkpoint, &bytes).unwrap();
-    make_private(&checkpoint);
-    assert!(!root.join("scribe.db").exists());
+    // Session records live in scribe.db: no record file exists to erase.
+    // A residue an older build left in a pre-sqlite-* archive does.
+    let bytes = b"residue of an older build's session record\n".to_vec();
     let out = text(&type_settlement(&s, "#scribe forget s-1").stdout);
     assert!(out.contains("forgot s-1"), "{out}");
     let assert_absent = || {
@@ -2738,46 +2719,26 @@ fn failures_back_off_while_due_and_explicit_sessions_ignore_the_delay() {
 }
 
 #[test]
-fn legacy_control_is_read_without_writes_and_new_retry_state_is_strict() {
+fn a_seeded_switch_is_read_without_writes_and_a_pass_writes_the_retry_state() {
     let setup = Setup::new();
     setup.config("");
-    let file = setup.fx.root().join("control.json");
-    let legacy = json!({"format": 1, "sessions": {ON: {
-        "on": true, "since": "2026-11-03T05:00:00Z", "due": true, "final": false}}});
-    std::fs::write(&file, legacy.to_string()).unwrap();
-    make_private(&file);
+    // The retired file-store decoders are gone: the switch is seeded as a
+    // current-format control document, which is strict about every field.
+    let doc = json!({"format": 31, "codex_cursors": {}, "sessions": {ON: {
+        "provider": "claude-code", "on": true, "since": "2026-11-03T05:00:00Z",
+        "due": true, "final": false, "consecutive_failures": 0,
+        "retry_after": null, "pending_links": [], "cataloged_by": null}}});
+    support::seed_records(&setup.fx.root(), &[&doc.to_string()]);
+    setup.run(&["session", "list", "--json"], b"");
     let before = setup.control_bytes();
     setup.run(&["session", "list", "--json"], b"");
-    assert_eq!(
-        setup.control_bytes(),
-        before,
-        "migration on read is in memory only"
-    );
+    assert_eq!(setup.control_bytes(), before, "a read writes nothing");
     setup.pass();
     let current = support::control(&setup.fx.root());
     assert_eq!(current["format"], 31);
     assert_eq!(current["sessions"][ON]["consecutive_failures"], 0);
     assert_eq!(current["sessions"][ON]["retry_after"], Value::Null);
     assert_eq!(current["sessions"][ON]["pending_links"], json!([]));
-    // A current-format file that has not moved into `scribe.db` yet is read
-    // strictly; once moved, the table's CHECKs hold these fields.
-    for missing in ["consecutive_failures", "retry_after", "pending_links"] {
-        let fresh = Setup::new();
-        fresh.config("");
-        let mut broken = current.clone();
-        broken["format"] = json!(25);
-        broken["sessions"][ON]
-            .as_object_mut()
-            .unwrap()
-            .remove(missing);
-        let file = fresh.fx.root().join("control.json");
-        std::fs::write(&file, broken.to_string()).unwrap();
-        make_private(&file);
-        let out = fresh.run_any(&["session", "list", "--json"], b"");
-        assert_eq!(out.status.code(), Some(1), "{missing}");
-        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-        assert_eq!(error["code"], "store_corrupt");
-    }
 }
 
 #[test]
@@ -2928,11 +2889,11 @@ fn stop_marks_due_by_turns_and_minutes_and_session_end_marks_final_without_a_mod
     // By minutes: on since long ago, never passed, no new turns needed.
     let minutes = Setup::new();
     minutes.config("[catalog]\nevery_turns = 50\nevery_minutes = 5\n");
-    let control = json!({"format": 1, "sessions": {ON: {
-        "on": true, "since": "2026-01-01T00:00:00Z", "due": false, "final": false}}});
-    let file = minutes.fx.root().join("control.json");
-    std::fs::write(&file, format!("{control}\n")).unwrap();
-    make_private(&file);
+    let control = json!({"format": 31, "codex_cursors": {}, "sessions": {ON: {
+        "provider": "claude-code", "on": true, "since": "2026-01-01T00:00:00Z",
+        "due": false, "final": false, "consecutive_failures": 0,
+        "retry_after": null, "pending_links": [], "cataloged_by": null}}});
+    support::seed_records(&minutes.fx.root(), &[&control.to_string()]);
     minutes.hook("stop", &minutes.payload("Stop"));
     assert_eq!(minutes.control()["due"], true);
     assert!(minutes.prompts().is_empty());
@@ -3170,12 +3131,12 @@ fn session_names_a_switched_on_session_whose_due_was_cleared_and_passes_it() {
     let setup = Setup::new();
     // A session stranded as an earlier give-up rule left it: on, not due,
     // no record.
-    let control = json!({"format": 1, "sessions": {ON: {
-        "on": true, "since": "2026-11-03T05:00:00Z", "due": false, "final": false}}});
+    let control = json!({"format": 31, "codex_cursors": {}, "sessions": {ON: {
+        "provider": "claude-code", "on": true, "since": "2026-11-03T05:00:00Z",
+        "due": false, "final": false, "consecutive_failures": 0,
+        "retry_after": null, "pending_links": [], "cataloged_by": null}}});
     setup.config("");
-    let file = setup.fx.root().join("control.json");
-    std::fs::write(&file, format!("{control}\n")).unwrap();
-    make_private(&file);
+    support::seed_records(&setup.fx.root(), &[&control.to_string()]);
     assert_eq!(setup.pass()["passes"], json!([]), "nothing is due");
     assert!(setup.prompts().is_empty());
 
@@ -4123,15 +4084,7 @@ fn candidate_sources_and_existing_statements_are_checked_at_the_binary_boundary(
         let s = Setup::new();
         s.write(ON, &[line(role, "u-1", &text)]);
         if existing {
-            let root = s.fx.root();
-            let dir = root.join("entries/preferences");
-            std::fs::create_dir_all(&dir).unwrap();
-            for path in [&root, &root.join("entries"), &dir] {
-                make_private(path);
-            }
-            let path = dir.join("preferences-1.md");
-            std::fs::write(&path, support::entry_text(1, quote)).unwrap();
-            make_private(&path);
+            support::seed_records(&s.fx.root(), &[&support::entry_text(1, quote)]);
         }
         s.answer(&candidate_answer(quote, message, tag));
         s.scribe("/scribe on");
@@ -6410,8 +6363,10 @@ fn memory_refresh_writes_a_revision_and_has_nothing_new_on_a_second_run() {
 }
 
 #[test]
-fn a_format_24_memory_item_migrates_on_the_first_memory_write() {
+fn a_format_24_memory_item_is_not_migrated_and_the_first_memory_write_archives_it() {
     let s = Setup::new();
+    // Without a scribe.db the leftover would make the root a refused file store.
+    support::seed_records(&s.fx.root(), &[]);
     let dir = s.fx.root().join("memory");
     s.fx.create_private_dir_all(&dir);
     let path = dir.join("m-1.md");
@@ -6435,19 +6390,23 @@ fn a_format_24_memory_item_migrates_on_the_first_memory_write() {
     let shown = s.run(&["memory", "show"], b"");
     assert!(path.exists());
     assert!(
-        text(&shown.stderr).contains("1 format-24 memory item(s) not yet migrated"),
+        text(&shown.stderr).contains("1 format-24 memory item(s) not read"),
         "{}",
         text(&shown.stderr)
     );
-    // The first write migrates it.
+    // The first write archives it: it is not migrated into a working claim.
     s.answer(&profile_answer("scribe."));
     s.run(&["memory", "refresh", "--json"], b"");
     assert!(!path.exists());
     let block = memory_json(&s, &["show"]);
-    assert_eq!(
-        block["now"][0]["id"], "2026-12-12-sister-s-wedding-on-2026-12-12",
-        "{block}"
-    );
+    assert_eq!(block["now"], json!([]), "{block}");
+    let archived = rusqlite::Connection::open(s.fx.root().join("scribe.db"))
+        .unwrap()
+        .query_row("SELECT count(*) FROM archive_records", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+    assert!(archived >= 1, "the item is archived, not dropped");
 }
 
 /// The ```toml block of specs/catchers.md that declares `[tags.<name>]`.

@@ -413,7 +413,10 @@ pub(in crate::store) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
 
 /// When each forgotten session was forgotten; none before schema 4, which
 /// a reader of a database no writer has migrated yet still sees.
-fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, Tombstone>> {
+pub(in crate::store) fn forgotten(
+    conn: &Connection,
+    db: &Path,
+) -> Result<BTreeMap<SessionId, Tombstone>> {
     let err = |e| db_error("read sessions from", db, e);
     let version: u32 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -1003,16 +1006,6 @@ impl<'c> SessionTx<'c> {
         super::write_error("write sessions to", &self.path, self.started, e)
     }
 
-    /// Whether the sessions live here.
-    pub(in crate::store) fn moved(&self) -> Result<bool> {
-        moved(&self.tx).map_err(|e| self.fail(e))
-    }
-
-    /// Record that they do, and where their files went.
-    pub(in crate::store) fn mark_moved(&self, now: OffsetDateTime, to: Option<&str>) -> Result<()> {
-        mark_moved(&self.tx, now, to).map_err(|e| self.fail(e))
-    }
-
     /// Every switch and Codex cursor.
     pub(in crate::store) fn control(&self) -> Result<ControlState> {
         control(&self.tx, &self.path)
@@ -1049,20 +1042,6 @@ impl<'c> SessionTx<'c> {
     /// Drop a rebuild checkpoint.
     pub(in crate::store) fn drop_checkpoint(&self, id: &SessionId) -> Result<()> {
         drop_checkpoint(&self.tx, id).map_err(|e| self.fail(e))
-    }
-
-    /// How many rows each session table holds with a record, for a
-    /// migration's count check.
-    pub(in crate::store) fn record_count(&self) -> Result<usize> {
-        let n: i64 = self
-            .tx
-            .query_row(
-                "SELECT count(*) FROM sessions WHERE has_record = 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| self.fail(e))?;
-        Ok(usize::try_from(n).unwrap_or(usize::MAX))
     }
 
     /// Upsert a window's messages, each redacted first, in this

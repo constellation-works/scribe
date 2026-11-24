@@ -1,0 +1,60 @@
+---
+format: 31
+kind: session
+id: 8f6c2d1e-4b3a-4e5f-9a8b-7c6d5e4f3a2b
+status: final
+active: true
+keep_active: false
+active_change: null
+cataloged_by:
+  at: 2026-11-01T10:00:00Z
+  by:
+    kind: agent
+    name: seed
+rebuilt_by: null
+project: scribe
+topics:
+- replay
+related: []
+links: []
+terms:
+- term: replay fixture
+  said: By a replay fixture I mean a recorded set of model calls
+  message: 3e9a7c10-52d4-4b8e-9f61-0000000000a1
+provider: claude-code
+host: example-host
+created: 2026-11-01T10:00:00Z
+updated: 2026-11-01T10:00:00Z
+title: Planning replay fixtures
+cwd: /Users/example/work/scribe
+started: 2026-11-01T09:00:00Z
+on_since: 2026-11-01T10:00:00Z
+scribed_through: 3e9a7c10-52d4-4b8e-9f61-0000000000a2
+passes: 1
+next_open: 1
+log:
+- n: 1
+  heading: Planning
+  first_message: 3e9a7c10-52d4-4b8e-9f61-0000000000a1
+  last_message: 3e9a7c10-52d4-4b8e-9f61-0000000000a2
+  from: 2026-11-01T09:01:00Z
+  to: 2026-11-01T09:03:00Z
+  state: sealed
+  windows: 1
+  origin: catalog
+  topics:
+  - replay
+  related: []
+---
+## Summary
+The user started planning replay fixtures.
+
+## Goals
+Plan the fixtures.
+
+## Next
+- Write the recording format.
+
+## Log
+### 1. Planning
+The user defined a replay fixture.

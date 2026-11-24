@@ -13,20 +13,19 @@
 //!   it ends, so a write and its audit row commit together. A command that
 //!   calls a model does not use it, because no transaction may be held
 //!   across a model call; each of its steps commits on its own.
-//! - **The move.** The first write moves every record kind still in files
-//!   into the database in its own transaction ([`Store::import_at_write`]),
-//!   checking the row count of each kind. A write that refuses rolls the
-//!   move back with it. After the commit the files go to
-//!   `pre-sqlite-<date>/`, which scribe never deletes except for a forgotten
-//!   session's or entry's own records, and each JSON
-//!   document a format-26 build reads is left as an empty stamp at the
-//!   current format, so that build refuses the store instead of writing
-//!   files beside the database (STD-03 R10).
+//! - **The archive import.** The first write imports the file store's
+//!   `pre-sqlite-<date>/` and `pre-issue-<date>/` archives into the archive
+//!   tables in its own transaction ([`Store::import_at_write`]), checking
+//!   the row count of each kind. A write that refuses rolls the import back
+//!   with it. Each JSON document a format-26 build reads is kept as an
+//!   empty stamp at the current format, so that build refuses the store
+//!   instead of writing files beside the database (STD-03 R10).
 //! - **After the commit.** File work that must follow the commit runs
-//!   there: moving files aside, the memory journal's files (§15.6), issue
-//!   files moved aside, spooled audit lines removed, the WAL emptied
-//!   after a forget, and moved-aside files cleaned for a forgotten entry.
-//!   A crash before it leaves work the next write finds and finishes.
+//!   there: the imported archive directories removed, the stamps written,
+//!   the memory journal's files (§15.6), spooled audit lines removed and
+//!   the WAL emptied after a forget. A crash before it leaves work the next
+//!   write finds and finishes: an archive already imported is only
+//!   removed.
 //! - **Audit lines that cannot wait.** A line written outside a write's
 //!   transaction is inserted without waiting. When another writer holds the
 //!   database, or the store is still files, it is spooled to one file of
@@ -57,29 +56,22 @@ thread_local! {
     /// Test-only synchronization immediately before the spool is listed.
     pub(super) static BEFORE_SPOOL_DRAIN: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
     /// Tests: fail the next write after its transaction commits and before
-    /// `move_files_aside` runs, as an interruption there would.
-    pub(super) static CRASH_BEFORE_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Tests: fail the next write after its transaction commits and before
-    /// `apply_pending_archive_forgets` runs, as an interruption there would.
-    pub(super) static CRASH_BEFORE_ARCHIVE_FORGET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// the imported archives are removed, as an interruption there would.
+    pub(super) static CRASH_BEFORE_REMOVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What a write leaves to do once it commits.
 #[derive(Debug, Default)]
 pub(super) struct After {
-    /// Files to rename, in order: issue records moved aside.
-    pub(super) renames: Vec<(PathBuf, PathBuf)>,
     /// Apply the memory journals left open.
     pub(super) journals: bool,
-    /// Move files that now live in the database aside, and stamp.
-    pub(super) aside: bool,
+    /// Archive directories (and leftover files) whose records are now in
+    /// the archive tables, to remove.
+    pub(super) archive_removals: Vec<PathBuf>,
     /// Rewrite the format stamps.
     pub(super) stamp: bool,
     /// Spool files drained into the table.
     pub(super) spooled: Vec<PathBuf>,
-    /// Drain committed entry-forget archive erasures from
-    /// `pending_archive_forgets` after WAL truncation.
-    pub(super) archive_forgets: bool,
 }
 
 /// Which move a write makes: its own, or `store migrate`'s.
@@ -89,7 +81,7 @@ pub(super) enum Move {
     /// checkpoint becomes a row.
     AtWrite,
     /// `store migrate`: refused while a session is on, while a rebuild
-    /// checkpoint waits, or once every kind moved.
+    /// checkpoint file waits, or when there is no archive to import.
     ByHand,
 }
 
@@ -97,7 +89,7 @@ pub(super) enum Move {
 struct Pending {
     root: PathBuf,
     mode: Move,
-    /// When the write began: it dates the move and `pre-sqlite-<date>/`.
+    /// When the write began: it dates the archive import.
     now: OffsetDateTime,
     open: Option<Open>,
     after: After,
@@ -335,16 +327,6 @@ impl Store {
         })
     }
 
-    /// Whether the pending write has scheduled moving legacy files aside
-    /// after commit.
-    pub(super) fn aside_pending(&self) -> bool {
-        PENDING.with(|p| {
-            p.borrow()
-                .as_ref()
-                .is_some_and(|p| p.root == self.root && p.after.aside)
-        })
-    }
-
     /// What the pending write's move did, once it began.
     pub(super) fn moved_now(&self) -> Option<super::Moved> {
         PENDING.with(|p| {
@@ -367,39 +349,27 @@ impl Store {
         })
     }
 
-    /// The file work a commit leaves: issue files moved aside, the files
-    /// that moved in moved aside and the stamps written, spooled audit
-    /// lines removed, open memory journals applied, and the WAL emptied
-    /// after a forget.
-    fn after_commit(&self, after: After, now: OffsetDateTime, truncate: bool) -> Result<()> {
+    /// The file work a commit leaves: the WAL emptied after a forget, the
+    /// imported archives removed, the stamps written, spooled audit lines
+    /// removed and open memory journals applied.
+    fn after_commit(&self, after: After, _now: OffsetDateTime, truncate: bool) -> Result<()> {
         if truncate {
             let path = self.root.join(DB_FILE);
             let conn = db::open_new_writer(&self.root, self.lock_wait)?;
             db::truncate_wal(&conn, &path, std::time::Instant::now())?;
         }
-        if !after.renames.is_empty() {
-            let path = self.lock_path(super::documents::ARCHIVE_FORGET_LOCK)?;
-            let _lock = fsio::LockGuard::acquire(&path, "move legacy issues", self.lock_wait)?;
-            for (from, to) in &after.renames {
-                if fsio::inspect_file(from)? {
-                    if let Some(dir) = to.parent() {
-                        self.prepare_subdir(dir)?;
-                    }
-                    fsio::rename(from, to)?;
-                }
-            }
+        #[cfg(test)]
+        if !after.archive_removals.is_empty() && CRASH_BEFORE_REMOVAL.with(|c| c.replace(false)) {
+            return Err(Error::io(
+                "remove",
+                self.root.join(DB_FILE),
+                std::io::Error::other("a crash injected by a test before the archives are removed"),
+            ));
         }
-        if after.aside {
-            #[cfg(test)]
-            if CRASH_BEFORE_ASIDE.with(|c| c.replace(false)) {
-                return Err(Error::io(
-                    "move",
-                    self.root.join(super::AUDIT_FILE),
-                    std::io::Error::other("a crash injected by a test before move_files_aside"),
-                ));
-            }
-            self.move_files_aside(now)?;
-        } else if after.stamp {
+        for path in &after.archive_removals {
+            self.remove_archive(path)?;
+        }
+        if after.stamp || !after.archive_removals.is_empty() {
             self.stamp_format()?;
         }
         for spooled in &after.spooled {
@@ -408,10 +378,6 @@ impl Store {
         if after.journals {
             self.apply_open_journals()?;
         }
-        if after.archive_forgets {
-            self.apply_pending_archive_forgets()?;
-        }
-        self.clean_forgotten_session_files()?;
         Ok(())
     }
 
@@ -530,18 +496,19 @@ impl Store {
         Ok(inserted)
     }
 
-    /// Refuse `store migrate` before anything moves: once every kind is in
-    /// the database, while a session is on, or while a rebuild checkpoint
-    /// waits.
-    pub(super) fn refuse_migrate(&self, conn: &Connection) -> Result<()> {
-        let sessions_moved = db::sessions::moved(conn)
-            .map_err(|e| db::db_error("read", &self.root.join(DB_FILE), e))?;
-        let documents_moved =
-            docs::moved(conn).map_err(|e| db::db_error("read", &self.root.join(DB_FILE), e))?;
-        if sessions_moved && documents_moved {
+    /// Refuse `store migrate` before anything is imported: when there is
+    /// no archive to import, while a session is on, or while a rebuild
+    /// checkpoint file waits in a leftover `sessions/`.
+    pub(super) fn refuse_migrate(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
+        let db = self.root.join(DB_FILE);
+        let mut pending = !leftovers.is_empty();
+        for name in self.archive_dirs()? {
+            pending |= !db::archive::imported(conn, &db, &name)?;
+        }
+        if !pending {
             return Err(refusal(
                 WriteRefusal::MigrateBlocked,
-                "the store is already in scribe.db; there is nothing to migrate",
+                "the store is already in scribe.db and no pre-sqlite-* or pre-issue-* archive is left to import; there is nothing to migrate",
             ));
         }
         let control = self.control()?;
@@ -553,7 +520,7 @@ impl Store {
                 ),
             ));
         }
-        if !sessions_moved && let Some((id, path)) = self.checkpoint_files()?.first() {
+        if let Some((id, path)) = self.checkpoint_files()?.first() {
             return Err(refusal(
                 WriteRefusal::MigrateBlocked,
                 format!(

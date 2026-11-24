@@ -143,6 +143,9 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
 fn tag_show_is_read_only_and_unknown_tags_are_refused() {
     let fx = Fixture::new();
     fx.seed();
+    // The first open of scribe.db (an unknown tag's refusal opens it) leaves
+    // an empty `scribe.db-wal`.
+    fx.run(&["tag", "show", "nonesuch", "--json"]);
     let before = snapshot(&fx.root());
     fx.ok(&["tag", "show", "preferences"]);
     fx.ok(&["tag", "show", "preferences", "--json"]);

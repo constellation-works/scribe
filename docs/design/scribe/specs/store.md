@@ -1,7 +1,7 @@
 ---
 type: design
-summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export), memory files (profile, now items, milestones), record files with YAML frontmatter (format 31: decisions and open items; format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
-last_validated: 2026-11-22
+summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export; phase 8: the file store's archives imported into archive tables, no file decoder), memory files (profile, now items, milestones), record files with YAML frontmatter (format 31: decisions and open items; format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
+last_validated: 2026-11-23
 ---
 
 # Spec: Store
@@ -10,7 +10,7 @@ The store never exposes a torn file, never rewrites a file a newer build
 wrote, never trusts state another user could have written, and never serves
 a record under an id its file does not carry. The design is
 [2_design.md §3](../2_design.md#3-storage); this spec is what the code does.
-The code writes format <!-- current-format -->31 and reads formats 1–<!-- current-format -->31. Format 31 adds the optional `decision` and `item` entry objects. SQLite schema 17 adds their nullable JSON columns and replaces the trial tag registrations. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
+The code writes format <!-- current-format -->31 in exports and stamps, and refuses a stamp newer than <!-- current-format -->31. Since phase 8 it reads no record file: every record is a row of `scribe.db`, and the files a file store left are imported into its archive tables (see [The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)). The format history below says what each format added; no build reads a format-22 or older file now. Format 31 adds the optional `decision` and `item` entry objects. SQLite schema 17 adds their nullable JSON columns and replaces the trial tag registrations. Format 30 permits withdrawn claims, deleted citations and legacy memory items retired with their sources erased. Format 29 adds groups and seats in SQLite schema 9. SQLite schema 11 adds group turn capture and closing summaries. SQLite schema 12 adds optional `groups.slug` and a unique partial index for open slugs. Format 28 adds an optional `handoff_mode` (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column, and older databases read it as null until the next write migrates them. SQLite schema 8 removes stale rebuild checkpoints for forgotten sessions; export omits them before that migration runs. Schema 10 records completion of the required WAL cleanup, retrying after a busy reader, a busy writer, or interruption, including on stores already at schema 9. Format 26 moves the
 sessions into `scribe.db`
 ([2_design.md §15.7](../2_design.md#157-storage), phase 6): records,
 switches, Codex cursors and rebuild checkpoints become rows (schema version
@@ -19,19 +19,21 @@ switches, Codex cursors and rebuild checkpoints become rows (schema version
 and `control.json` stays as the format stamp alone; see
 [Sessions in scribe.db](#sessions-in-scribedb-phase-6). Format 27 (phase 7)
 introduced moving the other kinds into `scribe.db`; the format-27 release
-wrote the format stamps, including `control.json`, at 27. The current
-format-<!-- current-format -->31 build retains that migration and stamps at <!-- current-stamp -->31 after its first
-eligible store write transaction moves every kind still in files, sessions
-first. A standalone audit line does not start that move: it is inserted
-without waiting, or spooled under `audit-spool/` while the store is still in
-files or another writer holds the database, and the next eligible
-transaction drains the spool; see
+wrote the format stamps, including `control.json`, at 27. The builds of
+phases 6–7 moved every kind still in files at the first eligible store
+write transaction, sessions first. The current
+format-<!-- current-format -->31 build (phase 8) has no file decoder: it refuses a store whose
+records never moved, and stamps at <!-- current-stamp -->31 after its first write. A
+standalone audit line is inserted without waiting, or spooled under
+`audit-spool/` while the documents are not in `scribe.db` or another writer
+holds the database, and the next
+eligible transaction drains the spool; see
 [Documents in scribe.db](#documents-in-scribedb-phase-7). Format 25
 changes no stored document: it adds the memory files of
 [2_design.md §15.5](../2_design.md#155-memory-one-fixed-shape) (`memory/profile.md`,
 `memory/now/<stem>.md`, `memory/milestones/<stem>.md`), and the first
-memory write migrates every `memory/m-<n>.md` item into them and removes it
-(§15.11). A memory write stamps `control.json` at the format it writes (25
+memory write migrated every `memory/m-<n>.md` item into them and removed it
+(§15.11; since phase 8 a store write archives them unread). A memory write stamps `control.json` at the format it writes (25
 when these files arrived), so a format-24 build refuses the store rather
 than reading it without its memory. Format 24 adds
 `context` to each proposal candidate
@@ -120,27 +122,26 @@ user's file could pass for one of Daniel's records.
 ```
 <root>/                                  0700
 ├── config.toml                          0600, optional
-├── entries/<tag>/<tag>-<n>.md           0600, one file per entry, until the move (formats 1–26)
-├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converts each to an entry)
-├── pre-issue-<yyyy-mm-dd>/issue-<n>.md   0600, an issue file after its conversion, until its entry is forgotten (phase 2)
-├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25)
+├── entries/<tag>/<tag>-<n>.md           0600, one file per entry, until the move (formats 1–26); one an interrupted move left is archived by the next write (phase 8)
+├── issues/issue-<n>.md                  0600, one file per issue (formats 17–23; phase 2 converted each to an entry); since phase 8 archived unread by the next write
+├── pre-issue-<yyyy-mm-dd>/              0700, the issue files phase 2 converted; imported into the archive tables and removed by the next write (phase 8)
+├── sessions/<yyyy>/<mm>/<session-id>.md 0600, one file per session record, until the move (formats 1–25); one an interrupted move left is archived by the next write (phase 8)
 ├── control.json                         0600, optional; after the move only the format stamp
-├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`), kept except when a forget erases a session or an entry from them
+├── pre-sqlite-<yyyy-mm-dd>/             0700, the files the phase 6–7 move took in (`sessions/`, `entries/`, the JSON documents, `audit.jsonl`, `.codex-<id>.lock`); imported into the archive tables and removed by the next write (phase 8)
 ├── locks/codex-<id>.lock                0600, the Codex ingestion lock of a session (phase 6)
 ├── locks/rebuild-<id>.lock              0600, the rebuild lock of a session (phase 6)
-├── locks/archive-forget.lock            0600, serializes archive erasure and legacy issue moves
 ├── proposals.json                       0600, optional until the move (formats 1–26); after it an empty format stamp
 ├── tags.json                            0600, optional (introduced at format 5, S12); after the move an empty format stamp
 ├── pickups.json                         0600, optional (introduced at format 8); after the move an empty format stamp
 ├── memory/profile.md                     0600, the profile, rebuilt by `memory refresh` (format 25)
 ├── memory/now/<date>-<slug>.md          0600, one file per now item (format 25)
 ├── memory/milestones/<date>-<slug>.md   0600, one file per milestone (format 25)
-├── memory/m-<n>.md                      0600, a memory item (formats 19–24), migrated and removed by the first memory write
+├── memory/m-<n>.md                      0600, a memory item (formats 19–24); since phase 8 not read, and archived (kind `other`) and removed by the next store write
 ├── marks.json                           0600, optional (introduced at format 22); after the move an empty format stamp
 ├── scribe.db                            0600, SQLite in WAL mode, created by the first write that needs it (phase 4)
 ├── scribe.db-wal, scribe.db-shm         0600, kept after the last connection (PERSIST_WAL)
 ├── audit-spool/<nanos>-<pid>-<n>.json   0600, one audit line a busy database could not take yet (phase 7), drained by the next write
-├── audit.jsonl                          0600, the audit log until the move (formats 1–26)
+├── audit.jsonl                          0600, the audit log until the move (formats 1–26); one an interrupted move left is archived by the next write (phase 8)
 └── .lock                                0600, the store lock before phase 7; an existing file stays at the root (the move neither archives nor removes it)
 ```
 
@@ -152,7 +153,10 @@ missing subdirectory or a missing optional file is empty, not an error.
 Names starting with `.` are never records (a writer's temp file, an
 editor's swap file, a rebuild checkpoint `.<id>.rebuild.md`), nor is a file without the `.md` extension; under
 `sessions/`, only four-digit year and two-digit month directories are
-walked.
+walked. Since phase 8 no file under `sessions/`, `entries/` or `issues/` is
+read as a record: the archive import keeps every file there but Finder
+metadata (see
+[The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)).
 
 ## scribe.db (phase 4)
 
@@ -162,7 +166,8 @@ Only `store/db.rs` and `store/db/` open it. It holds the session pass's
 messages (phase 4) and memory's rows (phase 5): the pending `now`
 candidates, removed items' history, the profile revisions and cursor, the
 memory journal and each pass window's signal; the sessions (phase 6); and
-entries, claims, agent tags, marks, pickups and the audit log (phase 7).
+entries, claims, agent tags, marks, pickups and the audit log (phase 7);
+and the file store's imported archives (phase 8).
 Only `config.toml` and `memory/`'s files remain as primary data files outside the database.
 
 - **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
@@ -196,7 +201,8 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   `sessions.forgotten`; version 5 (phase 7) adds `entries`, `claims`,
   `agent_tags`, `marks`, `pickups` and `audit`, and rebuilds `record_kinds`
   to accept their kinds; version 6 adds `pending_archive_forgets` for
-  durable post-commit replay of entry-forget archive erasure; version 7
+  durable post-commit replay of entry-forget archive erasure (no build
+  writes one since phase 8); version 7
   adds the nullable `entries.handoff_mode` column; version 8 deletes
   `rebuild_checkpoints` rows whose session is forgotten (a
   checkpoint an older build could write after the forget) and adds no
@@ -224,8 +230,14 @@ Version 16 protects pending legacy issue erasures from older writers that
 would drop the obligation without erasing the source. It changes no table.
 Version 18 adds `group_members.restarted` (`INTEGER NOT NULL DEFAULT 0`, `0` or `1`), set to `1` when a departing or forgotten member's seat is restored to the member it displaced, so `group backfill` keeps that member's restarted `joined` cutoff.
 Version 19 repairs that default for a store upgraded from version 17 or earlier. A seat restored before the upgrade has its `joined` reset but no mark, and the row looks like one that was never displaced. The step sets `restarted = 1` on every seat holder that has a vanished `group_members.position` after its own: `AUTOINCREMENT` never reuses a position, so a restored holder's departed displacer leaves exactly such a gap. A holder with no gap after it cannot have been restored and stays `0`. The rule is conservative, not exact: a gap can also come from any later removed member, so an ordinary holder may be marked too. An explicit `group backfill` then stores only its turns dated at or after `joined`, never a turn from before it that the join-time backfill skipped. Missing a restored holder would store a turn typed during its displacement without consent, so the step prefers the false positive.
+Version 20 (phase 8) adds `archives` and `archive_records`, which hold the
+file store's `pre-sqlite-<date>/` and `pre-issue-<date>/` archives once
+imported (see
+[The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)).
+Its statements use `IF NOT EXISTS`, so a step replayed on a database an
+older build set back keeps its tables.
 
-### Tables (version 19)
+### Tables (version 20)
 
 | Table | Columns (type, constraint) | Written by |
 |---|---|---|
@@ -238,11 +250,11 @@ Version 19 repairs that default for a store upgraded from version 17 or earlier.
 | `messages` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters (the session record's id); `message TEXT NOT NULL`, non-empty (the provider's message id); `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`; `at TEXT NOT NULL`; `text TEXT NOT NULL`, redacted; `sha256 TEXT NOT NULL`, 64 hex characters of the redacted text; `group_only INTEGER NOT NULL DEFAULT 0` (0 or 1); `UNIQUE (session, message)` | the session pass and group hooks |
 | `messages_fts` | FTS5 over `messages.text`, external content (`content = 'messages'`, `content_rowid = 'id'`), `tokenize = 'unicode61 remove_diacritics 2'`; kept by `AFTER INSERT`, `AFTER DELETE` and `AFTER UPDATE OF text` triggers | the triggers |
 | `now_pending` | `id INTEGER PRIMARY KEY`; `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `subject TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `created TEXT NOT NULL`; `UNIQUE (session, subject)`; a `BEFORE INSERT` trigger aborts a sixth row for one session | the session pass; dropped by the session's final pass or when a dated element completes one |
-| `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | the migration, `memory refresh` (a passed `now` item it does not promote); `memory forget` deletes an item's rows |
+| `memory_history` | `id INTEGER PRIMARY KEY`; `item TEXT NOT NULL`, non-empty (the removed item's id or file stem); `kind TEXT NOT NULL`, non-empty; `text TEXT NOT NULL`; `sources TEXT NOT NULL`, a JSON array; `removed_at TEXT NOT NULL` | the `m-<n>` migration (before phase 8), `memory refresh` (a passed `now` item it does not promote); `memory forget` deletes an item's rows |
 | `profile_revisions` | `n INTEGER PRIMARY KEY AUTOINCREMENT` (the revision); `created TEXT NOT NULL`; `content TEXT NOT NULL`; `file_sha256 TEXT`, `NULL` until the journal closes, else 64 hex characters | `memory refresh` and `memory restore` |
 | `profile_cursor` | `id INTEGER PRIMARY KEY CHECK (id = 1)`; `through_at TEXT NOT NULL`; `through_session TEXT NOT NULL`, 1–128 characters | `memory refresh`; one row |
 | `memory_journal` | `id INTEGER PRIMARY KEY`; `created TEXT NOT NULL`; `ops TEXT NOT NULL`, a JSON array of `{path, content}` (content `null` removes the file); `done INTEGER NOT NULL CHECK (done IN (0, 1))`; `revision INTEGER REFERENCES profile_revisions(n)`; a partial index on the open rows | every memory write (version 2) |
-| `memory_messages` | `item TEXT NOT NULL`, non-empty (a `now` or milestone stem, or a migrated `m-<n>`); `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `PRIMARY KEY (item, session, message)` | the session pass (the turn an element quotes, and a completed candidate's turn), the migration (each occurrence's turn), `memory refresh` (a promoted `now` item's links copied to its milestone); `memory forget` deletes an item's rows (version 2) |
+| `memory_messages` | `item TEXT NOT NULL`, non-empty (a `now` or milestone stem, or a migrated `m-<n>`); `session TEXT NOT NULL`, 1–128 characters; `message TEXT NOT NULL`, non-empty; `PRIMARY KEY (item, session, message)` | the session pass (the turn an element quotes, and a completed candidate's turn), the `m-<n>` migration before phase 8 (each occurrence's turn), `memory refresh` (a promoted `now` item's links copied to its milestone); `memory forget` deletes an item's rows (version 2) |
 | `pass_signals` | `session TEXT NOT NULL`, 1–128 characters; `through TEXT NOT NULL`, non-empty (the window's last message); `signal INTEGER NOT NULL CHECK (signal BETWEEN 0 AND 3)`; `PRIMARY KEY (session, through)` | the session pass (version 2) |
 | `sessions` | `id INTEGER PRIMARY KEY AUTOINCREMENT`, shown as `s-<id>`; `provider_session TEXT NOT NULL UNIQUE`, 1–128 characters (the provider's session id, the key cites and messages use); `has_record` and `has_switch`, each `0` or `1`; the record's header as columns (`status` `open` or `final`, `active`, `keep_active`, `project`, `provider`, `host`, `created`, `updated`, `title`, `cwd`, `started`, `on_since`, `scribed_through`, `passes`, `next_open`; `active_change`, `cataloged_by`, `rebuilt_by`, `topics` and `related` as JSON text) and its `summary`, `goals` and `next`; the switch as `sw_provider`, `sw_on`, `sw_since`, `sw_due`, `sw_final`, `sw_consecutive_failures`, `sw_retry_after`, `sw_pending_links` (JSON) and `sw_cataloged_by` (JSON); `forgotten TEXT`, when `#scribe forget` erased the session, else `NULL` (version 4). A row with `has_record = 1` has every header column; one with `has_switch = 1` every switch column the switch requires | every session write (version 3) |
 | `segments` | `session INTEGER NOT NULL` (`sessions.id`); `n INTEGER NOT NULL CHECK (n >= 1)`; `heading`, `first_message`, `last_message`, `"from"`, `"to"`, `state` (`open` or `sealed`), `windows`, `origin`, `topics` and `related` (JSON), `text`; `PRIMARY KEY (session, n)` | the record's writer, replacing the session's rows (version 3) |
@@ -250,15 +262,17 @@ Version 19 repairs that default for a store upgraded from version 17 or earlier.
 | `session_terms` | `session INTEGER NOT NULL`; `position INTEGER NOT NULL`; `term`, `said`, `message`; `PRIMARY KEY (session, position)` | the record's writer (version 3) |
 | `codex_cursors` | `session TEXT PRIMARY KEY`, 1–128 characters; `message TEXT NOT NULL` | Codex ingestion (version 3) |
 | `rebuild_checkpoints` | `session INTEGER NOT NULL PRIMARY KEY` (`sessions.id`); `record TEXT NOT NULL`, the checkpoint as a record file's text; `created TEXT NOT NULL` | `session rebuild`; dropped in the transaction that writes the rebuilt record, and by `#scribe forget` (version 3). A forgotten session keeps none: export omits a row an older build left, and version 8 deletes it. A checkpoint of a session that was not forgotten stays |
-| `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions', 'entries', 'claims', 'agent_tags', 'marks', 'pickups', 'audit'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory the kind's files moved to, `NULL` when that kind had no files | the move; a row says that kind is rows (version 3; the kinds past `sessions` version 5) |
+| `record_kinds` | `kind TEXT PRIMARY KEY CHECK (kind IN ('sessions', 'entries', 'claims', 'agent_tags', 'marks', 'pickups', 'audit'))`; `moved_at TEXT NOT NULL`; `moved_to TEXT`, the `pre-sqlite-<date>` directory the kind's files moved to, `NULL` when that kind had no files | the move; a row says that kind is rows (version 3; the kinds past `sessions` version 5). Since phase 8 the first write of a new store adds every row with `moved_to` `NULL` |
 | `entries` | `id TEXT PRIMARY KEY` (`<tag>-<n>`); `tag TEXT NOT NULL`; `n INTEGER NOT NULL`, `UNIQUE (tag, n)`; every frontmatter field of an entry as a column (`"window"` quoted; lists, cites, authors and other objects as JSON text); `content TEXT NOT NULL`, the body | every entry write (version 5) |
 | `claims` | `n INTEGER PRIMARY KEY` (`p-<n>`); every field of a proposal as a column, objects as JSON text; `has_candidate` `0` or `1` and the candidate's fields as `c_<field>` columns | every claim write: only the claims a write changed (version 5) |
 | `agent_tags` | `name TEXT PRIMARY KEY`; the fields `tags.json` held | `tag add`, `tag update` (version 5) |
 | `marks` | `position INTEGER PRIMARY KEY`; the fields of one `marks.json` record | the `Stop` hook's marker outcomes (version 5) |
 | `pickups` | `position INTEGER PRIMARY KEY`; the fields of one `pickups.json` record | `entry pickup` (version 5) |
-| `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the move; the spool drain (version 5) |
+| `audit` | `id INTEGER PRIMARY KEY`; `format INTEGER NOT NULL`, the line's own format (1–5); the event's fields (`issue` as JSON text, `NULL` for none); `spool TEXT UNIQUE`, the spool file a line was drained from or the `audit.jsonl:<offset>:<sha256>` key of an imported log line, else `NULL` | every audited command; the phase 6–7 move; the spool drain (version 5) |
 | `deleted_handoffs` | `id TEXT PRIMARY KEY NOT NULL` | session forget reserves erased handoff ids (version 14) |
-| `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts and any matched legacy issue source tokens (never cleartext); `created TEXT NOT NULL` | committed in the entry forget's transaction when archives exist or are pending move-aside; drained after commit by that write or any restarted write (version 6) |
+| `pending_archive_forgets` | `id INTEGER PRIMARY KEY`; `entry TEXT NOT NULL` (`<tag>-<n>`); `salt TEXT NOT NULL`, 64 hex characters; `digests TEXT NOT NULL`, JSON array of `{len, sha256}` salted SHA-256 digests of erased texts and any matched legacy issue source tokens (never cleartext); `created TEXT NOT NULL` | before phase 8, committed in the entry forget's transaction when archives existed or were pending move-aside, and drained after commit (version 6). No build writes one since phase 8: a row an older build left is replayed against the archive records, then deleted, by the write that imports an archive |
+| `archives` | `name TEXT PRIMARY KEY NOT NULL`, `GLOB 'pre-sqlite-*'` or `'pre-issue-*'` (the directory's name); `imported TEXT NOT NULL`; `files INTEGER NOT NULL`, `>= 0`, the files imported | the archive import, one row per directory; a directory with a row is only removed, never imported again (version 20) |
+| `archive_records` | `id INTEGER PRIMARY KEY`; `archive TEXT NOT NULL` (an `archives.name`); `path TEXT NOT NULL`, the file's path inside the archive; `line INTEGER NOT NULL`, `>= 0` (an `audit.jsonl` line's number from 1, else 0); `kind TEXT NOT NULL CHECK (kind IN ('session', 'checkpoint', 'entry', 'issue', 'claims', 'control', 'tags', 'marks', 'pickups', 'audit', 'other'))`; `record TEXT NOT NULL CHECK (json_valid(record))`; `UNIQUE (archive, path, line)`; index on `kind` | the archive import, one row per file (one per non-blank line of an `audit.jsonl`); `#scribe forget` and `entry forget` rewrite or delete rows (version 20) |
 
 `group backfill <id>` rechecks that the group is open and each supplied session still holds its seat in the write transaction. A holder restored after a displacement (`restarted = 1`) has only the turns dated at or after its restarted `joined` time inserted. It inserts each checked transcript’s eligible turns as group-only rows, preserves existing rows and capture cursors, and reports unavailable transcripts and stored and skipped counts.
 
@@ -391,17 +405,26 @@ verified typed hook is the deletion route.
   citation. A claim with an erased source cannot recreate a missing entry.
 - Memory occurrences and pending candidates for the session are removed.
   A current item without any source is retired from the live files, and
-  source-free history is removed. An unmigrated `m-<n>` item can retain a
-  retired header with no statement or occurrences. The memory journal
+  source-free history is removed. A format-24 `m-<n>` item is not read
+  (phase 8); the archive erasure below covers it once archived. The memory journal
   applies file changes after commit and drops old copies of those files.
 - The hook's single audit line commits with the changes and uses `s-<n>`
-  as its target. Post-commit cleanup truncates the WAL and removes session
-  record and checkpoint files and matching document data in each
-  `pre-sqlite-*` archive. Archived audit events that name the session keep
-  their audit fields and lose extra fields that can hold free text. The
-  forgotten row drives retry after interrupted cleanup and after migration
-  moves legacy files. A repeated forget can
-  also repair residue from an earlier version.
+  as its target. The WAL is truncated after the change.
+- In the same transaction the session is erased from the archive tables
+  (phase 8), matched by field name on its provider id or `s-<n>`: its
+  archived record and checkpoints are deleted; archived switches, Codex
+  cursors, marks and successor `continues` links drop it; an archived
+  handoff naming it, or a scribe-authored entry citing it, is deleted with
+  the claims and pickups about that entry; other archived entries and
+  claims that cite it get the deleted cite and lose its quotes; a claim
+  sourced from it is deleted. Archived audit lines that name it keep their
+  audit fields (`format`, `at`, `command`, `status`, `target`,
+  `error_code`, `author`, `instruction_session`, `instruction_message`,
+  `issue`, `duration_ms`) and lose every other field. An `other` record
+  holding the session id is deleted. Unrelated archived records are kept.
+  An archive still on disk is erased as it is imported: the import
+  replays every forgotten session. A repeated forget can also repair
+  residue from an earlier version.
 
 The provider transcript stays at its original path. New exports omit erased
 content. A previously delivered export in the caller's directory is a
@@ -416,11 +439,13 @@ Rebuild also checks after acquiring its per-session lock.
 ### Sessions in scribe.db (phase 6)
 
 - **Where sessions are read from.** With a `record_kinds` row for
-  `sessions`, every session read is a query and the files are not read;
-  without one the store has not moved and reads `sessions/` and
-  `control.json` as before. `control.json`'s format is checked either way,
-  so a store stamped by a newer build is `store_too_new`.
-- **The move.** In the format-27 release, the first eligible store write
+  `sessions`, every session read is a query and the files are not read.
+  Without one, phases 6–7 read `sessions/` and `control.json` as before;
+  since phase 8 a root whose session files never moved is `store_corrupt`
+  (see [The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)).
+  `control.json`'s format is checked either way, so a store stamped by a
+  newer build is `store_too_new`.
+- **The move** (phases 6–7; history). In the format-27 release, the first eligible store write
   transaction moves every kind still in files, sessions first (see
   [Documents in scribe.db](#documents-in-scribedb-phase-7)). A session write
   (a switch, a pass, a rebuild, an activity change, a link) starts such a
@@ -444,15 +469,15 @@ Rebuild also checks after acquiring its per-session lock.
   eligible transaction can move the records and drain any spooled audit
   lines. A store with no session files is marked moved by its first
   eligible transaction.
-- **`scribe store migrate`** makes the move now, in its write's transaction. It is
-  refused with `migrate_blocked` while any session is switched on, while
-  any rebuild checkpoint waits, and once the sessions moved; the write's
-  own move is never refused for these, since it imports switches and
-  checkpoints as rows.
+- **`scribe store migrate`** made the move now, in its write's
+  transaction, refused with `migrate_blocked` while any session was
+  switched on, while any rebuild checkpoint waited, and once the sessions
+  moved. Since phase 8 it imports the archives instead; see
+  [The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8).
 - **`s-<n>` ids.** A session's number is its `sessions.id`. Before the
-  move a file store computes the numbers the move will give: records by
-  `created` then id, then sessions with only a switch by id, so
-  `session show --json` reads the same before and after. Every command
+  move, a phases 6–7 build computed for a file store the numbers the move
+  would give: records by `created` then id, then sessions with only a
+  switch by id, so `session show --json` read the same before and after. Every command
   taking a session id takes `s-<n>`: an exact provider id wins first, then
   `s-<n>`, then a unique prefix. JSON keeps `id` as the provider id and adds
   `short_id`. Cites (`session:<id>#<n>`), messages and memory links keep the
@@ -473,17 +498,19 @@ Rebuild also checks after acquiring its per-session lock.
   files at the current format plus `control.json` with the switches and
   cursors; `--as jsonl` as one `<table>.jsonl` per session table, one JSON
   object per row. A directory with anything in it is
-  `export_target_exists`; JSONL of a store whose sessions are still files
-  is `export_needs_migrate`. A record that does not read is left out and
-  reported under `skipped`.
+  `export_target_exists`; a store whose records never moved into
+  `scribe.db` is `store_corrupt` (phases 6–7 refused JSONL of one with
+  `export_needs_migrate`, which no build produces now). A record that does
+  not read is left out and reported under `skipped`.
 
 ### Documents in scribe.db (phase 7)
 
 - **Where they are read from.** With `record_kinds` rows for every kind,
   entries, claims, agent tags, marks, pickups and the audit log are
   queries, and `entries/`, `proposals.json`, `tags.json`, `marks.json`,
-  `pickups.json` and `audit.jsonl` are not read; without them the store has
-  not moved and reads the files as before. A row is checked as its file was
+  `pickups.json` and `audit.jsonl` are not read. Without them, phases 6–7
+  read the files as before; since phase 8 a root that still holds those
+  records in files is `store_corrupt`. A row is checked as its file was
   (an entry's id and tag agree, a claim's fields agree with its state), and
   one that does not read is skipped and reported as a file was.
 - **One write, one transaction.** The store lock is retired. Each
@@ -505,21 +532,20 @@ Rebuild also checks after acquiring its per-session lock.
   transaction is inserted without waiting. When another writer holds the
   database, or the store has not moved, it is written to `audit-spool/` as
   one file of its own, created `0600` under a name no other line has; every
-  read merges the spool. If the store is still file-backed, this audit-only
-  write can spool the line without starting migration. The next eligible
-  store write transaction moves the file-backed records and drains the
-  spool into `audit` (a drained file's name is kept in `spool`, so a crash
+  read merges the spool. The next eligible store write transaction drains
+  the spool into `audit` (a drained file's name is kept in `spool`, so a crash
   before its removal never counts a line twice), then removes the spool
   files after commit. A refused command therefore waits once and loses no
   line, and writes no warning before its error.
-- **The move.** The first eligible store write transaction moves every kind
+- **The move** (phases 6–7; history). The first eligible store write transaction moved every kind
   still in files, sessions first: every record must read (one that does not
   refuses the move with `store_corrupt` and nothing moves); each kind's row
   count is checked against the files read; audit lines keep their own
   format, and a torn line is counted and left in the moved file. After the
-  commit the files go to `pre-sqlite-<yyyy-mm-dd>/`, and `control.json`,
+  commit the files went to `pre-sqlite-<yyyy-mm-dd>/`. `control.json`,
   `proposals.json`, `tags.json`, `marks.json` and `pickups.json` are
-  written as empty stamps at format <!-- current-stamp -->31, so older builds refuse the
+  written as empty stamps, at format <!-- current-stamp -->31 by this build (after a new
+  store's first write and after an archive import), so older builds refuse the
   store instead of writing files beside the database. The format-27 release
   wrote these stamps at 27, the format-28 release at 28, and the format-29
   release at 29 and the format-30 release at 30. A
@@ -530,8 +556,9 @@ Rebuild also checks after acquiring its per-session lock.
   `audit.jsonl` lines keyed in `spool` by byte offset and SHA-256 so
   replaying an interrupted move keeps one copy of each original line and
   still preserves new lines appended before the rename.
-  `scribe store migrate` makes the move now, refused as in
-  phase 6.
+  `scribe store migrate` made the move on demand, refused as in
+  phase 6. Phase 8 removes the move; see
+  [The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8).
 - **The memory journal** is staged in the write's transaction and applied
   after its commit, in a write of its own, so a rollback leaves no memory
   file the database does not record. A later step of the same command
@@ -539,59 +566,108 @@ Rebuild also checks after acquiring its per-session lock.
 - **Forget and redaction.** A write that changes or deletes an entry or a
   claim row ends with a `TRUNCATE` checkpoint, so with `secure_delete` no
   old text is left in the WAL or a free page. Forgetting an entry also
-  deletes its moved-aside entry file from every
-  `pre-sqlite-<date>/entries*/`, drops or rewrites the matching proposals in
-  `pre-sqlite-<date>/proposals.json*` atomically (keeping every claim the
-  database keeps), and drops any `pre-sqlite-<date>/audit.jsonl*` lines
-  carrying the entry's text in a free-text value. Forgetting a converted
-  issue also deletes its matched source files in `pre-issue-<date>/`.
-  The source is identified before the entry is blanked, using the original
-  quote and creation metadata. An unchanged body can disambiguate
-  distinct matching sources. When the source remains ambiguous, the
-  forget refuses before committing. The archive-erasure obligation
-  commits in `pending_archive_forgets` inside the forget's own
-  SQLite transaction (storing only the entry id, a per-obligation salt, and
-  salted SHA-256 `{len, sha256}` digests of the texts and exact issue
-  source tokens), and is removed only after every matching archive copy
-  has been cleaned (audit lines first, then proposals, then source files).
-  A pending issue erasure also prevents a still-unmoved legacy source from
-  being imported again. A crash or I/O failure after commit leaves the
-  obligation in `pending_archive_forgets`,
-  and the next write (a retry of `entry forget` or `#scribe forget`, or any
-  subsequent write) replays WAL truncation and archive erasure idempotently
-  without needing the original entry contents in cleartext (STD-03 R8–R9).
-  Post-commit archive erasure and legacy issue moves run under
-  `locks/archive-forget.lock` (`flock` / `LockFileEx`, bounded by the lock
-  wait) so concurrent forgets serialize their read-modify-writes and cannot
-  restore one another's erased text. An audit line's structural
-  fields (ids, command, status, author, codes, counts) never match, so an
-  entry whose body is a common word such as `success` removes no unrelated
-  event. A torn line, which the reader skips, is dropped if it contains the
-  text. Other files in `pre-sqlite-<date>/` are the user's and are never
-  rewritten.
+  erases it from the archive tables in the forget's own transaction
+  (phase 8): its archived copies are deleted; for an imported `issue`
+  entry, every archived `pre-issue-*` record whose body holds the entry's
+  verified quote is deleted; archived claims about it are deleted and its
+  quotes in other archived claims lose their text; archived pickups and
+  marks naming it are dropped; and every archived audit line carrying the
+  entry's text (its live or archived words, or a claim's about it) in a
+  free-text value is deleted. An audit line's structural fields (ids,
+  command, status, author, codes, counts) never match, so an entry whose
+  body is a common word such as `success` removes no unrelated event.
+  Unrelated archived records are kept. Phases 6–7 erased the
+  `pre-sqlite-<date>/` and `pre-issue-<date>/` files after the commit,
+  under `locks/archive-forget.lock`, with the obligation kept in
+  `pending_archive_forgets` until done. Phase 8 has neither the lock nor
+  the post-commit file erasure. A `pending_archive_forgets` row an older
+  build left (an entry id, a salt and salted SHA-256 `{len, sha256}`
+  digests, never cleartext) is replayed against the archive records by the
+  write that imports an archive, matching texts by digest, and is deleted
+  in that transaction.
 - **Formats 27–31.** Format 27 introduced the move of every kind still in
   files into `scribe.db`, sessions first, and stamped `control.json` at 27.
   The format-28 release kept that migration path and stamped `control.json`
-  at 28 after the move. Format 29 adds groups and seats. The current
-  format-<!-- current-format -->31 build keeps that migration path and stamps `control.json` at <!-- current-stamp -->31. After the move `control.json` holds only that stamp, with an
+  at 28 after the move. Format 29 adds groups and seats. The format-29 to
+  format-30 builds kept the move. The current
+  format-<!-- current-format -->31 build (phase 8) removes it and stamps `control.json` at <!-- current-stamp -->31. After the first write `control.json` holds only that stamp, with an
   empty `sessions` and `codex_cursors`, so its `format` is <!-- current-stamp -->31.
   Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
-  The upgrade registry remains append-only for persisted document shapes; SQL
-  schema changes use migrations. The existing steps stay so the move can
-  read a store left at any older format for the support window; phase 8
-  removes them with the file decoders.
+  Phase 8 removes `store/format.rs`, its upgrade registry (`UPGRADES`) and
+  the file decoders. `FORMAT` is in `store/codec.rs`, which keeps only the
+  current-format codecs: the export encoders, the row checks, the session
+  decoder for a rebuild checkpoint row, the stamp check and the memory
+  files' codec. A persisted-shape change is a database migration.
 - **`scribe export <dir>`** writes records into a separate directory. `--as markdown` writes the
   file store's files at format <!-- current-format -->31 (`sessions/`, `entries/<tag>/<id>.md`,
   `control.json`, `proposals.json`, `tags.json`, `marks.json`,
-  `pickups.json`, `audit.jsonl`), which a build reads as a store and moves
-  in again unchanged. Each exported audit line keeps its original audit
+  `pickups.json`, `audit.jsonl`). Since phase 8 no build reads them back as
+  a store. Each exported audit line keeps its original audit
   format and decoded event. `--as jsonl` writes one `<table>.jsonl` per
-  table with rows, including groups, seats and membership chains. Groups have no legacy Markdown file representation. JSONL needs every kind with records moved (a phase-6 store with no live
-  record files exports its session tables), and on a moved store merges any
+  table with rows, including groups, seats and membership chains. Groups have no legacy Markdown file representation. JSONL works on any store whose records moved
+  into `scribe.db`, and merges any
   pending `audit-spool/` events not yet drained into `audit.jsonl` (with
   `id: null` and `spool` set to the spool filename), skipping spool files
-  already present in the `audit` table's `spool` column.
+  already present in the `audit` table's `spool` column. Neither format
+  writes the archive tables; reading them takes SQL against `scribe.db`.
+
+### The file store's archives in scribe.db (phase 8)
+
+Phases 6–7 moved the file store into `scribe.db` and kept the old files in
+`pre-sqlite-<date>/` (phase 2 kept converted issue files in
+`pre-issue-<date>/`). Phase 8 removes the file decoders, so it imports those
+archives once into the `archives` and `archive_records` tables (schema
+version 20) and removes the files
+([4_decisions.md](../4_decisions.md#the-file-stores-archives-move-into-scribedb-once)).
+
+- **When.** Every store write imports, at the start of its transaction,
+  each `pre-sqlite-*` and `pre-issue-*` directory at the root that has no
+  `archives` row. `scribe store migrate` makes the same import on demand.
+  A write that refuses rolls the import back with it.
+- **What is read.** No record format is decoded. A Markdown file is kept
+  as `{"front": {...}, "body": "..."}`, its YAML frontmatter read as JSON;
+  a JSON document and each non-blank line of an `audit.jsonl` as the JSON
+  itself; anything else, or a file that does not parse, as `{"text":
+  "..."}`, or `{"hex": "..."}` for bytes that are not UTF-8. Nothing is
+  lost. Finder metadata (`.DS_Store`, `._*`) is skipped and removed with
+  the directory; it is never a record.
+- **Kinds.** In a `pre-issue-*` archive a Markdown file is `issue`. In a
+  `pre-sqlite-*` archive, a Markdown file under `sessions*/` is `session`
+  (`checkpoint` for a `.<id>.rebuild.md`), one under `entries*/` is
+  `entry`, and the root documents are `claims` (`proposals.json`),
+  `control`, `tags`, `marks`, `pickups` and `audit` (`audit.jsonl`),
+  numeric-suffixed copies (`entries.2/`, `proposals.json.2`) included.
+  Everything else is `other`. No entry is made from an issue record.
+- **Checks.** After inserting an archive's rows the import compares the
+  count per kind with the files it read, in the transaction; a mismatch is
+  `store_corrupt` and nothing is imported.
+- **Removal.** After the commit the imported directories are removed,
+  every file and then every directory, and the stamps are rewritten. A
+  crash before that leaves the directory for the next write, which finds
+  its `archives` row and only removes it, so a forget made since stays
+  made.
+- **Files an interrupted move left.** When the records are in `scribe.db`
+  but the root still holds `sessions/`, `entries/`, `issues/`,
+  `audit.jsonl`, a JSON document with content (an empty one is a stamp),
+  a root `.codex-*.lock` or a format-24 `memory/m-<n>.md`, the write
+  imports them as one more archive, `pre-sqlite-<date>` (with a `.2`, `.3`
+  suffix when that name is taken), kinded as above, and removes them after
+  the commit. A read does not refuse them; the memory block (`memory
+  show` with no id) warns `N format-24 memory item(s) not read; the next
+  store write archives them`.
+- **Forgets made earlier.** An import replays, in its transaction, every
+  forgotten session and every `pending_archive_forgets` row, so text
+  forgotten while the archive was still files is erased as it arrives.
+- **`scribe store migrate`** is refused `migrate_blocked` when no archive
+  and no left file is waiting, while any session is switched on, and while
+  any rebuild checkpoint file `sessions/<yyyy>/<mm>/.<id>.rebuild.md`
+  exists (resume the rebuild with `session rebuild` or delete the file).
+  A write's own import is never refused for these.
+- **A store that never moved.** A root holding those file-store records
+  with no `record_kinds` rows for them is refused `store_corrupt` by every
+  read, write and export: this build has no decoder, so it is migrated with
+  a phase 6–7 build first.
 
 ## Record files
 
@@ -763,12 +839,16 @@ the current header and log (see **Format 4** below); later steps then apply.
 ## Issue files
 
 Phase 2 (2_design.md §15.9) removed issue records. In a write's transaction,
-the first write converts each `issues/issue-<n>.md` to one entry under the
-tag `issue` with no model call and moves the file to
-`pre-issue-<yyyy-mm-dd>/`; a file that does not parse stays and is tried
-again ([specs/catchers.md](catchers.md#stored-issues-become-issue-entries)).
+the first write of phases 2–7 converted each `issues/issue-<n>.md` to one
+entry under the tag `issue` with no model call and moved the file to
+`pre-issue-<yyyy-mm-dd>/`
+([specs/catchers.md](catchers.md#stored-issues-become-issue-entries)).
+Phase 8 removes the conversion: a `pre-issue-*` archive is imported as
+archive records of kind `issue`, an `issues/` directory left at the root is
+archived as kind `other`, and no entry is made from either
+([The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)).
 `issue` is no longer a reserved tag. The shape below is what that
-conversion reads.
+conversion read.
 
 An issue (`issues/issue-<n>.md`, format 17 and later only; an older format
 in one is `store_corrupt`) is the memory of an incident across projects and
@@ -855,8 +935,8 @@ with a warning and never served; an unknown key is `store_corrupt`.
 
 **The journal.** Every memory write runs in its write's transaction
 (phase 7; the store lock before it), in order: reads the memory files with
-every open journal row's operations laid over them; migrates any `m-<n>`
-items (below); computes its change; and stages its rows and one journal row
+every open journal row's operations laid over them; computes its change;
+and stages its rows and one journal row
 holding the file operations. After the transaction commits, a write of its
 own applies every open row's operations (through `write_atomic`, or removes
 the file) and closes the row (`done = 1`, and the profile revision's
@@ -903,8 +983,8 @@ the answer names for it, or else a `memory_history` row, and its file is
 removed. A run with no session after the cursor, no hand edit and no
 passed item calls no model and writes nothing.
 
-**Migration** (§15.11). The first memory write on a store holding
-`m-<n>.md` items migrates them through one journal: an active `now` item
+**Migration** (§15.11; phases 5–7, history). The first memory write on a store holding
+`m-<n>.md` items migrated them through one journal: an active `now` item
 with a date not past its 14 days becomes a `now` file (kind `plan`, its
 `acknowledged` as `raised`); an active milestone a milestone file (dated
 by its event date, else its creation); every item except a forgotten one
@@ -913,8 +993,12 @@ leaves a `memory_history` row (its statement and quotes); an active
 opens a claim first, cited by that quote's hash, `admitted.trigger`
 `migrated working memory`; each item's occurrence turns are linked in
 `memory_messages` under its `m-<n>` and, for an item that becomes a file,
-its stem; and every `m-<n>.md` is removed. Reads leave the
-items and warn how many await migration.
+its stem; and every `m-<n>.md` was removed. Phase 8 removes this
+migration and the `migrated working memory` trigger: a format-24 item is
+not read. A read counts the items left and warns `N format-24 memory
+item(s) not read; the next store write archives them`, and the next store
+write archives each as kind `other` and removes it
+([The file store's archives in scribe.db](#the-file-stores-archives-in-scribedb-phase-8)).
 
 **Forget** (`memory forget <stem> --confirm`) removes the file and, in
 the journal's transaction, deletes the item's `memory_history` rows, the
@@ -930,7 +1014,7 @@ cleared from the WAL. The profile is corrected by editing it outside Pinned.
   also held the switches and Codex cursors: `{"sessions": {"<session-id>":
   {"provider", "on", "since", "due", "final", "consecutive_failures",
   "retry_after", "pending_links", "cataloged_by"}}, "codex_cursors": {...}}`
-  (an older file upgrades on read). Once the sessions moved, a switch is a
+  (through phase 7 an older file upgraded on read). Once the sessions moved, a switch is a
   row of `sessions` (its `sw_*` columns) and a cursor a row of
   `codex_cursors`, both in `scribe.db`, and the file holds only
   `{"format": 28, "sessions": {}, "codex_cursors": {}}`. A switch has the
@@ -942,7 +1026,7 @@ cleared from the WAL. The profile is corrected by editing it outside Pinned.
   automatic attempt waits 5, 10, 20, 40, then at most 60 minutes. Success
   or switching off resets both retry fields. Explicit `--session` bypasses
   the delay.
-- `proposals.json` (written at format 22; an older file upgrades on read): `{"proposals": [{"id": "p-<n>", "kind":
+- `proposals.json` (written at format 22; through phase 7 an older file upgraded on read): `{"proposals": [{"id": "p-<n>", "kind":
   "supersedes"|"stale", "older", "newer", "reason", "quotes": [{"entry",
   "text"}], "state": "open"|"approved"|"rejected", "opened_at",
   "settled_at", "settled_by"}]}`. `newer`, `settled_at` and `settled_by`
@@ -1243,8 +1327,9 @@ exits 0.
   open to group or others, any group or other mode bit read included
   (`store_permissions`, naming the `chmod 700` or `chmod 600` that fixes it).
   Nothing is repaired automatically. Finder metadata files named `.DS_Store`
-  or `._*` are ignored by store walks, including during the legacy import;
-  they remain alongside the archived legacy files. On non-unix platforms
+  or `._*` are ignored by store walks, including during the archive
+  import, which never reads them as records and removes those inside an
+  archive with it. On non-unix platforms
   these checks are no-ops.
 - **Links.** A subdirectory, record file, document, config or lock file that
   is a symbolic link is `store_symlink` and is not followed. The root itself
@@ -1257,11 +1342,15 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (22) covers every document. A shape change bumps
-  it and appends one step to `UPGRADES` in `store/format.rs`, which is
-  given the document type it upgrades; shipped steps never change. Reads
-  upgrade an older document in memory; a newer one is refused and left
-  untouched. The format-1-to-2 step adds zero failures and a null retry
+- **Format.** One `FORMAT` (<!-- current-format -->31, in `store/codec.rs`) versions every
+  exported document and the stamps. A change to an exported document's
+  shape bumps it; a persisted-shape change appends a database migration in
+  `store/db.rs`. A newer stamp is refused (`store_too_new`) and left
+  untouched. Through phase 7 a shape change also appended one step to
+  `UPGRADES` in `store/format.rs`, given the document type it upgrades,
+  and reads upgraded an older document in memory; phase 8 removed
+  `format.rs`, its steps and the decoders, so the format steps below are
+  history. The format-1-to-2 step adds zero failures and a null retry
   timestamp to control switches; other document shapes are unchanged. The
   format-2-to-3 step adds an empty `links` to each session record and an
   empty `pending_links` to each control switch; entries and proposals are
@@ -1475,9 +1564,9 @@ exits 0.
   `proposals.json` first and then the entry, sets `updated_by` to the agent
   and `removal_instruction` to the instruction's `session`, `message` and
   `at` with `quote: null`; no database entry row is removed (while its
-  moved-aside entry file under `pre-sqlite-<date>/` is deleted, matching
-  proposals in `proposals.json*` are rewritten or dropped, and audit lines
-  carrying its text are dropped), and an entry already forgotten writes
+  archived copies are deleted from the archive tables, matching archived
+  claims are dropped or lose its quotes, and archived audit lines carrying
+  its text are deleted, in the same transaction), and an entry already forgotten writes
   nothing. `proposal settle --session --instruction` (2_design.md §12.3) settles
   an open candidate under the lock (every instructed write first refuses
   `instruction_not_found`, before writing anything, an instruction whose

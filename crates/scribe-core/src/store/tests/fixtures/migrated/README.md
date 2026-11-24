@@ -1,0 +1,3 @@
+This synthetic store was produced at commit a849e7f6d25ab7bab64d77c9295b47d040b17e1e by the phase 6–7 `export_round_trips_every_kind_through_the_move` test. The test migrated its format-26 fixture and checkpointed the SQLite WAL. It contains one session, two entries, one claim, a tag, a mark, a pickup and five audit events (including older audit formats).
+
+`markdown/` and `jsonl/` are what the last build with the file store (589f90db, before phase 8 removed it) exported from `scribe.db`. The test proves the build without the file store loads the same records and exports the same bytes. The fixture is an independent compatibility baseline; do not regenerate it with the code under test.

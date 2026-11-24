@@ -1,4 +1,4 @@
-use super::{SESSION_BODY, entry_text, private_tempdir, session_text};
+use super::{Seed, entry_text, private_tempdir, seed};
 use crate::entry::{EntryFilter, EntryStatus};
 use crate::session::SessionFilter;
 use crate::store::db;
@@ -27,7 +27,7 @@ fn event(command: &str) -> AuditEvent {
 /// write changed nothing.
 fn stored(store: &Store, id: &crate::session::SessionId) -> Vec<u8> {
     let record = store.session(id).unwrap().record;
-    crate::store::format::encode_session(Path::new("record"), &record).unwrap()
+    crate::store::codec::encode_session(Path::new("record"), &record).unwrap()
 }
 
 /// Write `text` at `rel` under `root`, creating owner-only directories.
@@ -91,27 +91,35 @@ fn a_missing_root_reads_as_an_empty_store() {
 #[test]
 fn a_corrupt_entry_is_skipped_in_a_list_and_refused_by_show() {
     let dir = private_tempdir();
-    put(
+    let at = time::macros::datetime!(2026-11-01 10:00 UTC);
+    seed(
         dir.path(),
-        "entries/preferences/preferences-1.md",
-        &entry_text(""),
+        &Seed {
+            entries: vec![
+                crate::tests::entry("preferences-1", at),
+                crate::tests::entry("preferences-2", at),
+            ],
+            ..Seed::default()
+        },
     );
-    put(
+    // A hand-edited row: Daniel's entry without the turn it cites.
+    db::execute(
         dir.path(),
-        "entries/preferences/preferences-2.md",
-        &entry_text("colour: blue\n").replace("preferences-1", "preferences-2"),
-    );
-    put(
-        dir.path(),
-        "entries/preferences/.preferences-3.md.tmp",
-        "partial",
-    );
-    put(dir.path(), "entries/preferences/notes.txt", "not a record");
+        "UPDATE entries SET cite = NULL WHERE id = 'preferences-2'",
+    )
+    .unwrap();
     let store = Store::open(dir.path());
     let list = store.list_entries(&EntryFilter::default()).unwrap();
     assert_eq!(list.listing.items.len(), 1);
     assert_eq!(list.skipped.len(), 1);
-    assert!(list.skipped[0].path.ends_with("preferences-2.md"));
+    assert!(
+        list.skipped[0]
+            .path
+            .to_string_lossy()
+            .ends_with("preferences-2"),
+        "{:?}",
+        list.skipped[0].path
+    );
     assert_eq!(list.skipped[0].error.code(), "store_corrupt");
     let err = store.entry(&"preferences-2".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "store_corrupt");
@@ -122,19 +130,30 @@ fn a_corrupt_entry_is_skipped_in_a_list_and_refused_by_show() {
 #[test]
 fn a_session_is_shown_with_its_switch() {
     let dir = private_tempdir();
-    put(
-        dir.path(),
-        "sessions/2026/11/s-1.md",
-        &session_text("", SESSION_BODY),
+    let at = time::macros::datetime!(2026-11-01 09:00 UTC);
+    let mut control = crate::session::ControlState::default();
+    crate::control::switch(
+        &mut control,
+        &"s-1".parse().unwrap(),
+        &crate::control::Switch::On,
+        at,
     );
-    put(
+    control
+        .sessions
+        .get_mut(&"s-1".parse().unwrap())
+        .unwrap()
+        .due = true;
+    seed(
         dir.path(),
-        "control.json",
-        r#"{"format":1,"sessions":{"s-1":{"on":true,"since":"2026-11-01T09:00:00Z","due":true,"final":false}}}"#,
+        &Seed {
+            sessions: vec![crate::tests::session("s-1", at)],
+            control,
+            ..Seed::default()
+        },
     );
     let store = Store::open(dir.path());
     let view = store.session(&"s-1".parse().unwrap()).unwrap();
-    assert_eq!(view.record.log[0].text, "sum\n\nout");
+    assert_eq!(view.record.log[0].text, "outcome");
     assert!(view.control.unwrap().due);
     let err = store.session(&"s-2".parse().unwrap()).unwrap_err();
     assert_eq!(err.code(), "session_not_found");
@@ -153,15 +172,10 @@ fn a_corrupt_config_refuses_every_read_naming_the_file() {
 
 #[cfg(unix)]
 #[test]
-fn a_linked_tag_directory_is_refused_not_followed() {
+fn a_linked_entries_directory_is_refused_not_followed() {
     let dir = private_tempdir();
     put(dir.path(), "elsewhere/preferences-1.md", &entry_text(""));
-    put(dir.path(), "entries/.keep", "");
-    std::os::unix::fs::symlink(
-        dir.path().join("elsewhere"),
-        dir.path().join("entries/preferences"),
-    )
-    .unwrap();
+    std::os::unix::fs::symlink(dir.path().join("elsewhere"), dir.path().join("entries")).unwrap();
     let err = Store::open(dir.path())
         .list_entries(&EntryFilter::default())
         .unwrap_err();
@@ -1096,51 +1110,38 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
     let sha = "0".repeat(64);
     let secret_quote = "approve p-1 with secret phrase XYZ123";
 
-    let entry_doc = format!(
-        "---
-format: 13
-kind: entry
-id: preferences-1
-tag: preferences
-status: active
-project: scribe
-topics: []
-related: []
-provider: claude-code
-host: host
-author: {{kind: daniel, name: daniel}}
-updated_by: null
-created: 2026-11-01T10:00:00Z
-updated: 2026-11-01T10:00:00Z
-inactive_since: null
-said: \"#scribe approve p-1\"
-content_from: {{kind: message, role: user, message: m-1, at: 2026-11-01T10:00:00Z}}
-cite: {{session: s-1, message: m-1, at: 2026-11-01T10:00:00Z, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
-retirement_reason: null
-superseded_by: null
-review_after: null
-quote: null
-window: null
-evidence: null
-as_of: null
-approved_by: {{kind: agent, name: aide}}
-instruction: {{session: s-9, message: m-9, at: 2026-11-02T09:00:00Z, quote: \"{secret_quote}\"}}
----
-I prefer secret phrase XYZ123
-"
-    );
-    put(
-        dir.path(),
-        "entries/preferences/preferences-1.md",
-        &entry_doc,
-    );
-
     let inst = Instruction {
         session: "s-9".parse().unwrap(),
         message: String::from("m-9"),
         at: datetime!(2026-11-02 09:00 UTC),
         quote: Some(String::from(secret_quote)),
     };
+    // Daniel's typed approval of a pass claim, settled on an instruction.
+    let mut entry = crate::tests::entry("preferences-1", t0);
+    entry.said = String::from("#scribe approve p-1");
+    entry.content = String::from("I prefer secret phrase XYZ123");
+    entry.content_from = crate::ContentFrom::Message {
+        role: crate::Speaker::User,
+        message: String::from("m-1"),
+        at: t0,
+    };
+    entry.cite = Some(Cite {
+        session: "s-1".parse().unwrap(),
+        message: Some(String::from("m-1")),
+        at: t0,
+        prompt_sha256: sha.clone(),
+        line: 1,
+        cwd: String::from("/work"),
+    });
+    entry.approved_by = Some(Author::agent("aide".parse().unwrap()));
+    entry.instruction = Some(inst.clone());
+    seed(
+        dir.path(),
+        &Seed {
+            entries: vec![entry],
+            ..Seed::default()
+        },
+    );
     let inst_cite = Cite {
         session: "s-9".parse().unwrap(),
         message: Some(String::from("m-9")),

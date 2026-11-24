@@ -30,21 +30,11 @@ fn lines(store: &Store) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Write `preferences-1`, whose content is `secret content`, and show it.
+/// Seed `preferences-1`, whose content is `secret content`, and show it.
 fn shown_entry(store: &Store) -> Output {
-    let dir = store.root().join("entries/preferences");
-    std::fs::create_dir_all(&dir).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for d in [store.root().join("entries"), dir.clone()] {
-            std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
-    }
-    let path = dir.join("preferences-1.md");
     let text = format!(
         "---
-format: 1
+format: 31
 kind: entry
 id: preferences-1
 tag: preferences
@@ -54,24 +44,32 @@ topics: []
 related: []
 provider: claude-code
 host: host
+author: {{kind: user, name: user}}
+updated_by: null
 created: 2026-09-26T12:00:00Z
 updated: 2026-09-26T12:00:00Z
+inactive_since: null
 said: \"#scribe preferences: secret content\"
 content_from: {{kind: instruction}}
 cite: {{session: s-1, message: null, at: 2026-09-26T12:00:00Z, prompt_sha256: \"{}\", line: 1, cwd: /work}}
+retirement_reason: null
 superseded_by: null
 review_after: null
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+removal_instruction: null
+stated_by: null
+outcome: null
 ---
 secret content
 ",
         "0".repeat(64)
     );
-    std::fs::write(&path, text).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
+    store.seed_records(&[&text]).unwrap();
     let entry = store.entry(&"preferences-1".parse().unwrap()).unwrap();
     Output::Show {
         record: Record::Entry(Box::new(EntryPayload::from(&entry))),
