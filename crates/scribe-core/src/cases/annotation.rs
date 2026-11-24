@@ -3,7 +3,7 @@
 //!
 //! The prompt hook only echoed the marker. Here, after the reply, each
 //! typed turn of the transcript with a marker that `marks.json` has not
-//! settled gets one bounded `models.annotation` call ([`MAX_TURNS_PER_STOP`]
+//! settled gets one bounded `models.annotation` call ([`MAX_TURNS_PER_STOP`](crate::annotation::MAX_TURNS_PER_STOP)
 //! turns per Stop, oldest first; `scribe mark retry` runs the same catalog
 //! for one session with no per-run bound). A typed turn is one the shared
 //! typed-turn rule keeps (`instruction::claude_conversation_raw_typed`, §4.1):

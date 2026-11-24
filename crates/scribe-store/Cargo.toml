@@ -1,0 +1,42 @@
+[package]
+name = "scribe-store"
+description = "scribe's persistence: scribe.db, the memory files, locks and atomic writes. The only crate that touches the data root."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "scribe_store"
+path = "src/lib.rs"
+
+# scripts/check-dependency-direction.sh rejects clap, tracing-subscriber and
+# every other surface crate here.
+[features]
+# `Store::seed_records` and the `testing` module (`StoreTestReads`, the
+# shared test helpers, and the internals scribe-core's store tests reach).
+# Only dev-dependencies turn it on, through scribe-core's own feature.
+test-support = ["scribe-domain/test-support"]
+
+[dependencies]
+scribe-domain = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+yaml_serde = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+scribe-domain = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }
+time = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

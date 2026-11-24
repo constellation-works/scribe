@@ -396,16 +396,14 @@ name = "scribe-core"
 version = "0.3.0"
 dependencies = [
  "rusqlite",
- "rustix",
  "scribe-core",
  "scribe-domain",
+ "scribe-store",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "time",
  "tracing",
- "yaml_serde",
 ]
 
 [[package]]
@@ -420,6 +418,22 @@ dependencies = [
  "toml",
  "tracing",
  "unicode-normalization",
+]
+
+[[package]]
+name = "scribe-store"
+version = "0.3.0"
+dependencies = [
+ "rusqlite",
+ "rustix",
+ "scribe-domain",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+ "tracing",
+ "yaml_serde",
 ]
 
 [[package]]

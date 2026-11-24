@@ -23,9 +23,9 @@
 //!   for an agent's write (word lists, freshness, interactive entry points)
 //!   in [`instruction`]; and the [`Models`] port, every model call
 //!   as a typed request, in [`models`];
-//! - persistence in `store`: the file-backed [`Store`], its formats, the
-//!   audit log ([`AuditEvent`]), the [`Redactor`] and the filesystem
-//!   mechanisms, and nothing else;
+//! - persistence in `store`, the `scribe-store` crate: the file-backed
+//!   [`Store`], its formats, the audit log ([`AuditEvent`]) and the
+//!   filesystem mechanisms, and nothing else;
 //! - the crate's typed [`Error`].
 //!
 //! It never parses arguments, never touches the terminal and never decides
@@ -64,11 +64,20 @@ pub use scribe_domain::pass;
 pub(crate) use scribe_domain::proposal;
 pub(crate) use scribe_domain::provider;
 pub(crate) use scribe_domain::record;
-pub(crate) use scribe_domain::redact;
 pub use scribe_domain::search;
 pub(crate) use scribe_domain::session;
+#[cfg(not(test))]
+pub(crate) use scribe_store as store;
 pub use transcript::codex;
-mod store;
+// The store tests that call the use cases live here (`tests/store/`), and
+// name the store internals they reach by the paths they had inside it; the
+// internals come from `scribe_store::testing`.
+#[cfg(test)]
+mod store {
+    pub(crate) use crate::tests::store as tests;
+    pub(crate) use scribe_store::testing::{audit, codec, db, memory, write};
+    pub use scribe_store::*;
+}
 pub(crate) use scribe_domain::tag;
 pub use scribe_domain::text;
 pub use scribe_domain::transcript;
@@ -86,6 +95,10 @@ pub use cases::proposal::ProposalVerbs;
 pub use cases::rebuild::RebuildVerbs;
 pub use cases::session::{HandoffSelection, SessionVerbs};
 pub use cases::tag::TagVerbs;
+pub use checks::entry::check_handoff_related;
+pub use checks::records::check_unsettled_item;
+pub use checks::tag::check_description;
+pub use checks::{check_agent_author, check_content, check_reason};
 pub use config::{Config, ConfigError, ModelIds, SessionsConfig};
 pub use entry::{
     AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
@@ -120,9 +133,8 @@ pub use store::{
     MemoryView, MemoryWritten, Moved, NEEDS_REDACTION, NOW_DIR, PROFILE_FILE, PROPOSALS_FILE,
     PassMemory, PassWrite, PassWritten, ProfileInputs, ProfileRevision, REDACTED_FIELDS,
     RebuildGuard, Redactor, RefreshWritten, SESSIONS_DIR, SessionForget, SessionList, SessionView,
-    Skipped, Snapshot, Store, TagList, Tx, check_agent_author, check_content, check_description,
-    check_handoff_related, check_reason, check_unsettled_item, init_project,
-    init_project_with_skill_files, integration_hooks, resolve_prefix, unresolved_redact_env,
+    Skipped, Snapshot, Store, TagList, Tx, init_project, init_project_with_skill_files,
+    integration_hooks, resolve_prefix, unresolved_redact_env,
 };
 pub use tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
@@ -131,9 +143,6 @@ pub use tag::{
 };
 
 #[cfg(any(test, feature = "test-support"))]
-pub mod testing;
-/// The record fixtures the store's unit tests share.
+pub use scribe_store::testing;
 #[cfg(test)]
-mod tests {
-    pub(crate) use scribe_domain::fixtures::{T0, entry, session};
-}
+mod tests;
