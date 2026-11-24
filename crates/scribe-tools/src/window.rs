@@ -5,10 +5,10 @@
 //! (docs/design/scribe/specs/architecture.md); the session app's pass builds
 //! its request from them.
 
+use crate::transcript::{Message, user_turn};
 use scribe_domain::config::{WINDOW_MESSAGES, WindowLimits};
 use scribe_domain::entry::Speaker;
 use scribe_domain::models::{CUT_MARK, PassMessage};
-use scribe_domain::transcript::{Message, user_turn};
 
 /// The session's messages as a pass reads them, in transcript order.
 /// Daniel's turns are [`user_turn`].

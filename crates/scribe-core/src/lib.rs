@@ -71,11 +71,11 @@ pub use provider::Provider;
 /// (`apps/hook`), and the origin guard and hashes it re-exported.
 pub mod capture {
     pub use crate::apps::hook::rules::{Turn, prompt_hashes};
-    pub use scribe_domain::origin::{
-        OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
-    };
     pub use scribe_domain::text::{bytes_sha256, prompt_sha256};
     pub use scribe_tools::markers::*;
+    pub use scribe_tools::origin::{
+        OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
+    };
 }
 pub(crate) use scribe_domain::claim;
 pub(crate) use scribe_domain::config;
@@ -88,12 +88,12 @@ pub mod consistency {
     pub use crate::apps::entry::rules::{SettleRefusal, Settled, forget};
     pub use crate::apps::proposal::rules::*;
 }
-/// `control` at its old path: the `/scribe` line's parser (the domain's
-/// `control`, until the domain's `transcript` stops reading it) and the
-/// switch transitions (`apps/session`).
+/// `control` at its old path: the `/scribe` line's parser
+/// (`scribe_tools::markers::control`) and the switch transitions
+/// (`apps/session`).
 pub mod control {
     pub use crate::apps::session::rules::control::*;
-    pub use scribe_domain::control::*;
+    pub use scribe_tools::markers::control::*;
 }
 pub(crate) use scribe_domain::entry;
 pub(crate) use scribe_store::error;
@@ -140,7 +140,7 @@ pub mod models {
     pub use crate::providers::{ModelError, Models};
     pub use scribe_domain::models::*;
 }
-pub use scribe_domain::origin;
+pub use scribe_tools::origin;
 /// `pass` at its old path: the session pass (`apps/session`), its claim
 /// checks (`apps/proposal`, re-exported by the pass) and its window
 /// (`scribe_tools::window`).
@@ -176,10 +176,10 @@ mod store {
 }
 pub(crate) use scribe_domain::tag;
 pub use scribe_domain::text;
-pub use scribe_domain::transcript;
 pub use scribe_domain::trigger;
 pub use scribe_domain::verbatim;
 pub use scribe_domain::voice;
+pub use scribe_tools::transcript;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::entry::EntryVerbs;

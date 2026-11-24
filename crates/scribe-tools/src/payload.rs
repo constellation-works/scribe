@@ -25,40 +25,40 @@ pub struct PromptPayload {
     /// `prompt_source`/`promptSource`, `origin`, `prompt_origin`/`promptOrigin`,
     /// `turn_origin`/`turnOrigin`); a claim, not authority (STD-05 R1), used
     /// only to refuse agent turns.
-    #[serde(default, deserialize_with = "scribe_domain::origin::present_value")]
+    #[serde(default, deserialize_with = "crate::origin::present_value")]
     pub source: Option<serde_json::Value>,
     /// `promptSource`.
     #[serde(
         default,
         rename = "promptSource",
-        deserialize_with = "scribe_domain::origin::present_value"
+        deserialize_with = "crate::origin::present_value"
     )]
     pub prompt_source_camel: Option<serde_json::Value>,
     /// `prompt_source`.
-    #[serde(default, deserialize_with = "scribe_domain::origin::present_value")]
+    #[serde(default, deserialize_with = "crate::origin::present_value")]
     pub prompt_source: Option<serde_json::Value>,
     /// `origin`.
-    #[serde(default, deserialize_with = "scribe_domain::origin::present_value")]
+    #[serde(default, deserialize_with = "crate::origin::present_value")]
     pub origin: Option<serde_json::Value>,
     /// `promptOrigin`.
     #[serde(
         default,
         rename = "promptOrigin",
-        deserialize_with = "scribe_domain::origin::present_value"
+        deserialize_with = "crate::origin::present_value"
     )]
     pub prompt_origin_camel: Option<serde_json::Value>,
     /// `prompt_origin`.
-    #[serde(default, deserialize_with = "scribe_domain::origin::present_value")]
+    #[serde(default, deserialize_with = "crate::origin::present_value")]
     pub prompt_origin: Option<serde_json::Value>,
     /// `turnOrigin`.
     #[serde(
         default,
         rename = "turnOrigin",
-        deserialize_with = "scribe_domain::origin::present_value"
+        deserialize_with = "crate::origin::present_value"
     )]
     pub turn_origin_camel: Option<serde_json::Value>,
     /// `turn_origin`.
-    #[serde(default, deserialize_with = "scribe_domain::origin::present_value")]
+    #[serde(default, deserialize_with = "crate::origin::present_value")]
     pub turn_origin: Option<serde_json::Value>,
     /// `isMeta`: a harness turn.
     #[serde(rename = "isMeta", default)]
@@ -66,12 +66,12 @@ pub struct PromptPayload {
 }
 
 /// Whether this payload's turn was written by an agent or the harness,
-/// not plainly typed by the user ([`scribe_domain::origin::OriginClaims`]
+/// not plainly typed by the user ([`crate::origin::OriginClaims`]
 /// over its origin fields, `isMeta`, and prompt). Such a turn records
 /// nothing, decides nothing and does not switch `/scribe` on or off.
 pub fn agent_originated(payload: &PromptPayload) -> bool {
-    scribe_domain::origin::prompt_agent_originated(
-        &scribe_domain::origin::PromptClaims {
+    crate::origin::prompt_agent_originated(
+        &crate::origin::PromptClaims {
             is_meta: payload.is_meta.as_bool() == Some(true),
             source: payload.source.as_ref(),
             prompt_source_camel: payload.prompt_source_camel.as_ref(),

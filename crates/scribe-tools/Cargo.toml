@@ -20,6 +20,7 @@ scribe-domain = { workspace = true }
 scribe-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+time = { workspace = true }
 
 # Unix only: transcripts and git metadata are opened beneath their root
 # without following a link (`openat` with `O_NOFOLLOW`), a transcript's

@@ -22,6 +22,8 @@
 //!
 //! Pure functions over text: no I/O (STD-02 R5).
 
+pub mod control;
+
 use scribe_domain::entry::{EntryId, TagName};
 use scribe_domain::proposal::ProposalId;
 use scribe_domain::record::{Topic, Topics};
@@ -516,7 +518,7 @@ pub fn marks(text: &str) -> Vec<Mark> {
 /// in.
 #[must_use]
 pub fn turn_marks(text: &str) -> Vec<Mark> {
-    let Some(args) = scribe_domain::transcript::slash_command_args(text) else {
+    let Some(args) = crate::transcript::slash_command_args(text) else {
         return marks(text);
     };
     // `args` is a slice of `text`; its first line is the line it starts on.

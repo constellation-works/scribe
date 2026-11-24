@@ -31,8 +31,6 @@ use std::fmt;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-pub mod codex;
-
 /// How far `first_prompt` and each preview turn are cut, in characters.
 pub const PROMPT_CHARS: usize = 300;
 /// Turns `transcript show` returns.
