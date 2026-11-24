@@ -192,6 +192,47 @@ fn a_slash_command_he_typed_is_his_in_its_args_and_its_tags_are_not() {
     assert_eq!(own, ["duo scribe (opus:high, sonnet:high)"]);
 }
 
+#[test]
+fn a_settings_command_args_are_a_value_not_his_words() {
+    // `/model` and the other settings commands write a value into a setting.
+    // The desktop app writes the same `/model` line when another session
+    // changes the model, so the line is not his turn whatever its origin.
+    let settings = [
+        ("/config", "config"),
+        ("/effort", "effort"),
+        ("/fast", "fast"),
+        ("/model", "model"),
+        ("/output-style", "output-style"),
+        ("/permissions", "permissions"),
+    ];
+    for (name, message) in settings {
+        let text = format!(
+            "<command-name>{name}</command-name>\n<command-message>{message}</command-message>\n<command-args>claude-haiku-5-5</command-args>"
+        );
+        assert_eq!(transcript::slash_command_args(&text), None, "{name}");
+    }
+    let raw = [
+        user(
+            "u-model",
+            "2026-11-23T21:50:41Z",
+            "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>claude-haiku-5-5</command-args>",
+        ),
+        // A command outside the list keeps its args as his words.
+        user(
+            "u-formation",
+            "2026-11-23T21:51:00Z",
+            "<command-name>/formation</command-name>\n<command-message>formation</command-message>\n<command-args>duo scribe</command-args>",
+        ),
+    ]
+    .join("\n");
+    let messages = transcript::parse(raw.as_bytes());
+    let own: Vec<String> = transcript::user_turns(&messages)
+        .into_iter()
+        .map(|turn| turn.own)
+        .collect();
+    assert_eq!(own, ["duo scribe"]);
+}
+
 /// A `queued_command` attachment line (a message typed while the agent was
 /// busy), with `extra` fields on the line itself.
 fn queued_line(uuid: &str, attachment: serde_json::Value, extra: serde_json::Value) -> String {

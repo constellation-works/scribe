@@ -808,7 +808,10 @@ A slash command he types is a user line whose `<command-name>` and
 `<command-args>` tags wrap it: the text inside `<command-args>` is his
 words, and the name and tags are not. `/clear`, `/compact`, a command
 with no args, a `/scribe` control line and `<local-command-*>` lines carry
-none of his words. The expanded skill body Claude Code writes after a
+none of his words. So do the settings commands `/config`, `/effort`, `/fast`,
+`/model`, `/output-style` and `/permissions`: their args are a value written
+into a setting, and the desktop app writes the same `/model` line when another
+session changes the model, so no field can tell it from one he typed. The expanded skill body Claude Code writes after a
 command is `isMeta` and never counts. A message he types while the agent
 is busy is an `attachment` line of type `queued_command` with
 `humanTurn: true` and `origin.kind: human`; its `prompt` is his turn. A
@@ -1352,7 +1355,8 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
 - The conversation drops tool payloads, thinking, turns that open with a
   synthetic tag (`<task-notification>`, `<system-reminder>`,
   `<command-name>` and the like, except a slash command's `<command-args>`,
-  which are his words, §4.1) and `/scribe` command turns. A slash command's
+  which are his words unless the command is a settings command, §4.1) and
+  `/scribe` command turns. A slash command's
   args and a queued message he typed mid-turn are his turns (§4.1) only when
   the origin guard passes them; a
   `<pasted_content>` block is kept apart as pasted text, offered to the
@@ -5242,9 +5246,9 @@ differs from the text above:
 - **Which turns** ([ORB-27648]). Stop catalogs a marker in any turn the
   user typed, by the typed-turn rule every reader shares (§4.1): a plain
   prompt, a line queued while the agent was working (a `queued_command`
-  attachment with `humanTurn`), and a slash command's arguments, read
-  apart from its `<command-…>` tags so a marker right after
-  `<command-args>` counts. A session never switched on is cataloged too.
+  attachment with `humanTurn`), and a slash command's arguments (not a
+  settings command's, §4.1), read apart from its `<command-…>` tags so a
+  marker right after `<command-args>` counts. A session never switched on is cataloged too.
 - **Given up** ([ORB-27648]). A marker `refused` `model_failed` is not
   lost. The Stop echo names `scribe mark retry <session>`; the agent's
   context (`additionalContext` on the Stop reply) carries the echo, the

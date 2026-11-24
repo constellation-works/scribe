@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684]
 ---
 
 # scribe — Decisions
@@ -4647,3 +4647,41 @@ chat.
 ## Session aliases in piped output and the brief
 
 Daniel chose “Yes, s-<n> alias for open-item-7” after asking “can we only show first n letters of the session_id column?”. Piped session ids, the session-start brief and group show use the stable `s-<n>` where a sessions row exists; otherwise they use the shortest unique prefix of at least eight characters. JSON and stored references retain the full provider id. This supersedes our earlier reading of STD-01@2 §R15 for piped session ids: the accepted alias is a complete, stable identifier, and keeps agent output concise.
+
+## A settings command's args are a value, not his words
+
+**Recorded:** 2026-11-23 · [ORB-27684] · **Overridable by Daniel**
+
+### Context
+
+ORB-27564 and ORB-27611 made a slash command's `<command-args>` his typed words,
+and the origin guard passes them. The desktop app writes a `/model` line, with
+null origin fields, when another session calls `set_session_model` on that
+session. Its args are the model id. `scribe group backfill g-3` stored
+`claude-haiku-5-5` as a typed turn of a session Daniel never typed in. A typed
+`/model` and the app's line carry the same fields, so origin cannot tell them
+apart.
+
+**Code anchors:** `crates/scribe-core/src/transcript.rs::SETTINGS_COMMANDS`,
+`crates/scribe-core/src/transcript.rs::slash_command_args`.
+
+### Decision
+
+`slash_command_args` gives no args for the built-in settings commands
+`/config`, `/effort`, `/fast`, `/model`, `/output-style` and `/permissions`.
+Their args are a value written to a setting, whoever wrote the line. Such a line
+is a synthetic command turn, as `/clear` is: conversation, but no turn. Every
+reader of typed turns gets this from that one function: the Stop capture, group
+join and backfill, the instruction check and the annotation pass. Args of other
+commands, such as `/formation` and skills, are still his turns.
+
+### Consequences
+
+- A typed `/model`, `/effort`, `/fast`, `/output-style`, `/permissions` or
+  `/config` is no longer a turn anywhere, and a `#scribe` marker in its args is
+  not cataloged.
+- An origin-refused settings line is no longer refused by the origin guard,
+  because it is not a typed form. It stays in the conversation as `/clear` does,
+  so it can set a transcript's first or last message time.
+- Cost: a built-in value command that is not on the list still stores its args
+  until it is added.
