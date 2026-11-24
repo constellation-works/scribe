@@ -29,8 +29,8 @@ PR 2 until PR 4, when composition is in the core.
 | `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, transcripts, the parsing of prompts and config, the checks a write runs, redaction, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives and the audit record. The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
 | `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots and read under the provenance checks (`transcript/`), a working directory's project from git's own files (`project.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
-| `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
-| `scribe` (binary) | Arguments, dispatch, the audit guard, composition and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
+| `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
+| `scribe` (binary) | Arguments, dispatch, the audit guard and rendering. | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
@@ -97,8 +97,7 @@ fails if either crate names it again.
 
 | Tier | Unit | Owns | May depend on |
 |------|------|------|---------------|
-| Composition | `scribe::app` | Resolves roots and configuration, builds the `Store` and composes the model adapter from `scribe-core`'s `providers/`. | `scribe-core` |
-| Surface | `scribe::cli`, `::commands`, `::output`, `::audit_middleware` | Argument declarations, dispatch, the audit guard around mutating commands, rendering, and the only stdout, stderr and terminal access. | composition, `scribe-core` |
+| Surface | `scribe::cli`, `::commands`, `::output`, `::audit_middleware` | Argument declarations, dispatch, the audit guard around mutating commands, rendering, and the only stdout, stderr and terminal access. `main` captures `scribe_core::composition::Env` once and resolves the `Context` (`scribe::Context`, composition's with the binary's error). | `scribe-core` |
 
 ## Rings inside `scribe-domain`
 
@@ -158,14 +157,13 @@ Checked by grep over non-test sources in `scripts/check-dependency-direction.sh`
 and `scripts/check-terminal-guard.sh`: what a crate edge cannot express. "Module"
 includes any file added later.
 
-- `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store`. The one exception is `scribe-core`'s `providers/`, which spawns the model processes (`std::process`).
-- `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots.
+- `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
+- `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
 - The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; config owns pass window limits. Their callers (`config`, `annotation`, `consistency`, `instruction`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `fsio.rs` imports no business module and nothing else from the store. `codec.rs` and `audit.rs` do no file I/O. `archive.rs` reads the file store's archives through `fsio.rs` and reaches their tables through `db/archive.rs`.
 - In `scribe-store`, only `db.rs` and `db/` use `rusqlite` (and `testing.rs`, test support).
-- `app.rs` imports no `cli`, `commands`, `output` or `audit_middleware`.
 - The binary spawns no process: `scribe-core`'s `providers/` (the model transports) does.
 - In `scribe-tools`, only `fs.rs` names `std::fs`; nothing names `scribe_core`, `std::env`, `std::net` or `std::process`, discovers a path, or calls `Store::write`.
 - `output/` imports no `app`, `cli`, `commands` or `audit_middleware`; `audit_middleware.rs` imports no `cli` or `commands`.

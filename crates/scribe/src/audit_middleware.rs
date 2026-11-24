@@ -118,7 +118,7 @@ pub(crate) struct AuditGuard<'a> {
     started: Instant,
     lines: Vec<Line>,
     author: Option<String>,
-    instruction: crate::app::InstructionNote,
+    instruction: scribe_core::composition::InstructionNote,
     committed: Option<Arc<AtomicBool>>,
 }
 
@@ -137,7 +137,7 @@ impl<'a> AuditGuard<'a> {
                 error_code: None,
             }],
             author: None,
-            instruction: crate::app::InstructionNote::default(),
+            instruction: scribe_core::composition::InstructionNote::default(),
             committed: None,
         }
     }
@@ -299,7 +299,7 @@ impl<'a> AuditGuard<'a> {
 
     /// Name the instruction a write ran on, by its session and turn ids
     /// only (2_design.md §12.4), on every line it writes.
-    pub(crate) fn set_instruction(&mut self, note: crate::app::InstructionNote) {
+    pub(crate) fn set_instruction(&mut self, note: scribe_core::composition::InstructionNote) {
         self.instruction = note;
     }
 

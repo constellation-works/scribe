@@ -151,11 +151,15 @@ CLI=crates/scribe/src
 # The crate edges keep the use cases out of scribe-domain and scribe-store,
 # and rusqlite out of every crate but the store. What they
 # cannot keep out is std: scribe-domain and scribe-core do no file, network
-# or process I/O of their own (R4, R5), except that the core's providers/
-# spawns the model processes, the only place in the core naming std::process.
+# or process I/O of their own (R4, R5), with two exceptions in the core:
+# composition.rs resolves the host (it may name std::fs), and providers/
+# spawns the model processes (std::fs and std::process).
 for path in "$DOMAIN"/* "$CORE"/*; do
   case "$(basename "$path")" in tests) continue ;; providers)
-    ban_std "$path" 'fs|net' "${path#crates/}: file access belongs in scribe-store"
+    ban_std "$path" 'net' "${path#crates/}: the model adapters open no socket"
+    continue ;;
+  composition.rs)
+    ban_std "$path" 'net|process' "${path#crates/}: composition resolves the host; providers/ spawns the model processes"
     continue ;;
   esac
   ban_std "$path" 'fs|net|process' "${path#crates/}: file and process access belong in scribe-store"
@@ -358,11 +362,21 @@ done
 # The domain receives resolved roots and configuration (R3).
 # A child's working directory (`Command::current_dir(path)`, providers/) is
 # set, not discovered: only the no-argument `current_dir()` is a discovery.
-ban "$CORE"          'std::env::|home_dir|current_dir\(\)'       "the core crate must not read the environment or discover paths"
+# In the core only composition.rs reads the environment or discovers a path.
+for path in "$CORE"/*; do
+  case "$(basename "$path")" in tests | composition.rs) continue ;; esac
+  ban "$path" 'std::env::|home_dir|current_dir\(\)' "${path#crates/}: only composition.rs reads the environment or discovers paths"
+done
+# rustix and tempfile serve the model processes: only providers/ names them.
+for path in "$CORE"/*; do
+  case "$(basename "$path")" in tests | providers) continue ;; esac
+  ban "$path" '(^|[^[:alnum:]_])(rustix|tempfile)::' "${path#crates/}: only providers/ uses rustix and tempfile"
+done
+# Composition builds the context the apps run against; it imports no app.
+ban "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
 ban "$DOMAIN"        'std::env::|home_dir|current_dir'           "the domain crate must not read the environment or discover paths"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
 # Composition does not know about parsing, dispatch or rendering (R2).
-ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
 # The model adapters spawn supervised processes through providers/cli.rs's
 # supervisor in scribe-core, so process-group supervision, the cleared
 # environment and the budget live in one place (STD-03 R11-R15, STD-05 R10).
@@ -399,6 +413,12 @@ for retired in \
   crates/scribe/src/models \
   crates/scribe/src/tests/models.rs \
   crates/scribe/src/tests/codex_models.rs \
+  crates/scribe/src/app.rs \
+  crates/scribe/src/tests/app.rs \
+  crates/scribe/src/commands/ports.rs \
+  crates/scribe/src/commands/hook/tests/payload.rs \
+  crates/scribe/src/commands/hook/project.rs \
+  crates/scribe/src/commands/hook/group_turns \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done

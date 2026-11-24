@@ -4,7 +4,7 @@
 //! ordinary brief.
 
 use super::payload::{self, SessionStartPayload};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use scribe_core::apps::hook::{Command, SessionStartInput, exec};

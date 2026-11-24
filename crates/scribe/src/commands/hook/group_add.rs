@@ -20,7 +20,7 @@
 use super::group_turns;
 #[cfg(test)]
 use super::payload::PromptPayload;
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 #[cfg(test)]
 use crate::output::Output;

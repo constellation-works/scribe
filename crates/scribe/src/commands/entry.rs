@@ -4,7 +4,7 @@ mod records;
 
 use self::records::RecordArgs;
 use super::{DateArgs, ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{EntryPayload, Output, Record, Records};

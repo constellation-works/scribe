@@ -3,10 +3,11 @@
 //! kept when the answer is invalid, terms kept only when verbatim from
 //! Daniel's turns, and a session never switched on never read.
 
-use crate::app::{AppEnv, Context};
+use crate::Context;
 use crate::commands::session::pass::{run_with, short_reason};
 use crate::output::{Output, PassPayload};
 use scribe_core::PassVerbs;
+use scribe_core::composition::Env as AppEnv;
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
     ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,

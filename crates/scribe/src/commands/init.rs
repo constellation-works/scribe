@@ -1,7 +1,7 @@
 //! Install the binary-embedded generic skill and selected provider hooks.
 
 use super::admin;
-use crate::{app::Context, error::CliError, output::Output};
+use crate::{Context, error::CliError, output::Output};
 use clap::Args;
 use scribe_core::apps::admin::{Command, exec};
 use std::path::PathBuf;

@@ -11,7 +11,6 @@
 // Unit tests use unwrap/expect for fixture setup; production call sites remain linted.
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-mod app;
 mod audit_middleware;
 mod cli;
 mod commands;
@@ -21,6 +20,11 @@ mod output;
 
 use std::process::ExitCode;
 
+/// The resolved context every command runs against: composition's, with
+/// this binary's error as its ports' error until the core maps errors
+/// itself (ORB-27921 step 3, PR 4).
+pub(crate) type Context = scribe_core::composition::Context<error::CliError>;
+
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     let cli = match cli::Cli::parse_args(&args) {
@@ -29,17 +33,21 @@ fn main() -> ExitCode {
     };
     let sink = output::Sink::from_process(cli.global.requested_format());
     output::init_logging();
-    let outcome = app::Context::resolve(cli.global.root.as_deref(), &app::AppEnv::from_process())
-        .and_then(|ctx| {
-            let ctx = ctx.with_provider(cli.global.provider.unwrap_or_default());
-            let output = commands::run(cli.command, &ctx)?;
-            let shorts = if sink.shortens_ids() {
-                commands::short_ids(&output, &ctx)
-            } else {
-                scribe_core::ShortIds::default()
-            };
-            Ok((output, shorts))
-        });
+    let outcome = Context::resolve(
+        cli.global.root.as_deref(),
+        &scribe_core::composition::Env::from_process(),
+    )
+    .map_err(error::CliError::from)
+    .and_then(|ctx| {
+        let ctx = ctx.with_provider(cli.global.provider.unwrap_or_default());
+        let output = commands::run(cli.command, &ctx)?;
+        let shorts = if sink.shortens_ids() {
+            commands::short_ids(&output, &ctx)
+        } else {
+            scribe_core::ShortIds::default()
+        };
+        Ok((output, shorts))
+    });
     output::finish(&sink, outcome)
 }
 

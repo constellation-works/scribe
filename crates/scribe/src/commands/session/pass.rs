@@ -1,7 +1,7 @@
 //! `scribe session pass`: the arguments, then the session app's pass.
 
 use super::passed;
-use crate::app::Context;
+use crate::Context;
 use crate::commands::RunLimits;
 use crate::error::CliError;
 use crate::output::Output;

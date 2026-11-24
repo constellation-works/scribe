@@ -175,6 +175,27 @@ impl CliError {
 
 /// `session pass`'s errors, each the variant it was before the flow moved to
 /// the session app (ORB-27707 step 3).
+/// The ports' error: the code the JSON error object carries.
+impl scribe_core::runtime::PortError for CliError {
+    fn code(&self) -> &'static str {
+        CliError::code(self)
+    }
+}
+
+/// Composition's failures, as the variants they have always been.
+impl From<scribe_core::composition::HostError> for CliError {
+    fn from(err: scribe_core::composition::HostError) -> Self {
+        use scribe_core::composition::HostError;
+        match err {
+            HostError::Core(err) => Self::Core(err),
+            HostError::Usage(why) => Self::Usage(why),
+            HostError::NoDataDir => Self::NoDataDir,
+            HostError::RedactEnvUnset(names) => Self::RedactEnvUnset(names),
+            HostError::Read { what, source } => Self::Read { what, source },
+        }
+    }
+}
+
 impl From<scribe_core::apps::session::PassRunError<CliError>> for CliError {
     fn from(err: scribe_core::apps::session::PassRunError<CliError>) -> Self {
         use scribe_core::apps::session::PassRunError;

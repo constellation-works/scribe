@@ -1,7 +1,7 @@
 //! Capture a member's typed turns from host-checked transcript data:
 //! the arguments, then the group app's turn capture.
 
-use crate::{app::Context, error::CliError};
+use crate::{Context, error::CliError};
 use scribe_core::apps::group;
 use scribe_core::{SessionId, message};
 use std::path::Path;

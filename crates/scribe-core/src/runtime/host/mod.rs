@@ -1,25 +1,29 @@
-//! The CLI's side of the use cases' ports ([`scribe_core::runtime::Ctx`]):
-//! the clock, the provider transcripts on this host and the redactor, all
-//! from this process's environment.
+//! The host's side of the apps' ports ([`Ctx`]): the clock, the provider
+//! transcripts on this host and the redactor, implemented on composition's
+//! [`Context`]. `E`, the ports' error, is built from the context's own
+//! [`HostError`]s.
 
-use crate::app::Context;
-use crate::commands::hook::payload;
-use crate::error::CliError;
+#[cfg(test)]
+mod tests;
+pub(crate) mod transcripts;
+
 #[cfg(unix)]
-use scribe_core::ClaudeCapturePosition;
-#[cfg(unix)]
-use scribe_core::runtime::ClaudeRead;
-use scribe_core::runtime::{
+use super::ClaudeRead;
+use super::{
     AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, Runtime, TranscriptState,
     Transcripts, Unreadable,
 };
-use scribe_core::{Config, Project, Provider, Redactor, SessionId};
+#[cfg(unix)]
+use crate::ClaudeCapturePosition;
+use crate::composition::{Context, HostError};
+use crate::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
+use transcripts as payload;
 
-impl Context {
+impl<E: PortError + From<HostError>> Context<E> {
     /// The store and this context's ports, for a use case's `run`.
-    pub(crate) fn core(&self) -> Ctx<'_, CliError> {
+    pub fn core(&self) -> Ctx<'_, E> {
         Ctx {
             store: self.store(),
             clock: self,
@@ -29,18 +33,12 @@ impl Context {
     }
 
     /// The store and this context's ports, for an app's `exec`.
-    pub(crate) fn runtime(&self) -> Runtime<'_, CliError> {
+    pub fn runtime(&self) -> Runtime<'_, E> {
         Runtime::from_parts(self.store(), self, self, self)
     }
 }
 
-impl PortError for CliError {
-    fn code(&self) -> &'static str {
-        CliError::code(self)
-    }
-}
-
-impl AuditNotes for Context {
+impl<E> AuditNotes for Context<E> {
     fn session(&self, session: &str) {
         self.note_instruction_session(session);
     }
@@ -54,9 +52,9 @@ impl AuditNotes for Context {
     }
 }
 
-impl Clock for Context {
+impl<E> Clock for Context<E> {
     fn now(&self) -> OffsetDateTime {
-        Context::now(self)
+        Context::<E>::now(self)
     }
 
     fn now_precise(&self) -> OffsetDateTime {
@@ -64,23 +62,23 @@ impl Clock for Context {
     }
 }
 
-impl Redaction for Context {
-    type Error = CliError;
+impl<E: From<HostError>> Redaction for Context<E> {
+    type Error = E;
 
-    fn redactor(&self, config: &Config) -> Result<Redactor, CliError> {
-        Context::redactor(self, config)
+    fn redactor(&self, config: &Config) -> Result<Redactor, E> {
+        Context::<E>::redactor(self, config).map_err(E::from)
     }
 }
 
-impl Transcripts for Context {
-    type Error = CliError;
+impl<E: PortError + From<HostError>> Transcripts for Context<E> {
+    type Error = E;
 
     fn dir(&self) -> Option<PathBuf> {
         self.transcripts().map(PathBuf::from)
     }
 
-    fn files(&self, provider: Provider) -> Result<Vec<(SessionId, PathBuf)>, CliError> {
-        payload::files_for(&self.with_provider(provider))
+    fn files(&self, provider: Provider) -> Result<Vec<(SessionId, PathBuf)>, E> {
+        payload::files_for(&self.with_provider(provider)).map_err(E::from)
     }
 
     fn check(
@@ -131,16 +129,12 @@ impl Transcripts for Context {
         payload::claude_header(&self.with_provider(provider), path, session)
     }
 
-    fn locate_own(
-        &self,
-        provider: Provider,
-        session: &SessionId,
-    ) -> Result<Option<PathBuf>, CliError> {
-        payload::locate_own(&self.with_provider(provider), session)
+    fn locate_own(&self, provider: Provider, session: &SessionId) -> Result<Option<PathBuf>, E> {
+        payload::locate_own(&self.with_provider(provider), session).map_err(E::from)
     }
 
-    fn discovered(&self, provider: Provider) -> Result<Discovered, CliError> {
-        payload::discovered_for(&self.with_provider(provider))
+    fn discovered(&self, provider: Provider) -> Result<Discovered, E> {
+        payload::discovered_for(&self.with_provider(provider)).map_err(E::from)
     }
 
     #[cfg(unix)]

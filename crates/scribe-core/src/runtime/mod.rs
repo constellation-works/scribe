@@ -13,6 +13,7 @@
 
 pub mod audit;
 pub mod errors;
+pub mod host;
 pub mod resolve;
 
 #[cfg(unix)]

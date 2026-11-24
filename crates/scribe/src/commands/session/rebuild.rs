@@ -2,7 +2,7 @@
 //! to an isolated dot-file; only the complete rebuild replaces the record.
 
 use super::{once, passed};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;

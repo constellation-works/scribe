@@ -8,7 +8,7 @@
 
 use super::session::{View, output};
 use super::{DateArgs, ListNotice, day_parser};
-use crate::app::Context;
+use crate::Context;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TranscriptPayload, WarningPayload};
 use clap::{Args, Subcommand};

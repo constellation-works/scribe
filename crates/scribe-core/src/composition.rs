@@ -1,21 +1,29 @@
-//! Composition (STD-02 R2): the one place that resolves configuration, picks
-//! the data directory and constructs the store. It hands the domain resolved
-//! values (STD-02 R3), composes the model adapter (`ClaudeCliModels`), and
-//! knows nothing about argument parsing or rendering;
-//! `scripts/check-dependency-direction.sh` rejects `crate::cli`,
-//! `crate::command` and `crate::output` imports here.
+//! Composition (STD-02 R2): the one place that resolves anything about the
+//! host. It captures the environment once ([`Env::from_process`]), picks the
+//! data directory, constructs the store, and hands the apps resolved values
+//! (STD-02 R3); it composes the model adapter
+//! ([`ClaudeCliModels`](crate::providers::ClaudeCliModels)) and knows nothing
+//! about argument parsing or rendering. Outside this module and
+//! `providers/`, nothing in the core reads an environment variable or
+//! touches a file (`scripts/check-dependency-direction.sh`).
+//!
+//! [`Context`] is generic over its ports' error `E`, which the binary sets to
+//! its own error until the core's error mapping lands (ORB-27921 step 3,
+//! PR 4); the context's own failures are [`HostError`]s, which `E` is built
+//! from.
 
-use crate::error::CliError;
-use scribe_core::providers::{ClaudeCliModels, allowed_env};
-use scribe_core::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
+use crate::providers::{ClaudeCliModels, allowed_env};
+pub use crate::runtime::errors::HostError;
+use crate::{Config, Label, Provider, Redactor, Store, unresolved_redact_env};
 use std::ffi::OsString;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
 /// Environment variable naming the data directory.
-pub(crate) const ROOT_ENV: &str = "SCRIBE_ROOT";
+pub const ROOT_ENV: &str = "SCRIBE_ROOT";
 
 /// Environment variable Claude Code sets on its hooks: `cli` when a person
 /// types into the session.
@@ -32,24 +40,25 @@ const DEFAULT_DIR: &str = ".scribe";
 
 /// The configuration-relevant environment, captured once.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AppEnv {
+pub struct Env {
     /// `SCRIBE_ROOT`.
-    pub(crate) root: Option<OsString>,
+    pub root: Option<OsString>,
     /// `HOME`.
-    pub(crate) home: Option<OsString>,
+    pub home: Option<OsString>,
     /// `CLAUDE_CONFIG_DIR`: where Claude Code keeps its state instead of
     /// `~/.claude`, and so its transcripts.
-    pub(crate) claude_config_dir: Option<OsString>,
+    pub claude_config_dir: Option<OsString>,
     /// Optional Codex state directory.
-    pub(crate) codex_home: Option<OsString>,
+    pub codex_home: Option<OsString>,
     /// `CLAUDE_CODE_ENTRYPOINT`: `cli` in an interactive Claude Code
     /// session, `sdk-cli` for every `claude -p` run (2_design.md §12.5).
-    pub(crate) claude_entrypoint: Option<OsString>,
+    pub claude_entrypoint: Option<OsString>,
 }
 
-impl AppEnv {
+impl Env {
     /// Read the variables from the real process environment.
-    pub(crate) fn from_process() -> Self {
+    #[must_use]
+    pub fn from_process() -> Self {
         Self {
             root: std::env::var_os(ROOT_ENV),
             home: std::env::var_os("HOME"),
@@ -60,9 +69,9 @@ impl AppEnv {
     }
 }
 
-/// Everything a command needs, resolved.
-#[derive(Clone, Debug)]
-pub(crate) struct Context {
+/// Everything a command needs, resolved. `E` is the error its ports report
+/// ([`crate::runtime::Transcripts`], [`crate::runtime::Redaction`]).
+pub struct Context<E = HostError> {
     store: Store,
     transcripts: Option<PathBuf>,
     codex_transcripts: Option<PathBuf>,
@@ -79,23 +88,59 @@ pub(crate) struct Context {
     /// its final store transaction, so the enclosing guard must not emit a
     /// duplicate or unwind line.
     audit_committed: Arc<AtomicBool>,
+    error: PhantomData<fn() -> E>,
+}
+
+impl<E> Clone for Context<E> {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            transcripts: self.transcripts.clone(),
+            codex_transcripts: self.codex_transcripts.clone(),
+            codex_archived: self.codex_archived.clone(),
+            provider: self.provider,
+            interactive: self.interactive,
+            instruction: Arc::clone(&self.instruction),
+            audit_committed: Arc::clone(&self.audit_committed),
+            error: PhantomData,
+        }
+    }
+}
+
+impl<E> std::fmt::Debug for Context<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("store", &self.store)
+            .field("transcripts", &self.transcripts)
+            .field("codex_transcripts", &self.codex_transcripts)
+            .field("codex_archived", &self.codex_archived)
+            .field("provider", &self.provider)
+            .field("interactive", &self.interactive)
+            .field("instruction", &self.instruction)
+            .field("audit_committed", &self.audit_committed)
+            .finish()
+    }
 }
 
 /// The ids of the user's instruction a write ran on (2_design.md §12.4): the
 /// session from `--session`, and the turn's message once the check found it.
 /// Ids only; the instruction's words never reach the audit log.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct InstructionNote {
+pub struct InstructionNote {
     /// The `--session` the instruction was looked for in.
-    pub(crate) session: Option<String>,
+    pub session: Option<String>,
     /// The uuid of the turn that backs it, once the check passed.
-    pub(crate) message: Option<String>,
+    pub message: Option<String>,
 }
 
-impl Context {
+impl<E> Context<E> {
     /// Resolve the context. Data directory precedence: `--root` >
     /// `SCRIBE_ROOT` > `$HOME/.scribe`.
-    pub(crate) fn resolve(root_flag: Option<&Path>, env: &AppEnv) -> Result<Self, CliError> {
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::NoDataDir`] when nothing names a data directory.
+    pub fn resolve(root_flag: Option<&Path>, env: &Env) -> Result<Self, HostError> {
         let root = resolve_root(root_flag, env)?;
         tracing::debug!(root = %root.display(), "resolved data directory");
         Ok(Self {
@@ -118,16 +163,18 @@ impl Context {
                 .claude_entrypoint
                 .as_deref()
                 .and_then(|e| e.to_str())
-                .is_some_and(|e| scribe_core::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
+                .is_some_and(|e| crate::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
             instruction: Arc::default(),
             audit_committed: Arc::default(),
+            error: PhantomData,
         })
     }
 
     /// A context for the store at `root` and the transcripts under
     /// `transcripts`, as the plugin's settings name them (`plugin call`
     /// never reads `SCRIBE_ROOT` or `HOME`).
-    pub(crate) fn at(root: PathBuf, transcripts: Option<PathBuf>) -> Self {
+    #[must_use]
+    pub fn at(root: PathBuf, transcripts: Option<PathBuf>) -> Self {
         Self {
             store: Store::open(root),
             transcripts,
@@ -137,24 +184,27 @@ impl Context {
             interactive: false,
             instruction: Arc::default(),
             audit_committed: Arc::default(),
+            error: PhantomData,
         }
     }
 
     /// A provider-scoped view sharing the same store.
-    pub(crate) fn with_provider(&self, provider: Provider) -> Self {
+    #[must_use]
+    pub fn with_provider(&self, provider: Provider) -> Self {
         Self {
             provider,
             ..self.clone()
         }
     }
     /// Explicit Codex state root for sandboxed plugin callers; no env fallback.
-    pub(crate) fn with_codex_home(mut self, root: Option<PathBuf>) -> Self {
+    #[must_use]
+    pub fn with_codex_home(mut self, root: Option<PathBuf>) -> Self {
         self.codex_transcripts = root.as_ref().map(|r| r.join("sessions"));
         self.codex_archived = root.map(|r| r.join("archived_sessions"));
         self
     }
     /// All permitted transcript roots for this provider, including archives.
-    pub(crate) fn transcript_roots(&self) -> Vec<&Path> {
+    pub fn transcript_roots(&self) -> Vec<&Path> {
         match self.provider {
             Provider::ClaudeCode => self.transcripts.iter().map(PathBuf::as_path).collect(),
             Provider::Codex => self
@@ -168,21 +218,21 @@ impl Context {
 
     /// Note the session a command's instruction is looked for in, before
     /// anything can refuse it, so its audit line names it.
-    pub(crate) fn note_instruction_session(&self, session: &str) {
+    pub fn note_instruction_session(&self, session: &str) {
         if let Ok(mut note) = self.instruction.lock() {
             note.session = Some(session.to_owned());
         }
     }
 
     /// Note the turn a passing instruction check found.
-    pub(crate) fn note_instruction_message(&self, message: &str) {
+    pub fn note_instruction_message(&self, message: &str) {
         if let Ok(mut note) = self.instruction.lock() {
             note.message = Some(message.to_owned());
         }
     }
 
     /// What the running command noted of its instruction.
-    pub(crate) fn instruction_note(&self) -> InstructionNote {
+    pub fn instruction_note(&self) -> InstructionNote {
         self.instruction
             .lock()
             .map(|note| note.clone())
@@ -191,27 +241,34 @@ impl Context {
 
     /// Note that a stepwise command already committed its success audit inside
     /// its final store write transaction.
-    pub(crate) fn note_audit_committed(&self) {
+    pub fn note_audit_committed(&self) {
         self.audit_committed.store(true, Ordering::Release);
     }
 
     /// Shared flag telling the enclosing `AuditGuard` that the audit row was
     /// already committed inside a store write transaction.
-    pub(crate) fn audit_committed_flag(&self) -> Arc<AtomicBool> {
+    pub fn audit_committed_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.audit_committed)
     }
 
     /// The active transcript provider.
     /// Whether this runs under an interactive Claude Code session.
-    pub(crate) fn interactive(&self) -> bool {
+    #[must_use]
+    pub fn interactive(&self) -> bool {
         self.interactive
     }
 
-    pub(crate) fn provider(&self) -> Provider {
+    /// The active transcript provider.
+    #[must_use]
+    pub fn provider(&self) -> Provider {
         self.provider
     }
     /// Config with provider-specific model defaults resolved.
-    pub(crate) fn config(&self) -> Result<Config, CliError> {
+    ///
+    /// # Errors
+    ///
+    /// When the store or `config.toml` cannot be read.
+    pub fn config(&self) -> Result<Config, HostError> {
         Ok(self
             .store
             .read()
@@ -221,7 +278,11 @@ impl Context {
     }
 
     /// Refuse scaffolding when the selected runtime is not executable on PATH.
-    pub(crate) fn require_runtime(&self) -> Result<(), CliError> {
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Usage`] when it is not.
+    pub fn require_runtime(&self) -> Result<(), HostError> {
         let program = match self.provider {
             Provider::Codex => "codex",
             Provider::ClaudeCode => "claude",
@@ -243,7 +304,7 @@ impl Context {
             })
         });
         if !found {
-            return Err(CliError::Usage(format!(
+            return Err(HostError::Usage(format!(
                 "{program} is not executable on PATH; install the selected runtime and rerun scribe init"
             )));
         }
@@ -251,7 +312,7 @@ impl Context {
     }
 
     /// The scribe store.
-    pub(crate) fn store(&self) -> &Store {
+    pub fn store(&self) -> &Store {
         &self.store
     }
 
@@ -259,7 +320,7 @@ impl Context {
     /// `$CLAUDE_CONFIG_DIR/projects`, else `$HOME/.claude/projects`. `None`
     /// when neither is set, which makes every transcript fail the
     /// provenance check.
-    pub(crate) fn transcripts(&self) -> Option<&Path> {
+    pub fn transcripts(&self) -> Option<&Path> {
         match self.provider {
             Provider::ClaudeCode => self.transcripts.as_deref(),
             Provider::Codex => self.codex_transcripts.as_deref(),
@@ -267,7 +328,7 @@ impl Context {
     }
 
     /// This host's name as a record label, for the records it stamps.
-    pub(crate) fn host(&self) -> Label {
+    pub fn host(&self) -> Label {
         Label::sanitized(host_name().as_deref().unwrap_or_default(), UNKNOWN_HOST)
     }
 
@@ -278,14 +339,18 @@ impl Context {
     /// would store the very value the operator configured scribe to mask,
     /// unmasked and without warning (STD-05 R13). The model credentials
     /// are not checked: they are alternatives, so one may be unset.
-    pub(crate) fn redactor(&self, config: &Config) -> Result<Redactor, CliError> {
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::RedactEnvUnset`] when a name has no value.
+    pub fn redactor(&self, config: &Config) -> Result<Redactor, HostError> {
         let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
         if !missing.is_empty() {
             tracing::warn!(
                 names = %missing.join(","),
                 "refusing to write: a configured [redact] env name has no value in this environment"
             );
-            return Err(CliError::RedactEnvUnset(missing));
+            return Err(HostError::RedactEnvUnset(missing));
         }
         Ok(Redactor::from_config(config, |name| {
             std::env::var(name).ok()
@@ -296,7 +361,7 @@ impl Context {
     /// `LANG` and the configured credential variables from this process's
     /// environment, and nothing else (STD-05 R10). Its failure reports mask
     /// every configured secret, as persisted text does (STD-05 R14).
-    pub(crate) fn models(&self, config: &Config) -> ClaudeCliModels {
+    pub fn models(&self, config: &Config) -> ClaudeCliModels {
         let mut credentials = config.models.credentials.clone();
         if config.models.provider == Provider::Codex {
             credentials.push(String::from("CODEX_HOME"));
@@ -322,14 +387,15 @@ impl Context {
     }
 
     /// The current time, whole seconds, for records created by this invocation.
-    pub(crate) fn now(&self) -> OffsetDateTime {
+    pub fn now(&self) -> OffsetDateTime {
         let now = OffsetDateTime::now_utc();
         now.replace_nanosecond(0).unwrap_or(now)
     }
 }
 
 /// The transcripts directory precedence, separated so tests can check it.
-pub(crate) fn transcripts_dir(env: &AppEnv) -> Option<PathBuf> {
+#[must_use]
+pub fn transcripts_dir(env: &Env) -> Option<PathBuf> {
     let non_empty = |v: &Option<OsString>| v.clone().filter(|s| !s.is_empty());
     non_empty(&env.claude_config_dir)
         .map(PathBuf::from)
@@ -339,13 +405,7 @@ pub(crate) fn transcripts_dir(env: &AppEnv) -> Option<PathBuf> {
 
 #[cfg(unix)]
 fn host_name() -> Option<String> {
-    let uname = rustix::system::uname();
-    uname
-        .nodename()
-        .to_str()
-        .ok()
-        .filter(|n| !n.is_empty())
-        .map(str::to_owned)
+    scribe_tools::host::name()
 }
 
 #[cfg(not(unix))]
@@ -354,7 +414,11 @@ fn host_name() -> Option<String> {
 }
 
 /// The data-directory precedence, separated so tests can check it directly.
-pub(crate) fn resolve_root(root_flag: Option<&Path>, env: &AppEnv) -> Result<PathBuf, CliError> {
+///
+/// # Errors
+///
+/// [`HostError::NoDataDir`] when nothing names one.
+pub fn resolve_root(root_flag: Option<&Path>, env: &Env) -> Result<PathBuf, HostError> {
     let non_empty = |v: &Option<OsString>| v.clone().filter(|s| !s.is_empty());
     if let Some(flag) = root_flag {
         return Ok(flag.to_path_buf());
@@ -364,5 +428,5 @@ pub(crate) fn resolve_root(root_flag: Option<&Path>, env: &AppEnv) -> Result<Pat
     }
     non_empty(&env.home)
         .map(|home| PathBuf::from(home).join(DEFAULT_DIR))
-        .ok_or(CliError::NoDataDir)
+        .ok_or(HostError::NoDataDir)
 }

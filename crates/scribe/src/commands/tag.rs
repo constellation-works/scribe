@@ -1,7 +1,7 @@
 //! Configured and store tags: listing and audited direct writes.
 
 use super::{ListNotice, list_output};
-use crate::app::Context;
+use crate::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
