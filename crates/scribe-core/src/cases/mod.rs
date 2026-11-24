@@ -14,15 +14,12 @@
 //! (scripts/check-dependency-direction.sh).
 
 pub mod annotation;
-pub mod brief;
 pub mod codex;
-pub mod consistency_scan;
 pub mod continuation;
 pub mod group_add;
 pub mod hook;
 pub mod proposal_command;
 pub mod scribe_command;
-pub mod search;
 pub mod session_end;
 pub mod session_start;
 pub mod stop;

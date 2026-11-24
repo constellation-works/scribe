@@ -384,7 +384,10 @@ for retired in \
   crates/scribe-core/src/cases/group_join.rs \
   crates/scribe-core/src/cases/group_leave.rs \
   crates/scribe-core/src/cases/group_open.rs \
-  crates/scribe-core/src/cases/group_turns.rs; do
+  crates/scribe-core/src/cases/group_turns.rs \
+  crates/scribe-core/src/cases/search.rs \
+  crates/scribe-core/src/cases/brief.rs \
+  crates/scribe-core/src/cases/consistency_scan.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

@@ -117,7 +117,12 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         limit,
     };
     let store = ctx.store();
-    let searched = scribe_core::cases::search::run(&ctx.core(), &query, args.group.as_deref())?;
+    let command = scribe_core::apps::search::Command {
+        query: &query,
+        group: args.group.as_deref(),
+    };
+    let scribe_core::apps::search::Outcome::Searched(searched) =
+        scribe_core::apps::search::exec(&ctx.runtime(), command)?;
     let (found, group, skipped, read_only_copy, message_matches) = (
         searched.found,
         searched.group,

@@ -270,9 +270,9 @@ impl From<scribe_core::apps::proposal::Error<CliError>> for CliError {
 }
 
 /// `consistency scan`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::consistency_scan::ScanError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::consistency_scan::ScanError<CliError>) -> Self {
-        use scribe_core::cases::consistency_scan::ScanError;
+impl From<scribe_core::apps::consistency::ScanError<CliError>> for CliError {
+    fn from(err: scribe_core::apps::consistency::ScanError<CliError>) -> Self {
+        use scribe_core::apps::consistency::ScanError;
         match err {
             ScanError::Core(e) => Self::Core(e),
             ScanError::Port(e) => e,

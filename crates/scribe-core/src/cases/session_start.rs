@@ -1,13 +1,13 @@
 //! SessionStart (ORB-27707 step 3c) reports open proposals and unpicked
 //! actions to the user.
 //! An interactive session also receives the ordinary brief
-//! ([`crate::cases::brief`]) after the rest of [`run`]'s context. A clear
+//! ([`crate::apps::brief`]) after the rest of [`run`]'s context. A clear
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use crate::apps::brief;
 use crate::apps::group;
 use crate::apps::session::{self, ClearedPredecessor};
-use crate::cases::brief;
 use crate::cases::continuation;
 use crate::cases::hook::{HookOutcome, HookReply};
 use crate::group::SeatStart;

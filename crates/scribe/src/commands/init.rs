@@ -1,7 +1,9 @@
 //! Install the binary-embedded generic skill and selected provider hooks.
 
+use super::admin;
 use crate::{app::Context, error::CliError, output::Output};
 use clap::Args;
+use scribe_core::apps::admin::{Command, exec};
 use std::path::PathBuf;
 
 const SKILL: &str = include_str!("../../../../skills/scribe/SKILL.md");
@@ -45,12 +47,12 @@ pub(super) fn run(args: InitArgs, ctx: &Context) -> Result<Output, CliError> {
             "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
         )));
     }
-    let report = scribe_core::init_project_with_skill_files(
-        &args.target,
-        ctx.provider(),
-        &binary,
-        SKILL,
-        SKILL_FILES,
-    )?;
-    Ok(Output::Init(report))
+    let command = Command::Init {
+        target: &args.target,
+        provider: ctx.provider(),
+        binary: &binary,
+        skill: SKILL,
+        skill_files: SKILL_FILES,
+    };
+    Ok(admin::output(exec(&ctx.runtime(), command)?))
 }
