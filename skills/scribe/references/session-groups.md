@@ -59,7 +59,9 @@ For open, join, leave and close in Codex, put `--provider codex` before
   that started the work is kept. Capture continues after them, storing none
   twice. A `--replace` or clear successor stores its own earlier turns only.
   `/scribe group add` also backfills eligible older typed turns.
-- **Backfill existing seats.** `scribe group backfill <id>` stores eligible earlier typed turns from each current holder’s checked transcript, without a model call or changing capture cursors. It reports stored and skipped counts per seat and in total, where skipped covers turns already stored and turns a restored holder’s cutoff excludes; unavailable or refused transcripts are named separately. It refuses closed groups, and repeating it stores nothing twice.
+- **Backfill existing seats.** `scribe group backfill <id>` stores eligible earlier typed turns from each current holder’s checked transcript without a model call or changing capture cursors. It reports counts per seat and in total.
+  - **Skipped.** Counts turns already stored and turns excluded by a restored holder’s cutoff. On V19-upgraded stores, a missing later membership can conservatively mark a never-displaced holder as restored, so the cutoff excludes its pre-join turns too.
+  - Unavailable or refused transcripts are named separately. The command refuses closed groups; repeating it stores nothing twice.
 - **Capture exclusions.** Scribe excludes assistant turns, harness and
   `/scribe` control lines, pasted blocks, fenced code, and turns with a
   finance or sensitive-event word. It also excludes peer, agent and
