@@ -27,15 +27,18 @@ expect() {
   fi
 }
 
-# tree <name>: a fresh fixture root holding a minimal two-crate workspace.
+# tree <name>: a fresh fixture root holding a minimal three-crate workspace.
 tree() {
   local root="$work/$1"
-  mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src"
-  printf '[package]\nname = "scribe-core"\n' >"$root/crates/scribe-core/Cargo.toml"
+  mkdir -p "$root/crates/scribe-domain/src" "$root/crates/scribe-core/src" "$root/crates/scribe/src"
+  printf '[package]\nname = "scribe-domain"\n' >"$root/crates/scribe-domain/Cargo.toml"
+  printf '[package]\nname = "scribe-core"\n\n[dependencies]\nscribe-domain = { path = "../scribe-domain" }\n' \
+    >"$root/crates/scribe-core/Cargo.toml"
   printf '[package]\nname = "scribe"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
     >"$root/crates/scribe/Cargo.toml"
   printf '//! core\npub mod entry;\n' >"$root/crates/scribe-core/src/lib.rs"
-  printf '//! entry\nuse std::fmt;\n' >"$root/crates/scribe-core/src/entry.rs"
+  printf '//! domain\npub mod entry;\n' >"$root/crates/scribe-domain/src/lib.rs"
+  printf '//! entry\nuse std::fmt;\n' >"$root/crates/scribe-domain/src/entry.rs"
   printf 'fn main() {}\n' >"$root/crates/scribe/src/main.rs"
   echo "$root"
 }
@@ -65,28 +68,28 @@ expect pass check-test-modules.sh "$nested" "store/tests/ declared in store/mod.
 
 # --- check-dependency-direction.sh: std::fs reached by a grouped import ------
 deps=$(tree deps-clean)
-expect pass check-dependency-direction.sh "$deps" "a core module with use std::fmt"
+expect pass check-dependency-direction.sh "$deps" "a domain module with use std::fmt"
 
 for import in 'use std::{fmt, fs};' 'use std::{io, fs::File};' $'use std::{\n    fmt,\n    process::Command,\n};'; do
   bad=$(tree "deps-grouped-$n")
-  printf '//! entry\n%s\n' "$import" >"$bad/crates/scribe-core/src/entry.rs"
-  expect fail check-dependency-direction.sh "$bad" "a core module with $(echo "$import" | tr -s '\n ' ' ')"
+  printf '//! entry\n%s\n' "$import" >"$bad/crates/scribe-domain/src/entry.rs"
+  expect fail check-dependency-direction.sh "$bad" "a domain module with $(echo "$import" | tr -s '\n ' ' ')"
 done
 
 near=$(tree deps-near)
-printf '//! entry\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-core/src/entry.rs"
+printf '//! entry\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-domain/src/entry.rs"
 expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
 
 # The Models port may not depend on its callers.
 port=$(tree port-clean)
-printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-core/src/models.rs"
+printf 'use crate::voice::Voice;\n' >"$port/crates/scribe-domain/src/models.rs"
 expect pass check-dependency-direction.sh "$port" "a port using a lower-level module"
-printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-core/src/models.rs"
+printf 'use crate::{voice::{group, Voice}};\n' >"$port/crates/scribe-domain/src/models.rs"
 expect pass check-dependency-direction.sh "$port" "a nested name that is not a caller module"
 for module in ask memory group; do
-  printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-core/src/models.rs"
+  printf 'use crate::%s::Item;\n' "$module" >"$port/crates/scribe-domain/src/models.rs"
   expect fail check-dependency-direction.sh "$port" "a port importing $module"
-  printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-core/src/models.rs"
+  printf 'use crate::{voice::Voice,\n    %s::Item};\n' "$module" >"$port/crates/scribe-domain/src/models.rs"
   expect fail check-dependency-direction.sh "$port" "a port importing $module in a group"
 done
 
