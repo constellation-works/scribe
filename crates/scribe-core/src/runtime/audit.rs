@@ -1,5 +1,6 @@
 //! The audit lines a multi-step use case owes for writes already on disk
-//! when it returns early.
+//! when it returns early, and the outcome a hook run records per write or
+//! refusal.
 
 use crate::{AuditEvent, AuditStatus, Store};
 use time::OffsetDateTime;
@@ -83,4 +84,14 @@ impl Drop for PersistedAudit<'_> {
             }
         }
     }
+}
+
+/// One write or refusal a hook run made: what the audit guard writes one
+/// line for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookOutcome {
+    /// The record it acted on: an entry id, or `session:<id>` for a refusal.
+    pub target: Option<String>,
+    /// The stable code of a refusal; `None` for a write.
+    pub error_code: Option<&'static str>,
 }

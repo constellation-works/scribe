@@ -5,10 +5,10 @@
 //! with a continue handoff restores it before the brief (§16.7). On other
 //! starts the same-project reminder is advisory and changes no switch.
 
+use crate::apps::group;
 use crate::apps::session::{self, ClearedPredecessor};
 use crate::cases::brief;
 use crate::cases::continuation;
-use crate::cases::group::GroupVerbs;
 use crate::cases::hook::{HookOutcome, HookReply};
 use crate::group::SeatStart;
 use crate::runtime::{Ctx, PortError, TranscriptState};
@@ -92,7 +92,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
         });
     // A marker that cannot be recorded is reported, not fatal: the start
     // still prints its brief, memory, proposals and handoff.
-    let deferral = missing.then(|| ctx.store.defer_ancestry(&session));
+    let deferral = missing.then(|| group::defer_ancestry(ctx.store, &session));
     if let Some(Err(err)) = &deferral {
         tracing::warn!(%err, "cannot record the deferred ancestry check");
     }
@@ -195,7 +195,7 @@ pub fn seat_at_start<E>(
         ClearedPredecessor::One(parent) => Some(parent),
         ClearedPredecessor::None | ClearedPredecessor::Multiple(_) => None,
     };
-    match ctx.store.inherit_seat(child, parent) {
+    match group::inherit_seat(ctx.store, child, parent) {
         Ok(SeatStart::NoOpenGroups) => SeatReply::default(),
         Ok(SeatStart::AlreadySeated(hold)) => SeatReply {
             context: Some(format!(

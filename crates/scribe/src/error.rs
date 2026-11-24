@@ -189,9 +189,9 @@ impl From<scribe_core::apps::session::PassRunError<CliError>> for CliError {
 /// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
 /// the prompt hook and `/scribe group add`), each the variant it was before the flow moved to
 /// `scribe_core::cases` (ORB-27707 step 3b).
-impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::hook::HookError<CliError>) -> Self {
-        use scribe_core::cases::hook::HookError;
+impl From<scribe_core::apps::group::HookError<CliError>> for CliError {
+    fn from(err: scribe_core::apps::group::HookError<CliError>) -> Self {
+        use scribe_core::apps::group::HookError;
         match err {
             HookError::Core(e) => Self::Core(e),
             HookError::Port(e) => e,
@@ -203,9 +203,9 @@ impl From<scribe_core::cases::hook::HookError<CliError>> for CliError {
 }
 
 /// `scribe group`'s errors, each the variant it was before the flow moved.
-impl From<scribe_core::cases::GroupError<CliError>> for CliError {
-    fn from(err: scribe_core::cases::GroupError<CliError>) -> Self {
-        use scribe_core::cases::GroupError;
+impl From<scribe_core::apps::group::Error<CliError>> for CliError {
+    fn from(err: scribe_core::apps::group::Error<CliError>) -> Self {
+        use scribe_core::apps::group::Error as GroupError;
         match err {
             GroupError::Core(e) => Self::Core(e),
             GroupError::Port(e) => e,

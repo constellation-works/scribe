@@ -17,7 +17,7 @@
 //! blocked as a `/scribe` line always is. Audit outcomes carry session ids and
 //! error codes only.
 
-use crate::cases::group::GroupVerbs;
+use crate::apps::group as group_app;
 use crate::cases::hook::{HookError, HookOutcome, HookPortError, HookReply};
 use crate::cases::user_prompt_submit::EVENT;
 use crate::group::{Added, GroupAddition};
@@ -87,7 +87,8 @@ pub fn run<E: HookPortError>(
         }
     };
     let project = ctx.transcripts.project_of(Path::new(cwd));
-    let added = ctx.store.add_project_group_sessions(
+    let added = group_app::add_project_group_sessions(
+        ctx.store,
         slug,
         &project,
         session,

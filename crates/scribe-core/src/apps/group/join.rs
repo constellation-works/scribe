@@ -1,9 +1,9 @@
 //! `scribe group join` (ORB-27707 step 3c): seat the calling session in a
 //! group under its own author name.
 
+use super::verbs::GroupVerbs;
+use super::{Error as GroupError, earlier_turns, ended, redactor};
 use crate::apps::session::{self, ClearedPredecessor};
-use crate::cases::group::GroupVerbs;
-use crate::cases::group_cmd::{GroupError, earlier_turns, ended, redactor};
 use crate::group::{JoinGroup, automatic_seat};
 use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Label, Provider, SessionId};

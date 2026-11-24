@@ -3,9 +3,10 @@
 //! Stop, a Codex rollout's typed turns, and a past session's turns when it
 //! joins.
 
-use crate::cases::group::GroupVerbs;
-use crate::cases::hook::{HookError, HookOutcome};
+use super::HookError;
+use super::verbs::GroupVerbs;
 use crate::control::is_control;
+use crate::runtime::audit::HookOutcome;
 use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::{Provider, SessionId, codex::TypedTurn, message, transcript};
 use std::path::Path;

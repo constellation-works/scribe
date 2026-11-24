@@ -7,6 +7,7 @@
 //! `mod.rs` exports (scripts/check-dependency-direction.sh).
 
 pub mod entry;
+pub mod group;
 pub mod mark;
 pub mod memory;
 pub mod proposal;

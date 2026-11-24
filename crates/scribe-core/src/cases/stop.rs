@@ -27,8 +27,8 @@
 //! that is off or was never switched on.
 
 use crate::apps::entry;
+use crate::apps::group;
 use crate::cases::annotation::{self, AnnotationInput};
-use crate::cases::group_turns;
 use crate::cases::hook::{HookError, HookOutcome, HookReply, PROVENANCE_FAILED};
 use crate::control::{self, Since};
 use crate::runtime::resolve::refuse_forgotten;
@@ -100,7 +100,7 @@ pub fn run<E: PortError>(
     let mut persisted =
         crate::runtime::audit::PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now());
     let mut outcomes: Vec<HookOutcome> = if provider == Provider::ClaudeCode {
-        group_turns::claude(ctx, provider, &session, transcript_path)?
+        group::claude_turns(ctx, provider, &session, transcript_path)?
             .into_iter()
             .collect()
     } else {

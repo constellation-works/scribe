@@ -12,11 +12,12 @@
 //! `SessionEnd` and `Stop` payloads are decoded up front, and a decode error
 //! is raised where the old adapter decoded them.
 
+use crate::apps::group;
 use crate::capture::{PromptClaims, prompt_agent_originated};
 use crate::cases::hook::{HookError, HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED};
+use crate::cases::session_end;
 use crate::cases::stop::{self, StopInput};
 use crate::cases::user_prompt_submit::{self, PromptInput};
-use crate::cases::{group_turns, session_end};
 use crate::codex::TypedTurn;
 use crate::control::{command_text, is_control};
 use crate::message::NewMessage;
@@ -236,7 +237,7 @@ where
     }
     let mut persisted =
         (event == "Stop").then(|| PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now()));
-    let group_outcomes: Vec<HookOutcome> = group_turns::codex(ctx, provider, &id, &rollout.typed)?
+    let group_outcomes: Vec<HookOutcome> = group::codex_turns(ctx, provider, &id, &rollout.typed)?
         .into_iter()
         .collect();
     if let Some(persisted) = persisted.as_mut() {

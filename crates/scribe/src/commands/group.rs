@@ -6,10 +6,10 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
-use scribe_core::cases::group_close::{CLOSE_COMMAND, GroupCloseInput};
-use scribe_core::cases::group_join::GroupJoinInput;
-use scribe_core::cases::group_open::GroupOpenInput;
-use scribe_core::cases::{group_backfill, group_close, group_join, group_leave, group_open};
+use scribe_core::apps::group::{
+    self as app, CLOSE_COMMAND, Command, GroupBackfilled, GroupCloseInput, GroupJoinInput,
+    GroupOpenInput, Outcome, exec,
+};
 use scribe_core::{AuthorName, Config, Label, Project, Provider, Related, SessionId};
 
 pub(super) const EXAMPLES: &str = "Examples:
@@ -116,11 +116,11 @@ impl GroupCommand {
         match self {
             Self::Join { id, author, .. } => AuditSubject {
                 author: Some(author.to_string()),
-                target: ctx.store().read().groups().get(id).ok().map(|g| g.id),
+                target: app::resolved_id(&ctx.runtime(), id),
             },
             Self::Close { id, .. } | Self::Backfill { id } => AuditSubject {
                 author: None,
-                target: ctx.store().read().groups().get(id).ok().map(|g| g.id),
+                target: app::resolved_id(&ctx.runtime(), id),
             },
             Self::Open { .. } | Self::Leave | Self::List | Self::Show { .. } => {
                 AuditSubject::default()
@@ -145,100 +145,75 @@ fn caller(ctx: &Context) -> Result<SessionId, CliError> {
 }
 
 pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
-    let store = ctx.store();
-    let (id, changed, notices) = match command {
+    let command = match command {
         GroupCommand::Open {
             title,
             kind,
             project,
             related,
             quote,
-        } => {
-            let session = caller(ctx)?;
-            let opened = group_open::run(
-                &ctx.core(),
-                GroupOpenInput {
-                    session,
-                    title,
-                    kind,
-                    project,
-                    related,
-                    quote,
-                    provider: ctx.provider(),
-                    notes: ctx,
-                },
-            )?;
-            (opened.id, true, opened.notices)
-        }
+        } => Command::Open(GroupOpenInput {
+            session: caller(ctx)?,
+            title,
+            kind,
+            project,
+            related,
+            quote,
+            provider: ctx.provider(),
+            notes: ctx,
+        }),
         GroupCommand::Join {
             id,
             seat,
             author,
             role,
             replace,
-        } => {
-            let session = caller(ctx)?;
-            let joined = group_join::run(
-                &ctx.core(),
-                GroupJoinInput {
-                    session,
-                    id,
-                    seat,
-                    author,
-                    role,
-                    replace,
-                    provider: ctx.provider(),
-                },
-            )?;
-            (joined.id, joined.changed, joined.notices)
+        } => Command::Join(GroupJoinInput {
+            session: caller(ctx)?,
+            id,
+            seat,
+            author,
+            role,
+            replace,
+            provider: ctx.provider(),
+        }),
+        GroupCommand::Backfill { id } => Command::Backfill {
+            id,
+            provider: ctx.provider(),
+        },
+        GroupCommand::Leave => Command::Leave(caller(ctx)?),
+        GroupCommand::Close { id, quote } => Command::Close(GroupCloseInput {
+            session: caller(ctx)?,
+            id,
+            quote,
+            provider: ctx.provider(),
+            models: super::session::once(|config: &Config| ctx.models(config)),
+            notes: ctx,
+        }),
+        GroupCommand::Show { id } => Command::Show(id),
+        GroupCommand::List => Command::List,
+    };
+    Ok(output(exec(&ctx.runtime(), command)?))
+}
+
+/// A `group` outcome as its output.
+fn output(outcome: Outcome) -> Output {
+    match outcome {
+        Outcome::Written(written) => {
+            let written = *written;
+            Output::Written {
+                record: Record::Group(Box::new(written.group)),
+                changed: written.changed,
+                notices: written.notices,
+            }
         }
-        GroupCommand::Backfill { id } => {
-            let report = group_backfill::run(&ctx.core(), &id, ctx.provider())?;
-            return Ok(Output::GroupBackfill(crate::output::GroupBackfill {
-                group: report.group,
-                members: report
-                    .members
-                    .into_iter()
-                    .map(|m| crate::output::GroupBackfillMember {
-                        seat: m.seat,
-                        session: m.session,
-                        stored: m.stored,
-                        skipped: m.skipped,
-                        transcript_unavailable: m.transcript_unavailable,
-                    })
-                    .collect(),
-                stored: report.stored,
-                skipped: report.skipped,
-            }));
-        }
-        GroupCommand::Leave => {
-            let session = caller(ctx)?;
-            (group_leave::run(&ctx.core(), &session)?, true, Vec::new())
-        }
-        GroupCommand::Close { id, quote } => {
-            let session = caller(ctx)?;
-            let closed = group_close::run(
-                &ctx.core(),
-                GroupCloseInput {
-                    session,
-                    id,
-                    quote,
-                    provider: ctx.provider(),
-                    models: |config: &Config| ctx.models(config),
-                    notes: ctx,
-                },
-            )?;
-            (closed.id, closed.changed, closed.notices)
-        }
-        GroupCommand::Show { id } => {
-            return Ok(Output::Show {
-                record: Record::Group(Box::new(store.read().groups().get(&id)?)),
-            });
-        }
-        GroupCommand::List => {
-            let groups = store.read().groups().all()?;
+        Outcome::Backfilled(report) => backfilled(*report),
+        Outcome::Shown(group) => Output::Show {
+            record: Record::Group(group),
+        },
+        Outcome::Listed(groups) => {
             let total = groups.len();
-            return Ok(list_output(
+            list_output(
                 Records::Groups(groups),
                 total,
                 &[],
@@ -247,12 +222,27 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                     criteria: Vec::new(),
                     empty: "no session groups in the store",
                 },
-            ));
+            )
         }
-    };
-    Ok(Output::Written {
-        record: Record::Group(Box::new(store.read().groups().get(&id)?)),
-        changed,
-        notices,
+    }
+}
+
+/// What `group backfill` stored.
+fn backfilled(report: GroupBackfilled) -> Output {
+    Output::GroupBackfill(crate::output::GroupBackfill {
+        group: report.group,
+        members: report
+            .members
+            .into_iter()
+            .map(|m| crate::output::GroupBackfillMember {
+                seat: m.seat,
+                session: m.session,
+                stored: m.stored,
+                skipped: m.skipped,
+                transcript_unavailable: m.transcript_unavailable,
+            })
+            .collect(),
+        stored: report.stored,
+        skipped: report.skipped,
     })
 }

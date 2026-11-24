@@ -91,6 +91,8 @@ pub use apps::entry::EntryVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::entry::PickupVerbs;
 #[cfg(any(test, feature = "test-support"))]
+pub use apps::group::GroupVerbs;
+#[cfg(any(test, feature = "test-support"))]
 pub use apps::mark::MarkVerbs;
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::memory::MemoryVerbs;
@@ -104,7 +106,6 @@ pub use apps::session::SessionVerbs;
 pub use apps::session::{ClaimsWritten, PassVerbs};
 #[cfg(any(test, feature = "test-support"))]
 pub use apps::tag::TagVerbs;
-pub use cases::group::GroupVerbs;
 pub use checks::entry::check_handoff_related;
 pub use checks::records::check_unsettled_item;
 pub use checks::tag::check_description;
