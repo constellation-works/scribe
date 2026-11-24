@@ -4572,6 +4572,11 @@ backfills its own transcript only.
   backfilled; they keep the join-time cutoff.
 - A join whose transcript is absent or fails its check still joins, with no
   earlier turns.
+- `group join` stamps the join time from before the transcript is read, as
+  `group add` does, so a join whose snapshot held no eligible turn (no cursor)
+  still stores the first typed turn appended before the membership committed
+  ([ORB-27644]). Restored seats and the typed `/scribe group <slug>` join keep
+  their cutoffs.
 
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 

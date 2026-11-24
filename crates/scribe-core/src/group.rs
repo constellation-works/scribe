@@ -360,4 +360,9 @@ pub struct JoinGroup<'a> {
     /// the last one becomes the capture cursor. Empty when there is no
     /// readable transcript.
     pub earlier_turns: &'a [crate::message::NewMessage],
+    /// When the caller took the snapshot `earlier_turns` came from, before it
+    /// read any transcript. It is the membership's join time, so a member that
+    /// stored no earlier turn (and so has no cursor) still keeps a typed turn
+    /// appended after the snapshot but before the membership committed.
+    pub snapshot_at: time::OffsetDateTime,
 }

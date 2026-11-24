@@ -769,6 +769,7 @@ fn project_group_automatic_seat_avoids_every_taken_name() {
                 ended: None,
                 predecessor: None,
                 earlier_turns: &[],
+                snapshot_at: time::OffsetDateTime::now_utc(),
             },
             &redactor,
         )
@@ -1094,6 +1095,7 @@ fn a_restored_seat_with_a_cursor_excludes_turns_typed_during_displacement() {
                     ended: None,
                     predecessor: None,
                     earlier_turns: &[],
+                    snapshot_at: time::OffsetDateTime::now_utc(),
                 },
                 &redactor,
             )
@@ -1304,6 +1306,7 @@ fn forgetting_the_seat_holder_restarts_the_restored_holders_capture_window() {
                     ended: None,
                     predecessor: None,
                     earlier_turns: &[],
+                    snapshot_at: time::OffsetDateTime::now_utc(),
                 },
                 &redactor,
             )
@@ -1513,6 +1516,7 @@ fn forgetting_a_non_holder_preserves_the_active_holders_capture_state() {
                     ended: None,
                     predecessor: None,
                     earlier_turns: &[],
+                    snapshot_at: time::OffsetDateTime::now_utc(),
                 },
                 &redactor,
             )
@@ -1846,6 +1850,77 @@ fn project_group_join_returns_error_promptly_when_seat_lookup_fails() {
     assert_eq!(new_groups, 0);
 }
 
+/// A join whose snapshot held no eligible turn has no cursor, so its join time
+/// is the cutoff. That time is the snapshot's: a first typed turn appended
+/// after the snapshot but before the membership committed is stored once,
+/// while a turn dated before the snapshot stays out.
+#[test]
+fn an_empty_join_snapshot_keeps_the_first_turn_appended_before_the_join_commits() {
+    use crate::group::JoinGroup;
+
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let project = crate::Project::sanitized("checkout");
+    let redactor = Redactor::default();
+    let opener = "empty-snapshot-opener".parse().unwrap();
+    store
+        .join_project_group("empty-snapshot", &project, &opener, T0, &redactor)
+        .unwrap();
+    let session: crate::SessionId = "empty-snapshot-joiner".parse().unwrap();
+    let seat = crate::Label::sanitized("editor", "member");
+    let author = "aide".parse().unwrap();
+    // The snapshot at `T0` found no eligible turn; the join commits at the
+    // wall clock, long after the turn below was appended.
+    assert!(
+        store
+            .join_group(
+                JoinGroup {
+                    group: "empty-snapshot",
+                    seat: &seat,
+                    role: None,
+                    session: &session,
+                    author: &author,
+                    replace: false,
+                    ended: None,
+                    predecessor: None,
+                    earlier_turns: &[],
+                    snapshot_at: T0,
+                },
+                &redactor,
+            )
+            .unwrap()
+    );
+    let mut before = message("empty-snapshot-joiner", "j-0", "orchid before the snapshot");
+    before.at = T0 - Duration::from_secs(1);
+    let mut first = message("empty-snapshot-joiner", "j-1", "orchid first appended turn");
+    first.at = T0 + Duration::from_secs(1);
+    let mut second = message("empty-snapshot-joiner", "j-2", "orchid second turn");
+    second.at = T0 + Duration::from_secs(2);
+    let turns = [before, first, second];
+    assert_eq!(
+        store
+            .capture_group_turns(&session, &turns, &redactor)
+            .unwrap(),
+        2
+    );
+    // A repeated capture stores nothing twice.
+    assert_eq!(
+        store
+            .capture_group_turns(&session, &turns, &redactor)
+            .unwrap(),
+        0
+    );
+    let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    let stored: Vec<String> = conn
+        .prepare("SELECT message FROM messages WHERE session = ?1 ORDER BY message")
+        .unwrap()
+        .query_map([session.as_str()], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(stored, ["j-1", "j-2"]);
+}
+
 /// A backfill carries only the joining session's own user turns; anything else
 /// is refused before the membership is written.
 #[test]
@@ -1879,6 +1954,7 @@ fn a_join_backfill_takes_only_the_joining_sessions_own_user_turns() {
                     ended: None,
                     predecessor: None,
                     earlier_turns: &turns,
+                    snapshot_at: time::OffsetDateTime::now_utc(),
                 },
                 &redactor,
             )

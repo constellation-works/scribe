@@ -314,6 +314,9 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 }
                 _ => (None, None),
             };
+            // Taken before the transcript is read, so a first turn appended
+            // after an empty snapshot is not dated before the membership.
+            let snapshot_at = ctx.now();
             let earlier = earlier_turns(ctx, &caller)?;
             let join = JoinGroup {
                 group: &group.id,
@@ -325,6 +328,7 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
                 ended,
                 predecessor: predecessor.as_ref(),
                 earlier_turns: &earlier,
+                snapshot_at,
             };
             let changed = store.join_group(join, &ctx.redactor(&ctx.config()?)?)?;
             if !changed {

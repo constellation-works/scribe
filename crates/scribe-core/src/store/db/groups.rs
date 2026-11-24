@@ -706,11 +706,13 @@ impl Store {
             }
             conn.execute(
                 "INSERT INTO group_members(group_id, seat, session, author, joined) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![n, seat, session, join.author.as_str(), stamp(OffsetDateTime::now_utc())],
+                params![n, seat, session, join.author.as_str(), stamp(join.snapshot_at)],
             )
             .map_err(fail)?;
             // The capture starts at the session's own first line, not at the
             // join time, so the cursor takes over from its last stored turn.
+            // With no stored turn the join time is the snapshot's, taken before
+            // the transcript was read, so a turn typed since stays in capture.
             if let Some(last) = join.earlier_turns.last() {
                 write_captured_turns(
                     &conn,
