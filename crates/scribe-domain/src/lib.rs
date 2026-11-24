@@ -5,10 +5,8 @@
 //! and the due rule ([`SessionRecord`], its log of [`Segment`]s,
 //! [`ControlState`], [`Cadence`]) in `session`; proposals ([`Proposal`]) in
 //! `proposal`; the shared metadata ([`Project`], [`Topic`], [`Related`],
-//! [`Author`]) in `record`; the
-//! model request and answer shapes in [`models`]; the rules
-//! that select and judge records (capture, claims, the pass, instructions)
-//! in their modules. The typed `Error` is the store's (`scribe-store`'s
+//! [`Author`]) in `record`; the rules
+//! that select and judge records in their modules. The typed `Error` is the store's (`scribe-store`'s
 //! `error`).
 //!
 //! The modules sit in three rings, each importing only its own and the ones
@@ -20,18 +18,13 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod claim;
 pub mod entry;
 pub mod handoff;
-pub mod models;
 pub mod proposal;
 pub mod provider;
 pub mod record;
 pub mod session;
 pub mod tag;
-pub mod text;
-pub mod trigger;
-pub mod verbatim;
 pub mod voice;
 pub use provider::Provider;
 

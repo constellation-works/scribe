@@ -1,14 +1,20 @@
 //! Text primitives every layer may use: the ranking tokens search and the
 //! consistency routine compare (§6.2), the sensitive and finance words the
-//! memory rules and stored messages check (§13.8), and the SHA-256 hashes a
-//! cite and a transcript boundary carry. Pure functions and constants over
-//! text; no I/O (STD-02 R5). Each is re-exported from the module that first
-//! owned it (scribe-core's `memory` and `capture`).
+//! memory rules and stored messages check (§13.8). Pure functions and
+//! constants over text; no I/O (STD-02 R5). Each is re-exported from the
+//! module that first owned it (scribe-core's `memory` and `capture`). The
+//! SHA-256 hashes a cite and a transcript boundary carry are the store's
+//! (`scribe_store::digest`).
+//!
+//! Beside them: the quote check ([`verbatim`]), the claim checks
+//! ([`claim`]) and the trigger phrases ([`trigger`]).
+
+pub mod claim;
+pub mod trigger;
+pub mod verbatim;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fmt::Write as _;
 
 /// Words that carry no meaning for ranking.
 const STOPWORDS: &[&str] = &[
@@ -165,23 +171,4 @@ pub fn sensitive_word(text: &str) -> Option<SensitiveKind> {
 #[must_use]
 pub fn finance_word(text: &str) -> bool {
     FINANCE_WORDS.iter().any(|word| has_phrase(text, word))
-}
-
-/// SHA-256 of a prompt's text, lowercase hex: the cite's `prompt_sha256`,
-/// which the `Stop` hook matches against the transcript, and a trigger
-/// fire's key in the audit log (2_design.md §11.4).
-#[must_use]
-pub fn prompt_sha256(prompt: &str) -> String {
-    bytes_sha256(prompt.as_bytes())
-}
-
-/// SHA-256 of raw bytes, lowercase hex, for checks on a transcript boundary.
-#[must_use]
-pub fn bytes_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
 }

@@ -7,7 +7,35 @@
 
 use crate::transcript::{Message, user_turn};
 use scribe_domain::entry::Speaker;
-use scribe_domain::models::{CUT_MARK, PassMessage};
+
+/// The most characters of one message a prompt carries. A longer message is
+/// cut and the cut is marked (STD-03 R15); the span the model returns is
+/// still checked against the whole message.
+pub const PROMPT_MESSAGE_CHARS: usize = 8_000;
+
+/// The marker that ends a message cut to [`PROMPT_MESSAGE_CHARS`].
+pub const CUT_MARK: &str = "[… cut]";
+
+/// One message of a session, as the session model reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassMessage {
+    /// The transcript message's uuid.
+    pub uuid: String,
+    /// Whose words they are.
+    pub role: Speaker,
+    /// The speaker's own words: for a user turn, without pasted blocks.
+    pub text: String,
+    /// Blocks the user pasted into the turn: their words are not his.
+    pub pasted: Vec<String>,
+}
+
+impl PassMessage {
+    /// How many characters the message weighs in the pass window.
+    #[must_use]
+    pub fn chars(&self) -> usize {
+        self.text.chars().count() + self.pasted.iter().map(|p| p.chars().count()).sum::<usize>()
+    }
+}
 
 /// The default characters of message content in one window (2_design.md §5.3).
 pub const WINDOW_CHARS: usize = 15_000;

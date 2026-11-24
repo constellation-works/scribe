@@ -2,7 +2,7 @@
 //! sentence ends and phrase checks. It takes and returns plain values; no
 //! I/O is reachable from it.
 
-use crate::trigger::{self, Fired, MATCHED_CHARS, TriggerError};
+use crate::text::trigger::{self, Fired, MATCHED_CHARS, TriggerError};
 
 fn find(phrase: &str, text: &str) -> Option<String> {
     trigger::find(phrase, text)

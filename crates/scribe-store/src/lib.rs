@@ -66,6 +66,7 @@ use contracts::group;
 // The message shapes at the path the store's code names them by.
 use contracts::message;
 mod db;
+pub mod digest;
 pub mod error;
 mod redact;
 pub use db::documents::Imported;
@@ -78,8 +79,8 @@ pub use contracts::action::Pickup;
 pub use contracts::group::{ClaudeSeen, Group, LastGroup, NewGroup, Seat, SeatHold};
 pub use contracts::mark::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
 pub use contracts::memory::{
-    Milestone, MilestoneFront, NowFront, NowItem, NowKind, Pending, ProfileView, Raised, Refusal,
-    SLUG_CHARS, Stem, TEXT_CHARS, TITLE_CHARS,
+    MemoryContext, Milestone, MilestoneFront, NowFront, NowItem, NowKind, Pending, PendingContext,
+    ProfileView, Raised, Refusal, SLUG_CHARS, Stem, TEXT_CHARS, TITLE_CHARS,
 };
 pub use contracts::message::{MessageMatch, MessageSearch, NewMessage};
 pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
@@ -116,7 +117,7 @@ use scribe_domain::{
     Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
     StoreTag, TagTable,
 };
-use scribe_domain::{entry, handoff, models, proposal, record, session, text};
+use scribe_domain::{entry, handoff, proposal, record, session};
 // The domain names the redaction tests (`tests/redact.rs`) and their
 // shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
 // in the domain.

@@ -170,9 +170,9 @@ done
 # (`crate::{session, …}`) or through a name the crate root re-exports
 # (`crate::SessionId`). A new module fails until it is given a ring here.
 DOMAIN_RINGS='
-base:       record text verbatim provider
+base:       record provider
 records:    session entry handoff tag proposal
-rules:      trigger voice claim models
+rules:      voice
 '
 ring_hits=$(DOMAIN_RINGS="$DOMAIN_RINGS" perl -e '
   use strict; use warnings;
@@ -327,7 +327,7 @@ for path in config.rs; do
   ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "domain/$path must not depend on pass"
 done
 # The model shapes must not import their callers.
-ban "$DOMAIN/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
+ban "$CORE/providers/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
 # A grouped crate import can name a caller without spelling crate::caller.
 port_grouped=$(perl -0777 -ne '
   while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?crate::\{([^;]*)\};/mg) {
@@ -337,7 +337,7 @@ port_grouped=$(perl -0777 -ne '
     my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
     $stmt =~ s/\s+/ /g;
     print "$ARGV:$line:$stmt\n";
-  }' "$DOMAIN/models.rs" 2>/dev/null || true)
+  }' "$CORE/providers/models.rs" 2>/dev/null || true)
 if [[ -n "$port_grouped" ]]; then
   echo "$port_grouped" >&2
   err "the model shapes must not import their callers"
@@ -502,7 +502,12 @@ for retired in \
   crates/scribe-domain/src/transcript \
   crates/scribe-domain/src/origin.rs \
   crates/scribe-domain/src/control.rs \
-  crates/scribe-domain/src/config.rs; do
+  crates/scribe-domain/src/config.rs \
+  crates/scribe-domain/src/models.rs \
+  crates/scribe-domain/src/text.rs \
+  crates/scribe-domain/src/verbatim.rs \
+  crates/scribe-domain/src/claim.rs \
+  crates/scribe-domain/src/trigger.rs; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done
 # ORB-27707 step 4: scribe-core's business modules became scribe-domain

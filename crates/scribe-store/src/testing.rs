@@ -183,10 +183,7 @@ pub trait StoreTestInternals {
     fn memory_context(
         &self,
         session: &crate::SessionId,
-    ) -> Result<(
-        Vec<crate::models::MemoryContext>,
-        Vec<crate::models::PendingContext>,
-    )>;
+    ) -> Result<(Vec<crate::MemoryContext>, Vec<crate::PendingContext>)>;
     /// Every session record. (`Store::load_sessions`).
     fn load_sessions(&self) -> Result<crate::LoadedSessions>;
     /// Record one audit event. (`Store::record_audit`).
@@ -323,10 +320,7 @@ impl StoreTestInternals for Store {
     fn memory_context(
         &self,
         session: &crate::SessionId,
-    ) -> Result<(
-        Vec<crate::models::MemoryContext>,
-        Vec<crate::models::PendingContext>,
-    )> {
+    ) -> Result<(Vec<crate::MemoryContext>, Vec<crate::PendingContext>)> {
         Store::memory_context(self, session)
     }
     fn load_sessions(&self) -> Result<crate::LoadedSessions> {

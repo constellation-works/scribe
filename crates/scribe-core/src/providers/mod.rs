@@ -14,6 +14,7 @@
 //! step 5).
 
 mod cli;
+pub mod models;
 
 #[cfg(test)]
 pub(crate) use cli::{BASELINE_ENV, argv};

@@ -21,6 +21,8 @@
 
 use crate::entry::Speaker;
 use crate::voice::Voice;
+pub use scribe_store::{MemoryContext, PendingContext};
+pub use scribe_tools::window::{CUT_MARK, PROMPT_MESSAGE_CHARS, PassMessage};
 use std::fmt::Write as _;
 use std::time::Duration;
 
@@ -53,14 +55,6 @@ pub const SESSION_BUDGET: Duration = Duration::from_secs(120);
 /// the removed `ask`, whose budget it was (ORB-27911 step 2 decides it).
 pub const ASK_BUDGET: Duration = Duration::from_secs(90);
 
-/// The most characters of one message a prompt carries. A longer message is
-/// cut and the cut is marked (STD-03 R15); the span the model returns is
-/// still checked against the whole message.
-pub const PROMPT_MESSAGE_CHARS: usize = 8_000;
-
-/// The marker that ends a message cut to [`PROMPT_MESSAGE_CHARS`].
-pub const CUT_MARK: &str = "[… cut]";
-
 /// The `memory` and `signal` properties the session schema gains when memory is
 /// requested (2_design.md §13.3).
 const MEMORY_PROPERTY: &str = r#""memory":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["now","milestone"]},"title":{"type":"string","maxLength":80,"description":"one line naming the event or plan"},"text":{"type":"string","maxLength":400,"description":"what the user said, third person, standing alone, with the date"},"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"date":{"type":["string","null"],"maxLength":10,"description":"YYYY-MM-DD resolved against the turn's date, else null"},"now_kind":{"type":["string","null"],"enum":["deadline","event","plan",null]},"update":{"type":["string","null"],"maxLength":64,"description":"the stem of a listed now item this changes, else null"},"completes":{"type":["string","null"],"maxLength":32,"description":"the id of a listed pending candidate this dates, else null"}},"required":["kind","title","text","quote","message","date","now_kind","update","completes"],"additionalProperties":false}},"signal":{"type":"integer","minimum":0,"maximum":3,"description":"how much this window says about who the user is: role, goals, projects, habits"}"#;
@@ -89,27 +83,6 @@ fn bounded(text: &str, max: usize) -> String {
     let mut cut: String = text.chars().take(max).collect();
     cut.push_str(CUT_MARK);
     cut
-}
-
-/// One message of a session, as the session model reads it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PassMessage {
-    /// The transcript message's uuid.
-    pub uuid: String,
-    /// Whose words they are.
-    pub role: Speaker,
-    /// The speaker's own words: for a user turn, without pasted blocks.
-    pub text: String,
-    /// Blocks the user pasted into the turn: their words are not his.
-    pub pasted: Vec<String>,
-}
-
-impl PassMessage {
-    /// How many characters the message weighs in the pass window.
-    #[must_use]
-    pub fn chars(&self) -> usize {
-        self.text.chars().count() + self.pasted.iter().map(|p| p.chars().count()).sum::<usize>()
-    }
 }
 
 /// The record a pass extends, as the session model reads it.
@@ -797,26 +770,6 @@ pub struct MemoryAnswer {
     /// The id of the listed pending candidate this dates.
     #[serde(default, deserialize_with = "crate::record::nullable")]
     pub completes: Option<String>,
-}
-
-/// A `now` item or milestone as a model reads it: stem, date and title.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemoryContext {
-    /// Its file stem.
-    pub stem: String,
-    /// Its date, `YYYY-MM-DD`.
-    pub date: String,
-    /// Its title.
-    pub title: String,
-}
-
-/// A pending candidate as the session model reads it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingContext {
-    /// `pending-<n>`.
-    pub id: String,
-    /// What it is about.
-    pub subject: String,
 }
 
 /// A model-suggested unmarked statement. All provenance is checked locally.

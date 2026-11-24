@@ -201,7 +201,7 @@ pub struct CaptureRules {
     pub from: Option<Rule<CaptureFrom>>,
     /// What a claim becomes.
     pub route: Option<Rule<CaptureRoute>>,
-    /// The trigger phrases ([`crate::trigger`]); a configured list replaces
+    /// The trigger phrases (`scribe_tools::text::trigger`); a configured list replaces
     /// the shipped one whole, and an empty one captures nothing.
     pub triggers: Option<Rule<Vec<String>>>,
     /// What qualifies, given to the `session` model.

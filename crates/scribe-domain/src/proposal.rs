@@ -123,7 +123,7 @@ impl ProposalState {
 pub struct Quote {
     /// The entry quoted.
     pub entry: EntryId,
-    /// The span; it passes [`crate::verbatim::contains`] against the entry.
+    /// The span; it passes `scribe_tools::text::verbatim::contains` against the entry.
     pub text: String,
 }
 

@@ -1,5 +1,5 @@
 use super::T0;
-use crate::claim as pass;
+use crate::text::claim as pass;
 use time::Duration;
 
 #[test]
@@ -220,50 +220,4 @@ fn a_stated_entry_covers_a_line_matching_its_quote() {
     unstated.content = "something else entirely, in other words".to_owned();
     unstated.quote = Some(quote.to_owned());
     assert!(pass::covering_entry(&[unstated.clone()], quote, &tag, &project).is_none());
-}
-
-#[test]
-fn the_session_schema_bounds_claims_to_six_of_680_characters_and_4080_per_answer() {
-    // 2_design.md §15.3: at most 6 candidates, each a context of at most
-    // 600 characters and a subject of at most 80, so the two add at most
-    // 4,080 value characters to one answer.
-    let schema: serde_json::Value = serde_json::from_str(crate::models::SESSION_SCHEMA).unwrap();
-    let candidates = &schema["properties"]["candidates"];
-    let fields = &candidates["items"]["properties"];
-    let max = |v: &serde_json::Value| usize::try_from(v.as_u64().unwrap()).unwrap();
-    let count = max(&candidates["maxItems"]);
-    let context = max(&fields["context"]["maxLength"]);
-    let subject = max(&fields["subject"]["maxLength"]);
-    assert_eq!(
-        (count, context, subject),
-        (6, crate::CONTEXT_CHARS, crate::SUBJECT_CHARS)
-    );
-    assert_eq!(count * (context + subject), 4_080);
-    assert!(fields.get("statement").is_none(), "{fields}");
-    let required = candidates["items"]["required"].as_array().unwrap();
-    assert!(
-        required.contains(&serde_json::json!("context")),
-        "{required:?}"
-    );
-}
-
-#[test]
-fn a_context_stands_alone_from_two_sentences_up_to_600_characters() {
-    assert!(crate::context_stands_alone(
-        "The user and the agent chose a store. The user asked for a log."
-    ));
-    assert!(crate::context_stands_alone(
-        "They weighed it (twice). The user said \"keep the log.\""
-    ));
-    for line in [
-        "",
-        "The user prefers a log.",
-        "The user prefers a log, e.g. one per session",
-        "v1.2 is out and the user prefers it",
-    ] {
-        assert!(!crate::context_stands_alone(line), "{line}");
-    }
-    let long = format!("{}. {}.", "a".repeat(299), "b".repeat(299));
-    assert_eq!(long.chars().count(), 601);
-    assert!(!crate::context_stands_alone(&long));
 }

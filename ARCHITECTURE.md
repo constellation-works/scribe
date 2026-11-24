@@ -116,9 +116,9 @@ map; a new module fails the check until it is given a ring.
 
 | Ring | Modules |
 |------|---------|
-| 1. base | `record`, `text`, `verbatim`, `provider` |
+| 1. base | `record`, `provider` |
 | 2. records | `session`, `entry`, `handoff`, `tag`, `proposal` |
-| 3. rules | `trigger`, `voice`, `claim`, `models` |
+| 3. rules | `voice` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -191,8 +191,8 @@ PR 5-9 moved `capture` and `instruction`:
   through the store's `GroupRows::seen`. The store no longer runs that rule.
 
 The core's root re-exports them as `crate::capture` and `crate::instruction`.
-`verbatim` stays in the domain's base ring, because `claim` imports it. It
-goes to `tools/text` with `claim` and `text` in PR 5-14.
+`verbatim` stayed in the domain's base ring because `claim` imported it,
+until PR 5-14 moved it to `tools/text` with `claim` and `text`.
 
 PR 5-10 moved `error` whole to the store's `error.rs`, beside `refusal` and
 `forgotten_refusal`. Every store call returns that `Error`, and the store
@@ -234,7 +234,7 @@ PR 5-12 moved the transcript family to the tools:
   and it holds the origin guard's functions, not shapes.
 - `control`'s line parser went to `scribe-tools/src/markers/control.rs`.
 
-The tools root names the domain's `entry`, `record`, `session`, `text`,
+The tools root names the domain's `entry`, `proposal`, `record`, `session`,
 `SessionId` and `Speaker`, and its own `control` and `codex`, at the paths
 the moved code uses. The core's root re-exports `crate::transcript`,
 `crate::codex`, `crate::origin` and `crate::control` from the tools. The
@@ -253,19 +253,31 @@ store tags (`apps/tag/config.rs`, `ConfigReads`: `config`, `configured` and
 `Redactor::new`. The window limits (`WindowLimits`, `WINDOW_MESSAGES`,
 `WINDOW_CHARS`) went to `scribe-tools/src/window.rs`, which uses them.
 
+PR 5-14 moved the domain's text and model modules:
+
+- `text`, `verbatim`, `claim` and `trigger` went to `scribe-tools/src/text/`
+  (`mod.rs`, `verbatim.rs`, `claim.rs`, `trigger.rs`). They match and compare
+  text and decide nothing about a record. The core's root re-exports
+  `crate::text`, `crate::verbatim`, `crate::trigger` and `crate::claim`.
+- The SHA-256 hashes (`prompt_sha256`, `bytes_sha256`) went to the store's
+  `digest.rs`, per ruling (h). The core's `crate::text` and `crate::capture`
+  re-export them.
+- `models` went to `scribe-core/src/providers/models.rs`. Its pass-window
+  pieces (`PassMessage`, `CUT_MARK`, `PROMPT_MESSAGE_CHARS`) went to
+  `scribe-tools/src/window.rs`, which uses them, and the memory context the
+  store reads (`MemoryContext`, `PendingContext`) went to the store's
+  `contracts/memory.rs`. `providers/models.rs` re-exports both, so
+  `crate::models` names them as before.
+
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
-- **Modules the lists did not name:**
-  - `models` (imports `voice`) is in rules.
-- **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
-  with their records, so there is no `ids` module.
+- **Naming:** ids live with their records, so there is no `ids` module.
 
-The model request and answer shapes (`models`) stay in `scribe-domain` until
-the domain is dissolved (ORB-27921 step 5): `scribe-store` and the domain use
-them. The `Models` port, `ModelError` and the `claude` and `codex` adapters
-live in `scribe-core/src/providers/` until ORB-27911 removes scribe's
-in-process model calls. The other open targets are
+The model request and answer shapes (`models`), the `Models` port,
+`ModelError` and the `claude` and `codex` adapters live in
+`scribe-core/src/providers/` until ORB-27911 removes scribe's in-process
+model calls. The other open targets are
 listed in the four-crate decision.
 
 ## Module rules
@@ -276,7 +288,7 @@ includes any file added later.
 
 - `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
 - `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
-- The `claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; the tools' `window` owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
+- The tools' `text::claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; the tools' `window` owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
 - In `scribe-store`, `db/fsio.rs` imports nothing of the store but its error type, and `contracts/` imports nothing from `db/` or `repository/` and has no `check_*` function.

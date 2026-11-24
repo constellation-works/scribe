@@ -416,10 +416,8 @@ version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
- "sha2",
  "thiserror",
  "time",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -449,7 +447,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "time",
+ "unicode-normalization",
 ]
 
 [[package]]

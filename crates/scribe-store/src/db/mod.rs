@@ -819,7 +819,7 @@ fn write_messages<'a>(
             ));
         }
         let text = redactor.message(&m.text);
-        let sha256 = crate::text::prompt_sha256(&text);
+        let sha256 = crate::digest::prompt_sha256(&text);
         changed += insert
             .execute((
                 m.session.as_str(),
@@ -1102,7 +1102,10 @@ fn store_id(path: &Path, created: &str) -> String {
         OffsetDateTime::now_utc().unix_timestamp_nanos(),
         path.display()
     );
-    crate::text::prompt_sha256(&seed).chars().take(32).collect()
+    crate::digest::prompt_sha256(&seed)
+        .chars()
+        .take(32)
+        .collect()
 }
 
 /// An FTS5 query: each token as a quoted prefix, any of them.

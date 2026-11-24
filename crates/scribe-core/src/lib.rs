@@ -71,13 +71,13 @@ pub use provider::Provider;
 /// (`apps/hook`), and the origin guard and hashes it re-exported.
 pub mod capture {
     pub use crate::apps::hook::rules::{Turn, prompt_hashes};
-    pub use scribe_domain::text::{bytes_sha256, prompt_sha256};
+    pub use scribe_store::digest::{bytes_sha256, prompt_sha256};
     pub use scribe_tools::markers::*;
     pub use scribe_tools::origin::{
         OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
     };
 }
-pub(crate) use scribe_domain::claim;
+pub(crate) use scribe_tools::text::claim;
 pub(crate) mod config;
 /// The consistency rules and the settling verbs, at the path they had in
 /// the domain: the stale step (`apps/consistency`), settling and approval
@@ -137,8 +137,8 @@ pub mod message {
 /// [`Models`] port and its [`ModelError`](providers::ModelError) from
 /// [`providers`] at their old paths.
 pub mod models {
+    pub use crate::providers::models::*;
     pub use crate::providers::{ModelError, Models};
-    pub use scribe_domain::models::*;
 }
 pub use scribe_tools::origin;
 /// `pass` at its old path: the session pass (`apps/session`), its claim
@@ -175,10 +175,15 @@ mod store {
     pub(crate) use crate::apps::session::PassWrite;
 }
 pub(crate) use scribe_domain::tag;
-pub use scribe_domain::text;
-pub use scribe_domain::trigger;
-pub use scribe_domain::verbatim;
+/// `text` at its old path: the text primitives (`scribe_tools::text`) and
+/// the hashes (`scribe_store::digest`).
+pub mod text {
+    pub use scribe_store::digest::{bytes_sha256, prompt_sha256};
+    pub use scribe_tools::text::*;
+}
 pub use scribe_domain::voice;
+pub use scribe_tools::text::trigger;
+pub use scribe_tools::text::verbatim;
 pub use scribe_tools::transcript;
 
 #[cfg(any(test, feature = "test-support"))]

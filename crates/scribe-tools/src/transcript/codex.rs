@@ -134,7 +134,12 @@ pub fn parse(bytes: &[u8]) -> Result<Rollout, String> {
             .as_str()
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("codex-{}", crate::text::prompt_sha256(&row.to_string())));
+            .unwrap_or_else(|| {
+                format!(
+                    "codex-{}",
+                    scribe_store::digest::prompt_sha256(&row.to_string())
+                )
+            });
         if !ids.insert(uuid.clone()) {
             return Err(String::from("duplicate Codex message identity"));
         }
