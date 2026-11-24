@@ -743,6 +743,59 @@ fn precise_freshness_boundaries() {
 }
 
 #[test]
+fn a_queued_message_is_corroborated_by_its_attachment_origin() {
+    // A queued message's attachment carries the human origin that makes it a
+    // turn, and that claim corroborates an sdk prompt source on the line.
+    let queued_sdk = queued_line(
+        "q-sdk",
+        queued("approve p-4 please", json!({"kind": "human"})),
+        json!({"entrypoint": "claude-desktop", "promptSource": "sdk"}),
+    );
+    assert_eq!(
+        run(
+            &claude_conversation(queued_sdk.as_bytes()),
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn an_ordinary_sdk_row_is_corroborated_by_its_own_fields_not_by_an_attachment() {
+    // An attachment on an ordinary row is no claim on it: the human origin it
+    // carries cannot vouch for the row's sdk prompt source.
+    let incidental = json!({"entrypoint": "claude-desktop", "promptSource": "sdk",
+        "attachment": {"origin": {"kind": "human"}}});
+    let line = claude_line("u-att", "user", "approve p-4", incidental);
+    assert_eq!(
+        run(
+            &claude_conversation(line.as_bytes()),
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "instruction_not_found"
+    );
+    assert!(crate::instruction::claude_group_turns(line.as_bytes(), &session()).is_empty());
+
+    // The row's own turn origin still corroborates it.
+    let own = json!({"entrypoint": "claude-desktop", "promptSource": "sdk",
+        "turnOrigin": "human", "attachment": {"origin": {"kind": "human"}}});
+    let line = claude_line("u-own", "user", "approve p-4", own);
+    assert_eq!(
+        run(
+            &claude_conversation(line.as_bytes()),
+            "approve p-4",
+            Act::Approve,
+            "p-4"
+        ),
+        "ok"
+    );
+}
+
+#[test]
 fn origin_claims_fail_closed_and_ignore_nonconversation_lines() {
     for field in [
         "source",

@@ -415,16 +415,20 @@ struct LineAttachment {
 }
 
 impl LineMeta {
-    /// Every origin claim the line carries: its own fields, then a queued
-    /// message's attachment origin. Each is checked, so a claim that
-    /// contradicts the others refuses the line wherever it sits.
+    /// Every origin claim the line carries: its own fields and, on a queued
+    /// message's `attachment` line, the attachment's origin. Each is checked,
+    /// so a claim that contradicts the others refuses the line wherever it
+    /// sits. An ordinary row is corroborated by its own fields alone: an
+    /// attachment on it is no claim on it.
     pub(crate) fn origin_claims(&self) -> OriginClaims {
         let mut origin = OriginClaims::default();
         origin.push_claim(self.source.as_ref());
         origin.push_prompt_source(self.prompt_source_camel.as_ref());
         origin.push_prompt_source(self.prompt_source.as_ref());
         origin.push_origin(self.origin.as_ref());
-        origin.push_origin(self.attachment.as_ref().and_then(|a| a.origin.as_ref()));
+        if self.kind.as_deref() == Some("attachment") {
+            origin.push_origin(self.attachment.as_ref().and_then(|a| a.origin.as_ref()));
+        }
         origin.push_claim(self.prompt_origin_camel.as_ref());
         origin.push_claim(self.prompt_origin.as_ref());
         origin.push_turn_origin(self.turn_origin_camel.as_ref());
