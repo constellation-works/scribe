@@ -17,17 +17,17 @@
 //!   and its quotes; legacy audit lines that name it keep their audit
 //!   fields and lose every other field. Unrelated records are kept.
 
-use super::db::archive::{self as rows, ArchiveRow};
-use super::db::{self, Conn as Connection, DB_FILE};
-use super::documents::is_moved_variant;
-use super::{
-    AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Store, fsio,
-};
+use crate::db::archive::{self as rows, ArchiveRow};
+use crate::db::{self, Conn as Connection, DB_FILE};
+use crate::documents::is_moved_variant;
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::session::SessionId;
+use crate::{
+    AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
+    SESSIONS_DIR, Store, fsio,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -35,16 +35,16 @@ use std::path::Path;
 use time::OffsetDateTime;
 
 /// The directory the move put the file store's files in.
-pub(super) const MOVED_PREFIX: &str = "pre-sqlite-";
+pub(crate) const MOVED_PREFIX: &str = "pre-sqlite-";
 /// The directory issue records went to once converted to entries.
-pub(super) const ISSUE_PREFIX: &str = "pre-issue-";
+pub(crate) const ISSUE_PREFIX: &str = "pre-issue-";
 
 /// The tag converted issue records carry.
 const ISSUE_TAG: &str = "issue";
 
 /// What an archive import did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Imported {
+pub(crate) struct Imported {
     /// Archive directories imported.
     pub archives: usize,
     /// Records imported.
@@ -71,7 +71,7 @@ const AUDIT_STANDARD_KEYS: &[&str] = &[
 
 impl Store {
     /// The archive directories under the root, by name.
-    pub(super) fn archive_dirs(&self) -> Result<Vec<String>> {
+    pub(crate) fn archive_dirs(&self) -> Result<Vec<String>> {
         if !self.root_exists()? {
             return Ok(Vec::new());
         }
@@ -90,7 +90,7 @@ impl Store {
     /// In the write's transaction: import every archive directory not yet
     /// imported, check its counts, erase what earlier forgets erased, and
     /// note every directory for removal after the commit.
-    pub(super) fn import_archives(
+    pub(crate) fn import_archives(
         &self,
         conn: &Connection,
         now: OffsetDateTime,
@@ -171,7 +171,7 @@ impl Store {
 
     /// Import file-store files an interrupted move left in the root, after
     /// their records moved into `scribe.db`, as one more archive.
-    pub(super) fn import_leftovers(
+    pub(crate) fn import_leftovers(
         &self,
         conn: &Connection,
         items: &[String],
@@ -219,7 +219,7 @@ impl Store {
 
     /// Remove an archive directory (or a leftover file) whose records are
     /// in `scribe.db`: every file, then every directory, deepest first.
-    pub(super) fn remove_archive(&self, path: &Path) -> Result<()> {
+    pub(crate) fn remove_archive(&self, path: &Path) -> Result<()> {
         if !is_dir(path)? {
             return if fsio::inspect_file(path)? {
                 fsio::remove_private(path)
@@ -287,7 +287,7 @@ fn classify(rel: &str, issue: bool) -> &'static str {
     for (base, kind) in [
         (PROPOSALS_FILE, "claims"),
         (CONTROL_FILE, "control"),
-        (super::documents::TAGS_FILE, "tags"),
+        (crate::documents::TAGS_FILE, "tags"),
         (MARKS_FILE, "marks"),
         (PICKUPS_FILE, "pickups"),
         (AUDIT_FILE, "audit"),
@@ -385,7 +385,7 @@ fn deleted_cite(cite: &mut Map<String, Value>) {
 /// Erase session `id` (`s-<number>` too) from the archive tables. Returns
 /// how many of the session's own records (its record and checkpoints) were
 /// deleted, and whether anything changed.
-pub(super) fn scrub_session(
+pub(crate) fn scrub_session(
     conn: &Connection,
     db: &Path,
     id: &SessionId,
@@ -623,13 +623,13 @@ fn detach_claims(claims: &mut Vec<Value>, matches: &dyn Fn(&str) -> bool, remove
 /// audit line whose free-text fields carry its words (`proposals` names
 /// the live claims whose texts are erased with it). Returns whether
 /// anything changed.
-pub(super) fn scrub_entry(
+pub(crate) fn scrub_entry(
     conn: &Connection,
     db: &Path,
     entry: &Entry,
     proposals: &[Proposal],
 ) -> Result<bool> {
-    let texts = super::documents::erased_texts(entry, proposals);
+    let texts = crate::documents::erased_texts(entry, proposals);
     scrub_entry_with(conn, db, &entry.id, Some(entry), TextMatcher::texts(texts))
 }
 
@@ -831,9 +831,9 @@ fn forget_claims(claims: &mut Vec<Value>, id: &str) {
 
 /// The words a forget erases: cleartext, plus the salted digests a forget
 /// recorded before phase 8 for archives it had not cleaned yet.
-pub(super) struct TextMatcher {
+pub(crate) struct TextMatcher {
     texts: Vec<String>,
-    digests: Option<super::documents::DigestMatcher>,
+    digests: Option<crate::documents::DigestMatcher>,
 }
 
 impl TextMatcher {
@@ -847,7 +847,7 @@ impl TextMatcher {
     fn digests(salt: &str, digests: &[db::docs::TextDigest], db: &Path) -> Result<Self> {
         Ok(Self {
             texts: Vec::new(),
-            digests: Some(super::documents::DigestMatcher::new(salt, digests, db)?),
+            digests: Some(crate::documents::DigestMatcher::new(salt, digests, db)?),
         })
     }
 

@@ -378,6 +378,19 @@ done
 ban "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
 ban "$DOMAIN"        'std::env::|home_dir|current_dir'           "the domain crate must not read the environment or discover paths"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
+# ORB-27921 step 4: db/ holds the storage mechanism. Only db/ names
+# rusqlite (testing.rs, the test-support shim, hands tests a connection),
+# and db/fsio.rs, mechanism only, names nothing else of the store but its
+# error type.
+while IFS= read -r -d '' path; do
+  case "$path" in "$STORE"/db/* | "$STORE"/testing.rs) continue ;; esac
+  ban "$path" '(^|[^[:alnum:]_])rusqlite::' "${path#crates/}: only scribe-store's db/ uses rusqlite"
+done < <(find "$STORE" -name '*.rs' -not -path '*/tests/*' -print0)
+fsio_hits=$(grep -nE '(crate|super)::' "$STORE/db/fsio.rs" | grep -vE '^[0-9]+:[[:space:]]*//' | grep -v 'crate::error::' || true)
+if [[ -n "$fsio_hits" ]]; then
+  echo "$fsio_hits" >&2
+  err "scribe-store/src/db/fsio.rs: fsio imports nothing of the store but its error"
+fi
 # Composition does not know about parsing, dispatch or rendering (R2).
 # The model adapters spawn supervised processes through providers/cli.rs's
 # supervisor in scribe-core, so process-group supervision, the cleared
@@ -432,6 +445,12 @@ for retired in \
   crates/scribe/src/commands/hook/session_end.rs \
   crates/scribe/src/commands/hook/codex.rs \
   crates/scribe-store/src/init.rs \
+  crates/scribe-store/src/db.rs \
+  crates/scribe-store/src/fsio.rs \
+  crates/scribe-store/src/write.rs \
+  crates/scribe-store/src/codec.rs \
+  crates/scribe-store/src/archive.rs \
+  crates/scribe-store/src/rebuild.rs \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done

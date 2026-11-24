@@ -3,7 +3,8 @@
 //! tests do, since no build reads a file store any more (2_design.md §15.9,
 //! phase 8). A shipped build never compiles this.
 
-use super::{Store, codec, db};
+use super::Store;
+use super::db::{self, codec};
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::session::{SessionControl, SessionId};

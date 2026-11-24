@@ -18,12 +18,12 @@
 //!   command could not commit without waiting is spooled to a file and
 //!   drained here by the next write, keyed by its file name (`spool`).
 
+use super::codec;
 use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
 use super::{Fallible, db_error, stamp};
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
 use crate::audit::{AUDIT_FORMAT, AuditEvent};
-use crate::codec;
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};

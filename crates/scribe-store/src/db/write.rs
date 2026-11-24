@@ -33,11 +33,11 @@
 //!   write drains into the table. So a command refused for a locked store
 //!   waits once, and its line is kept.
 
-use super::audit::{self, AuditEvent};
-use super::db::{self, Conn as Connection, DB_FILE, docs, scope};
-use super::{Store, fsio};
+use crate::audit::{self, AuditEvent};
 use crate::checks::admin;
+use crate::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use crate::error::{Error, Result};
+use crate::{Store, fsio};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -45,7 +45,7 @@ use std::time::Duration;
 use time::OffsetDateTime;
 
 /// A spooled audit line: its file name, its format and the event.
-pub(super) type Spooled = (String, u32, AuditEvent);
+pub(crate) type Spooled = (String, u32, AuditEvent);
 
 /// Spooled audit lines, one file each, under the root.
 pub const AUDIT_SPOOL_DIR: &str = "audit-spool";
@@ -60,26 +60,26 @@ thread_local! {
 thread_local! {
     /// Tests: fail the next write after its transaction commits and before
     /// the imported archives are removed, as an interruption there would.
-    pub(super) static CRASH_BEFORE_REMOVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static CRASH_BEFORE_REMOVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What a write leaves to do once it commits.
 #[derive(Debug, Default)]
-pub(super) struct After {
+pub(crate) struct After {
     /// Apply the memory journals left open.
-    pub(super) journals: bool,
+    pub(crate) journals: bool,
     /// Archive directories (and leftover files) whose records are now in
     /// the archive tables, to remove.
-    pub(super) archive_removals: Vec<PathBuf>,
+    pub(crate) archive_removals: Vec<PathBuf>,
     /// Rewrite the format stamps.
-    pub(super) stamp: bool,
+    pub(crate) stamp: bool,
     /// Spool files drained into the table.
-    pub(super) spooled: Vec<PathBuf>,
+    pub(crate) spooled: Vec<PathBuf>,
 }
 
 /// Which move a write makes: its own, or `store migrate`'s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Move {
+pub(crate) enum Move {
     /// At a write: never refused, so hooks keep working; a rebuild
     /// checkpoint becomes a row.
     AtWrite,
@@ -96,7 +96,7 @@ struct Pending {
     now: OffsetDateTime,
     open: Option<Open>,
     after: After,
-    moved: Option<super::Imported>,
+    moved: Option<crate::Imported>,
 }
 
 /// The transaction, once the first write began it.
@@ -152,7 +152,7 @@ impl Store {
     }
 
     /// [`Store::transaction`] making `mode`'s move, dated `now`.
-    pub(super) fn transaction_as<T, E: From<Error>>(
+    pub(crate) fn transaction_as<T, E: From<Error>>(
         &self,
         mode: Move,
         now: OffsetDateTime,
@@ -239,13 +239,13 @@ impl Store {
     /// Run `f` as one store write: inside the command's transaction when
     /// there is one, else in a transaction of its own. A refusal rolls back
     /// everything `f` wrote.
-    pub(super) fn write_step<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(crate) fn write_step<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.step(f)
     }
 
     /// [`Store::write_step`] for any error a store error converts into: the
     /// same lock, transaction and savepoint ([`Store::write`] runs on it).
-    pub(super) fn step<T, E: From<Error>>(
+    pub(crate) fn step<T, E: From<Error>>(
         &self,
         f: impl FnOnce() -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
@@ -260,7 +260,7 @@ impl Store {
 
     /// Run a write and retain its committed result even if cleanup fails.
     /// The caller must run outside a pending write to observe the commit.
-    pub(super) fn write_step_with_cleanup<T>(
+    pub(crate) fn write_step_with_cleanup<T>(
         &self,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<(T, Result<()>)> {
@@ -277,7 +277,7 @@ impl Store {
     }
 
     /// The connection of the transaction under way, if it began.
-    pub(super) fn open_conn(&self) -> Option<Rc<Connection>> {
+    pub(crate) fn open_conn(&self) -> Option<Rc<Connection>> {
         PENDING.with(|p| {
             p.borrow()
                 .as_ref()
@@ -326,7 +326,7 @@ impl Store {
 
     /// Note work for after the commit of the pending write; `false` when
     /// there is none, so the caller does it now.
-    pub(super) fn after(&self, f: impl FnOnce(&mut After)) -> bool {
+    pub(crate) fn after(&self, f: impl FnOnce(&mut After)) -> bool {
         PENDING.with(|p| {
             let mut pending = p.borrow_mut();
             match pending
@@ -343,7 +343,7 @@ impl Store {
     }
 
     /// What the pending write's move did, once it began.
-    pub(super) fn moved_now(&self) -> Option<super::Imported> {
+    pub(crate) fn moved_now(&self) -> Option<crate::Imported> {
         PENDING.with(|p| {
             p.borrow()
                 .as_ref()
@@ -354,7 +354,7 @@ impl Store {
 
     /// Run `f` on the connection of the write under way, beginning it if
     /// needed: the document writers' way in.
-    pub(super) fn with_conn<T>(
+    pub(crate) fn with_conn<T>(
         &self,
         f: impl FnOnce(&Connection, &Path) -> Result<T>,
     ) -> Result<T> {
@@ -396,7 +396,7 @@ impl Store {
         Ok(())
     }
 
-    /// [`Audit::record`](super::repo::Audit::record), in the store's own
+    /// [`Audit::record`](crate::repo::Audit::record), in the store's own
     /// tests' call syntax. Test support: it moves with the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn record_audit(&self, event: &AuditEvent) -> Result<()> {
@@ -405,7 +405,7 @@ impl Store {
 
     /// Insert `event` in a transaction of its own that waits for no other
     /// writer.
-    pub(super) fn audit_without_waiting(&self, event: &AuditEvent) -> Result<()> {
+    pub(crate) fn audit_without_waiting(&self, event: &AuditEvent) -> Result<()> {
         let path = self.root.join(DB_FILE);
         let conn = db::open_new_writer(&self.root, Duration::ZERO)?;
         let tx = scope::Tx::begin(&conn, &path, "audit to")?;
@@ -414,7 +414,7 @@ impl Store {
     }
 
     /// Write `event` to `audit-spool/<time>-<pid>-<n>.json`.
-    pub(super) fn spool_audit(&self, event: &AuditEvent) -> Result<()> {
+    pub(crate) fn spool_audit(&self, event: &AuditEvent) -> Result<()> {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = self.root.join(AUDIT_SPOOL_DIR);
         self.prepare_subdir(&dir)?;
@@ -431,7 +431,7 @@ impl Store {
 
     /// The spooled audit lines, by file name, with how many did not parse.
     /// Reads only.
-    pub(super) fn spooled_audit(&self) -> Result<(Vec<Spooled>, usize)> {
+    pub(crate) fn spooled_audit(&self) -> Result<(Vec<Spooled>, usize)> {
         let dir = self.root.join(AUDIT_SPOOL_DIR);
         if !fsio::inspect_subdir(&dir)? {
             return Ok((Vec::new(), 0));
@@ -459,7 +459,7 @@ impl Store {
 
     /// Drain the spool into the table inside the write under way; the files
     /// are removed after the commit.
-    pub(super) fn drain_spool(&self, conn: &Connection, path: &Path) -> Result<usize> {
+    pub(crate) fn drain_spool(&self, conn: &Connection, path: &Path) -> Result<usize> {
         #[cfg(any(test, feature = "test-support"))]
         BEFORE_SPOOL_DRAIN.with(|hook| {
             if let Some(hook) = hook.borrow_mut().take() {
@@ -484,7 +484,7 @@ impl Store {
     /// Refuse `store migrate` before anything is imported: when there is
     /// no archive to import, while a session is on, or while a rebuild
     /// checkpoint file waits in a leftover `sessions/`.
-    pub(super) fn refuse_migrate(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
+    pub(crate) fn refuse_migrate(&self, conn: &Connection, leftovers: &[String]) -> Result<()> {
         let db = self.root.join(DB_FILE);
         let mut pending = !leftovers.is_empty();
         for name in self.archive_dirs()? {

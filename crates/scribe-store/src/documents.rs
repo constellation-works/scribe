@@ -11,17 +11,18 @@
 //! - **The first write.** [`Store::import_at_write`] runs at the start of the
 //!   first write's transaction: it records a new store's kinds as moved,
 //!   imports the `pre-sqlite-*` and `pre-issue-*` archives into the archive
-//!   tables (`archive`), and drains the spooled audit lines.
+//!   tables (`db/import`), and drains the spooled audit lines.
 //! - **Stamps.** `control.json`, `proposals.json`, `tags.json`, `marks.json`
 //!   and `pickups.json` are empty documents at the current format, so an
 //!   older build refuses the store.
 
 use super::audit::{self, AuditEvent};
+use super::db::codec;
+use super::db::write::Move;
 use super::db::{self, Conn as Connection, DB_FILE, docs};
-use super::write::Move;
 use super::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Skipped, Store, codec, fsio,
+    SESSIONS_DIR, Skipped, Store, fsio,
 };
 use crate::action::Pickup;
 use crate::annotation::MarkRecord;
@@ -526,7 +527,7 @@ impl Store {
         // The cited turns' stored messages go first: they hold the words
         // the forget removes, and deleting them again is a no-op.
         self.forget_cited_messages(entry, proposals)?;
-        self.with_conn(|conn, path| super::archive::scrub_entry(conn, path, entry, proposals))
+        self.with_conn(|conn, path| super::db::import::scrub_entry(conn, path, entry, proposals))
             .map(drop)
     }
 }
