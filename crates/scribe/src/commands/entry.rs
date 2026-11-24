@@ -428,44 +428,30 @@ fn output(written: entry_cmd::EntryWritten) -> Output {
     output
 }
 
-/// Resolve session prefixes keeping each reference as given
-/// ([`scribe_core::cases::resolve::relateds_preserving_input`]).
-fn resolve_relateds_preserving_input(
-    ctx: &Context,
-    related: &[scribe_core::Related],
-) -> Result<Vec<scribe_core::Related>, CliError> {
-    Ok(scribe_core::cases::resolve::relateds_preserving_input(
-        &ctx.core(),
-        ctx.provider(),
-        related,
-    )?)
-}
-
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let filter = EntryFilter {
-        tag: args.tag,
-        status: args.status,
-        project: args.project,
-        topics: args.topic,
-        related: resolve_relateds_preserving_input(ctx, &args.related)?,
-        dates: args.dates.range()?,
-        after: args.after,
-        author: args.author.map(scribe_core::AuthorName::current),
-        author_kind: args.author_kind.map(AuthorKind::from),
-        states: args.state,
-        limit: args.limit,
-    };
-    let store = ctx.store();
-    let group = args
-        .group
-        .as_deref()
-        .map(|id| store.read().groups().get(id))
-        .transpose()?;
-    let members = group.as_ref().map(|group| group.members());
-    let found = store
-        .read()
-        .entries()
-        .list_scoped(&filter, members.as_ref())?;
+    let listed = scribe_core::cases::entry::list(
+        &ctx.core(),
+        scribe_core::cases::entry::ListInput {
+            filter: EntryFilter {
+                tag: args.tag,
+                status: args.status,
+                project: args.project,
+                topics: args.topic,
+                related: args.related.clone(),
+                dates: scribe_core::DateRange::default(),
+                after: args.after,
+                author: args.author.map(scribe_core::AuthorName::current),
+                author_kind: args.author_kind.map(AuthorKind::from),
+                states: args.state,
+                limit: args.limit,
+            },
+            since: args.dates.since,
+            until: args.dates.until,
+            group: args.group,
+            provider: ctx.provider(),
+        },
+    )?;
+    let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.store().root().display()
@@ -485,7 +471,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         criteria,
         empty: &empty,
     };
-    let actions = Actions::load(ctx)?;
+    let actions = Actions(listed.actions);
     let records = Records::Entries(
         found
             .listing
@@ -539,38 +525,20 @@ fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related])
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let entry = ctx.store().resolve_entry(&args.id)?;
-    let actions = Actions::load(ctx)?;
-    // An entry approved from a pass claim shows what admitted the claim:
-    // the approved candidate proposal that reserved its id.
-    let admitted = ctx
-        .store()
-        .read()
-        .proposals()
-        .all()?
-        .into_iter()
-        .find(|p| {
-            p.kind == scribe_core::ProposalKind::Candidate
-                && p.state == scribe_core::ProposalState::Approved
-                && p.older == entry.id
-        })
-        .and_then(|p| p.candidate.and_then(|c| c.admitted));
+    let shown = scribe_core::cases::entry::show(&ctx.core(), &args.id)?;
+    let actions = Actions(shown.actions);
     Ok(Output::Show {
         record: Record::Entry(Box::new(
-            actions.payload(&entry, args.window).with_admitted(admitted),
+            actions
+                .payload(&shown.entry, args.window)
+                .with_admitted(shown.admitted),
         )),
     })
 }
 
-/// What an entry command needs to report action state
-/// ([`entry_cmd::Actions`]).
 struct Actions(entry_cmd::Actions);
 
 impl Actions {
-    fn load(ctx: &Context) -> Result<Self, CliError> {
-        Ok(Self(entry_cmd::Actions::load(&ctx.core())?))
-    }
-
     /// `entry` as output, with its action state when its tag is an action
     /// tag and its window when `window`.
     fn payload(&self, entry: &scribe_core::Entry, window: bool) -> EntryPayload {

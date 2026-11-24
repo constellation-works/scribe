@@ -651,18 +651,8 @@ fn discovered_only(
     })
 }
 
-/// Resolve a provider transcript, preserving discovery errors.
-pub(in crate::commands) fn locate(
-    ctx: &crate::app::Context,
-    id: &SessionId,
-) -> Result<Option<PathBuf>, CliError> {
-    Ok(files_for(ctx)?
-        .into_iter()
-        .find(|(found, _)| found == id)
-        .map(|(_, path)| path))
-}
-
-/// [`locate`] for a caller that needs only its own transcript. A duplicate id
+/// The transcript of `id` among [`files_for`], for a caller that needs only
+/// its own transcript. A duplicate id
 /// belonging to another session elsewhere in the tree is not an error here;
 /// a duplicate of `id` itself still is.
 pub(in crate::commands) fn locate_own(

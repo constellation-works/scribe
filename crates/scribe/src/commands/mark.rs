@@ -112,12 +112,8 @@ pub(super) fn run(command: MarkCommand, ctx: &Context) -> Result<Output, CliErro
 
 /// Read-only: no lock, no audit, no write.
 fn list(args: &ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let session = args
-        .session
-        .as_ref()
-        .map(|id| super::resolve_session_or_typed(ctx, id))
-        .transpose()?;
-    let marks = ctx.store().read().marks().uncataloged(session.as_ref())?;
+    let (session, marks) =
+        scribe_core::cases::mark::list(&ctx.core(), ctx.provider(), args.session.as_ref())?;
     let notice = ListNotice {
         noun: "uncataloged #scribe markers",
         criteria: session.iter().map(|id| format!("--session {id}")).collect(),

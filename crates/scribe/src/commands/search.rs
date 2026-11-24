@@ -11,9 +11,9 @@ use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
-use scribe_core::ask::{Corpus, RecordKind};
-use scribe_core::search::{self, DEFAULT_LIMIT, Found, SearchError, SearchQuery};
-use scribe_core::{EntryFilter, Project, SessionFilter, TagName, Topic};
+use scribe_core::ask::RecordKind;
+use scribe_core::search::{DEFAULT_LIMIT, SearchQuery};
+use scribe_core::{Project, TagName, Topic};
 use std::num::NonZeroUsize;
 
 pub(super) const SEARCH_EXAMPLES: &str = "\
@@ -118,68 +118,14 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         limit,
     };
     let store = ctx.store();
-    let group = args
-        .group
-        .as_deref()
-        .map(|id| store.read().groups().get(id))
-        .transpose()?;
-    let members = group.as_ref().map(|group| group.members());
-    let config = store.read().tags().config()?;
-    let entries = store
-        .read()
-        .entries()
-        .list_scoped(&EntryFilter::default(), members.as_ref())?;
-    let sessions = store.read().sessions().list_scoped(
-        &SessionFilter {
-            include_inactive: true,
-            ..SessionFilter::default()
-        },
-        members.as_ref(),
-    )?;
-    // The stored messages `query` keeps, and whether the store was opened as
-    // a read-only copy. Messages are ranked by the store, not by `search`.
-    let stored_messages = |query: &SearchQuery| -> Result<(Found, bool), CliError> {
-        let tokens = scribe_core::ask::tokens(&query.terms);
-        let stored = match &group {
-            Some(group) => store.read().groups().search_messages(&group.id, &tokens)?,
-            None => store.read().messages().search(&tokens)?,
-        };
-        let found = search::messages(query, &stored, &sessions.listing.items).map_err(usage)?;
-        Ok((found, stored.read_only_copy))
-    };
-    let mut read_only_copy = false;
-    let found = if query.kind == Some(RecordKind::Message) {
-        let (found, copy) = stored_messages(&query)?;
-        read_only_copy = copy;
-        found
-    } else {
-        let corpus = Corpus {
-            entries: &entries.listing.items,
-            sessions: &sessions.listing.items,
-            messages: &[],
-            tags: &config.tags,
-            user: &config.user,
-        };
-        search::search(&query, corpus).map_err(usage)?
-    };
-    // A default search that finds no entry or session says when stored
-    // messages match, since a line the user typed is only ever a message.
-    // The count uses the same filters, so the command lists those messages.
-    // A tag leaves messages out too: they carry none, so they never stand in.
-    let mut message_matches = None;
-    if query.kind.is_none() && query.tag.is_none() && found.total == 0 {
-        let message_query = SearchQuery {
-            kind: Some(RecordKind::Message),
-            ..query.clone()
-        };
-        let (stored, copy) = stored_messages(&message_query)?;
-        if stored.total > 0 {
-            message_matches = Some(stored.total);
-            read_only_copy = copy;
-        }
-    }
-    let mut skipped = entries.skipped;
-    skipped.extend(sessions.skipped);
+    let searched = scribe_core::cases::search::run(&ctx.core(), &query, args.group.as_deref())?;
+    let (found, group, skipped, read_only_copy, message_matches) = (
+        searched.found,
+        searched.group,
+        searched.skipped,
+        searched.read_only_copy,
+        searched.message_matches,
+    );
     let mut criteria = vec![format!("{:?}", query.terms)];
     if let Some(kind) = query.kind {
         criteria.push(format!("--kind {}", kind.as_str()));
@@ -244,13 +190,6 @@ pub(super) fn run(args: SearchArgs, ctx: &Context) -> Result<Output, CliError> {
         *shown = Some(count);
     }
     Ok(output)
-}
-
-/// A refused query as a usage error (exit 2).
-fn usage(e: SearchError) -> CliError {
-    match e {
-        SearchError::NoTerms(_) => CliError::Usage(e.to_string()),
-    }
 }
 
 /// The `scribe search` command that lists the messages a hint counts: the

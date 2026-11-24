@@ -16,8 +16,8 @@ fn refusal<E>(kind: WriteRefusal, message: String) -> WriteError<E> {
     WriteError::Core(crate::Error::AgentWrite { kind, message })
 }
 
-/// `session`'s `provider` transcript on this host, as `payload::locate`
-/// finds it.
+/// `session`'s `provider` transcript on this host, among those
+/// [`Transcripts::files`](crate::cases::Transcripts::files) lists.
 fn locate<E: PortError>(
     ctx: &Ctx<'_, E>,
     provider: Provider,

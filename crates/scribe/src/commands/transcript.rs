@@ -6,16 +6,13 @@
 //! line, and they work on a read-only root. `list` is how the user picks a
 //! past session to catalog; `show` is the preview.
 
-use super::hook::payload;
-use super::hook::project;
 use super::{DateArgs, ListNotice, day_parser};
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TranscriptPayload, WarningPayload};
 use clap::{Args, Subcommand};
-use scribe_core::{Config, DateRange, Project, SessionFilter, SessionId, transcript};
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use scribe_core::cases::transcript::Surveyed;
+use scribe_core::{DateRange, Project, SessionId};
 use time::Date;
 
 /// The default `--min-turns`: long sessions only.
@@ -133,7 +130,18 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         criteria.push(format!("--project {project}"));
     }
     criteria.push(format!("--min-turns {}", args.min_turns));
-    let Some(_dir) = ctx.transcripts() else {
+    let Some(listed) = scribe_core::cases::transcript::list(
+        &ctx.core(),
+        ctx.provider(),
+        &scribe_core::cases::transcript::ListInput {
+            since: args.since,
+            dates,
+            projects: &args.project,
+            min_turns: args.min_turns,
+            limit: args.limit,
+        },
+    )?
+    else {
         return Ok(Output::List {
             notices: vec![String::from(
                 "no transcripts directory: set HOME, CLAUDE_CONFIG_DIR or CODEX_HOME for the selected provider",
@@ -144,59 +152,21 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
             message_matches: None,
         });
     };
-    let config = ctx.config()?;
-    let cataloged = cataloged(ctx)?;
-    let since_start = since_start(args.since);
-    let mut warnings = Vec::new();
-    let mut rows = Vec::new();
-    for (id, path) in payload::files_for(ctx)? {
-        if cataloged.contains(id.as_str()) {
-            continue;
-        }
-        // Skip without opening: a file last written before `--since`
-        // started cannot be read cheaply, and the acceptance rule is to
-        // skip it even if its message timestamps fall in range.
-        if let Ok(modified) = std::fs::metadata(&path).and_then(|meta| meta.modified())
-            && modified < since_start
-        {
-            continue;
-        }
-        let bytes = match payload::read_checked(ctx, &path, &id) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(payload::Unreadable::Refused(_)) => continue,
-            Err(payload::Unreadable::Io(err)) => {
-                warnings.push(WarningPayload {
-                    path: path.display().to_string(),
-                    code: "io_error",
-                    error: err.to_string(),
-                });
-                continue;
-            }
-        };
-        let row = payload_from(&id, &bytes, &config, false);
-        if row.user_turns < args.min_turns {
-            continue;
-        }
-        if !args.project.is_empty() && !args.project.iter().any(|p| p.as_str() == row.project) {
-            continue;
-        }
-        let (Some(started), Some(ended)) = (row.started, row.ended) else {
-            continue;
-        };
-        if !dates.overlaps(started, ended) {
-            continue;
-        }
-        rows.push(row);
-    }
-    rows.sort_by(|a, b| {
-        b.started
-            .cmp(&a.started)
-            .then_with(|| a.session.cmp(&b.session))
-    });
-    let total = rows.len();
-    if let Some(limit) = args.limit {
-        rows.truncate(limit.get());
-    }
+    let total = listed.total;
+    let rows: Vec<TranscriptPayload> = listed
+        .rows
+        .into_iter()
+        .map(|row| payload(row, false))
+        .collect();
+    let warnings = listed
+        .warnings
+        .into_iter()
+        .map(|(path, error)| WarningPayload {
+            path,
+            code: "io_error",
+            error,
+        })
+        .collect();
     let notice = ListNotice {
         noun: "transcripts",
         criteria,
@@ -212,61 +182,24 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
 }
 
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
-    let id = resolve_transcript(ctx, &args.id)?;
-    let dir =
-        ctx.transcripts()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| CliError::TranscriptNotFound {
-                id: id.clone(),
-                dir: PathBuf::from("(no transcripts directory)"),
-            })?;
-    let path = payload::locate(ctx, &id)?.ok_or_else(|| CliError::TranscriptNotFound {
-        id: id.clone(),
-        dir: dir.clone(),
-    })?;
-    let bytes = match payload::read_checked(ctx, &path, &id) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => return Err(CliError::TranscriptNotFound { id, dir }),
-        Err(payload::Unreadable::Refused(reason)) => {
-            return Err(CliError::TranscriptRefused { id, reason });
-        }
-        Err(payload::Unreadable::Io(source)) => {
-            return Err(CliError::Read {
-                what: path.display().to_string(),
-                source,
-            });
-        }
-    };
-    let config = ctx.config()?;
+    let surveyed = scribe_core::cases::transcript::show(&ctx.core(), ctx.provider(), &args.id)?;
     Ok(Output::Show {
-        record: Record::Transcript(Box::new(payload_from(&id, &bytes, &config, true))),
+        record: Record::Transcript(Box::new(payload(surveyed, true))),
     })
 }
 
-fn payload_from(
-    id: &SessionId,
-    bytes: &[u8],
-    config: &Config,
-    with_turns: bool,
-) -> TranscriptPayload {
-    let (survey, cwd) = transcript::survey_with_cwd(bytes);
-    let cwd = cwd.unwrap_or_default();
-    let cwd_project = if cwd.is_empty() {
-        Project::sanitized("")
-    } else {
-        project::of(Path::new(&cwd))
-    };
-    let counts = transcript::mention_counts(bytes, &config.projects);
-    let project = transcript::attribute(&counts, &cwd_project);
-    let mut mentions = BTreeMap::new();
-    for (project, count) in &counts {
-        mentions.insert(project.to_string(), *count);
-    }
+/// A survey as its row; `with_turns` adds the user's first turns.
+fn payload(surveyed: Surveyed, with_turns: bool) -> TranscriptPayload {
+    let survey = surveyed.survey;
     TranscriptPayload {
-        session: id.to_string(),
-        project: project.to_string(),
-        project_mentions: mentions,
-        cwd,
+        session: surveyed.session.to_string(),
+        project: surveyed.project.to_string(),
+        project_mentions: surveyed
+            .mentions
+            .iter()
+            .map(|(project, count)| (project.to_string(), *count))
+            .collect(),
+        cwd: surveyed.cwd,
         started: survey.started,
         ended: survey.ended,
         bytes: survey.bytes,
@@ -276,42 +209,10 @@ fn payload_from(
     }
 }
 
-/// The start of the `--since` day as a system time (midnight UTC).
-fn since_start(since: Date) -> std::time::SystemTime {
-    let start = since.midnight().assume_utc().unix_timestamp();
-    if start >= 0 {
-        std::time::SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(u64::try_from(start).unwrap_or(0))
-    } else {
-        std::time::SystemTime::UNIX_EPOCH
-            - std::time::Duration::from_secs(u64::try_from(-start).unwrap_or(0))
-    }
-}
-
 fn dates(since: Date, until: Option<Date>) -> Result<DateRange, CliError> {
     DateArgs {
         since: Some(since),
         until,
     }
     .range()
-}
-
-/// Session ids that already have a record (including a file that did not
-/// parse) or a switch. Those transcripts are not candidates.
-fn cataloged(ctx: &Context) -> Result<BTreeSet<String>, CliError> {
-    let found = ctx.store().read().sessions().list(&SessionFilter {
-        include_inactive: true,
-        ..Default::default()
-    })?;
-    let mut ids = BTreeSet::new();
-    for record in &found.listing.items {
-        ids.insert(record.id.to_string());
-    }
-    for id in &found.skipped_sessions {
-        ids.insert(id.to_string());
-    }
-    for id in ctx.store().read().sessions().control()?.sessions.keys() {
-        ids.insert(id.to_string());
-    }
-    Ok(ids)
 }

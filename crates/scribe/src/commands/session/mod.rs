@@ -169,6 +169,7 @@ pub(crate) struct ShowArgs {
     pub(crate) segment: Option<NonZeroU32>,
 }
 
+use scribe_core::cases::session::Shown;
 pub(crate) use scribe_core::cases::session_activity::{SessionRef, parse_session_ref};
 
 impl SessionCommand {
@@ -245,27 +246,26 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
 }
 
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
-    let filter = SessionFilter {
-        project: args.project,
-        topics: args.topic,
-        related: super::resolve_relateds(ctx, &args.related)?,
-        status: args.status.map(SessionStatus::from),
-        dates: args.dates.range()?,
-        include_inactive: args.include_inactive,
-        limit: args.limit,
-        order: SessionOrder::Updated,
-    };
-    let store = ctx.store();
-    let group = args
-        .group
-        .as_deref()
-        .map(|id| store.read().groups().get(id))
-        .transpose()?;
-    let members = group.as_ref().map(|group| group.members());
-    let found = store
-        .read()
-        .sessions()
-        .list_scoped(&filter, members.as_ref())?;
+    let listed = scribe_core::cases::session::list(
+        &ctx.core(),
+        scribe_core::cases::session::ListInput {
+            filter: SessionFilter {
+                project: args.project,
+                topics: args.topic,
+                related: args.related,
+                status: args.status.map(SessionStatus::from),
+                dates: scribe_core::DateRange::default(),
+                include_inactive: args.include_inactive,
+                limit: args.limit,
+                order: SessionOrder::Updated,
+            },
+            since: args.dates.since,
+            until: args.dates.until,
+            group: args.group,
+            provider: ctx.provider(),
+        },
+    )?;
+    let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no session records in {}; a session is cataloged after /scribe on",
         ctx.store().root().display()
@@ -348,33 +348,23 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
         }
         (flag, cite) => flag.or(cite),
     };
-    let id = ctx
-        .store()
-        .read()
-        .sessions()
-        .resolve_or_handoff(&args.id.id)?;
-    let handoffs = ctx.store().read().entries().handoffs_for_session(&id)?;
-    let view = match ctx.store().read().sessions().get(&id) {
-        Ok(view) => view,
-        Err(scribe_core::Error::SessionNotFound { .. }) if !handoffs.is_empty() => {
-            if let Some(n) = segment {
-                return Err(CliError::SegmentNotFound {
-                    session: id,
-                    n: n.get(),
-                    count: 0,
+    let (view, handoffs) =
+        match scribe_core::cases::session::show(&ctx.core(), &args.id.id, segment)? {
+            Shown::Record { view, handoffs } => (view, handoffs),
+            Shown::Handoffs {
+                id,
+                control,
+                handoffs,
+            } => {
+                return Ok(Output::Show {
+                    record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
+                        &id,
+                        control.as_ref(),
+                        &handoffs,
+                    ))),
                 });
             }
-            let control = ctx.store().read().sessions().control()?;
-            return Ok(Output::Show {
-                record: Record::SessionHandoffs(Box::new(SessionHandoffsPayload::new(
-                    &id,
-                    control.get(&id),
-                    &handoffs,
-                ))),
-            });
-        }
-        Err(err) => return Err(err.into()),
-    };
+        };
     let record = &view.record;
     let payload = SessionPayload::new(
         record,
@@ -388,16 +378,8 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     .with_forgotten(view.forgotten)
     .with_handoffs(&handoffs);
     let mut payload = match segment {
-        Some(n) => {
-            let one = record
-                .segment(n.get())
-                .ok_or_else(|| CliError::SegmentNotFound {
-                    session: record.id.clone(),
-                    n: n.get(),
-                    count: record.log.len(),
-                })?;
-            payload.with_log([one])
-        }
+        // The case refused a segment the log does not have.
+        Some(n) => payload.with_log(record.segment(n.get())),
         None => payload.with_log(&record.log),
     };
     payload.log_text = args.log || segment.is_some();
