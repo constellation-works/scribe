@@ -43,7 +43,7 @@ impl Store {
         check_agent_author(&author)?;
         self.prepare_dir(&self.root)?;
         self.write_step(|| {
-        let entry = self.resolve_entry(id)?;
+        let entry = self.find_entry(id)?;
         let config = self.config()?;
         if config.tags.action(&entry.tag).is_none() {
             return Err(refusal(

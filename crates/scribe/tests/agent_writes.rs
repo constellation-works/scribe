@@ -3,6 +3,7 @@
 #[path = "agent_writes/records.rs"]
 mod records;
 mod support;
+use scribe_core::ProposalVerbs;
 use support::{Fixture, text};
 /// Files (relative to `root`) whose bytes or mode differ between two snapshots.
 fn changed(

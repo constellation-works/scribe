@@ -3,6 +3,7 @@
 //! and `forget` erasing from them as it erases from the live rows.
 
 use super::{Seed, on_disk, private_tempdir, seed};
+use crate::ProposalVerbs;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Entry};

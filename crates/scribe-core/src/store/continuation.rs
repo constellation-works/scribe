@@ -25,7 +25,7 @@ impl Store {
                 .next()
                 .filter(|e| e.handoff_mode == Some(handoff::Mode::Continue))),
             HandoffSelection::Named(id) => {
-                let entry = self.resolve_entry(id)?;
+                let entry = self.find_entry(id)?;
                 if entry.status != EntryStatus::Active {
                     return Err(crate::checks::refusal(
                         WriteRefusal::EntryNotActive,

@@ -5,6 +5,7 @@
 
 use super::super::db::{self, DB_FILE};
 use super::private_tempdir;
+use crate::ProposalVerbs;
 use crate::entry::Speaker;
 use crate::error::Error;
 use crate::group::GroupCloser;

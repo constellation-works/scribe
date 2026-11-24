@@ -3,6 +3,7 @@ use crate::entry::{EntryFilter, EntryStatus};
 use crate::session::SessionFilter;
 use crate::store::db;
 use crate::store::{AuditEvent, AuditStatus, Store};
+use crate::{EntryVerbs, ProposalVerbs};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -1220,6 +1221,7 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
 }
 
 mod marks {
+    use crate::EntryVerbs;
     use crate::Speaker;
     use crate::annotation::MarkState;
     use crate::entry::{Cite, ContentFrom, NewEntry};

@@ -47,7 +47,6 @@
 //! in [`Skipped`], so one bad record does not hide the rest (4_decisions.md,
 //! "One malformed record makes its file corrupt").
 
-mod agent;
 mod archive;
 mod audit;
 mod candidates;
@@ -57,7 +56,6 @@ pub use continuation::HandoffSelection;
 mod db;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 mod documents;
-mod entry_records;
 pub use documents::Moved;
 mod fsio;
 mod ids;
@@ -82,7 +80,7 @@ mod sessions;
 mod tags;
 mod write;
 pub use rebuild::RebuildGuard;
-pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget};
+pub use sessions::{ExportFormat, Exported, LOCKS_DIR, SessionForget, SessionForgetOutcome};
 
 pub use crate::checks::entry::check_handoff_related;
 pub use crate::checks::records::check_unsettled_item;
@@ -95,11 +93,10 @@ pub use tags::check_description;
 
 use crate::activity::{self, ActiveOutcome, SetActive};
 use crate::config::Config;
-use crate::consistency::{self, Draft, ReapplyReport, Settle, Settled};
 use crate::control;
 use crate::entry::{Cite, Entry, EntryFilter, EntryId};
 use crate::error::{Error, Result};
-use crate::proposal::{Proposal, ProposalId};
+use crate::proposal::Proposal;
 use crate::record::Listing;
 use crate::session::{
     self as session_mod, Child, ControlState, SessionFilter, SessionId, SessionLink, SessionRecord,
@@ -1132,171 +1129,6 @@ impl Store {
                 written_entries: claims.written,
                 memory: memory_written,
             })
-        })
-    }
-
-    /// Re-apply, under the store lock, every approved proposal whose older
-    /// entry is still `active` ([`consistency::reapply`]), and create any
-    /// missing entry from an approved candidate. An approval
-    /// writes `proposals.json` and then the entry, and this repairs a crash
-    /// between the two. Writes only the entries it changes. An approved
-    /// candidate an active entry of the same tag and project already covers
-    /// is closed as `rejected` instead, with no new entry; that close is
-    /// [`ReapplyReport::covered`] and the covering id is not stored on the
-    /// proposal.
-    pub fn reapply_approved(&self, now: time::OffsetDateTime) -> Result<ReapplyReport> {
-        if !self.root_exists()? {
-            return Ok(ReapplyReport::default());
-        }
-        let mut report = self.reapply_candidates()?;
-        let proposals = self.proposals()?;
-        let (entries, _) = self.load_entries()?;
-        let mut probe = entries;
-        if consistency::reapply(&proposals, &mut probe, now).is_empty() {
-            return Ok(report);
-        }
-        self.write_step(|| {
-            let proposals = self.proposals()?;
-            let (mut entries, _) = self.load_entries()?;
-            let done = consistency::reapply(&proposals, &mut entries, now);
-            for change in &done {
-                if let Some(entry) = entries.iter().find(|e| e.id == change.entry) {
-                    self.write_entry(entry, false)?;
-                }
-            }
-            report.applied.extend(done);
-            Ok(report)
-        })
-    }
-
-    /// Open one proposal per draft, under the store lock: a draft whose
-    /// pair (or stale entry) already has a proposal in any state, or whose
-    /// entries are no longer all `active`, is skipped
-    /// ([`consistency::is_settled_or_gone`], checked again here because a
-    /// settle may have run since the drafts were made). The rest are
-    /// numbered `p-<n>` past the highest id, their free text masked by
-    /// `redactor`, and `proposals.json` is replaced whole. Returns the
-    /// proposals opened, by id; writes nothing when there are none.
-    pub fn open_proposals(
-        &self,
-        drafts: Vec<Draft>,
-        now: time::OffsetDateTime,
-        redactor: &Redactor,
-    ) -> Result<Vec<Proposal>> {
-        if drafts.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.prepare_dir(&self.root)?;
-        self.write_step(|| {
-            let mut proposals = self.proposals()?;
-            let (entries, _) = self.load_entries()?;
-            let mut next = proposals.iter().map(|p| p.id.number()).max().unwrap_or(0);
-            let mut opened = Vec::new();
-            for draft in drafts {
-                if consistency::is_settled_or_gone(&draft, &proposals, &entries) {
-                    continue;
-                }
-                next = next.saturating_add(1);
-                let Ok(id) = ProposalId::try_from(format!("p-{next}")) else {
-                    continue;
-                };
-                let mut proposal = draft.into_proposal(id, now);
-                redactor.proposal(&mut proposal);
-                proposals.push(proposal.clone());
-                opened.push(proposal);
-            }
-            if !opened.is_empty() {
-                self.write_proposals(&proposals)?;
-            }
-            Ok(opened)
-        })
-    }
-
-    /// Apply one settling instruction typed in the turn `cite`, under the
-    /// store lock ([`consistency::settle`]). `proposals.json` is written
-    /// first and then the entry, so a crash between them leaves an approved
-    /// proposal the next scan re-applies; only what changed is written.
-    pub fn settle(
-        &self,
-        action: &Settle,
-        cite: &Cite,
-        now: time::OffsetDateTime,
-    ) -> Result<Settled> {
-        self.prepare_dir(&self.root)?;
-        self.write_step(|| {
-            if let Settle::ForgetSession(id) = action {
-                return Ok(match self.forget_session_locked(id, now)? {
-                    sessions::SessionForgetOutcome::Forgotten(forgot) => {
-                        Settled::SessionForgotten(forgot)
-                    }
-                    sessions::SessionForgetOutcome::Already {
-                        id: resolved,
-                        number,
-                        cleaned: true,
-                    } => Settled::SessionForgetRepaired {
-                        id: resolved,
-                        number,
-                    },
-                    sessions::SessionForgetOutcome::Already {
-                        id: resolved,
-                        cleaned: false,
-                        ..
-                    } => Settled::Already(format!("{resolved} is already forgotten")),
-                });
-            }
-            let mut proposals = self.proposals()?;
-            let (mut entries, _) = self.load_entries()?;
-            let before_proposals = proposals.clone();
-            let before_entries = entries.clone();
-            let mut settled = consistency::settle(action, &mut proposals, &mut entries, cite, now);
-            if let (Settle::Forget(id), Settled::Forgotten(_)) = (action, &settled)
-                && let Some(entry) = before_entries.iter().find(|e| &e.id == id)
-            {
-                // The stored messages first (2_design.md §15.7): they hold the
-                // words the forget removes, and deleting them again is a no-op;
-                // the archive tables are erased in the same write.
-                self.forget_entry_residue(entry, &before_proposals, now)?;
-            }
-            if proposals != before_proposals {
-                self.write_proposals(&proposals)?;
-            }
-            if let Settle::Approve(id) = action
-                && let Some(index) = proposals.iter().position(|p| {
-                    p.id == *id
-                        && p.kind == crate::ProposalKind::Candidate
-                        && p.state == crate::ProposalState::Approved
-                })
-            {
-                let proposal = proposals[index].clone();
-                match self.write_candidate_entry(&proposal)? {
-                    candidates::CandidateWrite::Created => {
-                        settled = Settled::Recorded {
-                            proposal: *id,
-                            entry: proposal.older.clone(),
-                            agent_authored: proposal
-                                .candidate
-                                .as_ref()
-                                .is_some_and(|c| c.role == crate::Speaker::Assistant),
-                        };
-                    }
-                    candidates::CandidateWrite::Present => {}
-                    candidates::CandidateWrite::Covered { by } => {
-                        // Approved, but an active entry now says it: closed as
-                        // covered, keeping who approved it and on what
-                        // instruction, never as a rejection (format 15).
-                        proposals[index].state = crate::ProposalState::Rejected;
-                        proposals[index].closed_reason = Some(crate::ClosedReason::Covered);
-                        self.write_proposals(&proposals)?;
-                        settled = Settled::Covered { proposal: *id, by };
-                    }
-                }
-            }
-            for (entry, before) in entries.iter().zip(&before_entries) {
-                if entry != before {
-                    self.write_entry(entry, false)?;
-                }
-            }
-            Ok(settled)
         })
     }
 

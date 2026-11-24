@@ -3,6 +3,7 @@
 //! transaction, and `store migrate`'s archive import (phase 8).
 
 use super::{Seed, private_tempdir, seed};
+use crate::ProposalVerbs;
 use crate::annotation::{MarkRecord, MarkState};
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
 use crate::control::{self, Switch};
