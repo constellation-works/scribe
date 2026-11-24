@@ -4206,6 +4206,45 @@ fn a_join_without_a_readable_transcript_still_joins_and_stores_nothing() {
     );
 }
 
+/// A second copy of `session`'s transcript in another project directory.
+fn duplicate_transcript(f: &Fixture, session: &str, original: &PathBuf) {
+    let dir = f.home().join(".claude/projects/-other");
+    f.create_private_dir_all(&dir);
+    let copy = dir.join(format!("{session}.jsonl"));
+    std::fs::copy(original, &copy).unwrap();
+    support::make_private(&copy);
+}
+
+#[test]
+fn an_unrelated_duplicate_transcript_does_not_block_a_join_or_its_retry() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    let other = transcript(&f, C, &[row_at(C, "c1", "user", "unrelated", OLD)]);
+    duplicate_transcript(&f, C, &other);
+    transcript(&f, B, &[row_at(B, "b1", "user", "ownorchid", OLD)]);
+    join(&f, B, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, B), ["b1"]);
+    // The retry holds the seat already; the unrelated duplicate still does not matter.
+    join(&f, B, "g-1", &[], 0);
+    assert_eq!(stored_turns(&f, B), ["b1"]);
+}
+
+#[test]
+fn the_callers_own_duplicate_transcript_still_refuses_the_join() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row_at(A, "u", "user", QUOTE, OLD)]);
+    open(&f);
+    let own = transcript(&f, B, &[row_at(B, "b1", "user", "ownorchid", OLD)]);
+    duplicate_transcript(&f, B, &own);
+    let err = join(&f, B, "g-1", &[], 2);
+    assert!(
+        err.to_string().contains("ambiguous duplicate transcript"),
+        "{err}"
+    );
+    assert!(stored_turns(&f, B).is_empty());
+}
+
 #[test]
 fn backfill_existing_holders_is_idempotent_and_keeps_capture_cursor() {
     let f = Fixture::new();

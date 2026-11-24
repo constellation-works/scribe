@@ -559,10 +559,13 @@ fn named_session(name: &std::ffi::OsStr, provider: scribe_core::Provider) -> Opt
 
 /// Discover only the provider's expected layout; never follow directory links.
 /// Also reports entries named like a transcript that are not regular files, so
-/// a caller can tell a refused entry from an absent one.
-pub(in crate::commands) fn discover(
+/// a caller can tell a refused entry from an absent one. With `only`, another
+/// session's entries are neither kept nor compared, so a duplicate id
+/// elsewhere in the tree is not an error.
+fn discover(
     dir: &Path,
     provider: scribe_core::Provider,
+    only: Option<&SessionId>,
 ) -> Result<Discovered, CliError> {
     let mut pending = vec![(dir.to_path_buf(), 0usize)];
     let mut found = std::collections::BTreeMap::new();
@@ -606,6 +609,9 @@ pub(in crate::commands) fn discover(
             let Some(id) = id else {
                 continue;
             };
+            if only.is_some_and(|only| only != &id) {
+                continue;
+            }
             if !kind.is_file() {
                 refused.insert((id, entry.path()));
                 continue;
@@ -634,10 +640,17 @@ pub(in crate::commands) fn files_for(
 pub(in crate::commands) fn discovered_for(
     ctx: &crate::app::Context,
 ) -> Result<Discovered, CliError> {
+    discovered_only(ctx, None)
+}
+
+fn discovered_only(
+    ctx: &crate::app::Context,
+    only: Option<&SessionId>,
+) -> Result<Discovered, CliError> {
     let mut all = std::collections::BTreeMap::new();
     let mut refused = Vec::new();
     for root in ctx.transcript_roots() {
-        let found = discover(root, ctx.provider())?;
+        let found = discover(root, ctx.provider(), only)?;
         for (id, path) in found.files {
             if all.insert(id, path).is_some() {
                 return Err(CliError::Usage(String::from(
@@ -661,5 +674,19 @@ pub(in crate::commands) fn locate(
     Ok(files_for(ctx)?
         .into_iter()
         .find(|(found, _)| found == id)
+        .map(|(_, path)| path))
+}
+
+/// [`locate`] for a caller that needs only its own transcript. A duplicate id
+/// belonging to another session elsewhere in the tree is not an error here;
+/// a duplicate of `id` itself still is.
+pub(in crate::commands) fn locate_own(
+    ctx: &crate::app::Context,
+    id: &SessionId,
+) -> Result<Option<PathBuf>, CliError> {
+    Ok(discovered_only(ctx, Some(id))?
+        .files
+        .into_iter()
+        .next()
         .map(|(_, path)| path))
 }
