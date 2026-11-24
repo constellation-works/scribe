@@ -3,8 +3,8 @@
 //! invocations fail rather than falling back to Claude or another model.
 
 use super::{Ended, MAX_STDOUT, detail, supervise};
-use scribe_core::Redactor;
-use scribe_core::models::ModelError;
+use crate::Redactor;
+use crate::models::ModelError;
 use serde_json::Value;
 use std::{
     ffi::OsString,

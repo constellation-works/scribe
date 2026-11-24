@@ -4,7 +4,7 @@
 //! runs the real `claude` (2_design.md §8).
 #![cfg(unix)]
 
-use crate::models::{BASELINE_ENV, ClaudeCliModels, allowed_env, argv};
+use crate::providers::{BASELINE_ENV, ClaudeCliModels, allowed_env, argv};
 use scribe_core::Models;
 use scribe_core::models::{
     Budgets, ModelError, SESSION_HEADER_SCHEMA, SessionHeader, SessionHeaderRequest,

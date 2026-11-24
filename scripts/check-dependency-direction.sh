@@ -44,8 +44,11 @@ policy() {
       ALLOWED="scribe-domain scribe-store"
       # The use cases reach files and scribe.db only through the store. Its
       # tests may stage database states with rusqlite: dev-dependencies are
-      # exempt (declared_deps reads normal dependencies only).
-      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile rustix"
+      # exempt (declared_deps reads normal dependencies only). rustix and
+      # tempfile are allowed for providers/, whose model adapters supervise
+      # process groups and hand the codex child its schema in a private
+      # temporary directory.
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite"
       ;;
     scribe)
       # The CLI reaches scribe.db through scribe_core::Store; its tests may
@@ -137,11 +140,15 @@ CORE=crates/scribe-core/src
 CLI=crates/scribe/src
 
 # The crate edges keep the use cases out of scribe-domain and scribe-store,
-# and rusqlite, tempfile and rustix out of every crate but the store. What
-# they cannot keep out is std: scribe-domain and scribe-core do no file,
-# network or process I/O of their own (R4, R5).
+# and rusqlite out of every crate but the store. What they
+# cannot keep out is std: scribe-domain and scribe-core do no file, network
+# or process I/O of their own (R4, R5), except that the core's providers/
+# spawns the model processes, the only place in the core naming std::process.
 for path in "$DOMAIN"/* "$CORE"/*; do
-  [[ "$(basename "$path")" == tests ]] && continue
+  case "$(basename "$path")" in tests) continue ;; providers)
+    ban_std "$path" 'fs|net' "${path#crates/}: file access belongs in scribe-store"
+    continue ;;
+  esac
   ban_std "$path" 'fs|net|process' "${path#crates/}: file and process access belong in scribe-store"
 done
 
@@ -271,21 +278,30 @@ fi
 # exec, Command, Outcome and Error.
 ban "$CORE" 'crate::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: a use case lives in its app under apps/"
 ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the app's exec through scribe_core::apps::<app>"
-# The model callers are pass, catalog and rebuild (session), memory refresh
-# and group close: only those three apps name the Models port, each carrying
-# the adapter in its Command. No other app reaches a model.
-for app in tag mark entry proposal search brief consistency hook admin; do
-  ban "$CORE/apps/$app" '(crate::models::|[^[:alnum:]_]Models[^[:alnum:]_])' \
-    "apps/$app names the Models port: only session, memory and group call a model"
-done
+# The model callers are five flows: session pass, catalog and rebuild,
+# memory refresh and group close. Only those flows, and the mod.rs of their
+# apps (which carries the adapter in its Command and the model failure in its
+# Error), name providers, the Models port or ModelError. The request and
+# answer shapes under crate::models stay free to use.
+models_port='crate::providers(::|[^[:alnum:]_]|$)|(^|[^[:alnum:]_])(Models|ModelError|ModelsOnce|ModelsEach)([^[:alnum:]_]|$)'
+while IFS= read -r file; do
+  case "${file#"$CORE"/}" in
+    apps/session/mod.rs | apps/session/catalog.rs | apps/session/rebuild.rs | apps/session/pass/* | \
+      apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs) continue ;;
+  esac
+  ban "$file" "$models_port" \
+    "${file#crates/} names the Models port: only session pass, catalog, rebuild, memory refresh and group close call a model"
+done < <(find "$CORE/apps" "$CORE/runtime" -name '*.rs' -not -path '*/tests/*' | sort)
+# The providers know nothing of the apps or the runtime that call them.
+ban "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
 
 # Pass is an orchestrator; its lower-level callers in the rules ring cannot
 # depend on it.
 for path in config.rs annotation.rs consistency.rs instruction.rs memory message.rs; do
   ban "$DOMAIN/$path" 'crate::pass(::|[^[:alnum:]_]|$)' "domain/$path must not depend on pass"
 done
-# The Models port must not import its callers.
-ban "$DOMAIN/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the Models port must not import its callers"
+# The model shapes must not import their callers.
+ban "$DOMAIN/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
 # A grouped crate import can name a caller without spelling crate::caller.
 port_grouped=$(perl -0777 -ne '
   while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?crate::\{([^;]*)\};/mg) {
@@ -298,7 +314,7 @@ port_grouped=$(perl -0777 -ne '
   }' "$DOMAIN/models.rs" 2>/dev/null || true)
 if [[ -n "$port_grouped" ]]; then
   echo "$port_grouped" >&2
-  err "the Models port must not import its callers"
+  err "the model shapes must not import their callers"
 fi
 
 # Inside scribe-store: fsio is mechanism with no knowledge of records, and
@@ -319,21 +335,17 @@ for path in "$STORE"/*; do
   ban "$path" 'rusqlite' "scribe-store/${path#"$STORE"/} must not use rusqlite: scribe.db belongs to db.rs and db/"
 done
 # The domain receives resolved roots and configuration (R3).
-ban "$CORE"          'std::env::|home_dir|current_dir'           "the core crate must not read the environment or discover paths"
+# A child's working directory (`Command::current_dir(path)`, providers/) is
+# set, not discovered: only the no-argument `current_dir()` is a discovery.
+ban "$CORE"          'std::env::|home_dir|current_dir\(\)'       "the core crate must not read the environment or discover paths"
 ban "$DOMAIN"        'std::env::|home_dir|current_dir'           "the domain crate must not read the environment or discover paths"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
 # Composition does not know about parsing, dispatch or rendering (R2).
 ban "$CLI/app.rs"    'crate::(cli|commands|output|audit_middleware)' "app.rs (composition) must not import surface modules"
-# The model adapter is composed by app.rs and knows nothing of the surface (R2).
-ban "$CLI/models.rs" 'crate::(cli|commands|output|audit_middleware)' "models.rs (the model adapter) must not import surface modules"
-ban "$CLI/models" 'crate::(cli|commands|output|audit_middleware)' "model transport modules must not import surface modules"
-# The model adapter spawns supervised processes through models.rs's
-# supervisor, so process-group supervision, the cleared environment and the
-# budget live in one place (STD-03 R11-R15, STD-05 R10).
-for path in "$CLI"/*; do
-  case "$(basename "$path")" in models.rs | models | tests) continue ;; esac
-  ban "$path" 'process::(Command|Child)|Command::new' "only models.rs spawns processes: reach a model through the Models port"
-done
+# The model adapters spawn supervised processes through providers/cli.rs's
+# supervisor in scribe-core, so process-group supervision, the cleared
+# environment and the budget live in one place (STD-03 R11-R15, STD-05 R10).
+ban "$CLI" 'process::(Command|Child)|Command::new' "the binary spawns no process: scribe-core's providers/ reaches a model"
 
 # Rendering is derived from payloads only; it never reaches back up (R1).
 ban "$CLI/output"    'crate::(app|cli|commands|audit_middleware)'    "output must not import app, cli, commands or audit_middleware"
@@ -362,6 +374,10 @@ for retired in \
   crates/scribe-core/src/tests/query.rs \
   crates/scribe/src/commands/note.rs \
   crates/scribe/src/commands/tests/note.rs \
+  crates/scribe/src/models.rs \
+  crates/scribe/src/models \
+  crates/scribe/src/tests/models.rs \
+  crates/scribe/src/tests/codex_models.rs \
   crates/scribe-core/src/cases; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
 done

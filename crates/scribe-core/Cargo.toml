@@ -25,8 +25,17 @@ scribe-domain = { workspace = true }
 scribe-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The codex adapter hands the child its schema and instructions in a private
+# temporary directory (providers/cli/codex.rs).
+tempfile = { workspace = true }
+thiserror = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
+
+# Unix only: the model adapters lead their own process group and observe the
+# leader's exit with `waitid(WNOWAIT)` (STD-03 R11-R14).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
 
 [dev-dependencies]
 scribe-core = { path = ".", features = ["test-support"] }

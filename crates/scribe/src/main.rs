@@ -17,7 +17,6 @@ mod cli;
 mod commands;
 mod error;
 mod help;
-mod models;
 mod output;
 
 use std::process::ExitCode;
