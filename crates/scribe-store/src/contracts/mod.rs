@@ -11,5 +11,6 @@ pub(crate) mod group;
 pub(crate) mod mark;
 pub(crate) mod memory;
 pub(crate) mod message;
+pub(crate) mod proposal;
 #[cfg(test)]
 mod tests;

@@ -83,6 +83,13 @@ pub use contracts::memory::{
     ProfileView, Raised, Refusal, SLUG_CHARS, Stem, TEXT_CHARS, TITLE_CHARS,
 };
 pub use contracts::message::{MessageMatch, MessageSearch, NewMessage};
+pub use contracts::proposal::{
+    Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate,
+    INSTRUCTED_SAID_PREFIX, Proposal, ProposalError, ProposalId, ProposalKind, ProposalState,
+    Quote, SUBJECT_CHARS,
+};
+// The proposal shapes at the path the store's code names them by.
+use contracts::proposal;
 pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
 pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
@@ -109,22 +116,19 @@ use repository::audit;
 #[cfg(test)]
 use crate as store;
 use crate::entry::{Entry, EntryFilter, EntryId};
-use crate::proposal::Proposal;
 use crate::session::{ControlState, SessionId, SessionRecord};
 use scribe_domain::tag::{self};
 use scribe_domain::{
-    Author, AuthorKind, ClosedReason, ContentFrom, EntryStatus, Instruction, Label, LinkType,
-    Project, ProposalId, ProposalKind, Related, RelatedKind, SessionError, SessionStatus, Speaker,
-    StoreTag, TagTable,
+    Author, AuthorKind, ContentFrom, EntryStatus, Instruction, Label, LinkType, Project, Related,
+    RelatedKind, SessionError, SessionStatus, Speaker, StoreTag, TagTable,
 };
-use scribe_domain::{entry, handoff, proposal, record, session};
+use scribe_domain::{entry, handoff, record, session};
 // The domain names the redaction tests (`tests/redact.rs`) and their
 // shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
 // in the domain.
 #[cfg(any(test, feature = "test-support"))]
 use scribe_domain::{
-    Admitted, AnswerIn, AuthorName, Decision, EntryCandidate, ItemAnswer, ItemClosure, OpenItem,
-    Outcome, OutcomeState,
+    AnswerIn, AuthorName, Decision, ItemAnswer, ItemClosure, OpenItem, Outcome, OutcomeState,
 };
 #[cfg(test)]
 use scribe_domain::{Window, WindowTurn};

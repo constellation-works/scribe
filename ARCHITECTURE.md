@@ -117,8 +117,7 @@ map; a new module fails the check until it is given a ring.
 | Ring | Modules |
 |------|---------|
 | 1. base | `record`, `provider` |
-| 2. records | `session`, `entry`, `handoff`, `tag`, `proposal` |
-| 3. rules | `voice` |
+| 2. records | `session`, `entry`, `handoff`, `tag` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -268,6 +267,23 @@ PR 5-14 moved the domain's text and model modules:
   store reads (`MemoryContext`, `PendingContext`) went to the store's
   `contracts/memory.rs`. `providers/models.rs` re-exports both, so
   `crate::models` names them as before.
+
+PR 5-15 moved `proposal` and `voice`:
+
+- The proposal shapes went to the store's `contracts/proposal.rs`: the id,
+  kind, state, quote, closed reason, `Admitted`, `EntryCandidate` with its
+  own-shape methods (`stated`, `is_older_claim`, `has_valid_provenance`),
+  the context and subject bounds and `INSTRUCTED_SAID_PREFIX`, which the
+  store's codec reads.
+- The rules went to `apps/proposal/rules/proposals.rs`:
+  `context_stands_alone`, `close_retired_tag_candidates`, the entry an
+  approved candidate becomes (`CandidateEntry::candidate_entry`, a trait so
+  the call keeps its text), `ProposalChange` and `ProposalFilter`. The core's
+  `crate::proposal` re-exports both halves.
+- `voice` went to `scribe-tools/src/voice.rs`. It words prompts and labels
+  from an entry's fields and decides nothing about a record, and its users
+  include `providers/models.rs` and `config.rs`, which may not import an
+  app. The core re-exports it as `crate::voice`.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

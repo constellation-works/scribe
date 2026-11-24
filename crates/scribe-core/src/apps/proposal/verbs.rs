@@ -2,6 +2,7 @@
 //! turn, consistency proposals and the recovery of interrupted approvals
 //! (2_design.md §11, §12).
 
+use super::rules::proposals::CandidateEntry;
 use crate::apps::entry::{required_message, required_reason};
 use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;

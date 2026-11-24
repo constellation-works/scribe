@@ -3,3 +3,4 @@
 
 mod mark;
 mod memory;
+mod proposal;

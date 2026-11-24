@@ -2,8 +2,8 @@
 
 use super::verbatim;
 use crate::entry::{Entry, EntryStatus, Outcome, TagName};
-use crate::proposal::EntryCandidate;
 use crate::record::Project;
+use scribe_store::EntryCandidate;
 
 /// `text` with fenced, indented and blockquoted material and marked
 /// instructions replaced by a NUL barrier each, so neither a quote nor a
