@@ -23,6 +23,7 @@ pub mod consistency_scan;
 pub mod continuation;
 mod ctx;
 pub mod entry;
+pub mod entry_cmd;
 pub mod group;
 pub mod group_add;
 pub mod group_backfill;
@@ -41,16 +42,20 @@ pub mod memory_cmd;
 pub mod pass;
 pub mod pickup;
 pub mod proposal;
+pub mod proposal_cmd;
 pub mod proposal_command;
 pub mod rebuild;
 pub mod resolve;
 pub mod scribe_command;
 pub mod session;
+pub mod session_activity;
 pub mod session_end;
 pub mod session_start;
 pub mod stop;
 pub mod tag;
+pub mod tag_cmd;
 pub mod user_prompt_submit;
+pub mod write_error;
 
 pub use ctx::{
     AuditNotes, Clock, Ctx, Discovered, PortError, Redaction, RunLimits, TranscriptState,

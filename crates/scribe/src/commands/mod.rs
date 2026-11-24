@@ -294,42 +294,17 @@ pub(in crate::commands) fn resolve_session_or_typed(
     )?)
 }
 
-/// Resolve one `--related` or `--result` `session:<id>` reference across the
-/// store and provider transcripts on disk, leaving other kinds and unknown
-/// ids as typed.
-pub(in crate::commands) fn resolve_related(
-    ctx: &Context,
-    related: &scribe_core::Related,
-) -> Result<scribe_core::Related, CliError> {
-    if related.kind() != scribe_core::RelatedKind::Session {
-        return Ok(related.clone());
-    }
-    let extra = transcript_session_ids(ctx)?;
-    Ok(ctx
-        .store()
-        .read()
-        .sessions()
-        .resolve_related_with(related, &extra)?)
-}
-
-/// Resolve `session:<id>` references in `related` across the store and
-/// provider transcripts on disk, scanning transcripts at most once.
+/// Resolve `session:<id>` references in `related`
+/// ([`scribe_core::cases::resolve::relateds`]).
 pub(in crate::commands) fn resolve_relateds(
     ctx: &Context,
     related: &[scribe_core::Related],
 ) -> Result<Vec<scribe_core::Related>, CliError> {
-    if !related
-        .iter()
-        .any(|r| r.kind() == scribe_core::RelatedKind::Session)
-    {
-        return Ok(related.to_vec());
-    }
-    let extra = transcript_session_ids(ctx)?;
-    Ok(ctx
-        .store()
-        .read()
-        .sessions()
-        .resolve_relateds_with(related, &extra)?)
+    Ok(scribe_core::cases::resolve::relateds(
+        &ctx.core(),
+        ctx.provider(),
+        related,
+    )?)
 }
 
 /// Run one command, auditing it if it is audited.

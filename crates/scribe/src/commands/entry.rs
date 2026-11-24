@@ -11,7 +11,7 @@ use crate::output::{EntryPayload, Output, Record, Records};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::EntryVerbs;
-use scribe_core::PickupVerbs;
+use scribe_core::cases::entry_cmd;
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,
@@ -387,24 +387,19 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
             written_with_action(ctx, entry, true)
         }
         EntryCommand::Pickup(args) => {
-            scribe_core::check_agent_author(&args.author)?;
-            let result = args
-                .result
-                .as_ref()
-                .map(|r| super::resolve_related(ctx, r))
-                .transpose()?;
-            let (pickup, changed) = ctx.store().record_pickup(
-                &args.id,
-                args.author,
-                result,
-                args.rejected,
-                ctx.now(),
+            let written = entry_cmd::pickup(
+                &ctx.core(),
+                entry_cmd::PickupInput {
+                    id: &args.id,
+                    author: args.author,
+                    result: args.result.as_ref(),
+                    rejected: args.rejected,
+                    provider: ctx.provider(),
+                },
             )?;
-            let entry = ctx.store().read().entries().get(&pickup.entry)?;
-            written_with_action(ctx, entry, changed)
+            Ok(output(written))
         }
         EntryCommand::Update(args) => {
-            scribe_core::check_agent_author(&args.author)?;
             let patch = scribe_core::EntryPatch {
                 content: args.content,
                 decision_options: (args.clear_options || !args.options.is_empty())
@@ -413,19 +408,12 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
                 decision_rationale: args.rationale,
                 add_topics: args.add_topic,
                 remove_topics: args.remove_topic,
-                add_related: super::resolve_relateds(ctx, &args.add_related)?,
-                remove_related: resolve_relateds_preserving_input(ctx, &args.remove_related)?,
+                add_related: args.add_related,
+                remove_related: args.remove_related,
             };
-            ctx.store().check_agent_entry_update(&args.id, &patch)?;
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (entry, changed) = ctx.store().update_agent_entry(
-                &args.id,
-                patch,
-                args.author,
-                ctx.now(),
-                &redactor,
-            )?;
-            written_with_action(ctx, entry, changed)
+            let written =
+                entry_cmd::update(&ctx.core(), &args.id, patch, args.author, ctx.provider())?;
+            Ok(output(written))
         }
         EntryCommand::Retire(args) => {
             args.instruction.note(ctx);
@@ -454,22 +442,39 @@ pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliErr
         EntryCommand::Forget(args) => forget(&args, ctx),
         EntryCommand::Answer(args) => answer(&args, ctx),
         EntryCommand::Close(args) => {
-            scribe_core::check_agent_author(&args.author)?;
-            if let Some(note) = &args.note {
-                scribe_core::check_reason(note)?;
-            }
-            let redactor = ctx.redactor(&ctx.store().read().tags().config()?)?;
-            let (entry, changed) = ctx.store().close_open_item(
+            let written = entry_cmd::close(
+                &ctx.core(),
                 &args.id,
                 args.decision.as_ref(),
                 args.note.as_deref(),
-                args.author.clone(),
-                ctx.now(),
-                &redactor,
+                args.author,
             )?;
-            written_with_action(ctx, entry, changed)
+            Ok(output(written))
         }
     }
+}
+
+/// An entry write's result as output, with its notices.
+fn output(written: entry_cmd::EntryWritten) -> Output {
+    let payload = EntryPayload::from(&written.entry).with_action(written.action.as_ref());
+    let mut output = Output::written(Record::Entry(Box::new(payload)), written.changed);
+    if let Output::Written { notices, .. } = &mut output {
+        notices.extend(written.notices);
+    }
+    output
+}
+
+/// Resolve session prefixes keeping each reference as given
+/// ([`scribe_core::cases::resolve::relateds_preserving_input`]).
+fn resolve_relateds_preserving_input(
+    ctx: &Context,
+    related: &[scribe_core::Related],
+) -> Result<Vec<scribe_core::Related>, CliError> {
+    Ok(scribe_core::cases::resolve::relateds_preserving_input(
+        &ctx.core(),
+        ctx.provider(),
+        related,
+    )?)
 }
 
 /// `entry answer`: the item is checked before any transcript is read, and
@@ -644,27 +649,6 @@ fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related])
     criteria
 }
 
-/// Resolve session prefixes for validation and canonical matching while
-/// retaining each caller-supplied reference. Existing entries can contain
-/// an unknown session reference literally, so lookup and removal must also
-/// compare that original value after a matching session is cataloged.
-fn resolve_relateds_preserving_input(
-    ctx: &Context,
-    related: &[scribe_core::Related],
-) -> Result<Vec<scribe_core::Related>, CliError> {
-    let resolved = super::resolve_relateds(ctx, related)?;
-    let mut preserved = Vec::with_capacity(resolved.len() * 2);
-    for (input, canonical) in related.iter().zip(resolved) {
-        if !preserved.contains(input) {
-            preserved.push(input.clone());
-        }
-        if !preserved.contains(&canonical) {
-            preserved.push(canonical);
-        }
-    }
-    Ok(preserved)
-}
-
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     let entry = ctx.store().resolve_entry(&args.id)?;
     let actions = Actions::load(ctx)?;
@@ -689,30 +673,19 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     })
 }
 
-/// What an entry command needs to report action state: the tag table, the
-/// pickups and the time.
-struct Actions {
-    tags: scribe_core::TagTable,
-    pickups: Vec<scribe_core::action::Pickup>,
-    now: time::OffsetDateTime,
-}
+/// What an entry command needs to report action state
+/// ([`entry_cmd::Actions`]).
+struct Actions(entry_cmd::Actions);
 
 impl Actions {
     fn load(ctx: &Context) -> Result<Self, CliError> {
-        Ok(Self {
-            tags: ctx.store().read().tags().config()?.tags,
-            pickups: ctx.store().read().pickups().all()?,
-            now: ctx.now(),
-        })
+        Ok(Self(entry_cmd::Actions::load(&ctx.core())?))
     }
 
     /// `entry` as output, with its action state when its tag is an action
     /// tag and its window when `window`.
     fn payload(&self, entry: &scribe_core::Entry, window: bool) -> EntryPayload {
-        let state = self
-            .tags
-            .action(&entry.tag)
-            .map(|_| scribe_core::action::state(entry, &self.pickups, self.now));
+        let state = self.0.state(entry);
         let payload = EntryPayload::from(entry).with_action(state.as_ref());
         if window {
             payload.with_window(entry)
