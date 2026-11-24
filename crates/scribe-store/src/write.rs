@@ -96,7 +96,7 @@ struct Pending {
     now: OffsetDateTime,
     open: Option<Open>,
     after: After,
-    moved: Option<super::Moved>,
+    moved: Option<super::Imported>,
 }
 
 /// The transaction, once the first write began it.
@@ -343,7 +343,7 @@ impl Store {
     }
 
     /// What the pending write's move did, once it began.
-    pub(super) fn moved_now(&self) -> Option<super::Moved> {
+    pub(super) fn moved_now(&self) -> Option<super::Imported> {
         PENDING.with(|p| {
             p.borrow()
                 .as_ref()

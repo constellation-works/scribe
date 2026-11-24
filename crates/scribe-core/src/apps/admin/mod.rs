@@ -6,10 +6,16 @@
 //! which composes a second store from the envelope's root; its tools reach
 //! the session, consistency and memory apps through their handlers.
 
+mod init;
+
+pub use init::{
+    InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
+};
+
 use crate::composition::Context;
 use crate::runtime::audit::{Audit, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
-use crate::{ExportFormat, Exported, InitReport, Moved, Provider};
+use crate::{ExportCounts, ExportFormat, Imported, Provider};
 use std::path::{Path, PathBuf};
 
 /// An `admin` command.
@@ -42,7 +48,7 @@ pub enum Outcome {
     /// What `init` installed.
     Initialized(Box<InitReport>),
     /// What `store migrate` imported.
-    Migrated(Box<Moved>),
+    Migrated(Box<Imported>),
     /// What `export` wrote.
     Exported(Box<ExportWritten>),
 }
@@ -50,7 +56,7 @@ pub enum Outcome {
 /// What `export` wrote, and where and how.
 pub struct ExportWritten {
     /// The counts and files written.
-    pub exported: Exported,
+    pub exported: ExportCounts,
     /// The directory written into.
     pub dir: PathBuf,
     /// The format written.
@@ -84,7 +90,7 @@ pub fn exec(
             } => {
                 ctx.require_runtime()?;
                 let binary = crate::composition::current_exe()?;
-                Outcome::Initialized(Box::new(crate::init_project_with_skill_files(
+                Outcome::Initialized(Box::new(init::init_project_with_skill_files(
                     target,
                     provider,
                     &binary,

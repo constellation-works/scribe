@@ -49,13 +49,13 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 /// Since `scribe.db` holds every record (2_design.md §15.7, phase 7), only
 /// the memory files, the format stamps and `scribe export`'s files are
 /// written this way.
-pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     write_staged(path, bytes, "replace", |staged, to| staged.persist(to))
 }
 
 /// Create `path` with `bytes`, durably, refusing one that exists: a spool
 /// file's name is unique, so it never replaces another line.
-pub(super) fn create_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn create_new_private(path: &Path, bytes: &[u8]) -> Result<()> {
     write_staged(path, bytes, "create", |staged, to| {
         staged.persist_noclobber(to)
     })
@@ -88,7 +88,7 @@ fn write_staged(
 
 /// Create `path` empty and `0600` when it is missing, and sync its directory
 /// entry. An existing file is left as it is; the caller has inspected it.
-pub(super) fn create_private_file(path: &Path) -> Result<()> {
+pub(crate) fn create_private_file(path: &Path) -> Result<()> {
     let mut options = OpenOptions::new();
     options.create(true).truncate(false).write(true);
     #[cfg(unix)]
@@ -121,7 +121,7 @@ fn parent_dir(path: &Path) -> &Path {
 }
 
 /// Create `dir` and any missing parents, each `0700`.
-pub(super) fn create_private_dir(dir: &Path) -> Result<()> {
+pub fn create_private_dir(dir: &Path) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -135,7 +135,7 @@ pub(super) fn create_private_dir(dir: &Path) -> Result<()> {
 ///
 /// The directory is followed if it is a link: the operator may name the data
 /// directory through one, and what is checked is the directory itself.
-pub(super) fn inspect_dir(dir: &Path) -> Result<bool> {
+pub(crate) fn inspect_dir(dir: &Path) -> Result<bool> {
     match fs::metadata(dir) {
         Ok(meta) => check_owner_and_mode(dir, &meta, "700").map(|()| true),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -147,7 +147,7 @@ pub(super) fn inspect_dir(dir: &Path) -> Result<bool> {
 /// directory, `sessions/<yyyy>/`); `Ok(false)` when it does not exist.
 /// Unlike the root, a directory inside the store is never followed through a
 /// link: the store uses only real directories (STD-05 R7).
-pub(super) fn inspect_subdir(dir: &Path) -> Result<bool> {
+pub(crate) fn inspect_subdir(dir: &Path) -> Result<bool> {
     if is_os_metadata(dir) {
         return Ok(false);
     }
@@ -162,7 +162,7 @@ pub(super) fn inspect_subdir(dir: &Path) -> Result<bool> {
 
 /// The names in `dir`, sorted. Names that are not UTF-8 cannot be a store
 /// record and are left out. The caller has inspected `dir` first.
-pub(super) fn list_dir(dir: &Path) -> Result<Vec<String>> {
+pub(crate) fn list_dir(dir: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
     for item in fs::read_dir(dir).map_err(|e| Error::io("list", dir, e))? {
         let item = item.map_err(|e| Error::io("list", dir, e))?;
@@ -175,18 +175,14 @@ pub(super) fn list_dir(dir: &Path) -> Result<Vec<String>> {
 }
 
 /// Read a store file that [`inspect_file`] found.
-pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| Error::io("read", path, e))
 }
 
 /// Read a bounded file through no-follow descriptors beneath a checked root.
 /// Missing files remain missing; all relative ancestors are directories.
 #[cfg(unix)]
-pub(super) fn read_bounded_beneath(
-    root: &Path,
-    path: &Path,
-    limit: u64,
-) -> Result<Option<Vec<u8>>> {
+pub fn read_bounded_beneath(root: &Path, path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
     use rustix::fs::{Mode, OFlags, open, openat};
     let relative = path
         .strip_prefix(root)
@@ -252,11 +248,7 @@ pub(super) fn read_bounded_beneath(
 }
 
 #[cfg(not(unix))]
-pub(super) fn read_bounded_beneath(
-    _root: &Path,
-    path: &Path,
-    _limit: u64,
-) -> Result<Option<Vec<u8>>> {
+pub fn read_bounded_beneath(_root: &Path, path: &Path, _limit: u64) -> Result<Option<Vec<u8>>> {
     Err(Error::io(
         "read scaffold",
         path,
@@ -269,7 +261,7 @@ pub(super) fn read_bounded_beneath(
 
 /// Check an existing store file; `Ok(false)` when it does not exist. A file
 /// reached through a symbolic link is refused, not followed.
-pub(super) fn inspect_file(path: &Path) -> Result<bool> {
+pub(crate) fn inspect_file(path: &Path) -> Result<bool> {
     if is_os_metadata(path) {
         return Ok(false);
     }
@@ -336,7 +328,7 @@ fn check_owner_and_mode(_path: &Path, _meta: &Metadata, _fix: &'static str) -> R
 /// holds the old one.
 #[must_use = "the lock is released as soon as the guard is dropped"]
 #[derive(Debug)]
-pub(super) struct LockGuard {
+pub struct LockGuard {
     file: File,
     path: PathBuf,
 }
@@ -346,7 +338,7 @@ impl LockGuard {
     ///
     /// `label` says what the holder is doing; it is recorded with the pid and
     /// time so a writer that times out can say who is in the way.
-    pub(super) fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
+    pub fn acquire(path: &Path, label: &str, wait: Duration) -> Result<Self> {
         // Never create or truncate through a link, and never lock a file that
         // another user can reach (STD-05 R7, R9): inspect it like any store file.
         inspect_file(path)?;
@@ -426,10 +418,62 @@ fn read_holder(file: &mut File) -> String {
 }
 
 /// Remove a checked owner-only file and durably publish its absence.
-pub(super) fn remove_private(path: &Path) -> Result<()> {
+pub(crate) fn remove_private(path: &Path) -> Result<()> {
     if !inspect_file(path)? {
         return Ok(());
     }
     fs::remove_file(path).map_err(|e| Error::io("remove", path, e))?;
     sync_dir(parent_dir(path))
+}
+
+/// What [`inspect_owned`] found at a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owned {
+    /// Nothing is there.
+    Missing,
+    /// It has the asked-for type, belongs to this user and no other user
+    /// can write it.
+    Fits,
+    /// It is a link, or not the asked-for type.
+    WrongType,
+    /// It belongs to another user or another user can write it.
+    Foreign,
+}
+
+/// Inspect `path` without following a link: whether it is a directory
+/// (`directory`) or a regular file of this user that no other user can
+/// write. On non-unix hosts ownership is not checked.
+///
+/// # Errors
+///
+/// When the path cannot be inspected for a reason other than its absence.
+pub fn inspect_owned(path: &Path, directory: bool) -> Result<Owned> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Owned::Missing),
+        Err(e) => return Err(Error::io("inspect scaffold", path, e)),
+    };
+    if meta.file_type().is_symlink()
+        || (directory && !meta.is_dir())
+        || (!directory && !meta.is_file())
+    {
+        return Ok(Owned::WrongType);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.uid() != rustix::process::geteuid().as_raw() || meta.mode() & 0o022 != 0 {
+            return Ok(Owned::Foreign);
+        }
+    }
+    Ok(Owned::Fits)
+}
+
+/// The canonical form of `path`, every link resolved.
+///
+/// # Errors
+///
+/// When the path cannot be resolved.
+pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+    std::fs::canonicalize(path)
 }

@@ -1975,7 +1975,7 @@ pub(crate) struct GroupBackfillMember {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     /// Provider integration scaffold result.
-    Init(scribe_core::InitReport),
+    Init(scribe_core::apps::admin::InitReport),
     /// A list result.
     List {
         /// The records returned, in order.

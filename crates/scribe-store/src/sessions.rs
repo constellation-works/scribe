@@ -14,7 +14,7 @@
 
 use super::db::sessions::{self as rows, SessionTx};
 use super::write::Move;
-use super::{CONTROL_FILE, Moved, RECORD_EXT, SESSIONS_DIR, Skipped, Store, codec, db, fsio};
+use super::{CONTROL_FILE, Imported, RECORD_EXT, SESSIONS_DIR, Skipped, Store, codec, db, fsio};
 use crate::WriteRefusal;
 use crate::checks::refusal;
 use crate::error::{Error, Result};
@@ -76,21 +76,6 @@ pub struct SessionErasure {
     pub files: usize,
 }
 
-/// Result of forgetting a session, including cleanup on a replay.
-pub enum SessionForgetOutcome {
-    /// The session was forgotten now.
-    Forgotten(SessionForget),
-    /// The session was already forgotten.
-    Already {
-        /// The session's id.
-        id: SessionId,
-        /// Its number, while the store still holds one.
-        number: Option<NonZeroU64>,
-        /// Whether this replay cleaned up what the first forget left.
-        cleaned: bool,
-    },
-}
-
 /// The format of `scribe export`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -103,7 +88,7 @@ pub enum ExportFormat {
 
 /// What `scribe export` wrote.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Exported {
+pub struct ExportCounts {
     /// The files written, relative to the target directory, in order.
     pub files: Vec<String>,
     /// Sessions written.
@@ -174,7 +159,7 @@ impl Store {
     /// checkpoint file exists, or when there is nothing to import;
     /// `store_corrupt` for a file store whose records never moved; store
     /// failures.
-    pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Moved> {
+    pub fn migrate_store(&self, now: OffsetDateTime) -> Result<Imported> {
         self.transaction_as(Move::ByHand, now, || {
             self.with_conn(|_, _| Ok(()))?;
             Ok::<_, Error>(self.moved_now().unwrap_or_default())
@@ -257,8 +242,8 @@ impl Store {
     /// `export_target_exists` for a directory with anything in it;
     /// `store_corrupt` for a file store whose records never moved into
     /// `scribe.db`; I/O and store failures.
-    pub fn export(&self, target: &Path, as_format: ExportFormat) -> Result<Exported> {
-        let mut out = Exported::default();
+    pub fn export(&self, target: &Path, as_format: ExportFormat) -> Result<ExportCounts> {
+        let mut out = ExportCounts::default();
         let rows = match as_format {
             ExportFormat::Markdown => None,
             ExportFormat::Jsonl if !self.root_exists()? => Some(Vec::new()),

@@ -7,12 +7,13 @@ mod verbs;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::MarkVerbs;
+pub use verbs::{MarkChange, MarkKey, MarkResult};
 
 use crate::annotation::MarkRecord;
 use crate::composition::Context;
 use crate::runtime::errors::CommandError;
 use crate::runtime::{Ctx, PortError};
-use crate::{MarkChange, MarkKey, MarkResult, Provider, SessionId, Store};
+use crate::{Provider, SessionId, Store};
 use time::OffsetDateTime;
 
 /// A `mark` command.

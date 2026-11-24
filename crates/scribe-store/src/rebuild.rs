@@ -14,7 +14,7 @@ use time::OffsetDateTime;
 /// Serializes rebuilders of one session without holding the store lock over
 /// model calls. The OS releases it on interruption.
 #[derive(Debug)]
-pub struct RebuildGuard {
+pub struct SessionLock {
     _lock: fsio::LockGuard,
 }
 
@@ -25,9 +25,9 @@ impl Store {
     /// # Errors
     ///
     /// [`crate::Error::Locked`] past the wait, and the privacy and I/O errors.
-    pub fn session_lock(&self, name: &str, what: &str) -> Result<RebuildGuard> {
+    pub fn session_lock(&self, name: &str, what: &str) -> Result<SessionLock> {
         let path = self.lock_path(name)?;
-        Ok(RebuildGuard {
+        Ok(SessionLock {
             _lock: fsio::LockGuard::acquire(&path, what, self.lock_wait)?,
         })
     }
@@ -41,9 +41,9 @@ impl Store {
     }
 
     /// Serialize Codex prompt ingestion for one session across lifecycle hooks.
-    pub fn lock_codex_ingestion(&self, id: &SessionId) -> Result<RebuildGuard> {
+    pub fn lock_codex_ingestion(&self, id: &SessionId) -> Result<SessionLock> {
         let path = self.lock_path(&format!("codex-{id}.lock"))?;
-        Ok(RebuildGuard {
+        Ok(SessionLock {
             _lock: fsio::LockGuard::acquire(&path, "codex ingestion", self.lock_wait)?,
         })
     }

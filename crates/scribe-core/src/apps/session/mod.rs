@@ -24,7 +24,7 @@ pub use catalog::{Begun, CatalogError, CatalogInput};
 pub use list::{ListInput, Listed};
 pub use pass::{CATALOG_COMMAND, PASS_COMMAND, PassInput, PassPayload, PassReport, PassRunError};
 #[cfg(any(test, feature = "test-support"))]
-pub use pass::{ClaimsWritten, PassVerbs, short_reason};
+pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
 #[cfg(any(test, feature = "test-support"))]
 pub use rebuild::RebuildVerbs;
 pub use rebuild::{REBUILD_COMMAND, RebuildError, RebuildInput};

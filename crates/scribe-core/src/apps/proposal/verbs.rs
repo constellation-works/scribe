@@ -8,12 +8,12 @@ use crate::consistency::{
 };
 use crate::entry::Cite;
 use crate::pass::covering_claim;
-use crate::store::SessionForgetOutcome;
 use crate::{
     Author, AuthorKind, AuthorName, EntryId, EntryStatus, Error, Proposal, ProposalId,
     ProposalKind, ProposalState, Redactor, Result, Store, Tx, WriteRefusal,
 };
 use crate::{SessionForget, SessionId, handoff};
+use std::num::NonZeroU64;
 use time::OffsetDateTime;
 
 /// The proposal verbs, implemented for [`Store`].
@@ -749,4 +749,19 @@ fn forget_session(
             was_on: erased.was_on,
         })
     })
+}
+
+/// Result of forgetting a session, including cleanup on a replay.
+pub enum SessionForgetOutcome {
+    /// The session was forgotten now.
+    Forgotten(SessionForget),
+    /// The session was already forgotten.
+    Already {
+        /// The session's id.
+        id: SessionId,
+        /// Its number, while the store still holds one.
+        number: Option<NonZeroU64>,
+        /// Whether this replay cleaned up what the first forget left.
+        cleaned: bool,
+    },
 }
