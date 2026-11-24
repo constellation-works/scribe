@@ -7339,7 +7339,7 @@ shipped. No entry is rewritten.
   Daniel's queue there, with its own options and answer. No open item copies
   one. `brief` reads scribe's local entries and does not show Orbit decision
   requests. This does not change `ask`'s separate, read-only use of Orbit tasks
-  as evidence (§8). The aide reads `orbit attention` and lists both, side by
+  as evidence (§6.2). The aide reads `orbit attention` and lists both, side by
   side, when he checks in. An open item may name a request's id in its text.
 - **An answer in scribe is not an approval in another session.** The app's
   auto mode reads only each session's own chat. An answer recorded by the
