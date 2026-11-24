@@ -2229,3 +2229,58 @@ fn schema_seventeen_replaces_trial_registrations_and_preserves_trial_rows() {
         .unwrap();
     assert_eq!(names, "notes");
 }
+
+#[test]
+fn schema_nineteen_marks_possible_restorations_and_preserves_existing_marks() {
+    for trailing_gap in [false, true] {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        store
+            .write_messages(&[message("setup", "m", "setup")], &Redactor::default())
+            .unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+        conn.execute_batch(
+            "INSERT INTO groups (id, title, kind, project, opened, opener, related)
+             VALUES (1, 'group', 'work', 'project', 'now', 'opener', '[]');
+             INSERT INTO group_seats (group_id, name, role) VALUES
+                 (1, 'shared', 'member'), (1, 'other', 'member'),
+                 (1, 'later', 'member'), (1, 'marked', 'member');
+             INSERT INTO group_members (position, group_id, seat, session, author, restarted) VALUES
+                 (1, 1, 'shared', 's1', 'agent', 0),
+                 (2, 1, 'other', 's2', 'agent', 0),
+                 (3, 1, 'other', 's3', 'agent', 0),
+                 (4, 1, 'shared', 's4', 'agent', 0),
+                 (5, 1, 'later', 's5', 'agent', 0),
+                 (6, 1, 'marked', 's6', 'agent', 1);
+             DELETE FROM group_members WHERE position = 3;
+             PRAGMA user_version = 18;",
+        )
+        .unwrap();
+        if trailing_gap {
+            conn.execute_batch("INSERT INTO group_members (position, group_id, seat, session, author) VALUES (7, 1, 'later', 'deleted', 'agent'); DELETE FROM group_members WHERE position = 7;").unwrap();
+        }
+        drop(conn);
+        store
+            .write_messages(&[message("upgrade", "m", "upgrade")], &Redactor::default())
+            .unwrap();
+        assert_eq!(db::meta(dir.path()).unwrap().unwrap().0, 19);
+        let conn = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+        let marks: Vec<(i64, i64)> = conn
+            .prepare("SELECT position, restarted FROM group_members ORDER BY position")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            marks,
+            [
+                (1, 0),
+                (2, 1),
+                (4, i64::from(trailing_gap)),
+                (5, i64::from(trailing_gap)),
+                (6, 1)
+            ]
+        );
+    }
+}
