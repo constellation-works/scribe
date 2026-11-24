@@ -5,7 +5,7 @@
 //!
 //! Model-free and read-only: it reads the memory files, the session records
 //! and `proposals.json`, takes no lock, writes nothing and is not audited
-//! (STD-01 R31). The reads are [`scribe_core::cases::brief`], which the
+//! (STD-01 R31). The reads are the brief app's, which the
 //! `SessionStart` hook also uses for an interactive session's context.
 
 use crate::app::Context;
@@ -13,8 +13,8 @@ use crate::error::CliError;
 use crate::output::{BriefPayload, MemoryBlockPayload, Output, Record};
 use clap::Args;
 use scribe_core::Project;
+use scribe_core::apps::brief::{BriefInput, Command, Outcome, exec};
 use scribe_core::brief::{DEFAULT_SESSIONS, MAX_SESSIONS};
-use scribe_core::cases::brief::{self as case, BriefInput};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -49,14 +49,12 @@ pub(super) fn run(args: &BriefArgs, ctx: &Context) -> Result<Output, CliError> {
             .ok()
             .map(|cwd| super::hook::project::of(&cwd))
     });
-    let page = case::run(
-        &ctx.core(),
-        &BriefInput {
-            project: project.as_ref(),
-            sessions: args.sessions,
-            provider: ctx.provider(),
-        },
-    )?;
+    let input = BriefInput {
+        project: project.as_ref(),
+        sessions: args.sessions,
+        provider: ctx.provider(),
+    };
+    let Outcome::Page(page) = exec(&ctx.runtime(), Command::Brief(input))?;
     let block = MemoryBlockPayload::from_view(&page.view, ctx.store().root());
     let mut payload = BriefPayload::new(&page.brief, block);
     payload.text = page.brief.text_with_ids(&page.ids);

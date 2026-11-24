@@ -7,8 +7,9 @@
 use crate::app::Context;
 use crate::audit_middleware::AuditMeta;
 use crate::error::CliError;
-use crate::output::{MigratePayload, Output, Record};
+use crate::output::Output;
 use clap::{Args, Subcommand};
+use scribe_core::apps::admin::{Command, exec};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -51,25 +52,8 @@ impl StoreCommand {
 pub(super) fn run(command: StoreCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         StoreCommand::Migrate(MigrateArgs {}) => {
-            let moved = ctx.store().migrate_store(ctx.now())?;
-            Ok(Output::written(
-                Record::StoreMigrate(Box::new(MigratePayload {
-                    sessions: moved.sessions,
-                    switches: moved.switches,
-                    cursors: moved.cursors,
-                    moved_to: moved.moved_to,
-                    entries: moved.entries,
-                    claims: moved.claims,
-                    tags: moved.tags,
-                    marks: moved.marks,
-                    pickups: moved.pickups,
-                    audit_lines: moved.audit_lines,
-                    audit_torn: moved.audit_torn,
-                    archives: moved.archives,
-                    archived: moved.archived,
-                })),
-                true,
-            ))
+            let command = Command::Migrate { now: ctx.now() };
+            Ok(super::admin::output(exec(&ctx.runtime(), command)?))
         }
     }
 }

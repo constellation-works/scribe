@@ -7,9 +7,10 @@
 
 use crate::app::Context;
 use crate::error::CliError;
-use crate::output::{ExportPayload, Output, Record};
+use crate::output::Output;
 use clap::{Args, ValueEnum};
 use scribe_core::ExportFormat;
+use scribe_core::apps::admin::{Command, exec};
 use std::path::PathBuf;
 
 pub(super) const EXAMPLES: &str = "\
@@ -41,25 +42,13 @@ pub(crate) struct ExportArgs {
 
 /// Run `export`.
 pub(super) fn run(args: &ExportArgs, ctx: &Context) -> Result<Output, CliError> {
-    let (format, name) = match args.export_as {
-        ExportAs::Markdown => (ExportFormat::Markdown, "markdown"),
-        ExportAs::Jsonl => (ExportFormat::Jsonl, "jsonl"),
+    let format = match args.export_as {
+        ExportAs::Markdown => ExportFormat::Markdown,
+        ExportAs::Jsonl => ExportFormat::Jsonl,
     };
-    let exported = ctx.store().export(&args.dir, format)?;
-    Ok(Output::Show {
-        record: Record::Export(Box::new(ExportPayload {
-            dir: args.dir.display().to_string(),
-            format: name,
-            sessions: exported.sessions,
-            entries: exported.entries,
-            claims: exported.claims,
-            audit_lines: exported.audit_lines,
-            files: exported.files,
-            skipped: exported
-                .skipped
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect(),
-        })),
-    })
+    let command = Command::Export {
+        dir: &args.dir,
+        format,
+    };
+    Ok(super::admin::output(exec(&ctx.runtime(), command)?))
 }

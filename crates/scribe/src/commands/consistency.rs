@@ -37,10 +37,10 @@ use crate::output::{
     ProposalPayload, ReappliedPayload, ScanReport,
 };
 use clap::{Args, Subcommand};
-use scribe_core::cases::consistency_scan::{self as case, ScanInput};
+use scribe_core::apps::consistency::{self as app, Command, Outcome, ScanInput, exec};
 
 /// The command path in the audit log.
-pub(in crate::commands) const COMMAND: &str = case::COMMAND;
+pub(in crate::commands) const COMMAND: &str = app::COMMAND;
 
 pub(super) const CONSISTENCY_EXAMPLES: &str = "\
 Examples:
@@ -96,14 +96,13 @@ pub(super) fn run(command: ConsistencyCommand, ctx: &Context) -> Result<Output, 
     }
 }
 
-/// Scan ([`scribe_core::cases::consistency_scan::run`]).
+/// Scan (the consistency app's `scan`).
 pub(in crate::commands) fn scan(ctx: &Context) -> Result<Output, CliError> {
-    let outcome = case::run(
-        &ctx.core(),
-        ScanInput {
-            provider: ctx.provider(),
-        },
-    )?;
+    let input = ScanInput {
+        provider: ctx.provider(),
+    };
+    let Outcome::Scanned(outcome) = exec(&ctx.runtime(), Command::Scan(input))?;
+    let outcome = *outcome;
     let report = ScanReport {
         reapplied: outcome
             .reapplied
