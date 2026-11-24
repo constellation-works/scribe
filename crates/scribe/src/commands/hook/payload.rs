@@ -74,19 +74,20 @@ pub(super) struct PromptPayload {
 /// over its origin fields, `isMeta`, and prompt). Such a turn records
 /// nothing, decides nothing and does not switch `/scribe` on or off.
 pub(super) fn agent_originated(payload: &PromptPayload) -> bool {
-    if payload.is_meta.as_bool() == Some(true) {
-        return true;
-    }
-    let mut origin = scribe_core::capture::OriginClaims::default();
-    origin.push_claim(payload.source.as_ref());
-    origin.push_prompt_source(payload.prompt_source_camel.as_ref());
-    origin.push_prompt_source(payload.prompt_source.as_ref());
-    origin.push_origin(payload.origin.as_ref());
-    origin.push_claim(payload.prompt_origin_camel.as_ref());
-    origin.push_claim(payload.prompt_origin.as_ref());
-    origin.push_turn_origin(payload.turn_origin_camel.as_ref());
-    origin.push_turn_origin(payload.turn_origin.as_ref());
-    origin.is_agent_originated(&payload.prompt)
+    scribe_core::capture::prompt_agent_originated(
+        &scribe_core::capture::PromptClaims {
+            is_meta: payload.is_meta.as_bool() == Some(true),
+            source: payload.source.as_ref(),
+            prompt_source_camel: payload.prompt_source_camel.as_ref(),
+            prompt_source: payload.prompt_source.as_ref(),
+            origin: payload.origin.as_ref(),
+            prompt_origin_camel: payload.prompt_origin_camel.as_ref(),
+            prompt_origin: payload.prompt_origin.as_ref(),
+            turn_origin_camel: payload.turn_origin_camel.as_ref(),
+            turn_origin: payload.turn_origin.as_ref(),
+        },
+        &payload.prompt,
+    )
 }
 
 /// The fields of the `SessionStart` payload scribe uses.

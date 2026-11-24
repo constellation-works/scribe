@@ -12,7 +12,7 @@
 //! `SessionEnd` and `Stop` payloads are decoded up front, and a decode error
 //! is raised where the old adapter decoded them.
 
-use crate::capture::OriginClaims;
+use crate::capture::{PromptClaims, prompt_agent_originated};
 use crate::cases::audit::PersistedAudit;
 use crate::cases::hook::{
     HookError, HookOutcome, HookPortError, HookReply, PROVENANCE_FAILED, command_text, is_control,
@@ -335,10 +335,13 @@ where
             break;
         }
         // The replayed turn is the prompt hook's payload with `source:
-        // "typed"`, its only origin claim.
+        // "typed"`, its only origin claim, judged by the prompt hook's rule.
         let text = command_text(&turn.message.text());
-        let mut origin = OriginClaims::default();
-        origin.push_claim(Some(&Value::from("typed")));
+        let typed = Value::from("typed");
+        let claims = PromptClaims {
+            source: Some(&typed),
+            ..PromptClaims::default()
+        };
         let reply = user_prompt_submit::run(
             ctx,
             &PromptInput {
@@ -346,7 +349,7 @@ where
                 transcript_path: path,
                 cwd: &rollout.cwd,
                 prompt: &text,
-                agent_originated: origin.is_agent_originated(&text),
+                agent_originated: prompt_agent_originated(&claims, &text),
                 provider,
                 host: host.clone(),
             },
