@@ -7,6 +7,7 @@ use crate::audit_middleware::{AuditMeta, AuditSubject};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
+use scribe_core::GroupVerbs;
 use scribe_core::group::{GroupCloser, GroupConsent, JoinGroup, NewGroup, automatic_seat};
 use scribe_core::{
     AuthorName, CloseGroupOutcome, Label, Models, Project, Provider, Related, SessionId,

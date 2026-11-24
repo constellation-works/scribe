@@ -38,6 +38,7 @@ use super::project;
 use crate::app::Context;
 use crate::error::CliError;
 use crate::output::{HookOutcome, HookReply, Output};
+use scribe_core::GroupVerbs;
 use scribe_core::SessionVerbs;
 use scribe_core::capture::{self, Parsed, Turn};
 use scribe_core::{Label, Provider, SessionId, annotation};

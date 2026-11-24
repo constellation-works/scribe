@@ -14,6 +14,7 @@
 //! (scripts/check-dependency-direction.sh).
 
 pub mod entry;
+pub mod group;
 pub mod pass;
 pub mod proposal;
 pub mod rebuild;

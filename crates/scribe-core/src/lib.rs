@@ -77,6 +77,7 @@ pub mod verbatim;
 pub mod voice;
 
 pub use cases::entry::EntryVerbs;
+pub use cases::group::GroupVerbs;
 pub use cases::pass::{ClaimsWritten, PassVerbs};
 pub use cases::proposal::ProposalVerbs;
 pub use cases::rebuild::RebuildVerbs;

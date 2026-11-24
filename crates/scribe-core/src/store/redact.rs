@@ -144,7 +144,7 @@ impl Redactor {
     }
 
     /// Mask the free-text metadata of a group before storing it.
-    pub(super) fn group(&self, draft: &mut crate::group::NewGroup) {
+    pub(crate) fn group(&self, draft: &mut crate::group::NewGroup) {
         self.mask_all(group_fields(draft));
     }
 

@@ -14,6 +14,7 @@
 //! transaction across calls.
 
 use super::audit::AuditEvent;
+pub use super::db::{GroupRows, MemberWindow, RowError};
 use super::{
     EntryList, LoadedSessions, MemoryShown, MemoryView, MemoryWritten, PassMemory, Redactor,
     SessionErasure, SessionList, SessionView, Skipped, Store,
@@ -511,6 +512,55 @@ impl Groups<'_> {
     /// The store's read errors.
     pub fn get(&self, id: &str) -> Result<Group> {
         self.store.group(id)
+    }
+
+    /// The number of the group an open project slug, an exact id or a
+    /// unique id prefix names.
+    ///
+    /// # Errors
+    ///
+    /// `group_not_found` naming the place searched, `id_ambiguous`, and the
+    /// store's read errors.
+    pub fn number(&self, input: &str) -> Result<i64> {
+        self.store.group_number(input)
+    }
+
+    /// Run `f` over the group rows in one write step, `action` naming the
+    /// write in a database error (`"join group in"`). Inside a [`Tx`] it is
+    /// part of that write.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn rows<T>(
+        &self,
+        action: &'static str,
+        f: impl FnOnce(&GroupRows<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.store.group_rows(action, f)
+    }
+
+    /// Run `f` over the group rows in one read; `T::default()` before the
+    /// store has groups. `f` may run twice, the second time on a read-only
+    /// copy of the database.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn read_rows<T: Default>(
+        &self,
+        f: impl Fn(&GroupRows<'_>) -> std::result::Result<T, RowError>,
+    ) -> Result<T> {
+        self.store.read_group_rows(f)
+    }
+
+    /// Whether a deferred ancestry check is pending for `session`.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
+        self.store.deferred_ancestry(session)
     }
 }
 
