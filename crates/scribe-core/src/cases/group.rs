@@ -1,16 +1,23 @@
-//! Group membership verbs: opening a group, joining, adding and moving
-//! members, leaving, a cleared session's seat and the deferred ancestry check
-//! (2_design.md §17). Every decision and its write share one store write: the
+//! Group verbs: opening a group, joining, adding and moving members,
+//! leaving, a cleared session's seat, the deferred ancestry check, turn
+//! capture and backfill, and the close (2_design.md §17). Every decision and its write share one store write: the
 //! verbs read and write the rows through [`Groups::rows`](crate::repo::Groups::rows).
+
+mod capture;
+mod close;
 
 use crate::checks::group::{check_additions, check_join, check_new_group, check_project_slug};
 use crate::checks::refusal;
 use crate::group::{
-    Added, GroupAdded, GroupAddition, GroupConsent, JoinGroup, NewGroup, OpenedGroup, SeatHold,
-    SeatStart,
+    Added, CloseEvidence, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup,
+    NewGroup, OpenedGroup, SeatHold, SeatStart,
 };
+use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
-use crate::{Project, Redactor, Result, SessionId, Store, WriteRefusal};
+use crate::{
+    AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, CloseGroupOutcome, Error, Project,
+    Redactor, Result, SessionId, Store, WriteRefusal,
+};
 use time::OffsetDateTime;
 
 /// The group membership verbs, implemented for [`Store`].
@@ -89,6 +96,61 @@ pub trait GroupVerbs {
     /// seat ownership inside the transaction.
     fn inherit_seat(&self, child: &SessionId, predecessor: Option<&SessionId>)
     -> Result<SeatStart>;
+
+    /// Backfill verified turns for the current holders without changing capture cursors.
+    /// Membership and the open state are checked again in the write transaction.
+    fn backfill_group_turns(
+        &self,
+        id: &str,
+        members: &[(SessionId, Vec<NewMessage>)],
+        redactor: &Redactor,
+    ) -> Result<Vec<usize>>;
+
+    /// Whether an open group authorizes capture for this session. A missing,
+    /// closed or forgotten membership takes no write lock in the hook.
+    fn captures_group_turns(&self, session: &SessionId) -> Result<bool>;
+
+    /// Store previously unprocessed turns from a verified transcript, in its
+    /// order. The membership and cursor are rechecked inside the write.
+    /// Returns how many new message rows were persisted.
+    fn capture_group_turns(
+        &self,
+        session: &SessionId,
+        messages: &[NewMessage],
+        redactor: &Redactor,
+    ) -> Result<usize>;
+
+    /// Read the capture snapshot without locking or migrating the database.
+    fn claude_group_capture(&self, session: &SessionId) -> Result<Option<ClaudeGroupCapture>>;
+
+    /// Commit the verified batch, first-seen ids and byte position together.
+    /// A stale snapshot returns `None` so the hook can retry from fresh progress.
+    fn capture_claude_group_turns(
+        &self,
+        before: &ClaudeGroupCapture,
+        resumed: bool,
+        position: &ClaudeCapturePosition,
+        batch: ClaudeGroupTurns,
+        redactor: &Redactor,
+    ) -> Result<Option<usize>>;
+
+    /// Close a group and report a committed success audit even if cleanup
+    /// failed. An outer error means this attempt did not commit a close.
+    /// A retry after a successful close returns `AlreadyClosed` without
+    /// calling the model again.
+    ///
+    /// The model closure runs outside any SQLite write transaction. The final
+    /// write commits `closed`, `summary`, and the caller-built success audit
+    /// row in one `scribe.db` transaction.
+    fn close_group_with_outcome<E: From<Error>>(
+        &self,
+        id: &str,
+        closer: GroupCloser<'_>,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
+        audit: impl FnOnce(&str) -> AuditEvent,
+    ) -> Result<CloseGroupOutcome, E>;
 }
 
 impl GroupVerbs for Store {
@@ -431,6 +493,55 @@ impl GroupVerbs for Store {
                 })
             })
         })
+    }
+
+    fn backfill_group_turns(
+        &self,
+        id: &str,
+        members: &[(SessionId, Vec<NewMessage>)],
+        redactor: &Redactor,
+    ) -> Result<Vec<usize>> {
+        capture::backfill_group_turns(self, id, members, redactor)
+    }
+
+    fn captures_group_turns(&self, session: &SessionId) -> Result<bool> {
+        capture::captures_group_turns(self, session)
+    }
+
+    fn capture_group_turns(
+        &self,
+        session: &SessionId,
+        messages: &[NewMessage],
+        redactor: &Redactor,
+    ) -> Result<usize> {
+        capture::capture_group_turns(self, session, messages, redactor)
+    }
+
+    fn claude_group_capture(&self, session: &SessionId) -> Result<Option<ClaudeGroupCapture>> {
+        capture::claude_group_capture(self, session)
+    }
+
+    fn capture_claude_group_turns(
+        &self,
+        before: &ClaudeGroupCapture,
+        resumed: bool,
+        position: &ClaudeCapturePosition,
+        batch: ClaudeGroupTurns,
+        redactor: &Redactor,
+    ) -> Result<Option<usize>> {
+        capture::capture_claude_group_turns(self, before, resumed, position, batch, redactor)
+    }
+
+    fn close_group_with_outcome<E: From<Error>>(
+        &self,
+        id: &str,
+        closer: GroupCloser<'_>,
+        now: OffsetDateTime,
+        redactor: &Redactor,
+        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
+        audit: impl FnOnce(&str) -> AuditEvent,
+    ) -> Result<CloseGroupOutcome, E> {
+        close::close_group_with_outcome(self, id, closer, now, redactor, summarize, audit)
     }
 }
 

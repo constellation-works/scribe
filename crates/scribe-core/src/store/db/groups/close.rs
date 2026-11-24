@@ -1,225 +1,131 @@
-//! A close reads bounded stored evidence, calls the model outside the write
-//! transaction, then compares the evidence before publishing its summary.
+//! The rows a group close reads and writes: its evidence, the opener's seat
+//! chain and the close itself. The close's flow and its refusals are the
+//! caller's (`cases/group`).
 
-use super::{DB_FILE, Fallible, HOLDS_SEAT, db_error, open_writer, refusal, stamp};
-use crate::group::{CloseEvidence, GroupCloser};
-use crate::store::fsio::LockGuard;
-use crate::{AuditEvent, CloseGroupOutcome, Error, Redactor, Related, Result, Store, WriteRefusal};
-use rusqlite::{Connection, OptionalExtension, params};
-use std::path::Path;
+use super::{Fallible, GroupRows, HOLDS_SEAT, RowError, Rows, db_error, stamp};
+use crate::{Error, Related};
+use rusqlite::{OptionalExtension, params};
 use time::OffsetDateTime;
 
-#[derive(PartialEq, Eq)]
-struct Snapshot {
-    evidence: CloseEvidence,
-    related: Vec<Related>,
+/// A group's row as a close reads it ([`GroupRows::close_header`]).
+#[derive(Debug)]
+pub struct CloseHeader {
+    /// The session that opened the group.
+    pub opener: String,
+    /// Whether the group is open.
+    pub open: bool,
+    /// The first 500 characters of its title.
+    pub title: String,
+    /// Its related references, as stored.
+    pub related: String,
 }
 
-impl Store {
-    /// Close a group and report a committed success audit even if cleanup
-    /// failed. An outer error means this attempt did not commit a close.
-    /// A retry after a successful close returns `AlreadyClosed` without
-    /// calling the model again.
-    ///
-    /// The model closure runs outside any SQLite write transaction. The final
-    /// write commits `closed`, `summary`, and the caller-built success audit
-    /// row in one `scribe.db` transaction.
-    pub fn close_group_with_outcome<E: From<Error>>(
-        &self,
-        id: &str,
-        closer: GroupCloser<'_>,
-        now: OffsetDateTime,
-        redactor: &Redactor,
-        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
-        audit: impl FnOnce(&str) -> AuditEvent,
-    ) -> Result<CloseGroupOutcome, E> {
-        if self.in_write() {
-            return Err(refusal(
-                WriteRefusal::GroupMembership,
-                "group close must run outside a store write transaction",
+impl GroupRows<'_> {
+    fn evidence_fail(&self, e: rusqlite::Error) -> RowError {
+        RowError(Fallible::Failed(db_error(
+            "read evidence for group close from",
+            self.path,
+            e,
+        )))
+    }
+
+    /// Group `n`'s row as a close reads it.
+    pub fn close_header(&self, n: i64) -> Rows<Option<CloseHeader>> {
+        self.conn
+            .query_row(
+                "SELECT opener, closed IS NULL, substr(title, 1, 500), related FROM groups WHERE id = ?1",
+                [n],
+                |r| {
+                    Ok(CloseHeader {
+                        opener: r.get(0)?,
+                        open: r.get(1)?,
+                        title: r.get(2)?,
+                        related: r.get(3)?,
+                    })
+                },
             )
-            .into());
-        }
-        let group = self.group(id)?;
-        let n = self.group_number(&group.id)?;
-        self.read_groups(|conn, path| {
-            check_closer(conn, path, n, &group.opener, closer).map_err(Fallible::Failed)
-        })?;
-        if group.closed.is_some() {
-            return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
-        }
-        let lock_path = self.lock_path(&format!("group-close-{n}.lock"))?;
-        let _lock = LockGuard::acquire(&lock_path, "close group", self.lock_wait)?;
-        let Some(before) = self.read_groups(|conn, path| {
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| Fallible::from_sqlite("read group for close", path, e))?;
-            snapshot(&tx, path, n, closer).map_err(Fallible::Failed)
-        })?
-        else {
-            return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
-        };
-        let answer = summarize(&before.evidence)?;
-        let mut summary = redactor.group_summary(answer.trim());
-        if summary.is_empty()
-            || answer.trim().chars().count() > 4000
-            || summary.chars().count() > 4000
-        {
-            return Err(refusal(
-                WriteRefusal::InvalidText,
-                "the group summary must be 1–4000 characters before and after redaction",
-            )
-            .into());
-        }
-        if !before.related.is_empty() {
-            summary.push_str("\n\nFor work missing from the handoffs, see ");
-            summary.push_str(
-                &redactor.group_summary(
-                    &before
-                        .related
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
+            .optional()
+            .map_err(|e| self.evidence_fail(e))
+    }
+
+    /// Whether `caller` holds the seat whose chain in group `n` contains
+    /// `opener`.
+    pub fn holds_opener_seat(&self, n: i64, caller: &str, opener: &str) -> Rows<bool> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM group_members m
+                 JOIN group_members o ON o.group_id = m.group_id AND o.seat = m.seat
+                 WHERE m.group_id = ?1 AND m.session = ?2 AND o.session = ?3 AND {HOLDS_SEAT})"
                 ),
-            );
-            summary.push('.');
-        }
-        let ((), cleanup) = self.write_with_cleanup(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            if snapshot(&conn, &path, n, closer)?.as_ref() != Some(&before) {
-                return Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    "group evidence changed during close; run group close again",
-                ));
-            }
-            conn.execute(
+                params![n, caller, opener],
+                |r| r.get(0),
+            )
+            .map_err(|e| {
+                RowError(Fallible::Failed(db_error(
+                    "read seat chain for group close from",
+                    self.path,
+                    e,
+                )))
+            })
+    }
+
+    /// Decode a group's stored related references.
+    pub fn related(&self, stored: &str) -> Rows<Vec<Related>> {
+        Ok(serde_json::from_str(stored).map_err(|e| Error::corrupt(self.path, e))?)
+    }
+
+    /// The newest active handoffs of group `n`'s unforgotten members: id and
+    /// the first 1200 characters, at most 16.
+    pub fn close_handoffs(&self, n: i64) -> Rows<Vec<(String, String)>> {
+        let mut handoffs = self
+            .conn
+            .prepare(&format!(
+                "SELECT e.id, substr(e.content, 1, 1200) FROM entries e
+         WHERE e.tag = 'handoff' AND e.status = 'active' AND EXISTS (
+             SELECT 1 FROM json_each(e.related)
+             WHERE substr(value, 1, 8) = 'session:' AND substr(value, 9) IN ({MEMBERS})
+         )
+         ORDER BY julianday(e.created) DESC, e.n DESC LIMIT 16",
+            ))
+            .map_err(|e| self.evidence_fail(e))?;
+        handoffs
+            .query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| self.evidence_fail(e))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| self.evidence_fail(e))
+    }
+
+    /// The newest typed turns of group `n`'s unforgotten members: session,
+    /// message id and text, bounded, at most 32.
+    pub fn close_turns(&self, n: i64) -> Rows<Vec<(String, String, String)>> {
+        let mut turns = self
+            .conn
+            .prepare(&format!(
+                "SELECT session, substr(message, 1, 128), substr(text, 1, 500) FROM messages
+         WHERE role = 'user' AND session IN ({MEMBERS})
+         ORDER BY julianday(at) DESC, id DESC LIMIT 32",
+            ))
+            .map_err(|e| self.evidence_fail(e))?;
+        turns
+            .query_map([n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| self.evidence_fail(e))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| self.evidence_fail(e))
+    }
+
+    /// Close group `n` at `now` with `summary`.
+    pub fn close(&self, n: i64, now: OffsetDateTime, summary: &str) -> Rows<()> {
+        self.conn
+            .execute(
                 "UPDATE groups SET closed = ?2, summary = ?3 WHERE id = ?1",
                 params![n, stamp(now), summary],
             )
-            .map_err(|e| db_error("close group in", &path, e))?;
-            self.record_audit(&audit(&group.id))?;
-            Ok(())
-        })?;
-        Ok(CloseGroupOutcome::Closed {
-            id: group.id,
-            cleanup,
-        })
+            .map(drop)
+            .map_err(|e| self.fail(e))
     }
 }
 
-/// The opener, or the session that now holds the seat whose chain contains the
-/// opener, may close. A seat replacement already took Daniel's word or a
-/// verified clear, so the seat chain is consent-checked. An opener that never
-/// joined a seat, or left it, has no chain: only that exact session closes.
-/// A quoted closer needs no seat, but its consent must have been verified for
-/// closing exactly this group: consent for another group or for opening one
-/// never authorizes a close.
-fn check_closer(
-    conn: &Connection,
-    path: &Path,
-    n: i64,
-    opener: &str,
-    closer: GroupCloser<'_>,
-) -> Result<()> {
-    let caller = match closer {
-        GroupCloser::Session(caller) => caller,
-        GroupCloser::Quoted(consent) => {
-            return if consent.authorizes_close(&format!("g-{n}")) {
-                Ok(())
-            } else {
-                Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    format!("the quoted consent was not given to close g-{n}"),
-                ))
-            };
-        }
-    };
-    if opener == caller.as_str() {
-        return Ok(());
-    }
-    let holds: bool = conn
-        .query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM group_members m
-                 JOIN group_members o ON o.group_id = m.group_id AND o.seat = m.seat
-                 WHERE m.group_id = ?1 AND m.session = ?2 AND o.session = ?3 AND {HOLDS_SEAT})"
-            ),
-            params![n, caller.as_str(), opener],
-            |r| r.get(0),
-        )
-        .map_err(|e| db_error("read seat chain for group close from", path, e))?;
-    if holds {
-        Ok(())
-    } else {
-        Err(refusal(
-            WriteRefusal::GroupMembership,
-            format!(
-                "only the opening session or the current holder of its seat can close g-{n}; \
-                 any other session can close it with --quote '<span>', where <span> is a \
-                 verbatim span of a user turn typed in that session that contains the whole \
-                 canonical group id g-{n} and is at least eight characters long after normalization"
-            ),
-        ))
-    }
-}
-
-fn snapshot(
-    conn: &Connection,
-    path: &Path,
-    n: i64,
-    closer: GroupCloser<'_>,
-) -> Result<Option<Snapshot>> {
-    let fail = |e| db_error("read evidence for group close from", path, e);
-    let (opener, open, title, related): (String, bool, String, String) = conn.query_row(
-        "SELECT opener, closed IS NULL, substr(title, 1, 500), related FROM groups WHERE id = ?1",
-        [n],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    ).optional().map_err(fail)?.ok_or_else(|| {
-        refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}"))
-    })?;
-    check_closer(conn, path, n, &opener, closer)?;
-    if !open {
-        return Ok(None);
-    }
-    let related = serde_json::from_str(&related).map_err(|e| Error::corrupt(path, e))?;
-    let members = "SELECT gm.session FROM group_members gm WHERE gm.group_id = ?1
+const MEMBERS: &str = "SELECT gm.session FROM group_members gm WHERE gm.group_id = ?1
                    AND NOT EXISTS (SELECT 1 FROM sessions s
                        WHERE s.provider_session = gm.session AND s.forgotten IS NOT NULL)";
-    let mut handoffs = conn
-        .prepare(&format!(
-            "SELECT e.id, substr(e.content, 1, 1200) FROM entries e
-         WHERE e.tag = 'handoff' AND e.status = 'active' AND EXISTS (
-             SELECT 1 FROM json_each(e.related)
-             WHERE substr(value, 1, 8) = 'session:' AND substr(value, 9) IN ({members})
-         )
-         ORDER BY julianday(e.created) DESC, e.n DESC LIMIT 16",
-        ))
-        .map_err(fail)?;
-    let handoffs = handoffs
-        .query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(fail)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(fail)?;
-    let mut turns = conn
-        .prepare(&format!(
-            "SELECT session, substr(message, 1, 128), substr(text, 1, 500) FROM messages
-         WHERE role = 'user' AND session IN ({members})
-         ORDER BY julianday(at) DESC, id DESC LIMIT 32",
-        ))
-        .map_err(fail)?;
-    let turns = turns
-        .query_map([n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .map_err(fail)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(fail)?;
-    Ok(Some(Snapshot {
-        evidence: CloseEvidence {
-            title,
-            handoffs,
-            turns,
-        },
-        related,
-    }))
-}

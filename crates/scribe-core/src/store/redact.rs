@@ -148,7 +148,7 @@ impl Redactor {
         self.mask_all(group_fields(draft));
     }
 
-    pub(super) fn group_summary(&self, summary: &str) -> String {
+    pub(crate) fn group_summary(&self, summary: &str) -> String {
         self.mask(summary)
     }
 

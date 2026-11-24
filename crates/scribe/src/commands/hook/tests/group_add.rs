@@ -4,6 +4,7 @@ use super::super::group_add::{self, run_with_transcript_reader};
 use crate::app::Context;
 use crate::commands::hook::{group_turns, payload::PromptPayload};
 use crate::output::Output;
+use scribe_core::GroupVerbs;
 use scribe_core::SessionId;
 use serde_json::json;
 

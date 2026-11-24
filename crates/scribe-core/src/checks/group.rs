@@ -108,3 +108,17 @@ pub(crate) fn check_join(join: &JoinGroup<'_>) -> Result<()> {
     }
     check_own_user_turns(join.session, join.earlier_turns)
 }
+
+/// A capture takes only the member's own verified user turns.
+pub(crate) fn check_capture_turns(session: &SessionId, messages: &[NewMessage]) -> Result<()> {
+    if messages
+        .iter()
+        .any(|m| &m.session != session || m.role != crate::Speaker::User)
+    {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "group capture takes only the member's verified user turns",
+        ));
+    }
+    Ok(())
+}

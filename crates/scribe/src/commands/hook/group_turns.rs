@@ -2,6 +2,7 @@
 
 use super::{codex, payload};
 use crate::{app::Context, error::CliError, output::HookOutcome};
+use scribe_core::GroupVerbs;
 use scribe_core::{SessionId, codex::TypedTurn, message, transcript};
 use std::path::Path;
 

@@ -53,7 +53,10 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-pub use groups::{ClaudeCapturePosition, ClaudeGroupCapture, GroupRows, MemberWindow, RowError};
+pub use groups::{
+    CaptureState, ClaudeCapturePosition, ClaudeGroupCapture, CloseHeader, GroupRows, MemberWindow,
+    RowError,
+};
 
 /// The database's file name under the store root.
 pub const DB_FILE: &str = "scribe.db";

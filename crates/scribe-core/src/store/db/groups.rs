@@ -6,11 +6,12 @@ mod close;
 
 pub(super) use claude::V15;
 pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture};
+pub use close::CloseHeader;
 
 use super::{
     DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
 };
-use crate::checks::group::{check_own_user_turns, number};
+use crate::checks::group::number;
 use crate::checks::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
@@ -448,6 +449,27 @@ impl Store {
         })
     }
 
+    /// [`Store::read_group_rows`] inside one read transaction, so that its
+    /// reads see one state; `action` names the read in a database error.
+    pub(in crate::store) fn read_group_rows_in_tx<T: Default>(
+        &self,
+        action: &'static str,
+        f: impl Fn(&GroupRows<'_>) -> Result<T, RowError>,
+    ) -> Result<T> {
+        self.read_groups(|conn, path| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| Fallible::from_sqlite(action, path, e))?;
+            f(&GroupRows {
+                conn: &tx,
+                path,
+                action,
+                read: true,
+            })
+            .map_err(|e| e.0)
+        })
+    }
+
     /// Whether a deferred ancestry check is pending for `session`.
     pub(in crate::store) fn deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
         self.read_groups(|conn, path| {
@@ -460,155 +482,6 @@ impl Store {
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|e| Fallible::from_sqlite("read deferred ancestry from", path, e))
-        })
-    }
-
-    /// Backfill verified turns for the current holders without changing capture cursors.
-    /// Membership and the open state are checked again in the write transaction.
-    pub fn backfill_group_turns(
-        &self,
-        id: &str,
-        members: &[(SessionId, Vec<NewMessage>)],
-        redactor: &Redactor,
-    ) -> Result<Vec<usize>> {
-        for (session, turns) in members {
-            check_own_user_turns(session, turns)?;
-        }
-        let n = self.group_number(id)?;
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("backfill group turns in", &path, e);
-            let open: bool = conn.query_row(
-                "SELECT closed IS NULL FROM groups WHERE id = ?1", [n], |r| r.get(0),
-            ).map_err(fail)?;
-            if !open {
-                return Err(refusal(WriteRefusal::GroupMembership, "the group is already closed"));
-            }
-            let holders: i64 = conn.query_row(
-                &format!("SELECT count(*) FROM group_members m WHERE m.group_id = ?1 AND {HOLDS_SEAT}"),
-                [n], |r| r.get(0),
-            ).map_err(fail)?;
-            if usize::try_from(holders).ok() != Some(members.len()) {
-                return Err(refusal(WriteRefusal::GroupMembership, "group membership changed during backfill; retry"));
-            }
-            let mut counts = Vec::with_capacity(members.len());
-            for (session, turns) in members {
-                let window: Option<(String, bool)> = conn.query_row(
-                    &format!("SELECT m.joined, m.restarted FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT}"),
-                    params![n, session.as_str()], |r| Ok((r.get(0)?, r.get(1)?)),
-                ).optional().map_err(fail)?;
-                let Some((joined, restarted)) = window else {
-                    return Err(refusal(WriteRefusal::GroupMembership, "group membership changed during backfill; retry"));
-                };
-                // A restored displaced holder restarted its consent window at
-                // its new join time: turns typed before it, during the
-                // displacement, were never authorized, so backfill keeps the
-                // same cutoff as capture.
-                let since = if restarted {
-                    Some(OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(&path, e))?)
-                } else {
-                    None
-                };
-                let eligible = turns.iter().filter(|m| since.is_none_or(|s| m.at >= s)).collect();
-                counts.push(write_captured_turns(&conn, &path, session, eligible, redactor)?);
-            }
-            Ok(counts)
-        })
-    }
-
-    /// Whether an open group authorizes capture for this session. A missing,
-    /// closed or forgotten membership takes no write lock in the hook.
-    pub fn captures_group_turns(&self, session: &SessionId) -> Result<bool> {
-        self.read_groups(|conn, path| Ok(capture_state(conn, path, session)?.is_some()))
-    }
-
-    /// Store previously unprocessed turns from a verified transcript, in its
-    /// order. The membership and cursor are rechecked inside the write.
-    /// Returns how many new message rows were persisted.
-    pub fn capture_group_turns(
-        &self,
-        session: &SessionId,
-        messages: &[NewMessage],
-        redactor: &Redactor,
-    ) -> Result<usize> {
-        if messages
-            .iter()
-            .any(|m| &m.session != session || m.role != crate::Speaker::User)
-        {
-            return Err(refusal(
-                WriteRefusal::GroupMembership,
-                "group capture takes only the member's verified user turns",
-            ));
-        }
-        let Some(before) = self.read_groups(|conn, path| capture_state(conn, path, session))?
-        else {
-            return Ok(0);
-        };
-        if !before.holds {
-            return self.skip_displaced_turns(session, &before, messages);
-        }
-        if next_turns(&before, messages).is_empty() {
-            return Ok(0);
-        }
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let fail = |e| db_error("store group turns in", &path, e);
-            let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?
-            else {
-                return Ok(0);
-            };
-            if state.position != before.position || !state.holds {
-                return Ok(0);
-            }
-            let turns = next_turns(&state, messages);
-            let Some(last) = turns.last().copied() else {
-                return Ok(0);
-            };
-            let inserted = write_captured_turns(&conn, &path, session, turns, redactor)?;
-            conn.execute(
-                "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
-                params![state.position, last.message],
-            )
-            .map_err(fail)?;
-            claude::clear_progress(&conn, state.position).map_err(fail)?;
-            Ok(inserted)
-        })
-    }
-
-    /// Move a displaced member's cursor past the turns it typed while a later
-    /// member held its seat, storing none of them, so they stay out of the
-    /// group if the seat comes back to it.
-    fn skip_displaced_turns(
-        &self,
-        session: &SessionId,
-        before: &CaptureState,
-        messages: &[NewMessage],
-    ) -> Result<usize> {
-        let Some(last) = messages.last() else {
-            return Ok(0);
-        };
-        if before.cursor.as_deref() == Some(last.message.as_str()) {
-            return Ok(0);
-        }
-        self.write_step(|| {
-            let conn = open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let Some(state) = capture_state(&conn, &path, session).map_err(Fallible::into_error)?
-            else {
-                return Ok(0);
-            };
-            if state.position == before.position && !state.holds {
-                conn.execute(
-                    "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
-                    params![state.position, last.message],
-                )
-                .map_err(|e| db_error("skip displaced group turns in", &path, e))?;
-                claude::clear_progress(&conn, state.position)
-                    .map_err(|e| db_error("skip displaced group turns in", &path, e))?;
-            }
-            Ok(0)
         })
     }
 }
@@ -639,14 +512,18 @@ fn write_captured_turns(
     Ok(inserted)
 }
 
-#[derive(PartialEq, Eq)]
-struct CaptureState {
-    position: i64,
+/// A member's capture row in an open group ([`GroupRows::capture_state`]).
+#[derive(Debug, PartialEq, Eq)]
+pub struct CaptureState {
+    /// The membership row's position.
+    pub position: i64,
     /// Whether the member holds its seat now. A replaced member keeps its row
     /// but stores nothing.
-    holds: bool,
-    since: OffsetDateTime,
-    cursor: Option<String>,
+    pub holds: bool,
+    /// The start of its capture window.
+    pub since: OffsetDateTime,
+    /// Its capture cursor.
+    pub cursor: Option<String>,
 }
 
 fn capture_state(
@@ -682,35 +559,6 @@ fn capture_state(
         })
     })
     .transpose()
-}
-
-fn next_turns<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
-    turns_since(state, after_cursor(state, messages).unwrap_or_default())
-}
-
-fn after_cursor<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Option<&'a [NewMessage]> {
-    match &state.cursor {
-        Some(cursor) => messages
-            .iter()
-            .position(|m| &m.message == cursor)
-            .map(|i| &messages[i + 1..]),
-        None => Some(messages),
-    }
-}
-
-/// The turns a member's capture may store. A member with no cursor holds its
-/// join time as a cutoff, so older turns stay out. Once a cursor is set (by a
-/// backfill or an earlier capture) it is the continuity point: every turn after
-/// it is new whatever its timestamp, since a turn appended while the cursor's
-/// snapshot was being read can be dated before the membership was committed.
-/// Restoring a displaced holder's seat clears its cursor (`leave_group`,
-/// `forget_session`), so the new join time cuts off the turns typed during the
-/// displacement.
-fn turns_since<'a>(state: &CaptureState, messages: &'a [NewMessage]) -> Vec<&'a NewMessage> {
-    if state.cursor.is_some() {
-        return messages.iter().collect();
-    }
-    messages.iter().filter(|m| m.at >= state.since).collect()
 }
 
 /// A membership row (alias `m`) holds its seat only while it is the seat's newest
@@ -1156,6 +1004,92 @@ impl GroupRows<'_> {
             )
             .map(|n| n > 0)
             .map_err(|e| self.fail(e))
+    }
+
+    /// Whether group `n` is open.
+    pub fn is_open(&self, n: i64) -> Rows<bool> {
+        self.conn
+            .query_row(
+                "SELECT closed IS NULL FROM groups WHERE id = ?1",
+                [n],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// How many members of group `n` hold their seats.
+    pub fn holder_count(&self, n: i64) -> Rows<i64> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM group_members m WHERE m.group_id = ?1 AND {HOLDS_SEAT}"
+                ),
+                [n],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Whether `session` holds a seat in group `n`, and if so the start of
+    /// its restarted consent window: `Some(None)` for a holder whose window
+    /// was never restarted.
+    pub fn holder_restart(
+        &self,
+        n: i64,
+        session: &SessionId,
+    ) -> Rows<Option<Option<OffsetDateTime>>> {
+        let window: Option<(String, bool)> = self
+            .conn
+            .query_row(
+                &format!("SELECT m.joined, m.restarted FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT}"),
+                params![n, session.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| self.fail(e))?;
+        let Some((joined, restarted)) = window else {
+            return Ok(None);
+        };
+        if !restarted {
+            return Ok(Some(None));
+        }
+        let at =
+            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(self.path, e))?;
+        Ok(Some(Some(at)))
+    }
+
+    /// Store the selected `turns` as `session`'s group turns, masked by
+    /// `redactor`; returns how many rows were inserted.
+    pub fn store_selected(
+        &self,
+        session: &SessionId,
+        turns: Vec<&NewMessage>,
+        redactor: &Redactor,
+    ) -> Rows<usize> {
+        Ok(write_captured_turns(
+            self.conn, self.path, session, turns, redactor,
+        )?)
+    }
+
+    /// `session`'s capture row in an open group, unless it is forgotten.
+    pub fn capture_state(&self, session: &SessionId) -> Rows<Option<CaptureState>> {
+        capture_state(self.conn, self.path, session).map_err(RowError)
+    }
+
+    /// Set the capture cursor of membership row `position` to `message`.
+    pub fn set_cursor_at(&self, position: i64, message: &str) -> Rows<()> {
+        self.conn
+            .execute(
+                "UPDATE group_members SET turn_cursor = ?2 WHERE position = ?1",
+                params![position, message],
+            )
+            .map(drop)
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Delete membership row `position`'s Claude transcript progress.
+    pub fn clear_progress(&self, position: i64) -> Rows<()> {
+        claude::clear_progress(self.conn, position).map_err(|e| self.fail(e))
     }
 
     /// The seat `session` holds now.
