@@ -2,7 +2,10 @@
 //! finishes approvals cut short and deactivates stale sessions
 //! (`scribe consistency scan`, and its routine; 2_design.md §16).
 
+pub mod rules;
 mod scan;
+#[cfg(test)]
+mod tests;
 
 pub use scan::{COMMAND, Deactivated, DeactivationFailed, ScanError, ScanInput, ScanOutcome};
 

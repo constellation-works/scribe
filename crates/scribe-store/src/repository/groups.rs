@@ -1,7 +1,7 @@
 //! The group repository: session groups, their seats and their rows.
 
 use super::{GroupRows, Groups, RowError};
-use crate::brief::LastGroup;
+use crate::LastGroup;
 use crate::error::Result;
 use crate::group::Group;
 use crate::message::MessageSearch;

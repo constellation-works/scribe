@@ -1,5 +1,5 @@
+use crate::capture::Settle;
 use crate::capture::{self, Parsed, Refusal};
-use crate::consistency::Settle;
 use crate::entry::EntryId;
 use crate::proposal::ProposalId;
 

@@ -119,7 +119,14 @@ map; a new module fails the check until it is given a ring.
 | 1. base | `record`, `text`, `verbatim`, `provider`, `origin` |
 | 2. records | `session`, `activity`, `control`, `entry`, `handoff`, `tag`, `proposal` |
 | 3. transcript | `transcript` (with `transcript/codex`) |
-| 4. rules | `trigger`, `voice`, `claim`, `brief`, `capture`, `consistency`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `search`, `group`, `memory`, `message`, `action`, `annotation`, `redact` |
+| 4. rules | `trigger`, `voice`, `claim`, `capture`, `pass`, `instruction`, `models`, `config`, `error`, `checks`, `group`, `memory`, `message`, `action`, `annotation`, `redact` |
+
+`brief`, `search` and `consistency` left the domain in ORB-27921 step 5
+(PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
+split by its lowest user: the stale step is in `apps/consistency`, settling
+and approval in `apps/proposal`, and `forget` with the `Settled` outcome in
+`apps/entry`. The core's root re-exports them as `crate::brief`,
+`crate::search` and `crate::consistency`.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
@@ -147,7 +154,7 @@ ORB-27707 where an import forces it:
   - `control` is in records, since it imports `activity::CatalogedBy` and
     `session`;
   - `error` (imports `config::ConfigError`), `checks` (imports `pass`,
-    `instruction`, `group`), `search` (imports `voice`), `models` (imports
+    `instruction`, `group`), `models` (imports
     `voice`) and `redact` (imports `config`, `group::NewGroup`) are in rules.
 - **Naming:** `verbatim` is its own module in base, beside `text`. Ids live
   with their records, so there is no `ids` module.

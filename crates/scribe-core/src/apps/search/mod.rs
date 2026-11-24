@@ -4,6 +4,9 @@
 //! It reads only.
 
 mod query;
+pub mod rules;
+#[cfg(test)]
+mod tests;
 
 pub use query::Searched;
 

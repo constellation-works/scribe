@@ -4,6 +4,9 @@
 //! It reads only.
 
 mod page;
+pub mod rules;
+#[cfg(test)]
+mod tests;
 
 pub use page::{BriefInput, BriefPage};
 
