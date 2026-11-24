@@ -130,36 +130,36 @@ impl RecordArgs {
 /// A user's typed turns in one session: each turn's time and words.
 type TypedTurns = Vec<(OffsetDateTime, String)>;
 
-/// The readable typed turns of each `session:` reference in `related` that
-/// parses as a session id, in reference order: the session, then each turn's
-/// time and words. A transcript missing or refused on this host is skipped.
-fn typed_sessions(
-    ctx: &Context,
-    related: &[Related],
-) -> Result<Vec<(SessionId, TypedTurns)>, CliError> {
-    let mut found = Vec::new();
-    for session in related
+/// Read each referenced session only when its turns are needed. Missing or
+/// refused transcripts are skipped; I/O errors are returned to the caller.
+fn typed_sessions<'a>(
+    ctx: &'a Context,
+    related: &'a [Related],
+) -> impl Iterator<Item = Result<(SessionId, TypedTurns), CliError>> + 'a {
+    related
         .iter()
         .filter(|r| r.kind() == RelatedKind::Session)
         .filter_map(|r| r.target().parse::<SessionId>().ok())
-    {
-        let Some(path) = payload::locate(ctx, &session)? else {
-            continue;
-        };
-        let bytes = match payload::read_checked_bytes(ctx, &path, &session) {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(Unreadable::Refused(_)) => continue,
-            Err(Unreadable::Io(source)) => {
-                return Err(CliError::Read {
-                    what: path.display().to_string(),
-                    source,
-                });
-            }
-        };
-        let turns = typed_turns(ctx.provider(), &session, &bytes);
-        found.push((session, turns));
-    }
-    Ok(found)
+        .filter_map(move |session| {
+            let read = || -> Result<Option<(SessionId, TypedTurns)>, CliError> {
+                let Some(path) = payload::locate(ctx, &session)? else {
+                    return Ok(None);
+                };
+                let bytes = match payload::read_checked_bytes(ctx, &path, &session) {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) | Err(Unreadable::Refused(_)) => return Ok(None),
+                    Err(Unreadable::Io(source)) => {
+                        return Err(CliError::Read {
+                            what: path.display().to_string(),
+                            source,
+                        });
+                    }
+                };
+                let turns = typed_turns(ctx.provider(), &session, &bytes);
+                Ok(Some((session, turns)))
+            };
+            read().transpose()
+        })
 }
 
 /// Verify each quote in a referenced transcript, using the host's typed-turn
@@ -170,9 +170,18 @@ pub(super) fn verify_decision_quotes(
     quote: &str,
     reason: Option<&str>,
 ) -> Result<(), CliError> {
+    verify_quotes_in_sessions(typed_sessions(ctx, related), quote, reason)
+}
+
+fn verify_quotes_in_sessions(
+    sessions: impl Iterator<Item = Result<(SessionId, TypedTurns), CliError>>,
+    quote: &str,
+    reason: Option<&str>,
+) -> Result<(), CliError> {
     let mut quote_found = false;
     let mut reason_found = reason.is_none();
-    for (_, turns) in typed_sessions(ctx, related)? {
+    for session in sessions {
+        let (_, turns) = session?;
         for (_, words) in turns {
             quote_found |= instruction::quoted_in(&words, quote);
             reason_found |= reason.is_some_and(|reason| instruction::quoted_in(&words, reason));
@@ -205,7 +214,8 @@ pub(super) fn find_answer(
         ));
     }
     let mut latest: Option<(SessionId, OffsetDateTime)> = None;
-    for (session, turns) in typed_sessions(ctx, related)? {
+    for session in typed_sessions(ctx, related) {
+        let (session, turns) = session?;
         for (at, words) in turns {
             if instruction::quoted_in(&words, quote)
                 && latest.as_ref().is_none_or(|(_, best)| at > *best)
@@ -258,5 +268,39 @@ fn typed_turns(provider: Provider, session: &SessionId, bytes: &[u8]) -> TypedTu
                 .map(|(at, parts)| (at, parts.join("\n")))
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decision_quotes_stop_before_a_later_read_error() {
+        let id: SessionId = "8dc9df2b-5808-47cf-8be4-190c9c6e0711".parse().unwrap();
+        let turns = vec![
+            (OffsetDateTime::UNIX_EPOCH, String::from("yes")),
+            (OffsetDateTime::UNIX_EPOCH, String::from("because")),
+        ];
+        let sessions = || {
+            [
+                Ok((id.clone(), turns.clone())),
+                Err(CliError::Read {
+                    what: String::from("later transcript"),
+                    source: std::io::Error::other("injected read failure"),
+                }),
+            ]
+            .into_iter()
+        };
+        assert!(verify_quotes_in_sessions(sessions(), "yes", Some("because")).is_ok());
+        assert!(verify_quotes_in_sessions(sessions(), "yes", None).is_ok());
+        assert!(matches!(
+            verify_quotes_in_sessions(sessions(), "yes", Some("missing")),
+            Err(CliError::Read { what, .. }) if what == "later transcript"
+        ));
+        assert!(matches!(
+            verify_quotes_in_sessions(sessions(), "missing", Some("because")),
+            Err(CliError::Read { what, .. }) if what == "later transcript"
+        ));
     }
 }
