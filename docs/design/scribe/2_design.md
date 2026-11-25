@@ -7278,9 +7278,9 @@ store with shipped decisions.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
 
-## 19. Replacing the five model callers with Orbit jobs and CLI primitives (proposed)
+## 19. Replacing the five model callers with Orbit jobs and CLI primitives (approved)
 
-Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Nothing is deleted or implemented here. Daniel answered the four questions of [§19.7](#197-decisions-on-the-open-questions) on 2026-11-25; approval of the section as a whole is still his to give.
+Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Daniel answered the four questions of [§19.7](#197-decisions-on-the-open-questions) and approved this section on 2026-11-25 in the chief's chat, to "Approve section 19 with your four answers, so the scribe captain can build it?": "Approve" (quoted on [ORB-28109]). The approval carried one condition: the section uses `agent_invoke` activities, as his words on [ORB-27911] say, or states why `agent_loop` is needed. [§19.2](#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs) states it. The five callers are deleted last, once their jobs are in place ([§19.5](#195-deletions-and-configuration-migration-after-approval)).
 
 ### 19.1 Scope and current boundary
 
@@ -7301,6 +7301,8 @@ All other paths (`UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `cons
 Daniel's direction ([ORB-27911]):
 
 > "scribe should just be a cli tool, exposing tools for agents to query/update. Any operations that require agent invocations (e.g. session pass; delete \"ask\" entirely, not needed) should be executed as orbit jobs with agent_invoke activities, passing the transcript data or whatever."
+
+**Why `agent_loop`.** Orbit has no `agent_invoke` activity. The name belonged to the `orbit run agent` command, the `orbit.agent.invoke` tool and the worker behind them, which were removed on Daniel's direction of 2026-11-07 ([ORB-20383], `codebases/orbit/docs/design/operations-as-data/4_decisions.md`, "Agent invocation and explorer removed"). An Orbit activity is `agent_loop` or `deterministic`, and a plugin activity is `agent_loop` or `plugin.tool_call` (`codebases/orbit/docs/design/plugins/1_scope.md`). Despite its name, `agent_loop` is one CLI agent invocation: since [ORB-10801] the provider owns its turn budget, `max_iterations` is inert, and only `wall_clock_timeout_seconds` bounds the call (`crates/orbit-types/src/workflow/activity_job/activity_v2.rs`). With `tools: []` and an output schema, each step below is a single invocation that returns one JSON answer, which is what Daniel's words ask for. The `loop:` in the jobs is the job's own iteration over windows, not the activity's.
 
 Under [specs/architecture.md](./specs/architecture.md), **scribe starts no model and spawns no child process**, and **scribe does not call Orbit**. Every operation that previously called `Models` splits into three pure/deterministic responsibilities owned by `scribe` and one model-execution step owned by Orbit:
 
@@ -7464,7 +7466,7 @@ Daniel answered the four questions on 2026-11-25 in the chief's chat, each as a 
 3. **Retiring `plugin/orbit-codex/.orbit-plugin/`.** Asked: retire it and `scripts/sync-orbit-packages.py` when `providers/` is deleted, since `codex_runtime_tmp` and `codex_installation_id` write grants are then unnecessary. Daniel: "keep for now". Both stay; [§19.5](#195-deletions-and-configuration-migration-after-approval) item 4 no longer retires them.
 4. **Omitted `--summary` on `scribe group close <id>`.** Asked: fail closed (`exit 2`, pointing to `scribe group evidence <id>` + `--summary` and `orbit job run scribe-group-close`), with `--no-summary` for an explicit close without one. Daniel: "yes". As in [§19.3](#193-replacing-each-of-the-five-callers).
 
-Still open: Daniel's approval of §19 as a whole, and his reading of `agent_loop` against the `agent_invoke activities` of his words on [ORB-27911]. Nothing in §19 is built and `providers/` is not deleted until he approves.
+Daniel approved §19 on 2026-11-25 with these four answers ("Approve"); its `agent_loop` condition is answered in [§19.2](#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs).
 
 ## Task References
 
@@ -7535,7 +7537,7 @@ Still open: Daniel's approval of §19 as a whole, and his reading of `agent_loop
   decisions and open items are quoted there.
 - [ORB-25162] — the standards plugin's decision intake, which reads a
   `decision` action tag.
-- [ORB-28068] — proposed §19: replace the five remaining model callers
+- [ORB-28068] — drafted §19 (approved 2026-11-25): replace the five remaining model callers
   (`session pass`, `session catalog`, `session rebuild`, `memory refresh`,
   `group close` summary) with deterministic `prepare`/`apply` primitives and
   Orbit `agent_loop` jobs; callers stay in `providers/` until Daniel approves.
