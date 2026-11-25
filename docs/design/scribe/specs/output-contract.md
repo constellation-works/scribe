@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-23
+last_validated: 2026-11-24
 ---
 
 # Spec: Output contract
@@ -378,9 +378,9 @@ slug), `id` (the entry's or session's id), `segment` (integer or `null`),
 (phase 4) `message` (a stored message's provider id, `null` for any other
 kind), `score` (a
 number, three decimals), `title` (a session's title, a segment's heading,
-or for an entry `<id> (<tag>)`), `snippet` (up to 240 characters on one
+or for an entry `<id> (<tag>)`), `snippet` (see below: one fragment of up to 240 characters on one
 line, starting a little before the first matching word, with `…` where it
-was cut; format 14: for an entry with `stated_by`, `scribe's statement of
+was cut, plus, for an entry, attribution and metadata; format 14: for an entry with `stated_by`, `scribe's statement of
 Daniel's turn: <statement> | Daniel's words: "<quote>"`, each part cut to
 240 characters, and format 24 for an approved assistant claim with
 context: `scribe's statement of the assistant's turn: <context> | The
@@ -398,6 +398,35 @@ session's `updated`, a segment's `to`, a message's time), and `status`
 (added beside the designed fields: an entry's `active`, `superseded` or
 `retired`, a session's `open` or `final`, which a message takes from its
 session when it has a record; otherwise a group-only message is `stored`).
+
+**Snippet length.** The 240-character limit applies to each *fragment*, a
+window of one text (an entry's content, a stated quote, a header's summary,
+goals and next, a segment's text, a message's turn), never to the `snippet`
+value as a whole. A session header, a segment, a message and a plain entry
+carry exactly one fragment, so their `snippet` is at most 240 characters. An
+entry's `snippet` can be longer, since it joins up to two fragments (the
+statement and the quote, each at most 240) with its attribution labels and
+trailing metadata: ` | outcome: …`, ` [agent claim (<name>) as of <date>;
+evidence: …]`, ` | handoff mode: …` and ` | approved by … on your instruction
+"…" (<session>, <date>)`. Labels and suffixes are never cut, so a consumer needs
+its own bound. Example, from the `search-instructed` golden (the entry's
+fragments are each under 240; the whole `snippet` is longer, and the approval
+suffix is metadata, not a third fragment):
+
+```json
+{"hits": [{"kind": "entry", "cite": "preferences-2", "id": "preferences-2",
+  "segment": null, "message": null, "score": 8.216,
+  "title": "preferences-2 (preferences)",
+  "snippet": "scribe's statement of the user's turn: The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome. | The user's words: \"ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.\" | approved by opus on your instruction \"approve p-5, that is how session records should work\" (9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03, 2026-11-15)",
+  "project": "constellation-works/scribe", "topics": [],
+  "author": {"kind": "user", "name": "user"}, "active": null,
+  "updated": "2026-11-15T00:05:00Z", "status": "active",
+  "evidence": null, "as_of": null}],
+ "total": 1, "truncated": false, "warnings": []}
+```
+
+`--kind` takes `entry`, `session` and `message`. `--group <id>` scopes every
+kind to the group's member sessions.
 
 (Phase 4, 2_design.md §15.7) `scribe search --kind message` searches the
 messages in `scribe.db` instead of the entries and sessions: ranked by
