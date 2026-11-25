@@ -369,8 +369,9 @@ impl Models for Adapter<'_> {
     }
 }
 
-/// The session `id` (an id or unique prefix) resolves to, or `None` when
-/// it does not: the audit subject's target, which [`Command::subject`] names before the command runs.
+/// The session `id` (an id or unique prefix) resolves to, or `None` when it
+/// does not: the audit subject's target, which [`Command::subject`] names
+/// before the command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, id: &SessionId) -> Option<SessionId> {
     ctx.store().read().sessions().resolve(id).ok()

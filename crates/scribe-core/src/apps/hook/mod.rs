@@ -28,7 +28,7 @@ pub use group_add::{GroupAddInput, MAX_SESSIONS};
 pub use reply::{HookPortError, HookReply, PROVENANCE_FAILED, chain, quote};
 pub use scribe_tools::payload::PromptPayload;
 pub use session_start::SessionStartInput;
-pub use stdin::{Event, Stdin};
+pub use stdin::{Event, HookEvent, Stdin};
 pub use stop::StopInput;
 pub use user_prompt_submit::{EVENT, PromptInput};
 

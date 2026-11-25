@@ -1,50 +1,48 @@
 //! The audit guard around a mutating command (STD-02 R24), the lines a
-//! multi-step use case owes for writes already on disk when it returns
-//! early, and the outcome a hook run records per write or refusal.
+//! multi-step use case owes for writes already on disk when it returns early,
+//! and the outcome a hook run records per write or refusal.
 //!
-//! [`AuditGuard`] wraps an app's `exec` ([`guarded`]). It is created before
-//! the command runs, told the outcome with [`AuditGuard::mark_result`], and
-//! writes the lines when it is dropped. It starts out recording a failure, so
-//! a command that returns early or panics is logged as one; an outcome is
-//! never assumed to be success (STD-02 R29).
+//! [`AuditGuard`] wraps an app's `exec` ([`guarded`]). It is created before the
+//! command runs, told the outcome with [`AuditGuard::mark_result`], and writes
+//! the lines when it is dropped. It starts out recording a failure, so a
+//! command that returns early or panics is logged as one; an outcome is never
+//! assumed to be success (STD-02 R29).
 //!
-//! Which commands are audited is declared by each app, beside its
-//! `Command` (`Command::audit` and `Command::subject`, built into an
-//! [`Audit`] by its `exec`); read-only commands are not, because they must not write
-//! (STD-01 R31). The line holds the command path, the record acted on, the
-//! outcome, the stable error code, for a command that takes an `--author`,
-//! that name (STD-05 R2), and for a write run on the user's instruction its
-//! session and turn ids: never argument values or error text, which can carry
-//! entry contents or paths (STD-05 R13).
+//! Which commands are audited is declared by each app, beside its `Command`
+//! (`Command::audit` and `Command::subject`, built into an [`Audit`] by its
+//! `exec`); read-only commands are not, because they must not write (STD-01
+//! R31). The line holds the command path, the record acted on, the outcome, the
+//! stable error code, for a command that takes an `--author`, that name (STD-05
+//! R2), and for a write run on the user's instruction its session and turn ids:
+//! never argument values or error text, which can carry entry contents or paths
+//! (STD-05 R13).
 //!
 //! A hook run writes one line per outcome it reports: one per record it wrote
-//! or refused (two `#scribe` lines in one prompt are two lines in the log);
-//! one per `/scribe` switch it changed (`on`, `off`, a link, `catalog` or
+//! or refused (two `#scribe` lines in one prompt are two lines in the log); one
+//! per `/scribe` switch it changed (`on`, `off`, a link, `catalog` or
 //! `continue`, `target` `session:<id>`), and a refused `/scribe` command is one
 //! failure line; one more per run that stores a group member's new typed turns
 //! (`target` `session:<id>`, no error code, content-free, one per run however
 //! many turns it stores); one per deferred ancestry check that a session start
-//! records, and one per typed prompt that consumes one (`target` `session:<id>`,
-//! no error code, whatever the prompt holds), and one failure line with its
-//! code for a check that could not be recorded or consumed. A run that only
-//! moves a group
-//! member's capture cursor writes none, and so does a no-op switch or a status;
-//! a session pass one per
-//! session passed (a `session catalog`
-//! also one for the switch it wrote, unless a window failed: a failed catalog is one
-//! failure line) and one per retired-tag candidate closed; a consistency scan one
-//! per entry re-applied, per proposal opened or closed, per session deactivated or
-//! deactivation failed, per batch the model failed, and none when it changed
-//! nothing; a direct write verb (`entry`, `tag` and `proposal` writes,
-//! `session activate|deactivate`) one when it changed the record and none
-//! when it did not: the `Stop` hook runs after
-//! every reply and usually has nothing to do. A prompt with no `#scribe` line
-//! adds a line only when it changes a `/scribe` switch, is a refused `/scribe`
-//! command, stores a group member's turn, or consumes a deferred ancestry check.
+//! records, and one per typed prompt that consumes one (`target`
+//! `session:<id>`, no error code, whatever the prompt holds), and one failure
+//! line with its code for a check that could not be recorded or consumed. A run
+//! that only moves a group member's capture cursor writes none, and so does a
+//! no-op switch or a status; a session pass one per session passed (a `session
+//! catalog` also one for the switch it wrote, unless a window failed: a failed
+//! catalog is one failure line) and one per retired-tag candidate closed; a
+//! consistency scan one per entry re-applied, per proposal opened or closed,
+//! per session deactivated or deactivation failed, per batch the model failed,
+//! and none when it changed nothing; a direct write verb (`entry`, `tag` and
+//! `proposal` writes, `session activate|deactivate`) one when it changed the
+//! record and none when it did not: the `Stop` hook runs after every reply and
+//! usually has nothing to do. A prompt with no `#scribe` line adds a line only
+//! when it changes a `/scribe` switch, is a refused `/scribe` command, stores a
+//! group member's turn, or consumes a deferred ancestry check.
 //!
 //! A command that calls no model runs, with its lines, as one `scribe.db`
-//! transaction: [`AuditGuard::flush`] writes them inside it, so a write and
-//! its line commit together or not at all. A refused or failed command's
+//! transaction: [`AuditGuard::flush`] writes them inside it, so a write and its
+//! line commit together or not at all. A refused or failed command's
 //! transaction rolls back, and its failure line is written after, without
 //! waiting: spooled to a file of its own when another writer holds the
 //! database, so a locked store costs one wait and loses no line.
@@ -272,7 +270,8 @@ impl<'a> AuditGuard<'a> {
         };
     }
 
-    /// Name the known target even when a command refuses before a payload exists.
+    /// Name the known target even when a command refuses before a payload
+    /// exists.
     pub(crate) fn set_target(&mut self, target: &str) {
         for line in &mut self.lines {
             line.target = Some(target.to_owned());
@@ -280,7 +279,8 @@ impl<'a> AuditGuard<'a> {
     }
 
     /// Name the agent a command acted as, on every line it writes: the
-    /// `--author` name, a self-reported identity kept in its own field (STD-05 R2).
+    /// `--author` name, a self-reported identity kept in its own field (STD-05
+    /// R2).
     pub(crate) fn set_author(&mut self, author: &str) {
         self.author = Some(author.to_owned());
     }
