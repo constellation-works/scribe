@@ -2133,3 +2133,73 @@ fn a_handed_over_marker_stays_listed() {
     assert_eq!(doc["marks"][0]["outcome"], "refused");
     assert_eq!(doc["marks"][0]["code"], "agent_handoff");
 }
+
+#[cfg(unix)]
+#[test]
+fn an_error_after_marking_rolls_back_the_marker_and_audits_the_failure() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_switch_on(&fx, SESSION);
+    marked_turns(&claude, &[("u-1", MARKED)]);
+    // Fail when mark_due persists `sw_due = 1` after annotation::run writes `marks`.
+    support::sql(
+        &fx.root(),
+        "CREATE TRIGGER fail_mark_due BEFORE UPDATE OF sw_due ON sessions \
+         WHEN NEW.sw_due = 1 BEGIN SELECT RAISE(ABORT, 'injected mark_due failure'); END;",
+    );
+
+    let failed = hook(&fx, "stop", &claude.payload("stop.json"));
+    assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stderr));
+    assert!(failed.stdout.is_empty(), "{}", text(&failed.stdout));
+    support::sql(&fx.root(), "DROP TRIGGER fail_mark_due;");
+
+    assert!(
+        marks_json(&fx).is_empty(),
+        "marking rolled back with the failed Stop: {:?}",
+        marks_json(&fx)
+    );
+    assert_eq!(
+        support::control(&fx.root())["sessions"][SESSION]["due"],
+        false
+    );
+    let failed_audit = audit(&fx);
+    assert_eq!(failed_audit.len(), 1, "{failed_audit:?}");
+    assert_eq!(failed_audit[0]["command"], "hook stop");
+    assert_eq!(failed_audit[0]["status"], "failure");
+    assert_eq!(failed_audit[0]["error_code"], "store_database");
+
+    // Once the fault clears, the next Stop still hands the marker over.
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let reply_json = reply(&out);
+    assert!(
+        reply_json["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains(MARKED),
+        "{reply_json}"
+    );
+    assert!(
+        reply_json["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("scribe entry add --tag preferences"),
+        "{reply_json}"
+    );
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0]["code"], "agent_handoff");
+    assert_eq!(
+        support::control(&fx.root())["sessions"][SESSION]["due"],
+        true
+    );
+    let all_audit = audit(&fx);
+    assert_eq!(all_audit.len(), 3, "{all_audit:?}");
+    assert_eq!(all_audit[1]["command"], "hook stop");
+    assert_eq!(all_audit[1]["status"], "failure");
+    assert_eq!(all_audit[1]["error_code"], "agent_handoff");
+    assert_eq!(all_audit[1]["target"], format!("session:{SESSION}"));
+    assert_eq!(all_audit[2]["command"], "hook stop");
+    assert_eq!(all_audit[2]["status"], "success");
+    assert_eq!(all_audit[2]["target"], format!("session:{SESSION}"));
+    assert!(all_audit[2]["error_code"].is_null());
+}

@@ -30,7 +30,7 @@ impl Command {
         match self {
             Self::Scan(_) => Some(AuditMeta {
                 command: COMMAND,
-                stepwise: true,
+                stepwise: false,
             }),
         }
     }

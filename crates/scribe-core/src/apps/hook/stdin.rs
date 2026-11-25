@@ -88,9 +88,9 @@ impl HookEvent {
 impl Event<'_> {
     /// What the audit log records for this hook: every hook is audited,
     /// under its command path, whichever provider runs it. Each reports its
-    /// writes and refusals; a silent read has no audit line. `Stop` may call
-    /// a model, so it commits stepwise. Exhaustive, so a new event cannot
-    /// compile without deciding (STD-02 R27).
+    /// writes and refusals; a silent read has no audit line. Every hook calls
+    /// no model and commits as one store transaction with its audit lines.
+    /// Exhaustive, so a new event cannot compile without deciding (STD-02 R27).
     #[must_use]
     pub fn audit(&self) -> Option<AuditMeta> {
         let event = match self {
@@ -102,7 +102,7 @@ impl Event<'_> {
         };
         Some(AuditMeta {
             command: event.command(),
-            stepwise: event == HookEvent::Stop,
+            stepwise: false,
         })
     }
 

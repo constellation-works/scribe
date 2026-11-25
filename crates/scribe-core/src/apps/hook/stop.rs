@@ -98,10 +98,6 @@ pub fn run<E: PortError>(
         });
         return Ok(reply);
     }
-    // Group turn capture commits immediately because `hook stop` is stepwise;
-    // keep it audited if a later step returns `Err`.
-    let mut persisted =
-        crate::runtime::audit::PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now());
     let mut outcomes: Vec<HookOutcome> = if provider == Provider::ClaudeCode {
         group::claude_turns(ctx, provider, &session, transcript_path)?
             .into_iter()
@@ -109,13 +105,6 @@ pub fn run<E: PortError>(
     } else {
         Vec::new()
     };
-    for outcome in &outcomes {
-        if outcome.error_code.is_none()
-            && let Some(target) = &outcome.target
-        {
-            persisted.record(target.clone());
-        }
-    }
     outcomes.extend(fill_cites(ctx, provider, transcript_path, &session)?);
     if !outcomes
         .iter()
@@ -147,7 +136,6 @@ pub fn run<E: PortError>(
     {
         outcomes.extend(mark_due(ctx, provider, transcript_path, &session)?);
     }
-    persisted.disarm();
     reply.outcomes = outcomes;
     Ok(reply)
 }

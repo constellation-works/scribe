@@ -970,7 +970,7 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
 }
 
 #[test]
-fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
+fn a_scan_that_fails_after_closing_candidates_rolls_back_and_audits_failure() {
     let fx = Fixture::new();
     let path = fx.fake_program(
         "claude",
@@ -1034,8 +1034,8 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
 
     mend_sessions(&s);
     let stored = support::proposals_doc(&s.fx.root());
-    assert_eq!(stored["proposals"][0]["state"], "rejected");
-    assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
+    assert_eq!(stored["proposals"][0]["state"], "open");
+    assert!(stored["proposals"][0]["closed_reason"].is_null());
 
     let scan_lines: Vec<Value> = s
         .audit()
@@ -1044,14 +1044,25 @@ fn a_scan_that_fails_after_persisting_closures_still_audits_each_one() {
         .collect();
     let closures = scan_lines
         .iter()
-        .filter(|line| line["status"] == "success" && line["target"] == "p-1")
+        .filter(|line| line["status"] == "success")
         .count();
-    assert_eq!(closures, 1, "{scan_lines:?}");
+    assert_eq!(closures, 0, "{scan_lines:?}");
     let failures = scan_lines
         .iter()
         .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
         .count();
     assert_eq!(failures, 1, "{scan_lines:?}");
+
+    let report = s.scan();
+    assert_eq!(ids(&report["closed"]), ["p-1"]);
+    assert_eq!(s.proposal("p-1")["closed_reason"], "tag_retired");
+    assert_eq!(
+        s.audit()
+            .into_iter()
+            .filter(|line| line["command"] == "consistency scan" && line["status"] == "success")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -1132,7 +1143,7 @@ fn consistency_scan_with_custom_tag_config_keeps_open_preferences_candidates() {
 }
 
 #[test]
-fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
+fn a_scan_that_fails_after_reapply_and_open_rolls_back_every_write() {
     let fx = Fixture::new();
     let path = fx.fake_program(
         "claude",
@@ -1148,9 +1159,9 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
         path,
     };
     // Active entries:
-    // - preferences-1 will be superseded when p-1 is reapplied
-    // - preferences-2 covers approved candidate p-2 (closed as covered)
-    // - rituals-1 is past review_after so open_proposals opens p-4
+    // - preferences-1 would be superseded when p-1 is reapplied
+    // - preferences-2 would cover approved candidate p-2 (closed as covered)
+    // - rituals-1 is past review_after so open_proposals would open p-4
     s.entry(
         "preferences-1",
         "2026-01-02T03:04:05Z",
@@ -1260,8 +1271,8 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
     s.write_proposals(&doc["proposals"]);
 
     // A missing segments table fails deactivate_sessions AFTER
-    // reapply_approved, close_retired_candidates, and open_proposals have all
-    // persisted.
+    // reapply_approved, close_retired_candidates, and open_proposals have run
+    // inside the scan's outer transaction.
     break_sessions(&s);
 
     let out = s.run(&["consistency", "scan", "--json"], b"");
@@ -1275,6 +1286,40 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
     );
     mend_sessions(&s);
 
+    assert_eq!(s.entry_json("preferences-1")["status"], "active");
+    let stored = support::proposals_doc(&s.fx.root());
+    let proposals = stored["proposals"].as_array().unwrap();
+    assert_eq!(proposals.len(), 3, "{proposals:?}");
+    assert_eq!(proposals[1]["state"], "approved");
+    assert!(proposals[1]["closed_reason"].is_null());
+    assert_eq!(proposals[2]["state"], "open");
+    assert!(proposals[2]["closed_reason"].is_null());
+
+    let scan_lines: Vec<Value> = s
+        .audit()
+        .into_iter()
+        .filter(|line| line["command"] == "consistency scan")
+        .collect();
+    assert_eq!(
+        scan_lines
+            .iter()
+            .filter(|line| line["status"] == "success")
+            .count(),
+        0,
+        "failed scan rolls back all writes and emits no success audit lines: {scan_lines:?}"
+    );
+    assert_eq!(
+        scan_lines
+            .iter()
+            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
+            .count(),
+        1,
+        "{scan_lines:?}"
+    );
+
+    let report = s.scan();
+    assert_eq!(ids(&report["opened"]), ["p-4"]);
+    assert_eq!(s.entry_json("preferences-1")["status"], "superseded");
     let scan_lines: Vec<Value> = s
         .audit()
         .into_iter()
@@ -1287,15 +1332,41 @@ fn a_scan_that_fails_after_reapply_and_open_still_audits_each_write() {
                 .filter(|line| line["status"] == "success" && line["target"] == expected)
                 .count(),
             1,
-            "expected persisted write {expected} to be audited once: {scan_lines:?}"
+            "expected committed write {expected} to be audited once: {scan_lines:?}"
         );
     }
-    assert_eq!(
-        scan_lines
-            .iter()
-            .filter(|line| line["status"] == "failure" && line["error_code"] == "store_database")
-            .count(),
-        1,
-        "{scan_lines:?}"
+}
+
+#[test]
+fn a_routine_consistency_scan_commits_with_audit_and_rolls_back_on_failure() {
+    let s = Setup::new();
+    let root = s.fx.root();
+    let config = json!({"root": root, "task_workspaces": []});
+
+    break_sessions(&s);
+    let reply = plugin(&s, "scribe.consistency-scan", &config);
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "store_database", "{reply}");
+    mend_sessions(&s);
+
+    let list = s.json(&["proposal", "list", "--json"]);
+    assert!(
+        list["proposals"].as_array().unwrap().is_empty(),
+        "failed routine scan rolled back opened proposal: {list}"
     );
+    let scan_lines = s.audit();
+    assert_eq!(scan_lines.len(), 1, "{scan_lines:?}");
+    assert_eq!(scan_lines[0]["command"], "consistency scan");
+    assert_eq!(scan_lines[0]["status"], "failure");
+    assert_eq!(scan_lines[0]["error_code"], "store_database");
+
+    let reply = plugin(&s, "scribe.consistency-scan", &config);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(ids(&reply["output"]["opened"]), ["p-1"]);
+    assert_eq!(s.proposal("p-1")["state"], "open");
+    let scan_lines = s.audit();
+    assert_eq!(scan_lines.len(), 2, "{scan_lines:?}");
+    assert_eq!(scan_lines[1]["command"], "consistency scan");
+    assert_eq!(scan_lines[1]["status"], "success");
+    assert_eq!(scan_lines[1]["target"], "p-1");
 }

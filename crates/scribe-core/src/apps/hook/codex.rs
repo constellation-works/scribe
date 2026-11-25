@@ -23,7 +23,6 @@ use crate::codex::TypedTurn;
 use crate::control::{command_text, is_control};
 use crate::message::NewMessage;
 use crate::runtime::audit::HookOutcome;
-use crate::runtime::audit::PersistedAudit;
 use crate::runtime::{Ctx, TranscriptState};
 use crate::{Label, Provider, SessionId, annotation, capture, control};
 use serde_json::Value;
@@ -237,24 +236,12 @@ where
             ));
         }
     }
-    let mut persisted =
-        (event == "Stop").then(|| PersistedAudit::new(ctx.store, "hook stop", ctx.clock.now()));
     let group_outcomes: Vec<HookOutcome> = group::codex_turns(ctx, provider, &id, &rollout.typed)?
         .into_iter()
         .collect();
-    if let Some(persisted) = persisted.as_mut() {
-        for outcome in &group_outcomes {
-            if outcome.error_code.is_none()
-                && let Some(target) = &outcome.target
-            {
-                persisted.record(target.clone());
-            }
-        }
-    }
     // Ends without a replay: Stop runs (or the reply is silent), after the
-    // group turns' outcomes, and the persisted audit is disarmed.
+    // group turns' outcomes.
     let finish = |group_outcomes: Vec<HookOutcome>,
-                  persisted: Option<&mut PersistedAudit<'_>>,
                   stop_payload: &mut Option<Result<CodexStop, E>>|
      -> Result<HookReply, HookError<E>> {
         let mut out = if event == "Stop" {
@@ -263,14 +250,11 @@ where
             silent(event)
         };
         prepend_outcomes(&mut out, group_outcomes);
-        if let Some(persisted) = persisted {
-            persisted.disarm();
-        }
         Ok(out)
     };
     let candidates: Vec<_> = rollout.typed.iter().filter(|t| relevant(t)).collect();
     if candidates.is_empty() {
-        return finish(group_outcomes, persisted.as_mut(), &mut stop_payload);
+        return finish(group_outcomes, &mut stop_payload);
     }
     let before = ctx.store.read().sessions().control()?;
     if before
@@ -278,7 +262,7 @@ where
         .get(&id)
         .is_some_and(|cursor| candidates.last().is_some_and(|t| &t.message.uuid == cursor))
     {
-        return finish(group_outcomes, persisted.as_mut(), &mut stop_payload);
+        return finish(group_outcomes, &mut stop_payload);
     }
     let _ingestion = ctx.store.lock_codex_ingestion(&id)?;
     let state = ctx.store.read().sessions().control()?;
@@ -292,9 +276,6 @@ where
                     "Codex ingestion cursor disappeared; transcript was rewritten. Nothing replayed; inspect the session before resuming",
                 );
                 prepend_outcomes(&mut out, group_outcomes);
-                if let Some(persisted) = persisted.as_mut() {
-                    persisted.disarm();
-                }
                 return Ok(out);
             }
         },
@@ -369,9 +350,6 @@ where
         replies.extend(reply.message);
         agent_only = reply.context;
         outcomes.extend(reply.outcomes);
-    }
-    if let Some(persisted) = persisted.as_mut() {
-        persisted.disarm();
     }
     let message = (!replies.is_empty()).then(|| replies.join("\n"));
     // Codex Stop permits additionalContext JSON; no plain stdout, and no

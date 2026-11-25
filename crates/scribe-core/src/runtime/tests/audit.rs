@@ -302,7 +302,8 @@ fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
 
 #[test]
 fn both_hook_commands_are_audited_under_their_command_path() {
-    use crate::apps::hook::Event;
+    use crate::apps::consistency;
+    use crate::apps::hook::{Event, HookEvent};
     use crate::apps::session;
     use crate::{AuthorName, Label, Provider, SessionId};
     let mut read_past = |_: Provider, _: &SessionId, _: &std::path::Path| Ok(None);
@@ -316,7 +317,10 @@ fn both_hook_commands_are_audited_under_their_command_path() {
         host: Label::sanitized("host", "host"),
         models: Box::new(|_| unreachable!("audit() never runs the command")),
     });
-    for (audit, path) in [
+    let scan = consistency::Command::Scan(consistency::ScanInput {
+        provider: Provider::ClaudeCode,
+    });
+    for (audit, path, stepwise) in [
         (
             Event::UserPromptSubmit {
                 input: Ok(Vec::new()),
@@ -324,10 +328,25 @@ fn both_hook_commands_are_audited_under_their_command_path() {
             }
             .audit(),
             "hook user-prompt-submit",
+            false,
         ),
-        (Event::Stop(Ok(Vec::new())).audit(), "hook stop"),
-        (catalog.audit(), "session catalog"),
+        (Event::Stop(Ok(Vec::new())).audit(), "hook stop", false),
+        (
+            Event::Codex {
+                event: HookEvent::Stop,
+                input: Ok(Vec::new()),
+                read_past: &mut read_past,
+            }
+            .audit(),
+            "hook stop",
+            false,
+        ),
+        (scan.audit(), "consistency scan", false),
+        (catalog.audit(), "session catalog", true),
     ] {
-        assert_eq!(audit.map(|m| m.command), Some(path));
+        assert_eq!(
+            audit.map(|m| (m.command, m.stepwise)),
+            Some((path, stepwise))
+        );
     }
 }
