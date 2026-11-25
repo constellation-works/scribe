@@ -3,7 +3,8 @@
 //! The `audit` table of `scribe.db` (`<root>/audit.jsonl` before
 //! 2_design.md §15.9 phase 7) answers "what changed this store, when, and
 //! did it work". The CLI's audit middleware builds each [`AuditEvent`] and
-//! [`crate::Store::record_audit`] records it. Read-only commands are never
+//! [`crate::Store::record_audit`] or a [`Tx`](crate::Tx)'s
+//! [`Audit::record`] records it. Read-only commands are never
 //! audited: they must not write (STD-01 R31).
 //!
 //! An event holds stable identifiers only: the command path, the record it
@@ -13,6 +14,7 @@
 //! a crash can leave a torn last line, which a reader skips.
 
 use super::Audit;
+use super::{Access, ReadWrite};
 use crate::Store;
 use crate::db::{self, docs};
 use crate::error::{Error, Result};
@@ -20,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
-impl Audit<'_> {
+impl<A: Access> Audit<'_, A> {
     /// Every audit event and how many lines did not read.
     ///
     /// # Errors
@@ -28,6 +30,25 @@ impl Audit<'_> {
     /// The store's read errors.
     pub fn events(&self) -> Result<(Vec<AuditEvent>, usize)> {
         self.store.audit_events()
+    }
+
+    /// The audit log, `<root>/audit.jsonl`.
+    #[must_use]
+    pub fn path(&self) -> std::path::PathBuf {
+        self.store.audit_path()
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl<'s> Audit<'s, ReadWrite> {
+    /// The audit log's write side for [`Store::record_audit`], the guard's
+    /// line outside a [`Tx`](super::Tx).
+    pub(crate) fn over(store: &'s Store) -> Self {
+        Audit {
+            store,
+            access: std::marker::PhantomData,
+        }
     }
 
     /// Record one audit line. Inside a write's transaction it commits with
@@ -65,12 +86,6 @@ impl Audit<'_> {
             }
         }
         self.store.spool_audit(event)
-    }
-
-    /// The audit log, `<root>/audit.jsonl`.
-    #[must_use]
-    pub fn path(&self) -> std::path::PathBuf {
-        self.store.audit_path()
     }
 }
 

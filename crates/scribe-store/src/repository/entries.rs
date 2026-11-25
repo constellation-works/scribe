@@ -4,6 +4,7 @@
 
 use super::Entries;
 use super::ids::resolve;
+use super::{Access, ReadWrite};
 use crate::WriteRefusal;
 use crate::db::{self, DB_FILE, docs};
 use crate::error::refusal;
@@ -15,7 +16,7 @@ use crate::{
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
-impl Entries<'_> {
+impl<A: Access> Entries<'_, A> {
     /// The entry an exact id or a unique prefix of at least four characters
     /// names.
     ///
@@ -32,22 +33,6 @@ impl Entries<'_> {
     #[must_use]
     pub fn path(&self, id: &EntryId) -> std::path::PathBuf {
         self.store.entry_path(id)
-    }
-
-    /// Erase `entry` from the stored messages it cites and from the archive
-    /// tables, in the write under way (`proposals`: the claims before the
-    /// forget).
-    ///
-    /// # Errors
-    ///
-    /// The store's write errors.
-    pub fn erase_residue(
-        &self,
-        entry: &Entry,
-        proposals: &[Proposal],
-        now: OffsetDateTime,
-    ) -> Result<()> {
-        self.store.erase_entry_residue(entry, proposals, now)
     }
 
     /// Every entry, plus the rows that did not read.
@@ -77,6 +62,42 @@ impl Entries<'_> {
         self.store.list_entries(filter)
     }
 
+    /// Entries matching `filter` among those `keep` accepts, which it sees
+    /// before the filter's limit. Reads only.
+    pub fn list_where(
+        &self,
+        filter: &EntryFilter,
+        keep: impl FnMut(&Entry) -> bool,
+    ) -> Result<EntryList> {
+        self.store.list_entries_where(filter, keep)
+    }
+
+    /// The entries already recorded from one prompt, by their cite's
+    /// `session` and `prompt_sha256`. Reads only.
+    pub fn from_prompt(&self, session: &SessionId, prompt_sha256: &str) -> Result<Vec<Entry>> {
+        self.store.entries_from_prompt(session, prompt_sha256)
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Entries<'_, ReadWrite> {
+    /// Erase `entry` from the stored messages it cites and from the archive
+    /// tables, in the write under way (`proposals`: the claims before the
+    /// forget).
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    pub fn erase_residue(
+        &self,
+        entry: &Entry,
+        proposals: &[Proposal],
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        self.store.erase_entry_residue(entry, proposals, now)
+    }
+
     /// Write `entry` in the transaction under way; `new` refuses to replace
     /// an existing row.
     ///
@@ -96,22 +117,6 @@ impl Entries<'_> {
     pub fn delete_handoff(&self, id: &EntryId) -> Result<()> {
         self.store
             .with_conn(|conn, db| docs::delete_handoff(conn, db, id))
-    }
-
-    /// Entries matching `filter` among those `keep` accepts, which it sees
-    /// before the filter's limit. Reads only.
-    pub fn list_where(
-        &self,
-        filter: &EntryFilter,
-        keep: impl FnMut(&Entry) -> bool,
-    ) -> Result<EntryList> {
-        self.store.list_entries_where(filter, keep)
-    }
-
-    /// The entries already recorded from one prompt, by their cite's
-    /// `session` and `prompt_sha256`. Reads only.
-    pub fn from_prompt(&self, session: &SessionId, prompt_sha256: &str) -> Result<Vec<Entry>> {
-        self.store.entries_from_prompt(session, prompt_sha256)
     }
 }
 

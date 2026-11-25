@@ -4,11 +4,12 @@
 //! (`config`, `apps/tag`).
 
 use super::Tags;
+use super::{Access, ReadWrite};
 use crate::db::{self, docs};
 use crate::error::{Error, Result};
 use crate::{CONFIG_FILE, Store, StoreTag, fsio};
 
-impl Tags<'_> {
+impl<A: Access> Tags<'_, A> {
     /// The text of `config.toml` and its path, or `None` when there is
     /// none. Core parses it (`scribe_core::config`).
     ///
@@ -28,6 +29,16 @@ impl Tags<'_> {
         self.store.store_tags()
     }
 
+    /// The path of `config.toml`, whether or not it exists.
+    #[must_use]
+    pub fn config_path(&self) -> std::path::PathBuf {
+        self.store.config_path()
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Tags<'_, ReadWrite> {
     /// Replace the store tags.
     ///
     /// # Errors
@@ -35,12 +46,6 @@ impl Tags<'_> {
     /// The store's write errors.
     pub fn put_all(&self, tags: &[StoreTag]) -> Result<()> {
         self.store.write_tags(tags)
-    }
-
-    /// The path of `config.toml`, whether or not it exists.
-    #[must_use]
-    pub fn config_path(&self) -> std::path::PathBuf {
-        self.store.config_path()
     }
 }
 

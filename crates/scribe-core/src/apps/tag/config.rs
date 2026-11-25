@@ -3,7 +3,7 @@
 //! and aliases first.
 
 use crate::config::Config;
-use crate::repository::Tags;
+use crate::repository::{Access, Tags};
 use crate::store::refusal;
 use crate::{Result, TagDef, TagTable, WriteRefusal};
 
@@ -36,7 +36,7 @@ pub trait ConfigReads {
     fn definition(&self, word: &str) -> Result<(TagDef, &'static str)>;
 }
 
-impl ConfigReads for Tags<'_> {
+impl<A: Access> ConfigReads for Tags<'_, A> {
     fn config(&self) -> Result<Config> {
         let mut config = self.configured()?;
         config.tags = merge_tags(self, &config.tags)?.0;
@@ -66,7 +66,10 @@ impl ConfigReads for Tags<'_> {
 }
 
 /// Merge routing definitions, letting config claim names and aliases first.
-fn merge_tags(tags: &Tags<'_>, configured: &TagTable) -> Result<(TagTable, Vec<String>)> {
+fn merge_tags<A: Access>(
+    tags: &Tags<'_, A>,
+    configured: &TagTable,
+) -> Result<(TagTable, Vec<String>)> {
     configured
         .merge_store(&tags.all()?)
         .map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))

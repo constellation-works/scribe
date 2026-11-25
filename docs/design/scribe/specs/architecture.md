@@ -242,6 +242,10 @@ Invariants:
 - **One repository per record, never per app.** Apps and records do not line
   up: the session app writes sessions, messages, proposals, entries and
   memory. An app composes repositories inside one snapshot or one write.
+- **A snapshot only reads.** `read()` hands out `ReadOnly` repositories,
+  on which no record write is callable; only a `write(|tx| …)`'s
+  `ReadWrite` repositories write, inside that transaction. The audit
+  guard's own line outside a write goes through `Store::record_audit`.
 - **The store holds no rule and no use case.** No function named after a
   command (`settle_pass`, `close_group`), no validation beyond what a
   contract type enforces on itself, and no type named after a use case.

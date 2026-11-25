@@ -13,6 +13,10 @@
 //! `memory`, `messages`, `marks`, `pickups` and `audit`; `ids` resolves an
 //! exact id or a unique prefix for any of them.
 //!
+//! A [`Snapshot`]'s repositories are [`ReadOnly`]: only their reads are
+//! callable, so a holder of a read cannot write. A [`Tx`]'s are
+//! [`ReadWrite`], and their writes join that transaction.
+//!
 //! A [`Snapshot`] reads as each read runs: every repository call opens its
 //! own read of the database (or, inside a write, sees that write's pending
 //! rows), as the store's reads always have. It does not pin one read
@@ -35,6 +39,7 @@ pub use crate::db::{CaptureState, ClaudeSeenIds, CloseHeader, GroupRows, MemberW
 pub use crate::db::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
 use crate::error::{Error, Result};
 pub use memory::{MemoryFiles, MemoryJournal, MemoryRows};
+use std::marker::PhantomData;
 
 impl Store {
     /// A read-only view of the store: no lock and no write.
@@ -100,19 +105,81 @@ pub struct Tx<'s> {
     store: &'s Store,
 }
 
+/// What a repository may do: [`ReadOnly`] from a [`Snapshot`], [`ReadWrite`]
+/// from a [`Tx`]. Sealed, so no other capability exists.
+pub trait Access: sealed::Sealed + Clone + Copy + std::fmt::Debug {}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::ReadOnly {}
+    impl Sealed for super::ReadWrite {}
+}
+
+/// The capability of a [`Snapshot`]'s repositories: their reads only. A
+/// record write is not callable on them, so a caller handed a read cannot
+/// start a write of its own outside the use case's transaction and audit.
+///
+/// ```compile_fail
+/// # fn put(store: &scribe_store::Store, entry: &scribe_domain::entry::Entry) {
+/// store.read().entries().put(entry, true).unwrap();
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// # fn record(store: &scribe_store::Store, event: &scribe_store::AuditEvent) {
+/// store.read().audit().record(event).unwrap();
+/// # }
+/// ```
+///
+/// The same writes compile on a [`Tx`]'s repositories, and its reads on
+/// either:
+///
+/// ```
+/// # fn put(
+/// #     store: &scribe_store::Store,
+/// #     entry: &scribe_domain::entry::Entry,
+/// #     event: &scribe_store::AuditEvent,
+/// # ) {
+/// let _ = store.read().entries().get(&entry.id);
+/// let _: scribe_store::repository::Entries<'_> = store.read().entries();
+/// let _ = store.write(|tx| tx.entries().put(entry, true));
+/// let _ = store.write(|tx| tx.entries().get(&entry.id).map(drop));
+/// let _ = store.write(|tx| tx.audit().record(event));
+/// let _ = store.read().audit().events();
+/// # }
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub enum ReadOnly {}
+
+/// The capability of a [`Tx`]'s repositories: their reads and their writes,
+/// which join the transaction [`Store::write`] holds.
+#[derive(Clone, Copy, Debug)]
+pub enum ReadWrite {}
+
+impl Access for ReadOnly {}
+impl Access for ReadWrite {}
+
 macro_rules! repositories {
     ($($(#[$doc:meta])* $name:ident => $repo:ident;)*) => {
         impl<'s> Snapshot<'s> {
-            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s> { $repo { store: self.store } })*
+            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadOnly> {
+                $repo { store: self.store, access: PhantomData }
+            })*
         }
         impl<'s> Tx<'s> {
-            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s> { $repo { store: self.store } })*
+            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadWrite> {
+                $repo { store: self.store, access: PhantomData }
+            })*
         }
         $(
             $(#[$doc])*
+            ///
+            /// Its reads take any [`Access`]; its writes need [`ReadWrite`],
+            /// the capability only a [`Tx`] gives.
             #[derive(Clone, Copy, Debug)]
-            pub struct $repo<'s> {
+            pub struct $repo<'s, A: Access = ReadOnly> {
                 store: &'s Store,
+                access: PhantomData<A>,
             }
         )*
     };

@@ -2,12 +2,13 @@
 //! (docs/design/scribe/2_design.md §4.6).
 
 use super::Pickups;
+use super::{Access, ReadWrite};
 use crate::Pickup;
 use crate::Store;
 use crate::db::{self, docs};
 use crate::error::Result;
 
-impl Pickups<'_> {
+impl<A: Access> Pickups<'_, A> {
     /// Every pickup, oldest first.
     ///
     /// # Errors
@@ -16,7 +17,11 @@ impl Pickups<'_> {
     pub fn all(&self) -> Result<Vec<Pickup>> {
         self.store.pickups()
     }
+}
 
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Pickups<'_, ReadWrite> {
     /// Replace the pickups.
     ///
     /// # Errors
