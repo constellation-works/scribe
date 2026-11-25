@@ -47,6 +47,18 @@ impl Fixture {
         Self { dir }
     }
 
+    /// [`Fixture::new`] with the temporary directory's name starting with
+    /// `prefix`, so every path the test prints holds that literal text
+    /// whatever `TMPDIR` is.
+    pub fn with_dir_prefix(prefix: &str) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix(prefix)
+            .tempdir()
+            .expect("create temp dir");
+        std::fs::create_dir(dir.path().join("home")).expect("create fake home");
+        Self { dir }
+    }
+
     /// The data directory the binary is pointed at.
     pub fn root(&self) -> PathBuf {
         self.dir.path().join("root")

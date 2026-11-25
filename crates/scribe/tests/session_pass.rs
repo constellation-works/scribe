@@ -625,6 +625,7 @@ fn an_empty_default_search_names_the_stored_messages_that_match() {
         &s.fx,
         hint,
         "1 stored message(s) match, and no entry or session does: ",
+        "quartzlark",
     );
     let listed = json(
         &s.fx
@@ -723,6 +724,7 @@ fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessi
         &s.fx,
         hint,
         "1 stored message(s) match, and no visible entry or session does: ",
+        "quartzlark",
     );
     assert!(!stderr.contains("and no entry or session does"), "{stderr}");
 
@@ -746,14 +748,30 @@ fn a_message_hint_beside_a_hidden_match_names_only_the_visible_entries_and_sessi
     );
 }
 
+/// `command` with `--json` before the `--` that `terms` follows. The root is
+/// one quoted word and may hold a literal ` -- ` when the temporary directory
+/// does, so the terminator is found from the end, where the terms are, and
+/// not as the first occurrence in the line.
 #[cfg(unix)]
-fn assert_message_hint_replays(fx: &Fixture, hint: &str, prefix: &str) {
-    let command = hint
-        .strip_prefix(prefix)
-        .unwrap()
-        .strip_suffix(" lists them")
-        .unwrap()
-        .replacen(" -- ", " --json -- ", 1);
+fn json_before_terminator(command: &str, terms: &str) -> String {
+    let head = command
+        .strip_suffix(terms)
+        .and_then(|rest| rest.strip_suffix(" -- "))
+        .unwrap_or_else(|| panic!("the hint ends with `-- {terms}`: {command}"));
+    format!("{head} --json -- {terms}")
+}
+
+/// Replay `hint` (after `prefix`) in `sh` with `--json` before its terminator,
+/// and check that it lists the one message `u-1`.
+#[cfg(unix)]
+fn assert_message_hint_replays(fx: &Fixture, hint: &str, prefix: &str, terms: &str) {
+    let command = json_before_terminator(
+        hint.strip_prefix(prefix)
+            .unwrap()
+            .strip_suffix(" lists them")
+            .unwrap(),
+        terms,
+    );
     let binary_dir = std::path::Path::new(support::BIN)
         .parent()
         .unwrap()
@@ -846,12 +864,13 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
     {
         let stderr = text(&search.stderr);
         let line = stderr.lines().last().unwrap();
-        let command = line
-            .strip_prefix("1 stored message(s) match, and no entry or session does: ")
-            .unwrap()
-            .strip_suffix(" lists them")
-            .unwrap()
-            .replacen(" -- ", " --json -- ", 1);
+        let command = json_before_terminator(
+            line.strip_prefix("1 stored message(s) match, and no entry or session does: ")
+                .unwrap()
+                .strip_suffix(" lists them")
+                .unwrap(),
+            "-quartzlark",
+        );
         let binary_dir = std::path::Path::new(support::BIN)
             .parent()
             .unwrap()
@@ -871,6 +890,52 @@ fn a_message_search_hint_keeps_its_root_filters_and_dash_leading_terms() {
         assert_eq!(shell_listed["total"], 1, "{shell_listed}");
         assert_eq!(shell_listed["hits"][0]["message"], "u-1", "{shell_listed}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_message_hint_replays_when_the_temp_dir_holds_a_separator() {
+    const DEFAULT: &str = "1 stored message(s) match, and no entry or session does: ";
+    // Every path in this fixture holds the literal " -- " that a replay must
+    // not take for its terminator, whatever TMPDIR is.
+    let s = Setup::in_fixture(Fixture::with_dir_prefix("scratch -- "));
+    let quote = "Keep the quartzlark rollout note out of the release.";
+    s.write(ON, &[line("user", "u-1", quote)]);
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.scribe("/scribe on");
+    s.run(&["session", "pass", "--session", ON, "--json"], b"");
+
+    // The default root is printed as one quoted word that holds the separator.
+    let found = s.fx.ok(&["search", "quartzlark"]);
+    let stderr = text(&found.stderr);
+    let hint = stderr.lines().last().unwrap();
+    assert!(
+        hint.contains("--root='") && hint.contains("scratch -- "),
+        "{hint}"
+    );
+    assert_message_hint_replays(&s.fx, hint, DEFAULT, "quartzlark");
+
+    // The explicit root is printed the same way.
+    let root = s.fx.elsewhere("selected store");
+    std::fs::rename(s.fx.root(), &root).unwrap();
+    let root_arg = root.display().to_string();
+    let search = s.fx.ok(&[
+        "--root",
+        &root_arg,
+        "search",
+        "--project",
+        "scribe",
+        "--since",
+        "2026-11-03",
+        "--until",
+        "2026-11-03",
+        "--",
+        "-quartzlark",
+    ]);
+    let stderr = text(&search.stderr);
+    let hint = stderr.lines().last().unwrap();
+    assert!(hint.contains("scratch -- "), "{hint}");
+    assert_message_hint_replays(&s.fx, hint, DEFAULT, "-quartzlark");
 }
 
 #[cfg(unix)]
@@ -914,7 +979,7 @@ fn a_message_search_hint_replays_unusual_roots_without_terminal_controls() {
             .strip_suffix(" lists them")
             .unwrap();
         assert!(!hint.chars().any(char::is_control), "{hint:?}");
-        let command = hint.replacen(" -- ", " --json -- ", 1);
+        let command = json_before_terminator(hint, "-quartzlark");
         let replay = Command::new("sh")
             .arg("-c")
             .arg(command)
@@ -977,12 +1042,13 @@ fn a_message_search_hint_replays_a_project_with_an_apostrophe() {
     // terminator, and compare the hits with the direct argv search.
     #[cfg(unix)]
     {
-        let command = hint
-            .strip_prefix("1 stored message(s) match, and no entry or session does: ")
-            .unwrap()
-            .strip_suffix(" lists them")
-            .unwrap()
-            .replacen(" -- ", " --json -- ", 1);
+        let command = json_before_terminator(
+            hint.strip_prefix("1 stored message(s) match, and no entry or session does: ")
+                .unwrap()
+                .strip_suffix(" lists them")
+                .unwrap(),
+            "quartzlark",
+        );
         let binary_dir = std::path::Path::new(support::BIN)
             .parent()
             .unwrap()
@@ -1690,7 +1756,10 @@ fn line(kind: &str, uuid: &str, text: &str) -> Value {
 
 impl Setup {
     fn new() -> Self {
-        let fx = Fixture::new();
+        Self::in_fixture(Fixture::new())
+    }
+
+    fn in_fixture(fx: Fixture) -> Self {
         let project = fx.home().join(".claude/projects/-work-scribe");
         std::fs::create_dir_all(&project).unwrap();
         let cwd = fx.elsewhere("work/scribe");
