@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127]
 ---
 
 # scribe — Decisions
@@ -5099,6 +5099,8 @@ Supersedes [Removal of the feature is the main deactivation route; age is a gene
 and [Removal evidence is Daniel-authored entries only](#removal-evidence-is-daniel-authored-entries-only),
 and in part [`#scribe` is an annotation, cataloged at the end of the turn](#scribe-is-an-annotation-cataloged-at-the-end-of-the-turn)
 and [An action entry's window is capped at 40 turns and 12,000 characters](#an-action-entrys-window-is-capped-at-40-turns-and-12000-characters).
+
+> **Superseded in part, 2026-11-24 ([ORB-28127]):** the report keeps the nine counters, always `0` or `[]`, instead of dropping them. This decision names the deletion but cites no deviation from STD-01@2 §R10, and that rule makes removing a `--json` field a breaking change. See `specs/output-contract.md`.
 
 ### Context
 

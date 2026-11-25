@@ -150,6 +150,16 @@ pub(in crate::commands) fn scan(ctx: &Context, audit: Option<Audit>) -> Result<O
                 error_code: f.error_code,
             })
             .collect(),
+        // No pair is judged since ORB-27911 step 2a; these stay neutral.
+        judged_pairs: 0,
+        pairs_left: 0,
+        unrelated_pairs: 0,
+        dropped_labels: 0,
+        failed_batches: Vec::new(),
+        removal_pairs_judged: 0,
+        removal_pairs_left: 0,
+        dropped_removal_labels: 0,
+        failed_removal_batches: Vec::new(),
         memory: MemoryScanPayload::default(),
         notices: outcome.notices,
     };

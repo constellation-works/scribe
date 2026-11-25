@@ -1077,9 +1077,12 @@ proposal, `older` and `newer` `null` for a candidate.
 `scribe consistency scan --json` and the Orbit tool
 `scribe.consistency-scan` print `{"reapplied": [{"proposal", "entry",
 "status"}], "opened": [<proposal>, ...], "closed": [<proposal>, ...],
-"covered": [{"proposal", "by"}], "stale_entries", "deactivated": [{"session",
-"route", "reason", "cite", "quote"}], "failed_deactivations": [{"session",
-"route", "error_code"}], "memory": {…}}`. The scan calls no model
+"covered": [{"proposal", "by"}], "judged_pairs", "pairs_left",
+"unrelated_pairs", "dropped_labels", "stale_entries", "failed_batches",
+"deactivated": [{"session", "route", "reason", "cite", "quote"}],
+"failed_deactivations": [{"session", "route", "error_code"}],
+"removal_pairs_judged", "removal_pairs_left", "dropped_removal_labels",
+"failed_removal_batches", "memory": {…}}`. The scan calls no model
 (ORB-27911): `reapplied`
 lists approved proposals the scan finished: a supersession or retirement
 whose older entry was still `active` and is now `superseded` or `retired`
@@ -1114,11 +1117,13 @@ read. Each reapplied approval (target the entry
 id), opened proposal (target the proposal id), closed proposal (target the
 proposal id) and covered candidate (target the proposal id) writes
 one audit line under `consistency scan`.
-Until ORB-27911 step 2a the report also carried the model's counts:
+The report also keeps the model's counts from before ORB-27911 step 2a:
 `judged_pairs`, `pairs_left`, `unrelated_pairs`, `dropped_labels`,
 `failed_batches`, `removal_pairs_judged`, `removal_pairs_left`,
-`dropped_removal_labels` and `failed_removal_batches`; they are gone, not
-zeroed, since no pair is judged.
+`dropped_removal_labels` and `failed_removal_batches`. No pair is judged
+since then, so each count is `0` and each batch list is `[]`; they are not
+omitted, because removing a `--json` field is a breaking change
+(STD-01@2 §R10).
 
 (Format 20, [2_design.md §13.5](../2_design.md#135-consolidation-the-weekly-consistency-routine).)
 Since §15.9 phase 5 the scan judges no memory pairs: `memory` keeps its
