@@ -1,8 +1,8 @@
 //! The `memory` app: what scribe remembers about the user — the profile,
-//! `now` items and milestones (`scribe memory`, 2_design.md §15.4–§15.6).
+//! `now` items and milestones (`scribe memory`, 2_design.md §15.4–§15.6, §19.3.5).
 //!
-//! `show` reads only; `ack`, `forget`, `restore` and `refresh` are audited
-//! writes. `refresh` is the one flow that calls a model.
+//! `show` reads only; `ack`, `forget`, `restore`, `prepare`, `apply` and
+//! `refresh` are audited writes (none invokes a model).
 
 mod ack;
 mod block;
@@ -18,8 +18,9 @@ mod window;
 
 pub use block::{is_empty, text, warnings};
 pub use refresh::{
-    Basis, ProfileInputs, REFRESH_BUDGET, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS,
-    REFRESH_VERBATIM_CHARS, REFRESH_VERBATIM_SESSIONS, RefreshWritten,
+    ApplyRefreshOutcome, ApplyRefreshRequest, Basis, PreparedProfileInputs, PreparedRefresh,
+    ProfileInputs, REFRESH_BUDGET, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
+    REFRESH_VERBATIM_SESSIONS, RefreshCursor, RefreshWritten,
 };
 pub use rules::check_sensitive_drafts;
 pub use show::Shown;
@@ -29,20 +30,15 @@ pub use verbs::MemoryVerbs;
 pub use window::WindowMemoryTestWrites;
 pub use window::{WindowMemory, plan_window};
 
-use crate::apps::tag::ConfigReads;
 use crate::composition::Context;
 use crate::memory::NowItem;
-use crate::models::ModelError;
 use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::{Ctx, PortError};
-use crate::{AuthorName, MemoryShown, Models, Provider, SessionId};
-
-/// The model adapter `memory refresh` builds for the config.
-pub type ModelsFor<'m> = Box<dyn FnOnce(&crate::Config) -> Box<dyn Models + 'm> + 'm>;
+use crate::{AuthorName, MemoryShown, Provider, SessionId};
 
 /// A `memory` command.
-pub enum Command<'m> {
+pub enum Command {
     /// `memory show`: profile revision `revision` when given, else the
     /// item `id` when given, else the block.
     Show {
@@ -76,19 +72,28 @@ pub enum Command<'m> {
         /// The profile revision.
         revision: i64,
     },
-    /// `memory refresh` with the adapter `models` builds for the config.
-    Refresh {
-        /// The provider whose `[models]` table applies.
+    /// `memory refresh`: runs the deterministic part (replays any open
+    /// `memory_journal` and archives legacy format-24 items), succeeds when
+    /// nothing is new, and directs the caller to `orbit job run
+    /// scribe-memory-refresh` when a model rebuild is needed.
+    Refresh,
+    /// `memory prepare` / `scribe.memory-refresh-prepare`: replays any open
+    /// `memory_journal` and returns bounded inputs and optimistic [`Basis`].
+    Prepare,
+    /// `memory apply` / `scribe.memory-refresh-apply`: verifies and commits a
+    /// supplied `ProfileAnswer` against its prepared [`Basis`].
+    Apply {
+        /// The provider whose `[models]` credentials apply to redaction.
         provider: Provider,
-        /// The model adapter, built for the provider's config.
-        models: ModelsFor<'m>,
+        /// The prepared basis/cursor/stems and unchecked answer.
+        request: Box<ApplyRefreshRequest>,
         /// Whether the plugin's routine tool runs it: its audit lines then
         /// name no subject, as the routine's always have.
         routine: bool,
     },
 }
 
-impl Command<'_> {
+impl Command {
     /// What the audit log records for this command, or `None` when it is
     /// not audited: a read writes nothing, not even an audit line (STD-01
     /// R31). Exhaustive, so a new command cannot compile without deciding
@@ -100,11 +105,11 @@ impl Command<'_> {
             Self::Ack { .. } => "memory ack",
             Self::Forget { .. } => "memory forget",
             Self::Restore { .. } => "memory restore",
-            Self::Refresh { .. } => "memory refresh",
+            Self::Refresh | Self::Prepare | Self::Apply { .. } => "memory refresh",
         };
         Some(AuditMeta {
             command,
-            stepwise: matches!(self, Self::Refresh { .. }),
+            stepwise: false,
         })
     }
 
@@ -117,12 +122,16 @@ impl Command<'_> {
             author: Some(author.as_str().to_owned()),
         };
         match self {
-            Self::Show { .. } | Self::Refresh { routine: true, .. } => AuditSubject::default(),
+            Self::Show { .. } | Self::Prepare | Self::Apply { routine: true, .. } => {
+                AuditSubject::default()
+            }
             Self::Ack { id, author, .. } | Self::Forget { id, author, .. } => of(id, author),
-            Self::Restore { .. } | Self::Refresh { routine: false, .. } => AuditSubject {
-                target: Some(String::from("memory:profile")),
-                author: None,
-            },
+            Self::Restore { .. } | Self::Refresh | Self::Apply { routine: false, .. } => {
+                AuditSubject {
+                    target: Some(String::from("memory:profile")),
+                    author: None,
+                }
+            }
         }
     }
 }
@@ -137,8 +146,12 @@ pub enum Outcome {
     Forgotten(Box<MemoryShown>),
     /// The profile as it now is, and whether this wrote a revision.
     Restored(Box<MemoryShown>, bool),
-    /// What a refresh wrote; `None` when nothing was new.
-    Refreshed(Option<Box<RefreshWritten>>),
+    /// Deterministic `memory refresh` found nothing new.
+    RefreshedNothingNew,
+    /// Prepared refresh inputs and basis.
+    Prepared(Box<PreparedRefresh>),
+    /// Result of `memory apply`.
+    Applied(Box<ApplyRefreshOutcome>),
 }
 
 /// Why a `scribe memory` write did not run.
@@ -148,10 +161,18 @@ pub enum Error<E> {
     Core(crate::Error),
     /// A port failed.
     Port(E),
-    /// The model call failed.
-    Model(ModelError),
     /// `forget` without `--confirm`: the item it would forget.
     ConfirmRequired(Box<MemoryShown>),
+    /// `memory refresh` found new material that needs an Orbit job or
+    /// interactive `prepare`/`apply`.
+    NeedsOrbit {
+        /// New sessions since the cursor.
+        sessions: usize,
+        /// Whether the user edited `memory/profile.md`.
+        corrections: bool,
+        /// Passed `now` items to settle.
+        passed: usize,
+    },
 }
 
 impl<E> From<crate::Error> for Error<E> {
@@ -160,28 +181,19 @@ impl<E> From<crate::Error> for Error<E> {
     }
 }
 
-impl<E> From<ModelError> for Error<E> {
-    fn from(err: ModelError) -> Self {
-        Self::Model(err)
-    }
-}
-
 /// Run `command` against `ctx`, inside the audit guard when
 /// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
-/// [`Error`]: a refusal, the config, the redactor, the model, or the store.
-pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+/// [`Error`]: a refusal, the config, the redactor, or the store.
+pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError> {
     let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
-pub(crate) fn run<E: PortError>(
-    ctx: &Ctx<'_, E>,
-    command: Command<'_>,
-) -> Result<Outcome, Error<E>> {
+pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
     Ok(match command {
         Command::Show { revision, id } => {
             Outcome::Show(Box::new(show::show(ctx, revision, id.as_deref())?))
@@ -204,15 +216,14 @@ pub(crate) fn run<E: PortError>(
             let (shown, written) = restore::restore(ctx, revision)?;
             Outcome::Restored(Box::new(shown), written)
         }
-        Command::Refresh {
-            provider, models, ..
-        } => {
-            // The config is read before the refresh, as `memory refresh` read
-            // it to build the adapter before the flow moved into the core.
-            let config = ctx.store.read().tags().config()?.for_provider(provider);
-            let models = models(&config);
-            Outcome::Refreshed(refresh::refresh(ctx, provider, &*models)?.map(Box::new))
+        Command::Refresh => {
+            refresh::refresh_deterministic(ctx)?;
+            Outcome::RefreshedNothingNew
         }
+        Command::Prepare => Outcome::Prepared(Box::new(refresh::prepare(ctx)?)),
+        Command::Apply {
+            provider, request, ..
+        } => Outcome::Applied(Box::new(refresh::apply(ctx, provider, &request)?)),
     })
 }
 
@@ -232,8 +243,27 @@ impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::error
         match err {
             Error::Core(e) => Self::Core(e),
             Error::Port(e) => e,
-            Error::Model(e) => Self::Model(e),
             Error::ConfirmRequired(shown) => Self::ForgetConfirmRequired(shown_id(&shown)),
+            Error::NeedsOrbit {
+                sessions,
+                corrections,
+                passed,
+            } => {
+                let mut pending = Vec::new();
+                if sessions > 0 {
+                    pending.push(format!("{sessions} session(s)"));
+                }
+                if corrections {
+                    pending.push(String::from("profile edits"));
+                }
+                if passed > 0 {
+                    pending.push(format!("{passed} passed now item(s)"));
+                }
+                Self::Usage(format!(
+                    "memory refresh needs a model run ({}); run `orbit job run scribe-memory-refresh`, or use `scribe memory prepare --json` and `scribe memory apply`",
+                    pending.join(", ")
+                ))
+            }
         }
     }
 }
@@ -253,9 +283,13 @@ impl Audited for Outcome {
             }
             Self::Forgotten(shown) => vec![Line::success(item(shown))],
             Self::Restored(shown, written) => Line::written(item(shown), *written),
-            Self::Refreshed(written) => {
-                Line::written(Some(String::from("memory:profile")), written.is_some())
-            }
+            Self::RefreshedNothingNew | Self::Prepared(_) => Vec::new(),
+            Self::Applied(outcome) => match &**outcome {
+                ApplyRefreshOutcome::Written(_) => {
+                    Line::written(Some(String::from("memory:profile")), true)
+                }
+                ApplyRefreshOutcome::Retry { .. } => Vec::new(),
+            },
         }
     }
 }

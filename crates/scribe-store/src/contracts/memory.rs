@@ -314,7 +314,8 @@ pub struct ProfileView {
 }
 
 /// A `now` item or milestone as a model reads it: stem, date and title.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryContext {
     /// Its file stem.
     pub stem: String,

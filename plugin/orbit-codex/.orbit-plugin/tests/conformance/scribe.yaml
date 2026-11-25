@@ -34,15 +34,41 @@ tests:
   expect:
     error:
       code: invalid_input
-- name: memory_refresh_without_a_store_root_is_not_configured
-  tool: memory-refresh
+- name: memory_refresh_prepare_without_a_store_root_is_not_configured
+  tool: memory-refresh-prepare
   input: {}
   expect:
     error:
       code: not_configured
       retryable: false
-- name: memory_refresh_with_an_input_key_is_invalid
-  tool: memory-refresh
+- name: memory_refresh_prepare_with_an_input_key_is_invalid
+  tool: memory-refresh-prepare
+  input:
+    dry_run: true
+  expect:
+    error:
+      code: invalid_input
+- name: memory_refresh_apply_without_a_store_root_is_not_configured
+  tool: memory-refresh-apply
+  input:
+    basis:
+      latest: null
+      file: null
+      cursor: null
+      now: []
+    cursor_to: null
+    session_ids: []
+    backlog: 0
+    passed_stems: []
+    answer:
+      profile: ""
+      milestones: []
+  expect:
+    error:
+      code: not_configured
+      retryable: false
+- name: memory_refresh_apply_with_an_input_key_is_invalid
+  tool: memory-refresh-apply
   input:
     dry_run: true
   expect:

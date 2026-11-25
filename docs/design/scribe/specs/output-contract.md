@@ -1042,17 +1042,27 @@ the profile is corrected by editing it). `memory restore <n>` writes
 revision `n` back as a new revision. Each prints the item and writes one
 audit line.
 
-`memory refresh` rebuilds the profile (§15.6). JSON is `{"result",
+`memory refresh` runs the deterministic part of profile refresh (§15.6,
+§19.3.5): replays any open `memory_journal`, archives legacy format-24 items,
+and succeeds with `result: "nothing_new"` when there are no new sessions,
+profile edits or passed `now` items; otherwise it exits 2 (`usage_error`)
+directing the caller to `orbit job run scribe-memory-refresh` (or `memory
+prepare` / `memory apply`). `memory prepare` prints the bounded inputs,
+optimistic `basis`, `cursor_to`, `session_ids`, `backlog`, `passed_stems`,
+`user_noun` and optional `[instructions] profile` override (or
+`nothing_new: true` when nothing is due). `memory apply` reads an apply JSON
+request on stdin (`{basis, cursor_to, session_ids, backlog, passed_stems,
+answer[, allow_retry]}`) and prints the refresh payload (`{"result",
 "revision", "sessions", "backlog", "milestones", "removed"}`: `result`
-`written` or `nothing_new` (no model call, nothing written), `revision` the
-new profile revision or `null` when the profile did not change, `sessions`
-the sessions read, `backlog` those left for later runs, `milestones` the
-stems written, `removed` the passed `now` stems removed. Plain is one
+`written`, `revision` the new profile revision or `null` when the profile did
+not change, `sessions` the sessions read, `backlog` those left for later runs,
+`milestones` the stems written, `removed` the passed `now` stems removed), or
+`{"status": "retry", "code", "correction"}` when `allow_retry` is true and a
+`profile_*` check refuses. Plain is one
 `<result>\t<revision or ->\t<sessions>\t<backlog>\t<milestones>\t<removed>`
 line (the last two counts); the table prints the fields one per line. A
-refused answer exits 1 with its `profile_*` code and writes nothing;
-`memory_changed` when memory changed while the model ran. The Orbit tool
-`scribe.memory-refresh` returns the same JSON.
+refused answer with `allow_retry` false exits 1 with its `profile_*` code and
+writes nothing; `memory_changed` when memory changed while the model ran.
 
 `memory rules` prints memory's fixed rules, read-only and unaudited. JSON
 is `{"rules": [{"rule", "value", "origin": {"source", "file", "line"},
@@ -1197,15 +1207,18 @@ Removed with `scribe question ask` and the Orbit tool `scribe.ask`
 
 `scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
 "tool": "scribe.<verb>", "input", "context": {"config": {"root",
-"transcripts", "codex_home"}, …}}`) on stdin and prints exactly one
-compact line, in every mode, then exits 0. The three routine tools are
-`scribe.session-pass`, `scribe.consistency-scan` and `scribe.memory-refresh`,
-the tools of `plugin/.orbit-plugin/plugin.yaml` ([2_design.md §1](../2_design.md#1-boundary-and-surfaces)).
+"transcripts", "codex_home", "group_summary_crew", "profile_refresh_crew"}, …}}`) on stdin and prints exactly one
+compact line, in every mode, then exits 0. The plugin tools are
+`scribe.session-pass`, `scribe.consistency-scan`,
+`scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply`,
+`scribe.group-close-prepare` and `scribe.group-close-apply`,
+the tools of `plugin/.orbit-plugin/plugin.yaml` ([2_design.md §1](../2_design.md#1-boundary-and-surfaces), [§19](../2_design.md#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved)).
 A success is `{"ok": true, "output": <output>}`, where `<output>` is the
 session pass report for `scribe.session-pass`, the consistency scan report
-for `scribe.consistency-scan`, and the memory refresh JSON (under Memory
-above: `result`, `revision`, `sessions`, `backlog`, `milestones`, `removed`)
-for `scribe.memory-refresh`. A failure is `{"ok": false, "error": {"code",
+for `scribe.consistency-scan`, the prepared refresh payload plus `crew` for
+`scribe.memory-refresh-prepare`, and `{"status": "written"|"retry", "result",
+"revision", "sessions", "backlog", "milestones", "removed", "code",
+"correction"}` for `scribe.memory-refresh-apply`. A failure is `{"ok": false, "error": {"code",
 "message", "retryable"}}`.
 
 **Configuration.** For every tool, `root` must be an absolute store path. A
@@ -1217,30 +1230,34 @@ Code's projects directory, must be absolute for `scribe.session-pass` unless
 configuration runs the pass with no Claude transcripts directory, reading the
 Codex rollouts under `codex_home` (its `sessions` and `archived_sessions`). A
 relative `transcripts` is `not_configured` even with `codex_home`.
-`scribe.consistency-scan` and `scribe.memory-refresh` read no transcripts and
+`scribe.consistency-scan`, `scribe.memory-refresh-prepare` and
+`scribe.memory-refresh-apply` read no transcripts and
 do not check it. The Codex-enabled package (`plugin/orbit-codex/.orbit-plugin/`)
 also describes `codex_home` as required in its own schema; these rules hold for
 both packages.
 
 **Errors.** The `code` is `invalid_envelope`, `unknown_tool`, `invalid_input`
-(unknown keys included; the routine tools take `{}`), `not_configured` (above),
+(unknown keys included; the no-arg tools take `{}`), `not_configured` (above),
 `internal_error` (a routine that returned no report), a model code, a store
 code, or `session_pass_failed`.
 
 **Retry.** `retryable` is `true` for one propagated error only: `store_locked`
 from a routine tool. Model codes (`model_timeout`, `model_unavailable`,
 `model_failed`, `model_malformed`) are `retryable: false`, so the envelope
-never asks the host to retry a model failure. `scribe.consistency-scan` calls
+never asks the host to retry a model failure. `scribe.consistency-scan`,
+`scribe.memory-refresh-prepare` and `scribe.memory-refresh-apply` call
 no model. `scribe.session-pass` returns `session_pass_failed` (`retryable:
 false`) when any pass in its report failed. Its message is the CLI's, naming
 each failed session with its code and short reason, and the report is not
 returned. A session's model failure therefore reaches the envelope inside that
 message, not as a model code. Each failed session stays due, and the next run
 retries it on the backoff of the session pass report (5, 10, 20, 40, then at
-most 60 minutes; `--session <id>` ignores backoff). A `scribe.memory-refresh`
-model failure is likewise `retryable: false`, and the next scheduled run is the
-next attempt. The routine tools write the lines their CLI commands do, in the
-store `root` names.
+most 60 minutes; `--session <id>` ignores backoff). On `profile_*` refusals
+with `allow_retry: true`, `scribe.memory-refresh-apply` returns an `ok: true`
+`{"status": "retry", "code", "correction"}` payload so the
+`scribe-memory-refresh` job can run one conditional retry; a final refusal
+returns `ok: false` (`retryable: false`). The routine tools write the lines
+their CLI commands do, in the store `root` names.
 
 ## Session groups
 

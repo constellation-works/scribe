@@ -79,41 +79,64 @@ fn listed<'a>(manifest: &'a Value, kind: &str) -> Vec<&'a str> {
 fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
     let manifest = manifest();
     let jobs: Vec<Value> = listed(&manifest, "jobs").into_iter().map(yaml).collect();
-    let mut ran = Vec::new();
+    let mut single_step_tools = Vec::new();
+    let mut saw_memory_refresh = false;
     for routine in listed(&manifest, "routines").into_iter().map(yaml) {
         let name = routine["name"].as_str().expect("a routine has a name");
         assert_eq!(routine["enabled"].as_bool(), Some(false), "{name}");
         let target = routine["target"].as_str().expect("a target");
-        let job = target.strip_prefix("job:").expect("a job target");
+        let job_name = target.strip_prefix("job:").expect("a job target");
         let job = jobs
             .iter()
-            .find(|j| j["metadata"]["name"].as_str() == Some(job))
-            .unwrap_or_else(|| panic!("{name}: no job {job}"));
+            .find(|j| j["metadata"]["name"].as_str() == Some(job_name))
+            .unwrap_or_else(|| panic!("{name}: no job {job_name}"));
         let steps = job["spec"]["steps"].as_sequence().expect("steps");
+        if job_name == "scribe-memory-refresh" {
+            saw_memory_refresh = true;
+            assert_eq!(steps.len(), 5, "{name}");
+            assert_eq!(
+                steps[0]["spec"]["config"]["tool"].as_str(),
+                Some("scribe.memory-refresh-prepare")
+            );
+            assert_eq!(
+                steps[1]["target"].as_str(),
+                Some("activity:scribe_profile_refresh")
+            );
+            assert_eq!(
+                steps[2]["spec"]["config"]["tool"].as_str(),
+                Some("scribe.memory-refresh-apply")
+            );
+            assert_eq!(
+                steps[3]["target"].as_str(),
+                Some("activity:scribe_profile_refresh")
+            );
+            assert_eq!(
+                steps[4]["spec"]["config"]["tool"].as_str(),
+                Some("scribe.memory-refresh-apply")
+            );
+            continue;
+        }
         assert_eq!(steps.len(), 1, "{name}");
         let config = &steps[0]["spec"]["config"];
         assert_eq!(
             steps[0]["spec"]["action"].as_str(),
             Some("plugin.tool_call")
         );
-        ran.push(config["tool"].as_str().expect("a tool").to_owned());
+        single_step_tools.push(config["tool"].as_str().expect("a tool").to_owned());
     }
-    ran.sort();
+    assert!(saw_memory_refresh, "scribe-memory-refresh routine exists");
+    single_step_tools.sort();
     assert_eq!(
-        ran,
-        [
-            "scribe.consistency-scan",
-            "scribe.memory-refresh",
-            "scribe.session-pass"
-        ]
+        single_step_tools,
+        ["scribe.consistency-scan", "scribe.session-pass"]
     );
 }
 
 #[test]
 fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
     // Settling is Daniel's, typed in a prompt (#scribe approve|reject|
-    // retire|forget): the tools are exactly the three routine jobs,
-    // and the routine tools take no input.
+    // retire|forget): the tools are the routine and workflow tools only,
+    // and the no-arg tools take no input.
     let manifest = manifest();
     let names: Vec<&str> = tools(&manifest)
         .into_iter()
@@ -124,7 +147,8 @@ fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
         [
             "session-pass",
             "consistency-scan",
-            "memory-refresh",
+            "memory-refresh-prepare",
+            "memory-refresh-apply",
             "group-close-prepare",
             "group-close-apply"
         ]

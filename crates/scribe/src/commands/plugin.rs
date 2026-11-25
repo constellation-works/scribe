@@ -9,15 +9,16 @@
 //! either way (a non-zero exit is an execution error to the host).
 //!
 //! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
-//!   routine's job) and `scribe.consistency-scan` runs `consistency scan`
-//!   (the `scribe-consistency` routine's), and `scribe.memory-refresh` runs
-//!   `memory refresh` (the `scribe-memory-refresh` routine's), on the same code as the CLI
-//!   verbs, with the same reports. Both are `agent_callable: false` and
-//!   `mcp_scope: none` in `plugin.yaml`: only the routines reach them. So
+//!   routine's job), `scribe.consistency-scan` runs `consistency scan`
+//!   (the `scribe-consistency` routine's), and `scribe.memory-refresh-prepare` /
+//!   `scribe.memory-refresh-apply` back the `scribe-memory-refresh` workflow job
+//!   (and `scribe.group-close-prepare` / `scribe.group-close-apply` back
+//!   `scribe-group-close`). All are `agent_callable: false` and `mcp_scope: none`
+//!   in `plugin.yaml`. So
 //!   that a call ends inside Orbit's 300 s backend timeout, no session
 //!   after the first starts once [`PASS_START_BY`] has passed; what is
 //!   left is reported as remaining for the next run. The consistency scan
-//!   calls no model and needs no such bound.
+//!   and memory-refresh prepare/apply call no model and need no such bound.
 //!
 //! The store root comes from `[plugins.scribe] root`, and the transcripts
 //! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
@@ -33,7 +34,7 @@
 
 use super::{RunLimits, consistency, session};
 use crate::error::CliError;
-use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
+use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply};
 use clap::{Args, Subcommand};
 use scribe_core::composition::Context;
 use serde::Deserialize;
@@ -156,7 +157,10 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         "group-close-apply" => group_close(&envelope.input, &envelope.context.config, true),
         "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
-        "memory-refresh" => memory_refresh(&envelope.input, &envelope.context.config, ctx),
+        "memory-refresh-prepare" => {
+            memory_refresh_prepare(&envelope.input, &envelope.context.config)
+        }
+        "memory-refresh-apply" => memory_refresh_apply(&envelope.input, &envelope.context.config),
         _ => failure(
             "unknown_tool",
             format!("{} is not a scribe tool", envelope.tool),
@@ -235,10 +239,6 @@ fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> Plu
     match result {
         Ok(Output::Pass(report)) => PluginReply::Pass(report),
         Ok(Output::Scan(report)) => PluginReply::Scan(report),
-        Ok(Output::Written {
-            record: Record::MemoryRefresh(report),
-            ..
-        }) => PluginReply::Refresh(report),
         Ok(_) => failure(
             "internal_error",
             format!("{command} returned no report"),
@@ -292,10 +292,7 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
 fn pass_reply(reply: PluginReply) -> PluginReply {
     let failed = match &reply {
         PluginReply::Pass(report) => failed_passes(report),
-        PluginReply::Scan(_)
-        | PluginReply::Refresh(_)
-        | PluginReply::Data(_)
-        | PluginReply::Error(_) => None,
+        PluginReply::Scan(_) | PluginReply::Data(_) | PluginReply::Error(_) => None,
     };
     failed.unwrap_or(reply)
 }
@@ -343,8 +340,9 @@ fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginRepl
     routine_reply(consistency::COMMAND, result)
 }
 
-fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
-    if let Err(reply) = routine_input("scribe.memory-refresh", input) {
+fn memory_refresh_prepare(input: &Value, config: &Value) -> PluginReply {
+    use scribe_core::apps::memory::{self, Command, Outcome};
+    if let Err(reply) = routine_input("scribe.memory-refresh-prepare", input) {
         return reply;
     }
     let root = match store_root(config) {
@@ -356,8 +354,102 @@ fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply 
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
-    let result = super::memory::refresh(&routine, true);
-    routine_reply("memory refresh", result)
+    match memory::exec(&routine, Command::Prepare) {
+        Ok(Outcome::Prepared(prepared)) => match serde_json::to_value(prepared) {
+            Ok(mut value) => {
+                let crew = config
+                    .get("profile_refresh_crew")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("haiku");
+                value["crew"] = serde_json::json!(crew);
+                PluginReply::Data(value)
+            }
+            Err(err) => failure(
+                "internal_error",
+                format!("cannot encode prepared refresh: {err}"),
+                false,
+            ),
+        },
+        Ok(_) => failure(
+            "internal_error",
+            "unexpected memory refresh prepare result",
+            false,
+        ),
+        Err(err) => {
+            let err = CliError::from(err);
+            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
+            failure(err.code(), message_of(&err), retryable)
+        }
+    }
+}
+
+fn memory_refresh_apply(input: &Value, config: &Value) -> PluginReply {
+    use scribe_core::apps::memory::{
+        self, ApplyRefreshOutcome, ApplyRefreshRequest, Command, Outcome,
+    };
+    let request: ApplyRefreshRequest = match serde_json::from_value(input.clone()) {
+        Ok(value) => value,
+        Err(err) => {
+            return failure(
+                "invalid_input",
+                format!("scribe.memory-refresh-apply input: {err}"),
+                false,
+            );
+        }
+    };
+    let root = match store_root(config) {
+        Ok(root) => root,
+        Err(reply) => return reply,
+    };
+    let codex_home = match codex_home(config) {
+        Ok(path) => path,
+        Err(reply) => return reply,
+    };
+    let routine = Context::at(root, None).with_codex_home(codex_home);
+    let command = Command::Apply {
+        provider: routine.provider(),
+        request: Box::new(request),
+        routine: true,
+    };
+    match memory::exec(&routine, command) {
+        Ok(Outcome::Applied(outcome)) => match *outcome {
+            ApplyRefreshOutcome::Written(w) => PluginReply::Data(serde_json::json!({
+                "status": "written",
+                "result": "written",
+                "revision": w.revision,
+                "sessions": w.sessions,
+                "backlog": w.backlog,
+                "milestones": w.milestones,
+                "removed": w.removed,
+                "code": null,
+                "correction": null,
+            })),
+            ApplyRefreshOutcome::Retry { code, correction } => {
+                PluginReply::Data(serde_json::json!({
+                    "status": "retry",
+                    "result": null,
+                    "revision": null,
+                    "sessions": 0,
+                    "backlog": 0,
+                    "milestones": [],
+                    "removed": [],
+                    "code": code,
+                    "correction": correction,
+                }))
+            }
+        },
+        Ok(_) => failure(
+            "internal_error",
+            "unexpected memory refresh apply result",
+            false,
+        ),
+        Err(err) => {
+            let err = CliError::from(err);
+            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
+            failure(err.code(), message_of(&err), retryable)
+        }
+    }
 }
 
 /// `err` with its cause chain, as `report_error` folds it.

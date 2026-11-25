@@ -698,6 +698,39 @@ pub(crate) fn show(
             field(out, "milestones", &or_none(&r.milestones))?;
             field(out, "removed", &or_none(&r.removed))
         }
+        (OutputMode::Json, Record::MemoryPrepare(p)) => write_json(out, p.as_ref()),
+        (OutputMode::Plain, Record::MemoryPrepare(p)) => writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            p.nothing_new,
+            p.session_ids.len(),
+            p.backlog,
+            p.passed_stems.len()
+        ),
+        (OutputMode::Table, Record::MemoryPrepare(p)) => {
+            field(
+                out,
+                "nothing_new",
+                if p.nothing_new { "true" } else { "false" },
+            )?;
+            field(out, "sessions", &p.session_ids.len().to_string())?;
+            field(out, "backlog", &p.backlog.to_string())?;
+            field(out, "passed", &p.passed_stems.len().to_string())?;
+            field(
+                out,
+                "corrections",
+                yes_no(p.inputs.as_ref().is_some_and(|i| i.corrections.is_some())),
+            )
+        }
+        (OutputMode::Json, Record::MemoryRefreshRetry(r)) => write_json(out, r.as_ref()),
+        (OutputMode::Plain, Record::MemoryRefreshRetry(r)) => {
+            writeln!(out, "{}\t{}\t{}", r.status, r.code, one_line(&r.correction))
+        }
+        (OutputMode::Table, Record::MemoryRefreshRetry(r)) => {
+            field(out, "status", r.status)?;
+            field(out, "code", r.code)?;
+            field(out, "correction", &r.correction)
+        }
         (OutputMode::Json, Record::StoreMigrate(r)) => write_json(out, r.as_ref()),
         (OutputMode::Plain, Record::StoreMigrate(r)) => writeln!(
             out,
@@ -846,13 +879,6 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
             },
         ),
         PluginReply::Scan(report) => serde_json::to_writer(
-            &mut *out,
-            &Ok {
-                ok: true,
-                output: report.as_ref(),
-            },
-        ),
-        PluginReply::Refresh(report) => serde_json::to_writer(
             &mut *out,
             &Ok {
                 ok: true,

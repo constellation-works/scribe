@@ -1216,8 +1216,12 @@ pub(crate) enum Record {
     MemoryBlock(Box<MemoryBlockPayload>),
     /// `memory show --revision`.
     MemoryRevision(Box<RevisionPayload>),
-    /// `memory refresh`.
+    /// `memory refresh` or `memory apply` (written).
     MemoryRefresh(Box<RefreshPayload>),
+    /// `memory prepare`.
+    MemoryPrepare(Box<scribe_core::apps::memory::PreparedRefresh>),
+    /// `memory apply` returning a conditional retry refusal.
+    MemoryRefreshRetry(Box<RefreshRetryPayload>),
     /// `store migrate`: the archives imported into `scribe.db`.
     StoreMigrate(Box<MigratePayload>),
     /// `export`: what was written where.
@@ -1480,6 +1484,18 @@ pub(crate) struct RefreshPayload {
     pub(crate) milestones: Vec<String>,
     /// Passed `now` items removed, by stem.
     pub(crate) removed: Vec<String>,
+}
+
+/// `memory apply` when `allow_retry` is true and a `profile_*` check refused
+/// the rebuilt answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct RefreshRetryPayload {
+    /// Always `"retry"`.
+    pub(crate) status: &'static str,
+    /// Stable `profile_*` refusal code.
+    pub(crate) code: &'static str,
+    /// Actionable correction for the retry prompt.
+    pub(crate) correction: String,
 }
 
 /// `store migrate`: the archives imported into `scribe.db`. Field names
@@ -1939,8 +1955,6 @@ pub(crate) enum PluginReply {
     Pass(PassReport),
     /// `scribe.consistency-scan` ran.
     Scan(Box<ScanReport>),
-    /// `scribe.memory-refresh` ran.
-    Refresh(Box<RefreshPayload>),
     /// A deterministic tool result.
     Data(serde_json::Value),
     /// The call failed; the envelope carries the code.

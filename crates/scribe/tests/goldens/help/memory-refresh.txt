@@ -1,6 +1,6 @@
-Rebuild the profile and settle passed now items
+Run deterministic refresh checks or point to the Orbit refresh job
 
-Rebuilds the profile from the sessions since the last run and settles now items past their 14 days.
+Replays any open memory journal, succeeds when nothing is new, and otherwise directs you to the scribe-memory-refresh Orbit job.
 
 Usage: scribe memory refresh [OPTIONS]
 
@@ -26,13 +26,13 @@ Global options:
       --json
           Shorthand for --format json
 
-Rebuilds memory/profile.md from the sessions since the last run (at most 40
-per run; a longer backlog is taken over several runs), keeps Pinned byte for
-byte, and settles now items past their 14 days: each becomes a milestone or
-history. It calls models.profile once, within 120 s, and writes nothing when
-there is nothing new. Run weekly: the scribe plugin seeds a disabled Orbit
-routine, or use cron or launchd.
+Runs the deterministic part of memory refresh: replays any open memory
+journal, archives legacy format-24 items, and succeeds with nothing_new when
+there are no new sessions, profile edits or passed now items. When a model
+rebuild is needed, points you to 'orbit job run scribe-memory-refresh' (or
+'scribe memory prepare --json' and 'scribe memory apply' for an interactive
+agent).
 
 Examples:
   scribe memory refresh
-  scribe memory refresh --json | jq '{result, revision, backlog}'
+  scribe memory refresh --json

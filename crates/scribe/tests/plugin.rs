@@ -40,6 +40,7 @@ impl Setup {
         let mut cmd = self.fx.cmd(&["plugin", "call"]);
         cmd.env_remove("SCRIBE_ROOT")
             .env("PATH", &self.path)
+            .env("GITHUB_TOKEN", "ghp_testtoken1234567890")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -96,11 +97,62 @@ fn the_routine_tools_refuse_any_input_key() {
     for tool in [
         "scribe.session-pass",
         "scribe.consistency-scan",
-        "scribe.memory-refresh",
+        "scribe.memory-refresh-prepare",
+        "scribe.memory-refresh-apply",
     ] {
         let reply = s.reply(tool, json!({"limit": 1}), s.root_config());
         assert_eq!(error_code(&reply), "invalid_input", "{tool}");
     }
+    // Store-backed memory-refresh-prepare -> retry -> apply -> nothing_new round-trip.
+    let cfg = json!({"root": s.fx.root().to_str().unwrap(), "profile_refresh_crew": "haiku"});
+    let prepared = s.reply("scribe.memory-refresh-prepare", json!({}), cfg.clone());
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    assert_eq!(prepared["output"]["nothing_new"], false, "{prepared}");
+    assert_eq!(prepared["output"]["crew"], "haiku", "{prepared}");
+    let out = &prepared["output"];
+    // Refused shape with allow_retry: true returns {status: "retry", correction}.
+    let retry = s.reply(
+        "scribe.memory-refresh-apply",
+        json!({
+            "basis": out["basis"],
+            "cursor_to": out["cursor_to"],
+            "session_ids": out["session_ids"],
+            "backlog": out["backlog"],
+            "passed_stems": out["passed_stems"],
+            "answer": {"profile": "not valid headings", "milestones": []},
+            "allow_retry": true
+        }),
+        cfg.clone(),
+    );
+    assert_eq!(retry["ok"], true, "{retry}");
+    assert_eq!(retry["output"]["status"], "retry", "{retry}");
+    assert_eq!(retry["output"]["code"], "profile_shape", "{retry}");
+    assert!(retry["output"]["correction"].is_string(), "{retry}");
+    // Valid fixed answer commits revision 1 and advances the cursor.
+    let applied = s.reply(
+        "scribe.memory-refresh-apply",
+        json!({
+            "basis": out["basis"],
+            "cursor_to": out["cursor_to"],
+            "session_ids": out["session_ids"],
+            "backlog": out["backlog"],
+            "passed_stems": out["passed_stems"],
+            "answer": {
+                "profile": "## Role and work\n\n## Current focus\n\n## Projects\n- scribe.\n\n## Goals\n\n## Environment\n\n## How they work\n\n## Pinned\n\n",
+                "milestones": []
+            },
+            "allow_retry": false
+        }),
+        cfg.clone(),
+    );
+    assert_eq!(applied["ok"], true, "{applied}");
+    assert_eq!(applied["output"]["status"], "written", "{applied}");
+    assert_eq!(applied["output"]["revision"], 1, "{applied}");
+    // Second prepare sees nothing new.
+    let again = s.reply("scribe.memory-refresh-prepare", json!({}), cfg);
+    assert_eq!(again["ok"], true, "{again}");
+    assert_eq!(again["output"]["nothing_new"], true, "{again}");
+    assert_eq!(again["output"]["crew"], "haiku", "{again}");
 }
 
 #[test]

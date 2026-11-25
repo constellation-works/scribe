@@ -1,0 +1,35 @@
+Validate and commit a rebuilt profile answer from stdin JSON
+
+Checks the optimistic basis, profile rules, redaction and milestone bounds, then commits the refresh atomically.
+
+Usage: scribe memory apply [OPTIONS]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Reads one JSON apply request on stdin ({basis, cursor_to, session_ids,
+backlog, passed_stems, answer[, allow_retry]}), verifies the optimistic
+basis, profile shape, Pinned byte identity, links, redaction and milestone
+bounds, and commits atomically via the memory journal.
+
+Examples:
+  scribe memory apply --json < apply.json

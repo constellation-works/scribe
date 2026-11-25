@@ -62,6 +62,8 @@ const HELP: &[(&str, &[&str])] = &[
     ("memory-forget", &["memory", "forget", "--help"]),
     ("memory-restore", &["memory", "restore", "--help"]),
     ("memory-refresh", &["memory", "refresh", "--help"]),
+    ("memory-prepare", &["memory", "prepare", "--help"]),
+    ("memory-apply", &["memory", "apply", "--help"]),
     ("tag", &["tag", "--help"]),
     ("tag-add", &["tag", "add", "--help"]),
     ("tag-update", &["tag", "update", "--help"]),

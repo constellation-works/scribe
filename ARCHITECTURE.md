@@ -80,11 +80,11 @@ environment variable, or branches on a record's state.
 | `hook` | `hook` |
 | `init`, `store`, `export` | `admin` |
 
-`plugin call` serves the Orbit plugin's tools. Its routine tools
-(`session-pass`, `consistency-scan`, `memory-refresh`) have no flow of their
-own. The handler resolves the envelope's root with `Context::at` and calls
-the command handler that owns the work, which calls the session, consistency
-or memory app's `exec`.
+`plugin call` serves the Orbit plugin's tools. Its routine and workflow tools
+(`session-pass`, `consistency-scan`, `memory-refresh-prepare`,
+`memory-refresh-apply`, `group-close-prepare`, `group-close-apply`) have no
+flow of their own. The handler resolves the envelope's root with `Context::at`
+and calls the app's `exec` (or command handler that owns the work).
 
 ## `scribe-core`
 
@@ -132,8 +132,8 @@ pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError>
   that returns early or panics is still logged, as a failure. `exec_unaudited`
   (test-support only) runs the same command with no guard. The hook app
   declares on its `Event`, and `HookEvent` names the four events for Claude
-  Code and Codex alike. The plugin's routine `memory refresh` keeps its empty
-  subject through `Command::Refresh { routine: true }`.
+  Code and Codex alike. The plugin's routine `memory-refresh-apply` keeps its empty
+  subject through `Command::Apply { routine: true, .. }`.
 - **The context is `composition::Context`.** The binary builds it once with
   `Context::resolve(root, &Env::from_process())` and `with_provider`. It holds
   the opened `Store`, the Claude and Codex transcript roots, the provider,
@@ -183,8 +183,9 @@ so the guard holds each to the same order.
   parses `config.toml`; `Context::redactor` and `Context::models` build from a
   parsed `Config`. `runtime/host/` implements the ports on the `Context`.
 - `providers/` holds everything about calling a model until ORB-27911
-  removes scribe's own model calls. Only five flows use it: session pass,
-  catalog and rebuild, and memory refresh. Group close accepts a supplied summary; its Orbit job performs the model step.
+  removes scribe's own model calls. Only three flows still use it: session pass,
+  catalog and rebuild. Group close and memory refresh use deterministic
+  prepare/apply flows; their Orbit jobs perform the model step.
 
 ## `scribe-store`
 

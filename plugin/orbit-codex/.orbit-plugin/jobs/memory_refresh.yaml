@@ -1,4 +1,6 @@
-# The scribe-memory-refresh routine's job: one call to scribe.memory-refresh.
+# The scribe-memory-refresh routine's job (2_design.md §19.3.5):
+# prepare bounded inputs -> scribe_profile_refresh -> apply, with one
+# conditional retry when profile or milestone checks refuse.
 schemaVersion: 2
 kind: Job
 metadata:
@@ -8,11 +10,57 @@ spec:
   kind: workflow
   max_active_runs: 1
   steps:
-    - id: memory-refresh
-      timeout_seconds: 300
+    - id: prepare
+      timeout_seconds: 60
       spec:
         type: deterministic
         action: plugin.tool_call
         config:
-          tool: scribe.memory-refresh
+          tool: scribe.memory-refresh-prepare
           input: {}
+    - id: refresh
+      when: "{{ steps.prepare.output.nothing_new }} == false"
+      target: activity:scribe_profile_refresh
+      default_input:
+        inputs: "{{ steps.prepare.output.inputs }}"
+        crew: "{{ steps.prepare.output.crew }}"
+        correction: null
+    - id: apply
+      when: "{{ steps.prepare.output.nothing_new }} == false"
+      timeout_seconds: 60
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.memory-refresh-apply
+          input:
+            basis: "{{ steps.prepare.output.basis }}"
+            cursor_to: "{{ steps.prepare.output.cursor_to }}"
+            session_ids: "{{ steps.prepare.output.session_ids }}"
+            backlog: "{{ steps.prepare.output.backlog }}"
+            passed_stems: "{{ steps.prepare.output.passed_stems }}"
+            answer: "{{ steps.refresh.output }}"
+            allow_retry: true
+    - id: refresh_retry
+      when: "{{ steps.apply.output.status }} == retry"
+      target: activity:scribe_profile_refresh
+      default_input:
+        inputs: "{{ steps.prepare.output.inputs }}"
+        crew: "{{ steps.prepare.output.crew }}"
+        correction: "{{ steps.apply.output.correction }}"
+    - id: apply_retry
+      when: "{{ steps.apply.output.status }} == retry"
+      timeout_seconds: 60
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.memory-refresh-apply
+          input:
+            basis: "{{ steps.prepare.output.basis }}"
+            cursor_to: "{{ steps.prepare.output.cursor_to }}"
+            session_ids: "{{ steps.prepare.output.session_ids }}"
+            backlog: "{{ steps.prepare.output.backlog }}"
+            passed_stems: "{{ steps.prepare.output.passed_stems }}"
+            answer: "{{ steps.refresh_retry.output }}"
+            allow_retry: false

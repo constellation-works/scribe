@@ -1,0 +1,265 @@
+{
+  "type": "object",
+  "properties": {
+    "nothing_new": {
+      "type": "boolean"
+    },
+    "basis": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "latest": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "now": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "latest",
+        "file",
+        "cursor",
+        "now"
+      ],
+      "additionalProperties": false
+    },
+    "cursor_to": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "session_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "backlog": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "passed_stems": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "inputs": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string"
+        },
+        "corrections": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "project": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "verbatim": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "project",
+              "date",
+              "title",
+              "summary",
+              "verbatim"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "now": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stem": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "stem",
+              "date",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "passed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stem": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "stem",
+              "date",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stem": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "stem",
+              "date",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "preferences": {
+          "type": "array"
+        },
+        "user_noun": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "corrections",
+        "hints",
+        "sessions",
+        "now",
+        "passed",
+        "milestones",
+        "preferences",
+        "user_noun",
+        "instructions"
+      ],
+      "additionalProperties": false
+    },
+    "crew": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "nothing_new",
+    "basis",
+    "cursor_to",
+    "session_ids",
+    "backlog",
+    "passed_stems",
+    "inputs",
+    "crew"
+  ],
+  "additionalProperties": false
+}

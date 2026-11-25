@@ -6375,20 +6375,56 @@ fn profile_answer(projects: &str) -> Value {
 #[test]
 fn memory_refresh_writes_a_revision_and_has_nothing_new_on_a_second_run() {
     let s = memory_setup();
+    s.config(
+        "[user]\nname = \"Sam\"\n\n[instructions]\nprofile = \"Emphasize {user}'s systems work.\"\n",
+    );
     s.scribe("/scribe on");
     pass_on(&s);
-    s.answer(&profile_answer("scribe, a memory store."));
     let calls = s.prompts().len();
-    let refreshed = memory_json(&s, &["refresh"]);
+
+    // Deterministic `memory refresh` refuses without calling a model and points to Orbit.
+    let needs_orbit = s.run_any(&["memory", "refresh", "--json"], b"");
+    assert_eq!(needs_orbit.status.code(), Some(2));
+    assert!(
+        text(&needs_orbit.stderr).contains("orbit job run scribe-memory-refresh"),
+        "{}",
+        text(&needs_orbit.stderr)
+    );
+    assert_eq!(s.prompts().len(), calls, "no model call");
+
+    // `memory prepare` returns bounded inputs carrying [instructions] and [user] name.
+    let prepared = memory_json(&s, &["prepare"]);
+    assert_eq!(prepared["nothing_new"], false, "{prepared}");
+    assert_eq!(prepared["inputs"]["user_noun"], "Sam", "{prepared}");
+    assert_eq!(
+        prepared["inputs"]["instructions"], "Emphasize Sam's systems work.",
+        "{prepared}"
+    );
+    assert_eq!(s.prompts().len(), calls, "prepare calls no model");
+
+    // `memory apply` commits the fixed answer and writes revision 1.
+    let apply_req = |prep: &Value, answer: Value, allow_retry: bool| {
+        json!({
+            "basis": prep["basis"],
+            "cursor_to": prep["cursor_to"],
+            "session_ids": prep["session_ids"],
+            "backlog": prep["backlog"],
+            "passed_stems": prep["passed_stems"],
+            "answer": answer,
+            "allow_retry": allow_retry,
+        })
+    };
+    let applied = s.run(
+        &["memory", "apply", "--json"],
+        apply_req(&prepared, profile_answer("scribe, a memory store."), false)
+            .to_string()
+            .as_bytes(),
+    );
+    let refreshed: Value = serde_json::from_slice(&applied.stdout).unwrap();
     assert_eq!(refreshed["result"], "written", "{refreshed}");
     assert_eq!(refreshed["revision"], 1);
     assert_eq!(refreshed["sessions"], 1);
-    assert_eq!(s.prompts().len(), calls + 1);
-    assert!(
-        s.prompts()[calls].contains("profile"),
-        "{}",
-        s.prompts()[calls]
-    );
+    assert_eq!(s.prompts().len(), calls, "apply calls no model");
     let profile = std::fs::read_to_string(s.fx.root().join("memory/profile.md")).unwrap();
     assert!(profile.contains("- scribe, a memory store."), "{profile}");
     let block = memory_json(&s, &["show"]);
@@ -6396,18 +6432,42 @@ fn memory_refresh_writes_a_revision_and_has_nothing_new_on_a_second_run() {
     let revision = memory_json(&s, &["show", "--revision", "1"]);
     assert_eq!(revision["text"], profile);
 
+    // Nothing new on a second run: both `memory refresh` and `memory prepare` short-circuit.
     let again = memory_json(&s, &["refresh"]);
     assert_eq!(again["result"], "nothing_new", "{again}");
-    assert_eq!(s.prompts().len(), calls + 1, "no model call");
+    let prepared_again = memory_json(&s, &["prepare"]);
+    assert_eq!(prepared_again["nothing_new"], true, "{prepared_again}");
+    assert_eq!(s.prompts().len(), calls, "no model call");
 
-    // A refused profile writes nothing.
+    // A refused profile writes nothing: allow_retry returns retry+correction; final fails.
     std::fs::write(
         s.fx.root().join("memory/profile.md"),
         profile.replacen("## Pinned\n", "## Pinned\n- Call me Daniel.\n", 1),
     )
     .unwrap();
-    s.answer(&profile_answer("orbit."));
-    let refused = s.run_any(&["memory", "refresh", "--json"], b"");
+    let edited = memory_json(&s, &["prepare"]);
+    assert_eq!(edited["nothing_new"], false, "{edited}");
+    let retry_out = s.run(
+        &["memory", "apply", "--json"],
+        apply_req(&edited, profile_answer("orbit."), true)
+            .to_string()
+            .as_bytes(),
+    );
+    let retry: Value = serde_json::from_slice(&retry_out.stdout).unwrap();
+    assert_eq!(retry["status"], "retry", "{retry}");
+    assert_eq!(retry["code"], "profile_pinned", "{retry}");
+    assert!(
+        retry["correction"]
+            .as_str()
+            .is_some_and(|c| c.contains("Pinned")),
+        "{retry}"
+    );
+    let refused = s.run_any(
+        &["memory", "apply", "--json"],
+        apply_req(&edited, profile_answer("orbit."), false)
+            .to_string()
+            .as_bytes(),
+    );
     assert_ne!(refused.status.code(), Some(0));
     assert!(
         text(&refused.stdout).contains("profile_pinned")
@@ -6452,8 +6512,7 @@ fn a_format_24_memory_item_is_not_migrated_and_the_first_memory_write_archives_i
         "{}",
         text(&shown.stderr)
     );
-    // The first write archives it: it is not migrated into a working claim.
-    s.answer(&profile_answer("scribe."));
+    // The first deterministic refresh archives it with no model call.
     s.run(&["memory", "refresh", "--json"], b"");
     assert!(!path.exists());
     let block = memory_json(&s, &["show"]);

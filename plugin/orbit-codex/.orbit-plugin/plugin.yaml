@@ -56,6 +56,7 @@ spec:
       # empty or relative path against it), so the default can be neither
       # empty nor made up (4_decisions.md).
       group_summary_crew: haiku
+      profile_refresh_crew: haiku
       root: /var/tmp
       # Claude Code's projects directory, an absolute path; session-pass
       # answers `not_configured` until it is set.
@@ -87,17 +88,29 @@ spec:
       input_schema: { $ref: schemas/empty.input.json }
       output_schema: { $ref: schemas/routine.output.json }
 
-    - name: memory-refresh
+    - name: memory-refresh-prepare
       description: >-
-        The scribe-memory-refresh routine's job: rebuild memory/profile.md from
-        the sessions since the last run and settle now items past their 14
-        days, as `scribe memory refresh --json` does. Writes nothing when there
-        is nothing new. Needs [plugins.scribe] root.
+        Prepare bounded memory refresh inputs and optimistic basis for
+        scribe_profile_refresh, replaying any open memory journal first.
+        Returns nothing_new: true when there is nothing to refresh. Needs
+        [plugins.scribe] root.
       execution_kind: mutating
       agent_callable: false
       mcp_scope: none
       input_schema: { $ref: schemas/empty.input.json }
-      output_schema: { $ref: schemas/routine.output.json }
+      output_schema: { $ref: schemas/memory-refresh-prepare.output.json }
+
+    - name: memory-refresh-apply
+      description: >-
+        Verify and commit a rebuilt memory profile and promoted milestones
+        against the prepared optimistic basis. Returns status retry with a
+        correction when allow_retry is true and profile or milestone checks
+        refuse. Needs [plugins.scribe] root.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/memory-refresh-apply.input.json }
+      output_schema: { $ref: schemas/memory-refresh-apply.output.json }
 
     - name: group-close-prepare
       description: Prepare bounded authorized group evidence for a summary.
@@ -117,7 +130,7 @@ spec:
 
   definitions:
     jobs: [jobs/session_pass.yaml, jobs/consistency.yaml, jobs/memory_refresh.yaml, jobs/group_close.yaml]
-    activities: [activities/group_summarize.yaml]
+    activities: [activities/group_summarize.yaml, activities/profile_refresh.yaml]
     routines: [routines/session_pass.yaml, routines/consistency.yaml, routines/memory_refresh.yaml]
 
   tests: [tests/conformance/*.yaml]

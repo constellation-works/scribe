@@ -4,8 +4,8 @@
 //! as the open journals leave them ([`Memory::commit`](crate::repository::Memory::commit)).
 
 use super::refresh::{
-    Basis, ProfileInputs, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS, REFRESH_VERBATIM_CHARS,
-    REFRESH_VERBATIM_SESSIONS, RefreshWritten,
+    ApplyRefreshRequest, Basis, ProfileInputs, REFRESH_SESSIONS, REFRESH_SUMMARY_CHARS,
+    REFRESH_VERBATIM_CHARS, REFRESH_VERBATIM_SESSIONS, RefreshWritten,
 };
 use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;
@@ -69,20 +69,17 @@ pub trait MemoryVerbs {
     /// A session or entry file that does not parse, and store failures.
     fn profile_inputs(&self, now: OffsetDateTime) -> Result<ProfileInputs>;
 
-    /// Check the model's `answer` to `inputs` and write it (§15.6): the
-    /// profile as a new revision when it changed, each promoted milestone,
-    /// the passed `now` items removed (to history unless promoted), and the
-    /// cursor moved through the sessions read. A failed check writes
-    /// nothing and keeps the cursor.
+    /// Check a prepared refresh apply request against the live store and commit
+    /// it (§15.6, §19.3.5): re-checks `Basis`, forgotten sessions,
+    /// `profile::check`, milestone bounds and sensitive gates under the write
+    /// lock.
     ///
     /// # Errors
     ///
-    /// `memory_changed` when memory changed since `inputs`; a `profile_*`
-    /// refusal; store failures.
-    fn write_refresh(
+    /// `memory_changed`, `invalid_id`, a `profile_*` refusal, or store failures.
+    fn write_refresh_prepared(
         &self,
-        inputs: &ProfileInputs,
-        answer: &ProfileAnswer,
+        request: &ApplyRefreshRequest,
         redactor: &Redactor,
         now: OffsetDateTime,
     ) -> Result<RefreshWritten>;
@@ -330,26 +327,48 @@ impl MemoryVerbs for Store {
         })
     }
 
-    fn write_refresh(
+    fn write_refresh_prepared(
         &self,
-        inputs: &ProfileInputs,
-        answer: &ProfileAnswer,
+        request: &ApplyRefreshRequest,
         redactor: &Redactor,
         now: OffsetDateTime,
     ) -> Result<RefreshWritten> {
+        let cursor_to = match &request.cursor_to {
+            Some(cursor) => {
+                let id: SessionId = cursor.session.parse().map_err(|err| {
+                    refusal(
+                        WriteRefusal::InvalidId,
+                        format!("cursor_to.session is not a valid session id: {err}"),
+                    )
+                })?;
+                Some((cursor.at, id))
+            }
+            None => None,
+        };
         self.write(|tx| {
             let forgotten = tx.sessions().forgotten_ids()?;
-            if inputs
-                .sessions
+            if request
+                .session_ids
                 .iter()
-                .any(|session| forgotten.iter().any(|id| id.as_str() == session.id))
+                .any(|session| forgotten.iter().any(|id| id.as_str() == session))
             {
                 return Err(refusal(
                     WriteRefusal::MemoryChanged,
-                    "a session was forgotten while the profile was rebuilt; run 'scribe memory refresh' again",
+                    "a session was forgotten while the profile was rebuilt; run 'orbit job run scribe-memory-refresh' again",
                 ));
             }
-
+            let config = tx.tags().config()?;
+            let (entries, skipped) = tx.entries().all()?;
+            if let Some(bad) = skipped.into_iter().next() {
+                return Err(bad.error);
+            }
+            let tags: Vec<String> = config
+                .tags
+                .tags()
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect();
+            let known: BTreeSet<String> = entries.iter().map(|e| e.id.to_string()).collect();
             let masks = |text: &str| redactor.mask(text) != text;
             let (written, journal) = tx.memory().commit(now, |rows, files| {
                 let (latest, closed) = rows.revisions()?;
@@ -359,140 +378,187 @@ impl MemoryVerbs for Store {
                     cursor: rows.cursor()?,
                     now: files.now.iter().map(|n| n.stem.clone()).collect(),
                 };
-                if basis != inputs.basis {
+                if basis != request.basis {
                     return Err(refusal(
                         WriteRefusal::MemoryChanged,
-                        "memory changed while the profile was rebuilt; nothing was written, run 'scribe memory refresh' again",
+                        "memory changed while the profile was rebuilt; nothing was written, run 'orbit job run scribe-memory-refresh' again",
                     ));
                 }
-                let text = if answer.profile.ends_with('\n') {
-                    answer.profile.clone()
-                } else {
-                    format!("{}\n", answer.profile)
-                };
-                profile::check(&text, &inputs.pinned, &inputs.tags, &inputs.known, &masks)
-                    .map_err(|r| {
-                        let kind = match r {
-                            profile::ProfileRefusal::Shape => WriteRefusal::ProfileShape,
-                            profile::ProfileRefusal::Pinned => WriteRefusal::ProfilePinned,
-                            profile::ProfileRefusal::TooLong => WriteRefusal::ProfileTooLong,
-                            profile::ProfileRefusal::UnknownLink => {
-                                WriteRefusal::ProfileUnknownLink
-                            }
-                            profile::ProfileRefusal::Sensitive => WriteRefusal::ProfileSensitive,
-                        };
-                        refusal(
-                            kind,
-                            format!(
-                                "the rebuilt profile was refused ({}); nothing was written",
-                                r.code()
-                            ),
-                        )
-                    })?;
-                let sources: Vec<SessionId> = inputs
-                    .sessions
-                    .iter()
-                    .filter_map(|s| s.id.parse().ok())
-                    .collect();
-                let mut commit = MemoryCommit::default();
-                let mut out = RefreshWritten {
-                    sessions: inputs.sessions.len(),
-                    backlog: inputs.backlog,
-                    ..RefreshWritten::default()
-                };
-                let mut promoted: Vec<&Stem> = Vec::new();
-                let mut stones: Vec<Milestone> = Vec::new();
-                for m in &answer.milestones {
-                    let bad = || {
-                        refusal(
-                            WriteRefusal::ProfileMilestone,
-                            "a promoted milestone names no passed now item, or has no real date, title or text within bounds; nothing was written",
-                        )
-                    };
-                    let title = one_line(&m.title);
-                    let body = one_line(&m.text);
-                    let date = crate::record::parse_day(m.date.trim()).map_err(|_| bad())?;
-                    if title.is_empty()
-                        || title.chars().count() > memory::TITLE_CHARS
-                        || body.is_empty()
-                        || body.chars().count() > memory::TEXT_CHARS
-                        || !memory::plausible_date(date, now.date())
-                    {
-                        return Err(bad());
-                    }
-                    if masks(&title)
-                        || masks(&body)
-                        || memory::finance_word(&title)
-                        || memory::finance_word(&body)
-                    {
+                let current = files
+                    .profile
+                    .clone()
+                    .or_else(|| latest.as_ref().map(|r| r.content.clone()))
+                    .unwrap_or_else(profile::template);
+                let pinned = profile::pinned(&current)
+                    .or_else(|| closed.as_ref().and_then(|c| profile::pinned(&c.content)))
+                    .unwrap_or_default()
+                    .to_owned();
+                let mut passed = Vec::with_capacity(request.passed_stems.len());
+                for stem in &request.passed_stems {
+                    let Some(item) = files.now.iter().find(|n| &n.stem == stem) else {
                         return Err(refusal(
-                            WriteRefusal::ProfileSensitive,
-                            "a promoted milestone holds a credential or a finance word; nothing was written",
+                            WriteRefusal::MemoryChanged,
+                            "memory changed while the profile was rebuilt; nothing was written, run 'orbit job run scribe-memory-refresh' again",
                         ));
-                    }
-                    let from = match m.now.as_deref().map(bare).filter(|s| !s.is_empty()) {
-                        Some(stem) => Some(
-                            inputs
-                                .passed
-                                .iter()
-                                .find(|n| n.stem.as_str() == stem)
-                                .ok_or_else(bad)?,
-                        ),
-                        None => None,
                     };
-                    if let Some(item) = from {
-                        promoted.push(&item.stem);
-                        commit
-                            .link_copies
-                            .push((item.stem.to_string(), Stem::new(date, &title).to_string()));
-                    }
-                    stones.push(Milestone {
-                        stem: Stem::new(date, &title),
-                        date,
-                        sources: from.map_or_else(|| sources.clone(), |n| n.sources.clone()),
-                        updated: now,
-                        title,
-                        text: body,
-                    });
-                }
-                for stone in stones {
-                    if !files.milestones.iter().any(|m| m.stem == stone.stem) {
-                        out.milestones.push(stone.stem.to_string());
-                        commit.ops.push(rows.milestone_op(&stone)?);
+                    if !passed.iter().any(|existing: &NowItem| existing.stem == item.stem) {
+                        passed.push(item.clone());
                     }
                 }
-                for item in &inputs.passed {
-                    if !files.now.iter().any(|n| n.stem == item.stem) {
-                        continue;
-                    }
-                    if !promoted.contains(&&item.stem) {
-                        commit.history.push(HistoryRow {
-                            item: item.stem.to_string(),
-                            kind: String::from("now"),
-                            text: format!("{}\n{}", item.title, item.text),
-                            sources: item.sources.iter().map(ToString::to_string).collect(),
-                            removed_at: now,
-                        });
-                    }
-                    out.removed.push(item.stem.to_string());
-                    commit.ops.push(rows.remove_now(&item.stem));
-                }
-                let changed = latest.as_ref().is_none_or(|l| l.content != text)
-                    || files.profile.as_deref() != Some(text.as_str())
-                    || closed
-                        .is_none_or(|c| c.file_sha256.as_deref() != Some(rows.digest(&text).as_str()));
-                if changed {
-                    commit.ops.insert(0, rows.profile_op(&text));
-                    commit.revision = Some(text);
-                }
-                commit.cursor.clone_from(&inputs.cursor_to);
-                Ok((commit, out))
+                plan_refresh_commit(
+                    rows,
+                    files,
+                    latest.as_ref(),
+                    closed.as_ref(),
+                    &pinned,
+                    &tags,
+                    &known,
+                    &passed,
+                    &request.session_ids,
+                    request.backlog,
+                    cursor_to.as_ref(),
+                    &request.answer,
+                    &masks,
+                    now,
+                )
             })?;
             let mut written = written;
             written.revision = journal.revision();
             Ok(written)
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_refresh_commit(
+    rows: &crate::repository::MemoryRows<'_>,
+    files: &crate::repository::MemoryFiles,
+    latest: Option<&crate::repository::Revision>,
+    closed: Option<&crate::repository::Revision>,
+    pinned: &str,
+    tags: &[String],
+    known: &BTreeSet<String>,
+    passed: &[NowItem],
+    session_ids: &[String],
+    backlog: usize,
+    cursor_to: Option<&(OffsetDateTime, SessionId)>,
+    answer: &ProfileAnswer,
+    masks: &dyn Fn(&str) -> bool,
+    now: OffsetDateTime,
+) -> Result<(MemoryCommit, RefreshWritten)> {
+    let text = if answer.profile.ends_with('\n') {
+        answer.profile.clone()
+    } else {
+        format!("{}\n", answer.profile)
+    };
+    profile::check(&text, pinned, tags, known, masks).map_err(|r| {
+        let kind = match r {
+            profile::ProfileRefusal::Shape => WriteRefusal::ProfileShape,
+            profile::ProfileRefusal::Pinned => WriteRefusal::ProfilePinned,
+            profile::ProfileRefusal::TooLong => WriteRefusal::ProfileTooLong,
+            profile::ProfileRefusal::UnknownLink => WriteRefusal::ProfileUnknownLink,
+            profile::ProfileRefusal::Sensitive => WriteRefusal::ProfileSensitive,
+        };
+        refusal(
+            kind,
+            format!(
+                "the rebuilt profile was refused ({}); nothing was written",
+                r.code()
+            ),
+        )
+    })?;
+    let sources: Vec<SessionId> = session_ids.iter().filter_map(|s| s.parse().ok()).collect();
+    let mut commit = MemoryCommit::default();
+    let mut out = RefreshWritten {
+        sessions: session_ids.len(),
+        backlog,
+        ..RefreshWritten::default()
+    };
+    let mut promoted: Vec<&Stem> = Vec::new();
+    let mut stones: Vec<Milestone> = Vec::new();
+    for m in &answer.milestones {
+        let bad = || {
+            refusal(
+                WriteRefusal::ProfileMilestone,
+                "a promoted milestone names no passed now item, or has no real date, title or text within bounds; nothing was written",
+            )
+        };
+        let title = one_line(&m.title);
+        let body = one_line(&m.text);
+        let date = crate::record::parse_day(m.date.trim()).map_err(|_| bad())?;
+        if title.is_empty()
+            || title.chars().count() > memory::TITLE_CHARS
+            || body.is_empty()
+            || body.chars().count() > memory::TEXT_CHARS
+            || !memory::plausible_date(date, now.date())
+        {
+            return Err(bad());
+        }
+        if masks(&title)
+            || masks(&body)
+            || memory::finance_word(&title)
+            || memory::finance_word(&body)
+        {
+            return Err(refusal(
+                WriteRefusal::ProfileSensitive,
+                "a promoted milestone holds a credential or a finance word; nothing was written",
+            ));
+        }
+        let from = match m.now.as_deref().map(bare).filter(|s| !s.is_empty()) {
+            Some(stem) => Some(
+                passed
+                    .iter()
+                    .find(|n| n.stem.as_str() == stem)
+                    .ok_or_else(bad)?,
+            ),
+            None => None,
+        };
+        if let Some(item) = from {
+            promoted.push(&item.stem);
+            commit
+                .link_copies
+                .push((item.stem.to_string(), Stem::new(date, &title).to_string()));
+        }
+        stones.push(Milestone {
+            stem: Stem::new(date, &title),
+            date,
+            sources: from.map_or_else(|| sources.clone(), |n| n.sources.clone()),
+            updated: now,
+            title,
+            text: body,
+        });
+    }
+    for stone in stones {
+        if !files.milestones.iter().any(|m| m.stem == stone.stem) {
+            out.milestones.push(stone.stem.to_string());
+            commit.ops.push(rows.milestone_op(&stone)?);
+        }
+    }
+    for item in passed {
+        if !files.now.iter().any(|n| n.stem == item.stem) {
+            continue;
+        }
+        if !promoted.contains(&&item.stem) {
+            commit.history.push(HistoryRow {
+                item: item.stem.to_string(),
+                kind: String::from("now"),
+                text: format!("{}\n{}", item.title, item.text),
+                sources: item.sources.iter().map(ToString::to_string).collect(),
+                removed_at: now,
+            });
+        }
+        out.removed.push(item.stem.to_string());
+        commit.ops.push(rows.remove_now(&item.stem));
+    }
+    let changed = latest.is_none_or(|l| l.content != text)
+        || files.profile.as_deref() != Some(text.as_str())
+        || closed.is_none_or(|c| c.file_sha256.as_deref() != Some(rows.digest(&text).as_str()));
+    if changed {
+        commit.ops.insert(0, rows.profile_op(&text));
+        commit.revision = Some(text);
+    }
+    commit.cursor = cursor_to.cloned();
+    Ok((commit, out))
 }
 
 fn one_line(text: &str) -> String {

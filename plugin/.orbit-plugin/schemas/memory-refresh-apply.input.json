@@ -1,0 +1,146 @@
+{
+  "type": "object",
+  "properties": {
+    "basis": {
+      "type": "object",
+      "properties": {
+        "latest": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "session"
+          ],
+          "additionalProperties": false
+        },
+        "now": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "latest",
+        "file",
+        "cursor",
+        "now"
+      ],
+      "additionalProperties": false
+    },
+    "cursor_to": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "session_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "backlog": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "passed_stems": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "answer": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string"
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "now": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "date": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 400
+              }
+            },
+            "required": [
+              "now",
+              "date",
+              "title",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "profile",
+        "milestones"
+      ],
+      "additionalProperties": false
+    },
+    "allow_retry": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "basis",
+    "cursor_to",
+    "session_ids",
+    "backlog",
+    "passed_stems",
+    "answer"
+  ],
+  "additionalProperties": false
+}
