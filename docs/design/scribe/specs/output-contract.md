@@ -724,12 +724,15 @@ or a `#scribe/<word>` other than `global`: `unparsed_instruction`; a fourth
 marker: `too_many_marks`). The same turn's `Stop` reply calls no model
 either (ORB-27911): it hands each open marker to the agent. Its
 `systemMessage` prints one line per marker,
-`scribe: #scribe in your message is the agent's to record — "<line>"`, or
+`scribe: #scribe in your message is the agent's to record — "<line>"` (the
+line flattened to one line and cut at 200 characters, as every echo quote
+is), or
 `scribe: nothing recorded for #scribe in your message — record decisions
 and open items through scribe entry add` for a marker whose tag hint is
 `decision` or `open-item` (`unknown_tag`). Each handed-over marker reaches
 the agent in the `Stop` reply's `hookSpecificOutput` (`hookEventName`
-`Stop`), whose `additionalContext` carries `scribe: the user marked a line
+`Stop`), whose `additionalContext` carries the line whole, as typed (its spacing
+and every character kept, never cut): `scribe: the user marked a line
 with #scribe for you to record — "<line>". If it marks something to keep,
 record it as theirs with their exact words: scribe entry add --tag <tag>
 --project <project> [--topic <topic>]... --author <name> --related
