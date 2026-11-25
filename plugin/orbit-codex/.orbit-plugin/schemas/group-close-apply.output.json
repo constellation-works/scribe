@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "group": {
+      "type": "object"
+    },
+    "changed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "group",
+    "changed"
+  ],
+  "additionalProperties": false
+}

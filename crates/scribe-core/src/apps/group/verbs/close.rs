@@ -1,90 +1,111 @@
-//! A group close reads bounded stored evidence, calls the model outside the
-//! write transaction, then compares the evidence before publishing its
-//! summary.
+//! Read bounded group evidence and atomically apply a supplied summary.
 
 use crate::group::{CloseEvidence, GroupCloser};
 use crate::repository::GroupRows;
 use crate::store::refusal;
-use crate::{AuditEvent, Error, Redactor, Related, Result, Store, WriteRefusal};
+use crate::{AuditEvent, Redactor, Related, Result, Store, WriteRefusal};
 use time::OffsetDateTime;
 
-#[derive(PartialEq, Eq)]
-struct Snapshot {
-    evidence: CloseEvidence,
-    related: Vec<Related>,
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Snapshot {
+    /// Bounded handoffs and typed turns.
+    pub evidence: CloseEvidence,
+    /// Related references.
+    pub related: Vec<Related>,
 }
 
-pub(super) fn close_group_with_outcome<E: From<Error>>(
+impl Snapshot {
+    /// Digest of the exact evidence and related references used by a close.
+    pub fn digest(&self) -> String {
+        crate::text::bytes_sha256(serde_json::json!(self).to_string().as_bytes())
+    }
+}
+
+pub(in crate::apps::group) fn evidence(
+    store: &Store,
+    id: &str,
+    closer: GroupCloser<'_>,
+) -> Result<Option<Snapshot>> {
+    let groups = store.read().groups();
+    let group = groups.get(id)?;
+    let n = groups.number(&group.id)?;
+    groups.read_rows_in_tx("read group evidence from", |rows| {
+        Ok(snapshot(rows, n, closer)?)
+    })
+}
+
+pub(in crate::apps::group) fn apply(
     store: &Store,
     id: &str,
     closer: GroupCloser<'_>,
     now: OffsetDateTime,
     redactor: &Redactor,
-    summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
-    audit: impl FnOnce(&str) -> AuditEvent,
-) -> Result<CloseGroupOutcome, E> {
-    if store.in_write() {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "group close must run outside a store write transaction",
-        )
-        .into());
-    }
+    answer: Option<&str>,
+    expected_and_audit: (Option<&str>, impl FnOnce(&str) -> AuditEvent),
+) -> Result<CloseGroupOutcome> {
+    let (expected, audit) = expected_and_audit;
     let groups = store.read().groups();
     let group = groups.get(id)?;
     let n = groups.number(&group.id)?;
-    groups.read_rows(|rows| Ok(check_closer(rows, n, &group.opener, closer)?))?;
-    if group.closed.is_some() {
-        return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
-    }
-    let _lock = store.session_lock(&format!("group-close-{n}.lock"), "close group")?;
-    let Some(before) = groups.read_rows_in_tx("read group for close", |rows| {
-        Ok(snapshot(rows, n, closer)?)
-    })?
-    else {
-        return Ok(CloseGroupOutcome::AlreadyClosed { id: group.id });
-    };
-    let answer = summarize(&before.evidence)?;
-    let mut summary = redactor.group_summary(answer.trim());
-    if summary.is_empty() || answer.trim().chars().count() > 4000 || summary.chars().count() > 4000
-    {
-        return Err(refusal(
-            WriteRefusal::InvalidText,
-            "the group summary must be 1–4000 characters before and after redaction",
-        )
-        .into());
-    }
-    if !before.related.is_empty() {
-        summary.push_str("\n\nFor work missing from the handoffs, see ");
-        summary.push_str(
-            &redactor.group_summary(
-                &before
-                    .related
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-        );
-        summary.push('.');
-    }
-    let ((), cleanup) = store.write_with_cleanup(|tx| {
+    let (changed, cleanup) = store.write_with_cleanup(|tx| {
         tx.groups().rows("close group in", |rows| {
-            if snapshot(rows, n, closer)?.as_ref() != Some(&before) {
+            let Some(current) = snapshot(rows, n, closer)? else {
+                return Ok(false);
+            };
+            if expected.is_some_and(|digest| digest != current.digest()) {
                 return Err(refusal(
-                    WriteRefusal::GroupMembership,
-                    "group evidence changed during close; run group close again",
+                    WriteRefusal::GroupEvidenceChanged,
+                    "group evidence changed during close; read it and draft the summary again",
                 ));
             }
-            rows.set_closed(n, now, &summary)?;
+            let mut summary = match answer {
+                Some(answer) => {
+                    let cleaned = redactor.group_summary(answer.trim());
+                    if cleaned.is_empty()
+                        || answer.trim().chars().count() > 4000
+                        || cleaned.chars().count() > 4000
+                    {
+                        return Err(refusal(
+                            WriteRefusal::InvalidText,
+                            "the group summary must be 1–4000 characters before and after redaction",
+                        ));
+                    }
+                    Some(cleaned)
+                }
+                None => None,
+            };
+            if !current.related.is_empty() {
+                let refs = redactor.group_summary(
+                    &current
+                        .related
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                let note = format!("For work missing from the handoffs, see {refs}.");
+                match &mut summary {
+                    Some(text) => {
+                        text.push_str("\n\n");
+                        text.push_str(&note);
+                    }
+                    None => summary = Some(note),
+                }
+            }
+            rows.set_closed(n, now, summary.as_deref())?;
             tx.audit().record(&audit(&group.id))?;
-            Ok(())
+            Ok(true)
         })
     })?;
-    Ok(CloseGroupOutcome::Closed {
-        id: group.id,
-        cleanup,
-    })
+    if changed {
+        Ok(CloseGroupOutcome::Closed {
+            id: group.id,
+            cleanup,
+        })
+    } else {
+        cleanup?;
+        Ok(CloseGroupOutcome::AlreadyClosed { id: group.id })
+    }
 }
 
 /// The opener, or the session that now holds the seat whose chain contains the

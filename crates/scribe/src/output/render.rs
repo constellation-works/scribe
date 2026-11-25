@@ -859,6 +859,13 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
                 output: report.as_ref(),
             },
         ),
+        PluginReply::Data(value) => serde_json::to_writer(
+            &mut *out,
+            &Ok {
+                ok: true,
+                output: value,
+            },
+        ),
         PluginReply::Error(error) => serde_json::to_writer(&mut *out, &Failed { ok: false, error }),
     }
     .map_err(io::Error::from)?;

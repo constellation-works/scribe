@@ -345,12 +345,6 @@ pub(crate) fn run<E: PortError>(
 /// method forwards, so an adapter's own answers (a test's fake) are kept.
 pub(crate) struct Adapter<'i>(Box<dyn Models + 'i>);
 
-/// `models` as a flow's `impl FnOnce(&Config) -> M`, for a higher app's
-/// model caller (`group close`).
-pub(crate) fn adapt_once<'i>(models: ModelsOnce<'i>) -> impl FnOnce(&Config) -> Adapter<'i> + 'i {
-    move |config: &Config| Adapter(models(config))
-}
-
 impl Models for Adapter<'_> {
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         self.0.session(request)

@@ -46,6 +46,7 @@ const HELP: &[(&str, &[&str])] = &[
     ("group-backfill", &["group", "backfill", "--help"]),
     ("group-leave", &["group", "leave", "--help"]),
     ("group-close", &["group", "close", "--help"]),
+    ("group-evidence", &["group", "evidence", "--help"]),
     ("group-show", &["group", "show", "--help"]),
     ("group-list", &["group", "list", "--help"]),
     ("proposal", &["proposal", "--help"]),

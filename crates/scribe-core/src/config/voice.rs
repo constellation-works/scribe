@@ -108,6 +108,7 @@ impl ModelUse {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Instructions {
     texts: Vec<(ModelUse, String)>,
+    group_summary: Option<String>,
 }
 
 impl Instructions {
@@ -123,6 +124,18 @@ impl Instructions {
         self.texts.retain(|(u, _)| *u != model_use);
         self.texts.push((model_use, text.to_owned()));
         Ok(())
+    }
+
+    /// Set optional Orbit group summary guidance after validation.
+    pub fn set_group_summary(&mut self, text: &str) -> Result<(), String> {
+        self.group_summary = Some(check_instruction("group_summary", text)?.to_owned());
+        Ok(())
+    }
+
+    /// The configured Orbit group summary guidance.
+    #[must_use]
+    pub fn group_summary(&self) -> Option<&str> {
+        self.group_summary.as_deref()
     }
 
     /// The text `config.toml` set for `model_use`, when it set one.

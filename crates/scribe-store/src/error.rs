@@ -244,6 +244,8 @@ pub enum WriteRefusal {
     GroupNotFound,
     /// The caller already holds a different seat or group.
     GroupMembership,
+    /// The group evidence changed after it was read.
+    GroupEvidenceChanged,
     /// Another live transcript holds the seat.
     SeatOccupied,
     /// `user_only`.
@@ -416,6 +418,7 @@ impl WriteRefusal {
         match self {
             Self::GroupNotFound => "group_not_found",
             Self::GroupMembership => "group_membership",
+            Self::GroupEvidenceChanged => "group_evidence_changed",
             Self::SeatOccupied => "seat_occupied",
             Self::UserOnly => "user_only",
             Self::ReservedAuthor => "reserved_author",

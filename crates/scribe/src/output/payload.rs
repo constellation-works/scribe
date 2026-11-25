@@ -1941,6 +1941,8 @@ pub(crate) enum PluginReply {
     Scan(Box<ScanReport>),
     /// `scribe.memory-refresh` ran.
     Refresh(Box<RefreshPayload>),
+    /// A deterministic tool result.
+    Data(serde_json::Value),
     /// The call failed; the envelope carries the code.
     Error(PluginError),
 }
@@ -2030,6 +2032,8 @@ pub(crate) enum Output {
         /// that a deactivation unpinned the session.
         notices: Vec<String>,
     },
+    /// Bounded evidence for a group close.
+    GroupEvidence(serde_json::Value),
     /// Group backfill counts.
     GroupBackfill(GroupBackfill),
     /// A hook's reply.

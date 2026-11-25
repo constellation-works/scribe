@@ -55,6 +55,7 @@ spec:
       # directory that exists, outside the install tree (Orbit resolves an
       # empty or relative path against it), so the default can be neither
       # empty nor made up (4_decisions.md).
+      group_summary_crew: haiku
       root: /var/tmp
       # Claude Code's projects directory, an absolute path; session-pass
       # answers `not_configured` until it is set.
@@ -98,8 +99,25 @@ spec:
       input_schema: { $ref: schemas/empty.input.json }
       output_schema: { $ref: schemas/routine.output.json }
 
+    - name: group-close-prepare
+      description: Prepare bounded authorized group evidence for a summary.
+      execution_kind: read_only
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/group-close-prepare.input.json }
+      output_schema: { $ref: schemas/group-close-prepare.output.json }
+
+    - name: group-close-apply
+      description: Verify and commit a supplied group summary.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/group-close-apply.input.json }
+      output_schema: { $ref: schemas/group-close-apply.output.json }
+
   definitions:
-    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml, jobs/memory_refresh.yaml]
+    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml, jobs/memory_refresh.yaml, jobs/group_close.yaml]
+    activities: [activities/group_summarize.yaml]
     routines: [routines/session_pass.yaml, routines/consistency.yaml, routines/memory_refresh.yaml]
 
   tests: [tests/conformance/*.yaml]

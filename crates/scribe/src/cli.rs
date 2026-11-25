@@ -81,6 +81,19 @@ impl Cli {
                 "--json cannot be used with a --format other than json",
             ));
         }
+        if matches!(
+            &cli.command,
+            Command::Group(crate::commands::GroupCommand::Close {
+                summary: None,
+                no_summary: false,
+                ..
+            })
+        ) {
+            return Err(Self::command().error(
+                ErrorKind::MissingRequiredArgument,
+                "group close requires --summary or --no-summary; draft with `scribe group evidence <id> --json` and --summary, or run `orbit job run scribe-group-close`",
+            ));
+        }
         if matches!(cli.command, Command::Init(_)) && cli.global.provider.is_none() {
             return Err(Self::command().error(
                 ErrorKind::MissingRequiredArgument,

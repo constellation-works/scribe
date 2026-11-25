@@ -8,12 +8,12 @@ use scribe_core::apps::group::{
     Command, GroupBackfilled, GroupCloseInput, GroupJoinInput, GroupOpenInput, Outcome, exec,
 };
 use scribe_core::composition::Context;
-use scribe_core::{AuthorName, Config, Label, Project, Related};
+use scribe_core::{AuthorName, Label, Project, Related};
 
 pub(super) const EXAMPLES: &str = "Examples:
   scribe group open --title 'Release review' --kind review --project scribe --quote 'open a release review'
   scribe group join <id> --as editor --author aide --role reviewer
-  scribe group close <id>
+  scribe group close <id> --summary 'Review complete'
   scribe group show <id> --json";
 
 #[derive(Debug, Subcommand)]
@@ -70,12 +70,31 @@ pub(crate) enum GroupCommand {
     #[command(after_help = "Example: scribe group leave")]
     Leave,
     /// Summarize and close the group from its opener, seat holder or a quote
-    #[command(after_help = "Example: scribe group close <id>")]
+    #[command(
+        after_help = "Draft with `scribe group evidence <id> --json`, then use --summary and --if-evidence, or run `orbit job run scribe-group-close`.\nExample: scribe group close <id> --summary 'Review complete'"
+    )]
     Close {
         /// Group id, unique prefix, or project group slug
         id: String,
         /// Words the user typed in this session that contain the whole group id (g-1
         /// does not match g-12); closes the group for a session that holds no seat in it
+        #[arg(long)]
+        quote: Option<String>,
+        /// Summary text, or - to read stdin
+        #[arg(long, conflicts_with = "no_summary")]
+        summary: Option<String>,
+        /// Close without a summary
+        #[arg(long)]
+        no_summary: bool,
+        /// Refuse if the evidence has changed
+        #[arg(long)]
+        if_evidence: Option<String>,
+    },
+    /// Read bounded evidence for drafting a close summary
+    Evidence {
+        /// Group id, unique prefix, or project group slug
+        id: String,
+        /// Words the user typed in this session naming the group
         #[arg(long)]
         quote: Option<String>,
     },
@@ -135,14 +154,40 @@ pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliErr
             session: ctx.caller(),
             provider: ctx.provider(),
         },
-        GroupCommand::Close { id, quote } => Command::Close(GroupCloseInput {
+        GroupCommand::Close {
+            id,
+            quote,
+            summary,
+            no_summary: _,
+            if_evidence,
+        } => Command::Close(GroupCloseInput {
             session: ctx.caller(),
             id,
             quote,
             provider: ctx.provider(),
-            models: super::session::once(|config: &Config| ctx.models(config)),
+            summary: match summary {
+                Some(s) if s == "-" => {
+                    use std::io::Read;
+                    let mut text = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .map_err(|source| CliError::Read {
+                            what: "stdin".into(),
+                            source,
+                        })?;
+                    Some(text)
+                }
+                other => other,
+            },
+            if_evidence,
             notes: ctx,
         }),
+        GroupCommand::Evidence { id, quote } => Command::Evidence {
+            session: ctx.caller(),
+            provider: ctx.provider(),
+            id,
+            quote,
+        },
         GroupCommand::Show { id } => Command::Show(id),
         GroupCommand::List => Command::List,
     };
@@ -161,6 +206,7 @@ fn output(outcome: Outcome) -> Output {
             }
         }
         Outcome::Backfilled(report) => backfilled(*report),
+        Outcome::Evidence(value) => Output::GroupEvidence(value),
         Outcome::Shown(group) => Output::Show {
             record: Record::Group(group),
         },

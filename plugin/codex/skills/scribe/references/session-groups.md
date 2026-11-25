@@ -82,16 +82,10 @@ For open, join, leave and close in Codex, put `--provider codex` before
   scribe search "<words>" --kind message --group <id> --json
   ```
 - **Citing.** Cite a group as `g-<n>`. Its closing summary is an account the
-  model wrote at close, not the human's words. Quote the human only from a
+  closer drafted from evidence, not the human's words. Quote the human only from a
   stored-turn hit titled `(user)`, citing its `session:<id>`.
-- **Close.** Run `scribe group close <id>` from the session that opened the
-  group or from the session that now holds the opener's seat (its newest
-  transcript, after a clear or a `--replace`), and only when the human asks. This runs a model call.
-- **Close with a quote.** From any other session, and only when the human asks
-  in their own typed words, run `scribe group close <id> --quote '<span>'`. The
-  span must be a verbatim substring of a turn the human typed in this session
-  and must contain the exact canonical group id (`g-<n>`), not a slug. The call
-  closes the group without taking a seat. Otherwise it is refused.
+- **Close.** When the human asks, run `scribe group evidence <id> --json` from the opening session or current holder of the opener's seat. Draft a summary from that evidence and run `scribe group close <id> --summary '<text>' --if-evidence <evidence_sha256>`. For headless work, run the Orbit job `scribe-group-close`. Use `--no-summary` to close explicitly without one.
+- **Close with a quote.** From any other session, include `--quote '<span>'` on both evidence and close. The span must be the human's own typed words in this session and contain the exact canonical group id (`g-<n>`), not a slug. This does not take a seat.
 - **Quote length.** The span may omit other words from that turn only when it
   still contains the complete id and has at least eight characters after the
   shared quote normalization and trimming.
@@ -99,17 +93,13 @@ For open, join, leave and close in Codex, put `--provider codex` before
   even when it names the group. From the typed turn "end g-1 after the release",
   `end g-1` (seven characters) is refused, while `end g-1 after` (thirteen
   characters from the same turn) is accepted.
-- **Closing summary.** Scribe sends up to 16 of the members' newest active
-  handoffs and 32 newest stored user turns to the ask model in one call. The
-  4,000-character limit applies to the model's text: trimmed, it must be 1–4,000
-  characters before and after redaction, or the close is refused and the group
-  stays open.
+- **Closing summary.** Evidence includes up to 16 recent active handoffs and 32 recent stored user turns. The supplied summary must be 1–4,000 characters before and after redaction. If evidence changes, the digest check refuses the close; read it again and redraft.
 - **Stored closing summary.** When the group has related references, Scribe
   appends a sentence naming them as work missing from the handoffs, then stores
   the summary with the closed time. So the stored closing summary can be longer
   than 4,000 characters.
 - **Closed groups.** A closed group takes no members and stores no more turns.
-  Closing a closed group returns its record without another model call.
+  Closing a closed group returns its record unchanged.
 
 ## Project groups
 
@@ -144,7 +134,7 @@ A second session joins itself to the existing open group by typing
 names. A session in a group must leave before joining another. Peer, scheduled
 and harness prompts cannot give consent. Clear-time seat inheritance also
 applies to project groups in Claude Code. The group stays open until
-`scribe group close <slug>` from its opening session or the current holder of
+`scribe group close <slug> --summary '<text>'` from its opening session or the current holder of
 its seat.
 
 A quoted close, described in the Close with a quote bullet above, names the

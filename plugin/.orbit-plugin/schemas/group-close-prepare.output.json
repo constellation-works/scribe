@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "handoffs": {
+          "type": "array"
+        },
+        "turns": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "handoffs",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "related": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "instructions": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "crew": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id",
+    "evidence",
+    "related",
+    "evidence_sha256",
+    "instructions",
+    "crew"
+  ],
+  "additionalProperties": false
+}

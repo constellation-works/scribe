@@ -25,7 +25,6 @@ pub use turns::{claude as claude_turns, codex as codex_turns, past as past_turns
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::{CloseGroupOutcome, GroupVerbs};
 
-use crate::apps::session::{self, ModelsOnce};
 use crate::apps::tag::ConfigReads;
 use crate::composition::Context;
 use crate::group::{GroupAdded, GroupAddition, SeatStart};
@@ -63,7 +62,18 @@ pub enum Command<'i> {
         provider: Provider,
     },
     /// `group close`.
-    Close(GroupCloseInput<'i, ModelsOnce<'i>>),
+    Close(GroupCloseInput<'i>),
+    /// Read bounded evidence for an authorized closer.
+    Evidence {
+        /// The calling session.
+        session: Option<SessionId>,
+        /// The calling provider.
+        provider: Provider,
+        /// The group id or alias.
+        id: String,
+        /// Optional verified user consent.
+        quote: Option<String>,
+    },
     /// `group show`: the group (an id, prefix or slug).
     Show(String),
     /// `group list`.
@@ -83,7 +93,7 @@ impl Command<'_> {
             Self::Leave { .. } => "group leave",
             Self::Backfill { .. } => "group backfill",
             Self::Close(_) => CLOSE_COMMAND,
-            Self::List | Self::Show(_) => return None,
+            Self::List | Self::Show(_) | Self::Evidence { .. } => return None,
         };
         Some(AuditMeta {
             command,
@@ -104,9 +114,11 @@ impl Command<'_> {
                 author: None,
                 target: resolved_id(ctx, id),
             },
-            Self::Open(_) | Self::Leave { .. } | Self::List | Self::Show(_) => {
-                AuditSubject::default()
-            }
+            Self::Open(_)
+            | Self::Leave { .. }
+            | Self::List
+            | Self::Show(_)
+            | Self::Evidence { .. } => AuditSubject::default(),
         }
     }
 }
@@ -117,6 +129,8 @@ pub enum Outcome {
     Written(Box<Written>),
     /// What a `backfill` stored.
     Backfilled(Box<GroupBackfilled>),
+    /// Bounded group close evidence.
+    Evidence(serde_json::Value),
     /// The group `show` read.
     Shown(Box<crate::group::Group>),
     /// Every group, newest first.
@@ -288,24 +302,18 @@ pub(crate) fn run<E: PortError>(
             (leave::run(ctx, &session)?, true, Vec::new())
         }
         Command::Close(input) => {
-            let GroupCloseInput {
-                session,
-                id,
-                quote,
-                provider,
-                models,
-                notes,
-            } = input;
-            let input = GroupCloseInput {
-                session,
-                id,
-                quote,
-                provider,
-                models: session::adapt_once(models),
-                notes,
-            };
             let closed = close::run(ctx, input)?;
             (closed.id, closed.changed, closed.notices)
+        }
+        Command::Evidence {
+            session,
+            provider,
+            id,
+            quote,
+        } => {
+            return Ok(Outcome::Evidence(close::evidence(
+                ctx, session, provider, id, quote,
+            )?));
         }
         Command::Show(id) => {
             return Ok(Outcome::Shown(Box::new(
@@ -571,7 +579,7 @@ impl Audited for Outcome {
                 Line::written(Some(report.group.clone()), report.stored != 0)
             }
             Self::Shown(group) => vec![Line::success(Some(group.id.clone()))],
-            Self::Listed(_) => vec![Line::success(None)],
+            Self::Listed(_) | Self::Evidence(_) => vec![Line::success(None)],
         }
     }
 }
