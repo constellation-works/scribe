@@ -4,6 +4,9 @@
     "id": {
       "type": "string"
     },
+    "closed": {
+      "type": "boolean"
+    },
     "evidence": {
       "type": "object",
       "properties": {
@@ -47,11 +50,23 @@
   },
   "required": [
     "id",
-    "evidence",
-    "related",
-    "evidence_sha256",
-    "instructions",
+    "closed",
     "crew"
   ],
+  "if": {
+    "properties": {
+      "closed": {
+        "const": false
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "evidence",
+      "related",
+      "evidence_sha256",
+      "instructions"
+    ]
+  },
   "additionalProperties": false
 }

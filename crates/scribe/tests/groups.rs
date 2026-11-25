@@ -527,7 +527,6 @@ fn opener_closes_with_one_bounded_summary_and_the_project_brief_shows_it() {
          least eight characters long after normalization",
         "{refused}"
     );
-    assert!(!f.home().join("model-calls").exists());
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
     let after_denied: Vec<_> = support::audit_lines(&f.root())
         .into_iter()
@@ -611,33 +610,22 @@ fn opener_closes_with_one_bounded_summary_and_the_project_brief_shows_it() {
 }
 
 /// A fixture whose opener `A` holds seat `chief`.
-fn seated_group() -> (Fixture, std::ffi::OsString) {
+fn seated_group() -> Fixture {
     let f = Fixture::new();
     for id in [A, B, C, D] {
         transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
     }
     open(&f);
     join_as(&f, A, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
-    (f, path)
+    f
 }
 
-/// No model executable is needed for a fixed close answer.
-fn summary_model(_f: &Fixture) -> std::ffi::OsString {
-    std::ffi::OsString::new()
-}
-
-fn close_as(f: &Fixture, path: &std::ffi::OsStr, session: &str) -> std::process::Output {
-    close_with(f, path, session, &[])
+fn close_as(f: &Fixture, session: &str) -> std::process::Output {
+    close_with(f, session, &[])
 }
 
 /// Close `g-1` as `session` with extra arguments, such as `--quote`.
-fn close_with(
-    f: &Fixture,
-    path: &std::ffi::OsStr,
-    session: &str,
-    extra: &[&str],
-) -> std::process::Output {
+fn close_with(f: &Fixture, session: &str, extra: &[&str]) -> std::process::Output {
     let args = [
         &["group", "close", "g-1"][..],
         extra,
@@ -646,35 +634,23 @@ fn close_with(
     .concat();
     f.cmd(&args)
         .env("CLAUDE_CODE_SESSION_ID", session)
-        .env("PATH", path)
         .output()
         .unwrap()
 }
 
-fn model_calls(f: &Fixture) -> usize {
-    std::fs::read_to_string(f.home().join("model-calls")).map_or(0, |calls| calls.lines().count())
-}
-
 /// The caller is refused with `group_membership`: the group
 /// unchanged and exactly one more failure audit.
-fn assert_close_refused(f: &Fixture, path: &std::ffi::OsStr, session: &str) {
-    assert_close_refused_with(f, path, session, &[], "group_membership");
+fn assert_close_refused(f: &Fixture, session: &str) -> Value {
+    assert_close_refused_with(f, session, &[], "group_membership")
 }
 
 /// The close with `extra` arguments is refused with `code`: the
 /// group unchanged and exactly one more failure audit naming `session`. Returns
 /// the refusal so a caller can check its message.
-fn assert_close_refused_with(
-    f: &Fixture,
-    path: &std::ffi::OsStr,
-    session: &str,
-    extra: &[&str],
-    code: &str,
-) -> Value {
-    let calls = model_calls(f);
+fn assert_close_refused_with(f: &Fixture, session: &str, extra: &[&str], code: &str) -> Value {
     let group = invoke(f, A, &["group", "show", "g-1"], 0);
     let audits = group_close_audits(f).len();
-    let out = close_with(f, path, session, extra);
+    let out = close_with(f, session, extra);
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -683,7 +659,6 @@ fn assert_close_refused_with(
     );
     let error: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(error["code"], code, "{session} {extra:?}: {error}");
-    assert_eq!(model_calls(f), calls, "{session} {extra:?}");
     assert_eq!(
         invoke(f, A, &["group", "show", "g-1"], 0),
         group,
@@ -700,18 +675,17 @@ fn assert_close_refused_with(
 
 #[test]
 fn the_newest_transcript_of_the_openers_seat_closes_after_a_replace() {
-    let (f, path) = seated_group();
+    let f = seated_group();
     join_as(&f, C, "g-1", "editor", &[], 0);
     join_as(&f, B, "g-1", "chief", &["--replace"], 0);
     // The replaced opener and the newest transcript of its seat both pass;
     // other sessions do not.
-    assert_close_refused(&f, &path, D);
-    assert_close_refused(&f, &path, C);
+    assert_close_refused(&f, D);
+    assert_close_refused(&f, C);
     for _ in 0..2 {
-        let out = close_as(&f, &path, B);
+        let out = close_as(&f, B);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     }
-    assert_eq!(model_calls(&f), 0);
     let successes: Vec<_> = group_close_audits(&f)
         .into_iter()
         .filter(|line| line["status"] == "success")
@@ -720,54 +694,114 @@ fn the_newest_transcript_of_the_openers_seat_closes_after_a_replace() {
     assert_eq!(successes[0]["instruction_session"], B);
     assert!(!invoke(&f, B, &["group", "show", "g-1"], 0)["closed"].is_null());
     // An unauthorized caller is refused on a closed group, not told it is closed.
-    assert_close_refused(&f, &path, D);
-    assert_close_refused(&f, &path, C);
+    assert_close_refused(&f, D);
+    assert_close_refused(&f, C);
 }
 
 #[test]
 fn the_newest_transcript_of_the_openers_seat_closes_after_a_clear() {
-    let (f, path) = seated_group();
+    let f = seated_group();
     cleared_transcript(&f, B, D, &[A]);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let out = close_as(&f, &path, B);
+    let out = close_as(&f, B);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
-    let again = close_as(&f, &path, B);
+    let again = close_as(&f, B);
     assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
 fn a_replaced_transcript_that_is_not_the_opener_cannot_close() {
-    let (f, path) = seated_group();
+    let f = seated_group();
     join_as(&f, B, "g-1", "chief", &["--replace"], 0);
     join_as(&f, C, "g-1", "chief", &["--replace"], 0);
-    assert_close_refused(&f, &path, B);
+    assert_close_refused(&f, B);
     // The opener itself still closes, as before.
-    let out = close_as(&f, &path, A);
+    let out = close_as(&f, A);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
 fn a_session_that_left_the_openers_seat_cannot_close() {
-    let (f, path) = seated_group();
+    let f = seated_group();
     join_as(&f, B, "g-1", "chief", &["--replace"], 0);
     invoke(&f, B, &["group", "leave"], 0);
-    assert_close_refused(&f, &path, B);
-    assert_close_refused(&f, &path, D);
+    assert_close_refused(&f, B);
+    assert_close_refused(&f, D);
 }
 
-/// An authorized seat holder can close with a supplied answer without a transcript.
+/// A closer whose own transcript cannot be verified is refused, and the refusal
+/// names that session's transcript rather than the opener's, for the opener and
+/// for the seat holder that replaced it, through `group close`, `group
+/// evidence` and the job's prepare and apply tools alike.
 #[test]
-fn an_authorized_closer_needs_no_transcript_without_a_quote() {
-    let (f, path) = seated_group();
+fn a_closer_whose_own_transcript_cannot_be_verified_is_named_as_itself() {
+    let f = seated_group();
     join_as(&f, B, "g-1", "chief", &["--replace"], 0);
+    let digest = invoke(&f, B, &["group", "evidence", "g-1"], 0)["evidence_sha256"].clone();
     std::fs::remove_file(transcript_path(&f, A)).unwrap();
     std::fs::remove_file(transcript_path(&f, B)).unwrap();
-    let out = close_as(&f, &path, B);
+    for (closer, other) in [(B, A), (A, B)] {
+        let error = assert_close_refused(&f, closer);
+        let message = error["error"].as_str().unwrap();
+        assert!(
+            message.contains(&format!("transcript of session {closer} ")),
+            "{message}"
+        );
+        assert!(!message.contains(other), "{message}");
+        let read = invoke(&f, closer, &["group", "evidence", "g-1"], 1);
+        assert_eq!(read["code"], "group_membership", "{read}");
+        assert_eq!(read["error"], message, "{read}");
+        let input = json!({"group": "g-1", "session": closer, "provider": "claude-code"});
+        let prepared = close_plugin(&f, "group-close-prepare", input.clone());
+        assert_eq!(prepared["ok"], false, "{prepared}");
+        assert_eq!(prepared["error"]["code"], "group_membership", "{prepared}");
+        let mut input = input;
+        input["summary"] = json!("Review complete.");
+        input["evidence_sha256"] = digest.clone();
+        let applied = close_plugin(&f, "group-close-apply", input);
+        assert_eq!(applied["ok"], false, "{applied}");
+        assert_eq!(applied["error"]["code"], "group_membership", "{applied}");
+    }
+    assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
+    // A session that may not close is still refused as one, not for its
+    // missing transcript.
+    let error = assert_close_refused(&f, C);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("only the opening session"),
+        "{error}"
+    );
+}
+
+/// Once closed, a group's close, evidence and prepare all end without error,
+/// even for an authorized closer whose transcript is gone; an unauthorized
+/// caller is still refused.
+#[test]
+fn an_already_closed_group_ends_clean_for_its_closer() {
+    let f = seated_group();
+    let out = close_as(&f, A);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert!(!invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
+    let shown = invoke(&f, A, &["group", "show", "g-1"], 0);
+    std::fs::remove_file(transcript_path(&f, A)).unwrap();
+    let again = close_as(&f, A);
+    assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
+    let again: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again, shown);
+    let read = invoke(&f, A, &["group", "evidence", "g-1"], 0);
+    assert_eq!(read, json!({"id": "g-1", "closed": true}));
+    let prepared = close_plugin(
+        &f,
+        "group-close-prepare",
+        json!({"group": "g-1", "session": A, "provider": "claude-code"}),
+    );
+    assert_eq!(prepared["ok"], true, "{prepared}");
+    assert_eq!(prepared["output"]["closed"], true, "{prepared}");
+    assert!(prepared["output"]["evidence"].is_null(), "{prepared}");
+    assert_eq!(invoke(&f, A, &["group", "show", "g-1"], 0), shown);
+    let refused = invoke(&f, C, &["group", "evidence", "g-1"], 1);
+    assert_eq!(refused["code"], "group_membership", "{refused}");
 }
 
 #[test]
@@ -778,9 +812,8 @@ fn an_opener_without_a_seat_is_the_only_closer() {
     }
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
-    assert_close_refused(&f, &path, B);
-    assert_close_refused(&f, &path, C);
+    assert_close_refused(&f, B);
+    assert_close_refused(&f, C);
     let out = f
         .cmd(&["group", "close", "g-1", "--no-summary", "--json"])
         .env("CLAUDE_CODE_SESSION_ID", A)
@@ -794,7 +827,6 @@ fn an_opener_without_a_seat_is_the_only_closer() {
             .unwrap()
             .starts_with("For work missing from the handoffs")
     );
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -823,15 +855,13 @@ fn a_quoted_request_closes_the_group_for_a_session_with_no_seat() {
     );
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
     // This eligible span is shorter than the typed turn that contains it.
     let quote = "please close g-1";
     // Without a quote D holds no seat, so the opener's rule still refuses it.
-    assert_close_refused(&f, &path, D);
+    assert_close_refused(&f, D);
 
-    let out = close_with(&f, &path, D, &["--quote", quote]);
+    let out = close_with(&f, D, &["--quote", quote]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
     let successes: Vec<_> = group_close_audits(&f)
         .into_iter()
         .filter(|line| line["status"] == "success")
@@ -851,9 +881,8 @@ fn a_quoted_request_closes_the_group_for_a_session_with_no_seat() {
 
     // A retry returns the closed record with no second success audit.
     let audits = group_close_audits(&f).len();
-    let again = close_with(&f, &path, D, &["--quote", quote]);
+    let again = close_with(&f, D, &["--quote", quote]);
     assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
-    assert_eq!(model_calls(&f), 0);
     assert_eq!(group_close_audits(&f).len(), audits);
     assert_eq!(invoke(&f, A, &["group", "show", "g-1"], 0), group);
 }
@@ -880,7 +909,6 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
             harness,
         ],
     );
-    let path = summary_model(&f);
     for (quote, code) in [
         // Not in any turn typed in this session.
         ("close g-1 right now", "quote_not_found"),
@@ -889,16 +917,11 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         // Only in a harness line, which is not a typed turn.
         ("close g-1 from the harness", "quote_not_found"),
     ] {
-        assert_close_refused_with(&f, &path, D, &["--quote", quote], code);
+        assert_close_refused_with(&f, D, &["--quote", quote], code);
     }
     // Verbatim in a typed turn, but the quote does not contain g-1 at all.
-    let absent = assert_close_refused_with(
-        &f,
-        &path,
-        D,
-        &["--quote", "the release ships"],
-        "group_membership",
-    );
+    let absent =
+        assert_close_refused_with(&f, D, &["--quote", "the release ships"], "group_membership");
     assert_eq!(
         absent["error"],
         "the quote must contain g-1, the group it closes"
@@ -912,11 +935,9 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         "close g-1é",
         "g-1 after review",
     ] {
-        let clipped =
-            assert_close_refused_with(&f, &path, D, &["--quote", quote], "group_membership");
+        let clipped = assert_close_refused_with(&f, D, &["--quote", quote], "group_membership");
         assert_eq!(clipped["error"], clipped_message, "{quote}");
     }
-    assert_eq!(model_calls(&f), 0);
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
 }
 
@@ -940,18 +961,15 @@ fn a_quoted_close_whose_span_clips_the_id_is_refused_even_when_its_turn_names_it
     );
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
     // The submitted span clips the id, so the refusal names that span, not the turn.
-    let clipped =
-        assert_close_refused_with(&f, &path, D, &["--quote", "finish g-1"], "group_membership");
+    let clipped = assert_close_refused_with(&f, D, &["--quote", "finish g-1"], "group_membership");
     assert_eq!(
         clipped["error"],
         "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where it only appears inside a longer id, so quote a span where g-1 stands alone"
     );
     // The standalone span of the same turn is what the close is authorized by.
-    let out = close_with(&f, &path, D, &["--quote", "close g-1"]);
+    let out = close_with(&f, D, &["--quote", "close g-1"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -967,14 +985,11 @@ fn a_quoted_close_under_eight_characters_is_refused_even_when_it_names_the_group
     );
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
     // Seven characters name g-1 but fall below the shared eight-character minimum.
-    assert_close_refused_with(&f, &path, D, &["--quote", "end g-1"], "quote_not_found");
-    assert_eq!(model_calls(&f), 0);
+    assert_close_refused_with(&f, D, &["--quote", "end g-1"], "quote_not_found");
     // Thirteen characters from the same typed turn clear the minimum and name g-1.
-    let out = close_with(&f, &path, D, &["--quote", "end g-1 after"]);
+    let out = close_with(&f, D, &["--quote", "end g-1 after"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
 }
 
 /// Restores owner access to a path a test made unreadable, even on a panic.
@@ -1019,25 +1034,24 @@ fn a_quoted_close_keeps_a_transcript_io_failure_apart_from_missing_evidence() {
     );
     open(&f);
     join_as(&f, B, "g-1", "chief", &[], 0);
-    let path = summary_model(&f);
     let args = ["--quote", "please close g-1"];
     let unreadable = std::fs::read(&quoted).unwrap();
     let projects = quoted.parent().unwrap().to_path_buf();
 
     // Missing evidence and a provenance refusal fail closed as not found.
     std::fs::remove_file(&quoted).unwrap();
-    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
+    assert_close_refused_with(&f, D, &args, "quote_not_found");
     std::fs::write(&quoted, &unreadable).unwrap();
     std::fs::set_permissions(&quoted, std::fs::Permissions::from_mode(0o666)).unwrap();
-    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
+    assert_close_refused_with(&f, D, &args, "quote_not_found");
     support::make_private(&quoted);
 
     // A read that fails on an existing transcript keeps its I/O diagnostic and
     // audit code; the request itself was valid.
     {
         let _restore = RestoreMode::lock(&quoted, 0o600);
-        assert_close_refused_with(&f, &path, D, &args, "io_error");
-        let out = close_with(&f, &path, D, &args);
+        assert_close_refused_with(&f, D, &args, "io_error");
+        let out = close_with(&f, D, &args);
         let error: Value = serde_json::from_slice(&out.stderr).unwrap();
         assert!(
             error["error"]
@@ -1051,13 +1065,11 @@ fn a_quoted_close_keeps_a_transcript_io_failure_apart_from_missing_evidence() {
     // So does a discovery failure, before any transcript is opened.
     {
         let _restore = RestoreMode::lock(&projects, 0o700);
-        assert_close_refused_with(&f, &path, D, &args, "io_error");
+        assert_close_refused_with(&f, D, &args, "io_error");
     }
-    assert_eq!(model_calls(&f), 0);
 
-    let out = close_with(&f, &path, D, &args);
+    let out = close_with(&f, D, &args);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    assert_eq!(model_calls(&f), 0);
 
     // A retry on the closed group verifies the quote first: unreadable
     // evidence is `io_error`, absent evidence is `quote_not_found`, and
@@ -1065,15 +1077,14 @@ fn a_quoted_close_keeps_a_transcript_io_failure_apart_from_missing_evidence() {
     let group = invoke(&f, A, &["group", "show", "g-1"], 0);
     {
         let _restore = RestoreMode::lock(&quoted, 0o600);
-        assert_close_refused_with(&f, &path, D, &args, "io_error");
+        assert_close_refused_with(&f, D, &args, "io_error");
     }
     {
         let _restore = RestoreMode::lock(&projects, 0o700);
-        assert_close_refused_with(&f, &path, D, &args, "io_error");
+        assert_close_refused_with(&f, D, &args, "io_error");
     }
     std::fs::remove_file(&quoted).unwrap();
-    assert_close_refused_with(&f, &path, D, &args, "quote_not_found");
-    assert_eq!(model_calls(&f), 0);
+    assert_close_refused_with(&f, D, &args, "quote_not_found");
     assert_eq!(invoke(&f, A, &["group", "show", "g-1"], 0), group);
 }
 
@@ -4028,7 +4039,6 @@ fn open_stores_the_openers_earlier_typed_turns_and_no_other_line() {
     ] {
         assert_eq!(search_group(&f, term)["total"], 0, "{term}");
     }
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -4062,7 +4072,6 @@ fn join_stores_the_joining_sessions_earlier_typed_turns_and_no_other_line() {
     ] {
         assert_eq!(search_group(&f, term)["total"], 0, "{term}");
     }
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -4505,7 +4514,6 @@ fn backfill_existing_holders_is_idempotent_and_keeps_capture_cursor() {
     assert_eq!(repeat["stored"], 0);
     assert_eq!(repeat["skipped"], 2);
     assert_eq!(cursor(), before);
-    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -4523,8 +4531,7 @@ fn backfill_reports_terminal_and_refuses_closed_groups() {
             && stdout.contains("Total:"),
         "{stdout}"
     );
-    let fake = summary_model(&f);
-    assert!(close_as(&f, &fake, A).status.success());
+    assert!(close_as(&f, A).status.success());
     let error = invoke(&f, A, &["group", "backfill", "g-1"], 1);
     assert_eq!(error["code"], "group_membership");
 }

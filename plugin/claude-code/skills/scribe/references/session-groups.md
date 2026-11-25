@@ -99,7 +99,8 @@ For open, join, leave and close in Codex, put `--provider codex` before
   the summary with the closed time. So the stored closing summary can be longer
   than 4,000 characters.
 - **Closed groups.** A closed group takes no members and stores no more turns.
-  Closing a closed group returns its record unchanged.
+  Closing a closed group returns its record unchanged, and its evidence reads
+  `"closed": true` with nothing to summarize.
 
 ## Project groups
 
