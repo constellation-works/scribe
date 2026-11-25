@@ -8,10 +8,8 @@
 //! it, and only this module names `std::process`
 //! (scripts/check-dependency-direction.sh).
 //!
-//! The request and answer shapes the port carries ([`crate::models`]) stay in
-//! `scribe-domain` for now: `scribe-store` and the domain use them, and both
-//! sit below the core. They move when the domain is dissolved (ORB-27921
-//! step 5).
+//! The request and answer shapes the port carries ([`crate::models`]) are in
+//! `models.rs` beside it.
 
 mod cli;
 pub mod models;

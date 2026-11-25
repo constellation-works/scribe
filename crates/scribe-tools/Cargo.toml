@@ -12,11 +12,9 @@ name = "scribe_tools"
 path = "src/lib.rs"
 
 # scripts/check-dependency-direction.sh holds the crate's policy: it depends
-# on the store (the capture position a Claude window resumes from) and, until
-# the domain is dissolved (ORB-27921 step 5), on scribe-domain for the
-# session id, provider, project and the Codex rollout parse.
+# on the store: the capture position a Claude window resumes from, and the
+# record shapes it reads (session id, provider, project, entry).
 [dependencies]
-scribe-domain = { workspace = true }
 scribe-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -32,7 +30,6 @@ unicode-normalization = { workspace = true }
 rustix = { workspace = true, features = ["fs", "system"] }
 
 [dev-dependencies]
-scribe-domain = { workspace = true, features = ["test-support"] }
 scribe-store = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 

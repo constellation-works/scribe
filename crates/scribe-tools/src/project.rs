@@ -14,7 +14,7 @@
 //! else gives no name, and the basename answers.
 
 use crate::fs::{self, File};
-use scribe_domain::Project;
+use scribe_store::record::Project;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 

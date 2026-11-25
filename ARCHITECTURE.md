@@ -2,8 +2,8 @@
 
 The layer model that [`scripts/check-dependency-direction.sh`](scripts/check-dependency-direction.sh) enforces
 ([STD-02](docs/standards/STD-02-rust-architecture-and-errors/STD-02.md) R1, R6).
-A lower layer never imports a higher one. A new crate, edge or domain module
-changes this file and that script in the same commit.
+A lower layer never imports a higher one. A new crate, edge or contract
+module changes this file and that script in the same commit.
 
 Why four crates: [the four-crate decision](docs/design/scribe/4_decisions.md#four-crates-domain-store-use-cases-and-cli)
 (ORB-27707). Other decisions are in [4_decisions.md](docs/design/scribe/4_decisions.md).
@@ -17,19 +17,19 @@ Why four crates: [the four-crate decision](docs/design/scribe/4_decisions.md#fou
 ## Crates
 
 ```
-scribe-domain  <-  scribe-store  <-  scribe-tools  <-  scribe-core  <-  scribe
+scribe-store  <-  scribe-tools  <-  scribe-core  <-  scribe
 ```
 
-`scribe-tools` names `scribe-domain` directly until the domain is dissolved
-(ORB-27921 step 5), and the binary names `scribe-tools` from ORB-27921 step 3
-PR 2 until PR 4, when composition is in the core.
+`scribe-core` also depends on `scribe-store` directly. `scribe-domain` was
+dissolved in ORB-27921 step 5 and deleted in PR 5-19: its shapes are the
+store's `contracts/`, its text and transcript code `scribe-tools`, and its
+rules the core's apps.
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe-domain` | Records and the pure rules over them: entries, sessions, proposals, tags, the parsing of config, and the request and answer shapes of the `Models` port. Values only, no I/O. | — | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `rustix` |
-| `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, and the redactor every persisted free-text field passes (`redact.rs`). The only crate that touches the data root. | `scribe-domain` | `clap`, `tracing-subscriber` and any terminal crate |
-| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), the fields of a hook's stdin payload and their decoding (`payload.rs`), a session pass's window over a transcript's messages (`window.rs`), the text primitives every layer may use: ranking tokens, sensitive and finance words, claim, verbatim and trigger predicates (`text/`), the host's name (`host.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-domain`, `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
-| `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with domain functions, calls the ports and commits in one store write. Its root re-exports `scribe-domain` and `scribe-store` at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-domain`, `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
+| `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, the redactor every persisted free-text field passes (`redact.rs`), and the record shapes (`contracts/`: entries, sessions, proposals, tags, groups, marks, memory, messages, pickups and the shared metadata). The only crate that touches the data root. | — | `clap`, `tracing-subscriber` and any terminal crate |
+| `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), the fields of a hook's stdin payload and their decoding (`payload.rs`), a session pass's window over a transcript's messages (`window.rs`), the text primitives every layer may use: ranking tokens, sensitive and finance words, claim, verbatim and trigger predicates (`text/`), the host's name (`host.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
+| `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with its app's rules, calls the ports and commits in one store write. Its root re-exports the store's contracts and the moved rules at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe` (binary) | Arguments, the grouped root help, dispatch, the surface error and rendering. The audit guard runs inside the core's `exec` (`runtime/audit.rs`). | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
 The store holds no rule: a check that decides whether a write may happen
@@ -108,16 +108,12 @@ fails if either crate names it again.
 |------|------|------|---------------|
 | Surface | `scribe::cli`, `::help`, `::commands`, `::error`, `::output` | Argument declarations, the grouped root help built from them (`help`), dispatch, the surface error type every command ends with (`error`), rendering, and the only stdout, stderr and terminal access. `main` captures `scribe_core::composition::Env` once and resolves the `Context` (`scribe::Context`, composition's with the binary's error). | `scribe-core` |
 
-## Rings inside `scribe-domain`
+## Where `scribe-domain` went
 
-The domain's modules are flat files, each in one ring. A module imports only
-modules of its own ring or an earlier one, by path, in a grouped import, or
-through a name the crate root re-exports. The script holds the module→ring
-map; a new module fails the check until it is given a ring.
-
-| Ring | Modules |
-|------|---------|
-| 1. base | `record`, `provider` |
+The domain's modules were flat files in rings (base, records, rules), and the
+script held the module→ring map. ORB-27921 step 5 moved them out one family
+per PR; PR 5-19 moved the last ring, `record` and `provider`, and deleted the
+crate with its ring map. The paragraphs below record where each module went.
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -233,7 +229,7 @@ PR 5-12 moved the transcript family to the tools:
   and it holds the origin guard's functions, not shapes.
 - `control`'s line parser went to `scribe-tools/src/markers/control.rs`.
 
-The tools root names the domain's `entry`, `proposal`, `record`, `session`,
+The tools root names the store's `entry`, `proposal`, `record`, `session`,
 `SessionId` and `Speaker`, and its own `control` and `codex`, at the paths
 the moved code uses. The core's root re-exports `crate::transcript`,
 `crate::codex`, `crate::origin` and `crate::control` from the tools. The
@@ -340,6 +336,21 @@ PR 5-18 moved `session`:
 - The session fixtures and `T0` joined `entry` in the store's
   `fixtures.rs`, and the domain's `fixtures` is gone.
 
+PR 5-19 moved `record` and `provider` and deleted `scribe-domain`:
+
+- `record` went whole to the store's `contracts/record.rs`
+  (`scribe_store::record`): the metadata shapes and their constructors, the
+  serde helpers (`nullable`, `nullable_date`), the day parser (`parse_day`)
+  and the kebab-case invariant tag and topic names share (`is_kebab`).
+  `patch`, the list edit `tag update` and `entry update` apply, went to
+  `apps/tag/rules.rs`; the core's `crate::record` re-exports both.
+- `provider` went whole to `contracts/provider.rs`; the store root exports
+  `Provider`.
+- The store's `testing/redact.rs` became an inline `testing::redact` beside
+  `audit`, `codec`, `db`, `memory` and `write`, and `testing/` is gone.
+- The crate, its workspace entries and its `test-support` feature are gone;
+  the store's `test-support` turns on `time/macros` for the fixtures.
+
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
 
@@ -357,8 +368,8 @@ Checked by grep over non-test sources in `scripts/check-dependency-direction.sh`
 and `scripts/check-terminal-guard.sh`: what a crate edge cannot express. "Module"
 includes any file added later.
 
-- `scribe-domain` and `scribe-core` do no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
-- `scribe-domain`, `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
+- `scribe-core` does no file, network or process I/O (`std::fs`, `std::net`, `std::process`): `scribe-core` reaches files through `scribe-store` and `scribe-tools`. The exceptions are in `scribe-core`: `composition.rs` and `providers/` name `std::fs`, and only `providers/`, which spawns the model processes, names `std::process`, `rustix` and `tempfile`.
+- `scribe-store` and `scribe-core` read no environment variables and discover no paths (`std::env::`, `home_dir`, `current_dir()`); the caller passes resolved roots. In `scribe-core` the one exception is `composition.rs`, which imports no app.
 - The tools' `text::claim` module owns lexical claim and provenance predicates below the `pass` orchestrator; the tools' `window` owns pass window limits. Their callers (`config`, `consistency`, `memory`, `message`) do not import `pass`.
 - A port imports none of the modules that call it: the model shapes do not import `memory` or `group`, and `providers/` imports no app and no runtime.
 - Only five flows name the `Models` port (`providers`, `Models`, `ModelError`, `ModelsOnce`, `ModelsEach`): session pass, catalog and rebuild, memory refresh and group close, with the `mod.rs` of their apps.
@@ -374,5 +385,5 @@ The crate edges replaced these grep rules:
 
 - business modules name no store and no use case;
 - the store names no use case;
-- `tempfile` and `rustix` stay out of the domain (the core's `providers/` uses them for the model processes);
-- `rusqlite` stays out of the domain, the use cases and the CLI.
+- `tempfile` and `rustix` stay out of the tools (the core's `providers/` uses them for the model processes);
+- `rusqlite` stays out of the tools, the use cases and the CLI.

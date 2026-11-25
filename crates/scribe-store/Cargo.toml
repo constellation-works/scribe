@@ -14,13 +14,13 @@ path = "src/lib.rs"
 # scripts/check-dependency-direction.sh rejects clap, tracing-subscriber and
 # every other surface crate here.
 [features]
-# `Store::seed_records` and the `testing` module (`StoreTestReads`, the
-# shared test helpers, and the internals scribe-core's store tests reach).
+# `Store::seed_records`, the record `fixtures` and the `testing` module
+# (`StoreTestReads`, the shared test helpers, and the internals scribe-core's
+# store tests reach).
 # Only dev-dependencies turn it on, through scribe-core's own feature.
-test-support = ["scribe-domain/test-support"]
+test-support = ["time/macros"]
 
 [dependencies]
-scribe-domain = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -35,7 +35,6 @@ yaml_serde = { workspace = true }
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
-scribe-domain = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 time = { workspace = true, features = ["macros"] }
 

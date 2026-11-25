@@ -4,12 +4,12 @@
 //! kind.
 //!
 //! Pure values with validating constructors (STD-02 R14) and no I/O
-//! (STD-02 R5): `scripts/check-dependency-direction.sh` rejects `std::fs`,
-//! `std::net`, `std::process` and `crate::store` here. The serde shapes are
-//! what `scribe.db` rows hold and exports write as frontmatter, so a field
-//! is never renamed or retyped without a database migration
-//! (`store/db.rs::MIGRATIONS`) and, for an exported shape, a `FORMAT` bump
-//! (`store/codec.rs`).
+//! (STD-02 R5): like every contract, it imports nothing from `db/` or
+//! `repository/` (`scripts/check-dependency-direction.sh`). The serde shapes
+//! are what `scribe.db` rows hold and exports write as frontmatter, so a
+//! field is never renamed or retyped without a database migration
+//! (`db/mod.rs`'s `MIGRATIONS`) and, for an exported shape, a `FORMAT` bump
+//! (`db/codec.rs`).
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
@@ -791,16 +791,6 @@ pub mod nullable_date {
         pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
             let text = String::deserialize(deserializer)?;
             Date::parse(&text, super::FORMAT).map_err(serde::de::Error::custom)
-        }
-    }
-}
-
-/// Remove `remove` from `items`, then append each of `add` not already there.
-pub fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {
-    items.retain(|item| !remove.contains(item));
-    for item in add {
-        if !items.contains(item) {
-            items.push(item.clone());
         }
     }
 }

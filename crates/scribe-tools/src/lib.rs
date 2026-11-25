@@ -39,7 +39,7 @@ mod tests;
 // `codex`, `markers` and `control` name them by, and the control parser and
 // Codex rollout at the root paths they had in the domain.
 use markers::control;
-use scribe_domain::record;
 use scribe_store::entry::{self, Speaker};
+use scribe_store::record;
 use scribe_store::session::{self, SessionId};
 use transcript::codex;

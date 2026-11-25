@@ -5,6 +5,7 @@ mod entry;
 mod mark;
 mod memory;
 mod proposal;
+mod record;
 mod session;
 mod tag;
 

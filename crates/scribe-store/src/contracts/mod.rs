@@ -14,6 +14,8 @@ pub(crate) mod mark;
 pub(crate) mod memory;
 pub(crate) mod message;
 pub(crate) mod proposal;
+pub mod provider;
+pub mod record;
 pub(crate) mod session;
 pub(crate) mod tag;
 #[cfg(test)]
