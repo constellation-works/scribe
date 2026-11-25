@@ -902,6 +902,74 @@ fn a_line_start_form_gives_the_agent_its_tag_as_the_hint() {
 }
 
 #[test]
+fn an_evidence_tag_handoff_gives_the_evidence_pointer_its_command_needs() {
+    let fx = Fixture::new();
+    fx.config("[tags.finding]\nrequire_evidence = true\n");
+    let claude = Claude::new(&fx);
+    let typed = "\
+#scribe finding: the reviewer mix alone predicts a 7-point gap
+#scribe preferences: keep merge commits for releases";
+    marked_turns(
+        &claude,
+        &[("u-0", "We compared the reviewer mixes."), ("u-1", typed)],
+    );
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let context = reply(&out)["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let lines: Vec<&str> = context.lines().collect();
+    assert_eq!(lines.len(), 2, "{context}");
+
+    // The evidence tag's command gives the pointer `entry add` requires
+    // (evidence_required) and neither --quote nor --spoken, which it refuses
+    // under a finding: the entry is the agent's own result.
+    let finding = lines[0];
+    assert!(
+        finding.contains(
+            "scribe entry add --tag finding --project scribe --author <name> \
+             --related session:"
+        ),
+        "{context}"
+    );
+    assert!(
+        finding.contains("--evidence '<pointer>' '<statement>'"),
+        "{context}"
+    );
+    assert!(!finding.contains("--quote"), "{context}");
+    assert!(!finding.contains("--spoken"), "{context}");
+
+    // An ordinary memory tag keeps its existing flags: --spoken, no pointer.
+    let preference = lines[1];
+    assert!(
+        preference.contains("scribe entry add --tag preferences --project scribe"),
+        "{context}"
+    );
+    assert!(preference.contains("--spoken '<statement>'"), "{context}");
+    assert!(!preference.contains("--evidence"), "{context}");
+
+    // The command with its placeholders filled in passes the finding checks.
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--project",
+        "scribe",
+        "--author",
+        "opus",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--evidence",
+        "exp-1",
+        "The reviewer mix alone predicts a 7-point gap",
+    ]);
+    let recorded = entries(&fx);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["tag"], "finding");
+}
+
+#[test]
 fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
     let fx = Fixture::new();
     fx.ok(&[

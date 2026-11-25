@@ -90,12 +90,13 @@ enum Say {
     Silent,
     /// Its reason, for a refusal the checks made.
     Reason(String),
-    /// Handed to the agent: the line as typed, the `entry add` hints and
-    /// whether the hinted tag takes `--spoken`.
+    /// Handed to the agent: the line as typed, the `entry add` hints, whether
+    /// the hinted tag takes `--spoken` and whether it requires `--evidence`.
     Handoff {
         said: String,
         hints: String,
         spoken: bool,
+        evidence: bool,
     },
 }
 
@@ -286,6 +287,7 @@ pub fn run<E: PortError>(
                     said: mark.said.clone(),
                     hints: hints(mark, &item.turn, &config.tags),
                     spoken: spoken(mark, &config.tags),
+                    evidence: evidence(mark, &config.tags),
                 });
             }
         }
@@ -332,7 +334,7 @@ fn hints(mark: &Mark, turn: &Turn, tags: &TagTable) -> String {
 
 /// Whether `entry add --spoken` takes the marker's hinted tag: an ordinary
 /// memory tag, or no hint. It refuses an action, evidence or handoff tag
-/// (`not_memory_tag`), so their command records the quote without it.
+/// (`not_memory_tag`), so their command has no `--spoken`.
 fn spoken(mark: &Mark, tags: &TagTable) -> bool {
     mark.hint(tags)
         .and_then(|name| tags.get(name))
@@ -341,6 +343,14 @@ fn spoken(mark: &Mark, tags: &TagTable) -> bool {
                 && !def.require_evidence
                 && def.name.as_str() != crate::handoff::HANDOFF_TAG
         })
+}
+
+/// Whether the hinted tag requires an evidence pointer: a `require_evidence`
+/// tag, which `entry add` refuses without `--evidence` (`evidence_required`).
+fn evidence(mark: &Mark, tags: &TagTable) -> bool {
+    mark.hint(tags)
+        .and_then(|name| tags.get(name))
+        .is_some_and(|def| def.require_evidence)
 }
 
 /// The echo and audit outcome of one recorded marker.
@@ -359,13 +369,9 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
                 said,
                 hints,
                 spoken,
+                evidence,
             },
         ) => {
-            let statement = if spoken {
-                "--spoken '<statement>'"
-            } else {
-                "'<statement>'"
-            };
             out.echoes.push(format!(
                 "scribe: #scribe in your message is the agent's to record — \"{}\"",
                 quote(&said)
@@ -373,9 +379,24 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             // The agent gets the line whole, as typed: its quote must match the
             // user's words character for character. Only the user's echo above
             // is flattened and cut.
-            out.context.push(format!(
-                "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks something to keep, record it as theirs with their exact words: scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' {statement}. If it marks nothing, record nothing."
-            ));
+            let context = if evidence {
+                // A finding is the agent's own result: `entry add` refuses
+                // --quote and --spoken under its tag, and takes the pointer
+                // that shows the result.
+                format!(
+                    "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks a result to keep, and you can point to its evidence, record it as your finding with a nonempty evidence pointer (a path, task, run, experiment or commit): scribe entry add {hints} --author <name> --related session:{session} --evidence '<pointer>' '<statement>'. If it marks nothing, record nothing."
+                )
+            } else {
+                let statement = if spoken {
+                    "--spoken '<statement>'"
+                } else {
+                    "'<statement>'"
+                };
+                format!(
+                    "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks something to keep, record it as theirs with their exact words: scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' {statement}. If it marks nothing, record nothing."
+                )
+            };
+            out.context.push(context);
             out.outcomes.push(refusal(session, AGENT_HANDOFF));
         }
         (MarkResult::Refused(code), Say::Reason(reason)) => {
