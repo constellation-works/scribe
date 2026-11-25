@@ -27,6 +27,10 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 pub use scribe_tools::group_close::CloseEvidence;
+pub use scribe_tools::memory_refresh::{
+    HEADINGS, PROFILE_CHARS, PROFILE_INSTRUCTIONS, PROFILE_SCHEMA, ProfileAnswer,
+    ProfileMilestoneAnswer, ProfileSession,
+};
 
 /// How long the session model may take for one session (2_design.md §5.2).
 pub const SESSION_BUDGET: Duration = Duration::from_secs(120);
@@ -818,26 +822,6 @@ pub struct NewSegmentAnswer {
     pub related: Vec<String>,
 }
 
-/// The JSON schema of a profile answer (2_design.md §15.6).
-pub const PROFILE_SCHEMA: &str = r#"{"type":"object","properties":{"profile":{"type":"string","description":"the whole profile.md: the seven sections in order, each a '## ' heading, Pinned copied exactly; at most 6000 characters"},"milestones":{"type":"array","items":{"type":"object","properties":{"now":{"type":["string","null"],"description":"the stem of the passed now item this promotes, or null for a profile change"},"date":{"type":"string","description":"YYYY-MM-DD"},"title":{"type":"string","maxLength":80},"text":{"type":"string","maxLength":400}},"required":["now","date","title","text"],"additionalProperties":false}}},"required":["profile","milestones"],"additionalProperties":false}"#;
-
-/// One session the profile job reads.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProfileSession {
-    /// Its id.
-    pub id: String,
-    /// Its project.
-    pub project: String,
-    /// Its last change's date, `YYYY-MM-DD`.
-    pub date: String,
-    /// Its title.
-    pub title: String,
-    /// Its summary and goals, bounded.
-    pub summary: String,
-    /// The user's stored turns, for the sessions with the highest signal.
-    pub verbatim: Option<String>,
-}
-
 /// Rebuild `profile.md` from the sessions since the job's cursor
 /// (2_design.md §15.6). The answer is a [`ProfileAnswer`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -866,25 +850,6 @@ pub struct ProfileRequest {
     /// Who the prompt names and the configured instruction text.
     pub voice: Voice,
 }
-
-/// The profile's section headings, in order.
-pub const HEADINGS: [&str; 7] = [
-    "Role and work",
-    "Current focus",
-    "Projects",
-    "Goals",
-    "Environment",
-    "How they work",
-    "Pinned",
-];
-
-/// The longest profile the job writes, in characters.
-pub const PROFILE_CHARS: usize = 6000;
-
-/// The shipped instruction text of a [`ProfileRequest`]
-/// (`[instructions] profile` replaces it).
-pub const PROFILE_INSTRUCTIONS: &str = "You keep {user}'s profile: one short document saying who \
-     they are now, rebuilt from their recent sessions.";
 
 impl ProfileRequest {
     /// The prompt the model reads on stdin.
@@ -960,31 +925,4 @@ impl ProfileRequest {
         }
         out
     }
-}
-
-/// One milestone the profile job returns.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileMilestoneAnswer {
-    /// The stem of the passed `now` item it promotes; `None` for a profile
-    /// change.
-    #[serde(default, deserialize_with = "crate::record::nullable")]
-    pub now: Option<String>,
-    /// `YYYY-MM-DD`.
-    pub date: String,
-    /// One line.
-    pub title: String,
-    /// Its prose.
-    pub text: String,
-}
-
-/// The model's answer to a [`ProfileRequest`], unchecked.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileAnswer {
-    /// The whole `profile.md`.
-    pub profile: String,
-    /// Milestones to write.
-    #[serde(default)]
-    pub milestones: Vec<ProfileMilestoneAnswer>,
 }

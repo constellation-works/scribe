@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "written",
+        "retry"
+      ]
+    },
+    "result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "revision": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "sessions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "backlog": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "milestones": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "correction": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "result",
+    "revision",
+    "sessions",
+    "backlog",
+    "milestones",
+    "removed",
+    "code",
+    "correction"
+  ],
+  "additionalProperties": false
+}

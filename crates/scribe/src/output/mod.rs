@@ -20,8 +20,8 @@ pub(crate) use payload::{
     ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin, MemoryBlockPayload,
     MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload, Output, PassFailure,
     PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
-    RefreshPayload, RevisionPayload, ScanReport, SessionHandoffsPayload, SessionPayload,
-    TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    RefreshPayload, RefreshRetryPayload, RevisionPayload, ScanReport, SessionHandoffsPayload,
+    SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 

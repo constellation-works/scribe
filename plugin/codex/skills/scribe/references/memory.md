@@ -14,11 +14,11 @@ Run `scribe memory show <id> --json` to read one item and its source sessions.
   this session: `scribe memory ack <id> --session <this session id>
   --author <name>`.
 - **Milestones.** Raise one only when the conversation goes there.
-- **The profile** is rebuilt weekly from the switched-on sessions by
-  `scribe memory refresh`. When the human says something in it is wrong,
-  tell them to edit `memory/profile.md` (the store root's): the next
-  refresh takes the edit as their correction. Lines under `## Pinned` are
-  theirs and are never rewritten.
+- **The profile** is rebuilt weekly by the `scribe-memory-refresh` Orbit job
+  (`orbit job run scribe-memory-refresh`, or via `scribe memory prepare --json`
+  and `scribe memory apply`). When the human says something in it is wrong,
+  tell them to edit `memory/profile.md`: the next refresh takes the edit as
+  their correction. Lines under `## Pinned` are never rewritten.
 - **Wrong or forgotten.** When the human asks scribe to forget a `now`
   item or milestone, run `scribe memory forget <id> --author <name>
   --confirm`; it cannot be undone.

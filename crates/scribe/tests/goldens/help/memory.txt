@@ -10,7 +10,9 @@ Commands:
   ack      Mark a now item as raised in this session
   forget   Forget a now item or milestone for good
   restore  Write a stored profile revision back as the profile
-  refresh  Rebuild the profile and settle passed now items
+  refresh  Run deterministic refresh checks or point to the Orbit refresh job
+  prepare  Prepare bounded profile refresh inputs and optimistic basis
+  apply    Validate and commit a rebuilt profile answer from stdin JSON
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -35,11 +37,11 @@ Global options:
       --json
           Shorthand for --format json
 
-Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
-memory refresh'; memory/now/, dated things the user plans, attends or must
-meet, written by the session pass of a session switched on with /scribe on;
-and memory/milestones/. It describes, it never binds: rules are their
-preferences entries.
+Memory is one fixed shape: memory/profile.md, rebuilt weekly by the
+scribe-memory-refresh Orbit job; memory/now/, dated things the user plans,
+attends or must meet, written by the session pass of a session switched on
+with /scribe on; and memory/milestones/. It describes, it never binds: rules
+are their preferences entries.
 
 Examples:
   scribe memory show
@@ -47,3 +49,4 @@ Examples:
   scribe memory show 2026-12-01-hackathon-deadline
   scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus
   scribe memory refresh
+  scribe memory prepare --json

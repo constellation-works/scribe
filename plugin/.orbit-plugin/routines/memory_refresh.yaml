@@ -1,8 +1,9 @@
-# Seeded disabled as `scribe-memory-refresh` (2_design.md §15.6). Every
-# Sunday at 05:00 it runs the scribe-memory-refresh job, which calls
-# scribe.memory-refresh: the profile rebuilt from the week's sessions, Pinned
-# kept, and now items past their 14 days made milestones or history.
-# Installing (enabling) it is the user's.
+# Seeded disabled as `scribe-memory-refresh` (2_design.md §15.6, §19.3.5).
+# Every Sunday at 05:00 it runs the scribe-memory-refresh workflow job:
+# prepare bounded inputs -> scribe_profile_refresh -> apply (with one
+# conditional retry), rebuilding the profile from the week's sessions,
+# keeping Pinned byte for byte, and settling now items past their 14 days
+# into milestones or history. Installing (enabling) it is the user's.
 schemaVersion: 1
 name: memory-refresh
 description: Rebuild the scribe profile weekly and settle passed now items.

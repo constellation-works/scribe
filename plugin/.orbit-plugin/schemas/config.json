@@ -19,6 +19,11 @@
       "type": "string",
       "minLength": 1,
       "description": "Orbit crew used to summarize a group."
+    },
+    "profile_refresh_crew": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Orbit crew used to rebuild the memory profile."
     }
   },
   "additionalProperties": false

@@ -111,6 +111,7 @@ scribe session activate <id> --author opus --pin
 scribe brief
 scribe memory show
 scribe memory refresh
+scribe memory prepare --json
 scribe search "merge policy" --kind session --since 2026-11-01
 scribe search "merge queue" --kind message
 scribe consistency scan --json

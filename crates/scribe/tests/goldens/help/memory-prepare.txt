@@ -1,0 +1,34 @@
+Prepare bounded profile refresh inputs and optimistic basis
+
+Replays any open memory journal and emits the bounded inputs and basis for scribe_profile_refresh or an interactive agent.
+
+Usage: scribe memory prepare [OPTIONS]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --provider <PROVIDER>
+          Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
+
+      --root <DIR>
+          Data directory [default: $SCRIBE_ROOT, else ~/.scribe]
+
+      --format <FORMAT>
+          Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
+          
+          [possible values: auto, table, json]
+
+      --json
+          Shorthand for --format json
+
+Replays any open memory journal and prints the bounded inputs, optimistic
+basis, cursor and passed now stems needed to rebuild memory/profile.md.
+Returns nothing_new: true when there is nothing to refresh.
+
+Examples:
+  scribe memory prepare --json

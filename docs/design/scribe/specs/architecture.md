@@ -118,11 +118,11 @@ Invariants:
 | `hook` | `hook` |
 | `init`, `store`, `export`, `plugin` | `admin` |
 
-A `plugin` routine tool (`session-pass`, `consistency-scan`,
-`memory-refresh`) has no flow of its own. The binary's `plugin` handler
-resolves the envelope's root (`Context::at`) and calls the command handler
-that owns the work, which calls the session, consistency or memory app's
-`exec`. `admin` holds no plugin command.
+A `plugin` routine or workflow tool (`session-pass`, `consistency-scan`,
+`memory-refresh-prepare`, `memory-refresh-apply`, `group-close-prepare`,
+`group-close-apply`) has no flow of its own. The binary's `plugin` handler
+resolves the envelope's root (`Context::at`) and calls the app's `exec` (or
+command handler that owns the work). `admin` holds no plugin command.
 
 ## `scribe-core`
 
@@ -237,9 +237,9 @@ sees it.
 ### Providers (interim)
 
 Scribe's own model calls are being removed (ORB-27911). Session pass, session
-catalog, session rebuild and memory refresh retain their callers until Orbit
-jobs replace them. Group close accepts a supplied summary and offers an Orbit
-job, as approved in §19 of the design.
+catalog and session rebuild retain their callers until Orbit jobs replace them.
+Group close and memory refresh use deterministic prepare/apply flows and Orbit
+jobs, as approved in §19 of the design.
 
 Until then:
 
@@ -523,8 +523,8 @@ invariants.
   owns what `Runtime::start` was to own.
 - **Each app declares its audit beside its `Command`** (`Command::audit`,
   `Command::subject`), and `exec` takes no `Audit` (#470, on Daniel's
-  direction). The plugin's routine `memory refresh` keeps its empty
-  subject through `Command::Refresh { routine }`.
+  direction). The plugin's routine `memory-refresh-apply` keeps its empty
+  subject through `Command::Apply { routine: true, .. }`.
 - **`run` stays `pub(crate)`.** Tests use `exec`, `exec_unaudited` and the
   `test-support` entry points.
 - **The app order is a total order** (`tag < mark < memory < entry <

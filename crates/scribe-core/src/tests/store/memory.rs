@@ -1,10 +1,16 @@
 use super::{Seed, private_tempdir, seed};
 use crate::MemoryVerbs;
 use crate::ProposalVerbs;
-use crate::apps::memory::{WindowMemory as PassMemory, WindowMemoryTestWrites};
+use crate::Provider;
+use crate::apps::memory::{
+    ApplyRefreshOutcome, ApplyRefreshRequest, Command as MemoryCommand, Error as MemoryError,
+    Outcome as MemoryOutcome, PreparedRefresh, WindowMemory as PassMemory, WindowMemoryTestWrites,
+};
+use crate::composition::Context;
 use crate::error::Error;
 use crate::memory::{Checked, Draft, ElementKind, NowKind, profile};
 use crate::models::{ProfileAnswer, ProfileMilestoneAnswer};
+use crate::runtime::Clock;
 use crate::session::{SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{Redactor, Store, db};
@@ -210,6 +216,64 @@ fn answer(profile: String) -> ProfileAnswer {
     }
 }
 
+struct FixedClock(OffsetDateTime);
+
+impl Clock for FixedClock {
+    fn now(&self) -> OffsetDateTime {
+        self.0
+    }
+    fn now_precise(&self) -> OffsetDateTime {
+        self.0
+    }
+}
+
+fn prepare_at(store: &Store, now: OffsetDateTime) -> PreparedRefresh {
+    let host = Context::at(store.root().to_path_buf(), None);
+    let mut ctx = host.core();
+    let clock = FixedClock(now);
+    ctx.clock = &clock;
+    let MemoryOutcome::Prepared(prepared) =
+        crate::apps::memory::run(&ctx, MemoryCommand::Prepare).unwrap()
+    else {
+        panic!("expected prepared");
+    };
+    *prepared
+}
+
+fn apply_at(
+    store: &Store,
+    prepared: &PreparedRefresh,
+    answer: ProfileAnswer,
+    allow_retry: bool,
+    now: OffsetDateTime,
+) -> std::result::Result<ApplyRefreshOutcome, MemoryError<crate::runtime::errors::CommandError>> {
+    let host = Context::at(store.root().to_path_buf(), None);
+    let mut ctx = host.core();
+    let clock = FixedClock(now);
+    ctx.clock = &clock;
+    let request = ApplyRefreshRequest {
+        basis: prepared.basis.clone().expect("basis present"),
+        cursor_to: prepared.cursor_to.clone(),
+        session_ids: prepared.session_ids.clone(),
+        backlog: prepared.backlog,
+        passed_stems: prepared.passed_stems.clone(),
+        answer,
+        allow_retry,
+    };
+    let MemoryOutcome::Applied(outcome) = crate::apps::memory::run(
+        &ctx,
+        MemoryCommand::Apply {
+            provider: Provider::ClaudeCode,
+            request: Box::new(request),
+            routine: false,
+        },
+    )?
+    else {
+        panic!("expected applied");
+    };
+    Ok(*outcome)
+}
+
 #[test]
 fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     let dir = private_tempdir();
@@ -220,20 +284,40 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     }
+    let config_path = root.join("config.toml");
+    fs::write(
+        &config_path,
+        "[user]\nname = \"Daniel\"\n\n[instructions]\nprofile = \"Keep {user}'s profile concise.\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let store = Store::open(root);
     let redactor = Redactor::default();
     sessions(&store, 45, T0);
     let now = T0 + Duration::days(60);
 
-    // The first run reads 40 sessions and leaves 5 for the next.
-    let first = store.profile_inputs(now).unwrap();
-    assert_eq!(first.sessions.len(), 40);
+    // The first run reads 40 sessions, carries [instructions], and leaves 5 for the next.
+    let first = prepare_at(&store, now);
+    assert!(!first.nothing_new);
+    assert_eq!(first.session_ids.len(), 40);
     assert_eq!(first.backlog, 5);
-    assert_eq!(first.profile, profile::template());
+    let first_inputs = first.inputs.as_ref().unwrap();
+    assert_eq!(first_inputs.profile, profile::template());
+    assert_eq!(first_inputs.user_noun, "Daniel");
+    assert_eq!(
+        first_inputs.instructions.as_deref(),
+        Some("Keep Daniel's profile concise.")
+    );
     let built = with_section(&profile::template(), "Projects", "- scribe.");
-    let written = store
-        .write_refresh(&first, &answer(built.clone()), &redactor, now)
-        .unwrap();
+    let ApplyRefreshOutcome::Written(written) =
+        apply_at(&store, &first, answer(built.clone()), false, now).unwrap()
+    else {
+        panic!("expected written");
+    };
     assert_eq!(written.revision, Some(1));
     let file = store.root().join("memory/profile.md");
     assert_eq!(fs::read_to_string(&file).unwrap(), built);
@@ -241,30 +325,45 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
     // The user pins a line by hand; the next run sees the edit.
     let pinned = with_section(&built, "Pinned", "- Call me Daniel.");
     fs::write(&file, &pinned).unwrap();
-    let second = store.profile_inputs(now).unwrap();
-    assert_eq!(second.sessions.len(), 5, "resumes after the cursor");
+    let second = prepare_at(&store, now);
+    assert!(!second.nothing_new);
+    assert_eq!(second.session_ids.len(), 5, "resumes after the cursor");
     assert_eq!(second.backlog, 0);
-    assert_eq!(second.pinned.trim(), "- Call me Daniel.");
     assert!(
         second
+            .inputs
+            .as_ref()
+            .unwrap()
             .corrections
             .as_deref()
             .unwrap()
             .contains("+ - Call me Daniel.")
     );
 
-    // A rebuild that drops Pinned is refused and writes nothing.
-    let err = store
-        .write_refresh(&second, &answer(built.clone()), &redactor, now)
-        .unwrap_err();
+    // A rebuild that drops Pinned returns retry+correction when allow_retry is true
+    // and fails with profile_pinned when allow_retry is false, writing nothing.
+    let retry = apply_at(&store, &second, answer(built.clone()), true, now).unwrap();
+    assert!(matches!(
+        retry,
+        ApplyRefreshOutcome::Retry {
+            code: "profile_pinned",
+            ..
+        }
+    ));
+    let err = apply_at(&store, &second, answer(built.clone()), false, now).unwrap_err();
+    let MemoryError::Core(err) = err else {
+        panic!("expected core refusal, got {err:?}");
+    };
     assert_eq!(err.code(), "profile_pinned");
     assert_eq!(fs::read_to_string(&file).unwrap(), pinned);
-    assert_eq!(store.profile_inputs(now).unwrap().sessions.len(), 5);
+    assert_eq!(prepare_at(&store, now).session_ids.len(), 5);
 
     let kept = with_section(&pinned, "Projects", "- orbit.");
-    let written = store
-        .write_refresh(&second, &answer(kept.clone()), &redactor, now)
-        .unwrap();
+    let ApplyRefreshOutcome::Written(written) =
+        apply_at(&store, &second, answer(kept.clone()), false, now).unwrap()
+    else {
+        panic!("expected written");
+    };
     assert_eq!(written.revision, Some(2));
     assert!(
         fs::read_to_string(&file)
@@ -272,11 +371,25 @@ fn a_refresh_resumes_from_its_cursor_keeps_pinned_and_is_idempotent() {
             .contains("- Call me Daniel.")
     );
 
-    // Nothing new now; the same answer again writes no revision.
-    let third = store.profile_inputs(now).unwrap();
-    assert!(third.nothing_new());
+    // Nothing new now; prepare returns nothing_new and the same answer writes no revision.
+    let third = prepare_at(&store, now);
+    assert!(third.nothing_new);
+    let third_inputs = store.profile_inputs(now).unwrap();
+    assert!(third_inputs.nothing_new());
     let again = store
-        .write_refresh(&third, &answer(kept.clone()), &redactor, now)
+        .write_refresh_prepared(
+            &ApplyRefreshRequest {
+                basis: third_inputs.basis,
+                cursor_to: None,
+                session_ids: Vec::new(),
+                backlog: 0,
+                passed_stems: Vec::new(),
+                answer: answer(kept.clone()),
+                allow_retry: false,
+            },
+            &redactor,
+            now,
+        )
         .unwrap();
     assert_eq!(again.revision, None);
     assert_eq!(store.profile_revision(2).unwrap().content, kept);
@@ -320,8 +433,12 @@ fn a_refresh_reads_kept_turns_but_not_turns_stored_only_for_a_group() {
     drop(conn);
 
     let now = T0 + Duration::days(60);
-    let inputs = store.profile_inputs(now).unwrap();
-    let verbatim = inputs.sessions[0].verbatim.as_deref().unwrap();
+    let prepared = prepare_at(&store, now);
+    let verbatim = prepared.inputs.unwrap().sessions[0]
+        .verbatim
+        .as_deref()
+        .unwrap()
+        .to_owned();
     assert!(verbatim.contains("kept through the pass"));
     assert!(!verbatim.contains("said only for the group"));
 }
@@ -343,9 +460,20 @@ fn a_refresh_refuses_when_memory_changed_since_its_inputs() {
             &r,
         )
         .unwrap();
-    let err = store
-        .write_refresh(&inputs, &answer(profile::template()), &redactor, T0)
-        .unwrap_err();
+    let stale = PreparedRefresh {
+        nothing_new: false,
+        basis: Some(inputs.basis),
+        cursor_to: None,
+        session_ids: Vec::new(),
+        backlog: 0,
+        passed_stems: Vec::new(),
+        inputs: None,
+    };
+    // MemoryChanged fails immediately even when allow_retry is true.
+    let err = apply_at(&store, &stale, answer(profile::template()), true, T0).unwrap_err();
+    let MemoryError::Core(err) = err else {
+        panic!("expected core refusal, got {err:?}");
+    };
     assert_eq!(err.code(), "memory_changed");
 }
 
@@ -365,12 +493,28 @@ fn a_passed_now_item_becomes_a_milestone_or_history_after_fourteen_days() {
     );
     store.write_pass_memory(&window, &redactor, &r).unwrap();
     // On 11-19 nothing has passed its 14 days.
-    let early = store.profile_inputs(T0 + Duration::days(18)).unwrap();
-    assert!(early.passed.is_empty());
+    let early = prepare_at(&store, T0 + Duration::days(18));
+    assert!(early.nothing_new);
     let now = T0 + Duration::days(25);
-    let inputs = store.profile_inputs(now).unwrap();
-    let passed: Vec<&str> = inputs.passed.iter().map(|n| n.stem.as_str()).collect();
+    let prepared = prepare_at(&store, now);
+    assert!(!prepared.nothing_new);
+    let passed: Vec<&str> = prepared.passed_stems.iter().map(|s| s.as_str()).collect();
     assert_eq!(passed, ["2026-11-05-release-ships", "2026-11-06-dentist"]);
+    // A milestone with an unknown passed stem returns retry+correction on allow_retry.
+    let mut bad = answer(profile::template());
+    bad.milestones.push(ProfileMilestoneAnswer {
+        now: Some(String::from("2026-11-01-not-a-passed-item")),
+        date: String::from("2026-11-01"),
+        title: String::from("Bad milestone"),
+        text: String::from("Not in passed."),
+    });
+    assert!(matches!(
+        apply_at(&store, &prepared, bad, true, now).unwrap(),
+        ApplyRefreshOutcome::Retry {
+            code: "profile_milestone",
+            ..
+        }
+    ));
     let mut promoted = answer(profile::template());
     promoted.milestones.push(ProfileMilestoneAnswer {
         now: Some(String::from("2026-11-05-release-ships")),
@@ -378,9 +522,11 @@ fn a_passed_now_item_becomes_a_milestone_or_history_after_fourteen_days() {
         title: String::from("Release shipped"),
         text: String::from("The release shipped."),
     });
-    let written = store
-        .write_refresh(&inputs, &promoted, &redactor, now)
-        .unwrap();
+    let ApplyRefreshOutcome::Written(written) =
+        apply_at(&store, &prepared, promoted, false, now).unwrap()
+    else {
+        panic!("expected written");
+    };
     assert_eq!(written.milestones, ["2026-11-05-release-shipped"]);
     assert_eq!(
         written.removed,

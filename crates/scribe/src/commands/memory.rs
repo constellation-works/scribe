@@ -1,34 +1,43 @@
 //! `scribe memory`: what scribe remembers about the user — the profile,
-//! `now` items and milestones (docs/design/scribe/2_design.md §15.4–§15.6).
+//! `now` items and milestones (docs/design/scribe/2_design.md §15.4–§15.6,
+//! §19.3.5).
 //!
 //! `show` and `rules` read only: no lock, no audit, no replay. `ack`,
-//! `forget`, `restore` and `refresh` are audited writes. Memory is
-//! scribe-authored, so an agent acknowledges or forgets an item without the
-//! user's instruction check, as it may an agent note.
+//! `forget`, `restore`, `prepare`, `apply` and `refresh` are audited writes
+//! and call no model. Memory is scribe-authored, so an agent acknowledges or
+//! forgets an item without the user's instruction check, as it may an agent
+//! note.
 
 use crate::error::CliError;
 use crate::output::{
     MemoryBlockPayload, MemoryPayload, MemoryRulesPayload, Output, Record, RefreshPayload,
-    RevisionPayload,
+    RefreshRetryPayload, RevisionPayload,
 };
 use clap::{Args, Subcommand};
-use scribe_core::apps::memory::{Command, Outcome, Shown, exec};
+use scribe_core::apps::memory::{
+    ApplyRefreshOutcome, ApplyRefreshRequest, Command, Outcome, Shown, exec,
+};
 use scribe_core::composition::Context;
-use scribe_core::{AuthorName, Models, SessionId};
+use scribe_core::{AuthorName, SessionId};
+use std::io::Read;
+
+/// The most bytes `memory apply` reads from stdin.
+const MAX_APPLY_INPUT: u64 = 1024 * 1024;
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
-Memory is one fixed shape: memory/profile.md, rebuilt weekly by 'scribe
-memory refresh'; memory/now/, dated things the user plans, attends or must
-meet, written by the session pass of a session switched on with /scribe on;
-and memory/milestones/. It describes, it never binds: rules are their
-preferences entries.
+Memory is one fixed shape: memory/profile.md, rebuilt weekly by the
+scribe-memory-refresh Orbit job; memory/now/, dated things the user plans,
+attends or must meet, written by the session pass of a session switched on
+with /scribe on; and memory/milestones/. It describes, it never binds: rules
+are their preferences entries.
 
 Examples:
   scribe memory show
   scribe memory show profile
   scribe memory show 2026-12-01-hackathon-deadline
   scribe memory ack 2026-12-01-hackathon-deadline --session <id> --author opus
-  scribe memory refresh";
+  scribe memory refresh
+  scribe memory prepare --json";
 
 const SHOW_EXAMPLES: &str = "\
 With no id, prints the memory block the session-start brief embeds:
@@ -76,16 +85,33 @@ Examples:
   scribe memory restore 3";
 
 const REFRESH_EXAMPLES: &str = "\
-Rebuilds memory/profile.md from the sessions since the last run (at most 40
-per run; a longer backlog is taken over several runs), keeps Pinned byte for
-byte, and settles now items past their 14 days: each becomes a milestone or
-history. It calls models.profile once, within 120 s, and writes nothing when
-there is nothing new. Run weekly: the scribe plugin seeds a disabled Orbit
-routine, or use cron or launchd.
+Runs the deterministic part of memory refresh: replays any open memory
+journal, archives legacy format-24 items, and succeeds with nothing_new when
+there are no new sessions, profile edits or passed now items. When a model
+rebuild is needed, points you to 'orbit job run scribe-memory-refresh' (or
+'scribe memory prepare --json' and 'scribe memory apply' for an interactive
+agent).
 
 Examples:
   scribe memory refresh
-  scribe memory refresh --json | jq '{result, revision, backlog}'";
+  scribe memory refresh --json";
+
+const PREPARE_EXAMPLES: &str = "\
+Replays any open memory journal and prints the bounded inputs, optimistic
+basis, cursor and passed now stems needed to rebuild memory/profile.md.
+Returns nothing_new: true when there is nothing to refresh.
+
+Examples:
+  scribe memory prepare --json";
+
+const APPLY_EXAMPLES: &str = "\
+Reads one JSON apply request on stdin ({basis, cursor_to, session_ids,
+backlog, passed_stems, answer[, allow_retry]}), verifies the optimistic
+basis, profile shape, Pinned byte identity, links, redaction and milestone
+bounds, and commits atomically via the memory journal.
+
+Examples:
+  scribe memory apply --json < apply.json";
 
 /// Verbs on the `memory` noun.
 #[derive(Debug, Subcommand)]
@@ -113,11 +139,21 @@ pub(crate) enum MemoryCommand {
     /// Write a stored profile revision back as the profile
     #[command(after_help = RESTORE_EXAMPLES)]
     Restore(RestoreArgs),
-    /// Rebuild the profile and settle passed now items
+    /// Run deterministic refresh checks or point to the Orbit refresh job
     ///
-    /// Rebuilds the profile from the sessions since the last run and settles now items past their 14 days.
+    /// Replays any open memory journal, succeeds when nothing is new, and otherwise directs you to the scribe-memory-refresh Orbit job.
     #[command(after_help = REFRESH_EXAMPLES)]
     Refresh(RefreshArgs),
+    /// Prepare bounded profile refresh inputs and optimistic basis
+    ///
+    /// Replays any open memory journal and emits the bounded inputs and basis for scribe_profile_refresh or an interactive agent.
+    #[command(after_help = PREPARE_EXAMPLES)]
+    Prepare(PrepareArgs),
+    /// Validate and commit a rebuilt profile answer from stdin JSON
+    ///
+    /// Checks the optimistic basis, profile rules, redaction and milestone bounds, then commits the refresh atomically.
+    #[command(after_help = APPLY_EXAMPLES)]
+    Apply(ApplyArgs),
 }
 
 /// Arguments to `memory show`.
@@ -178,6 +214,14 @@ pub(crate) struct RestoreArgs {
 #[derive(Debug, Args)]
 pub(crate) struct RefreshArgs {}
 
+/// Arguments to `memory prepare`: none.
+#[derive(Debug, Args)]
+pub(crate) struct PrepareArgs {}
+
+/// Arguments to `memory apply`: none (JSON request is read on stdin).
+#[derive(Debug, Args)]
+pub(crate) struct ApplyArgs {}
+
 /// Run one `memory` verb.
 pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
     let mut page = false;
@@ -208,21 +252,30 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
         MemoryCommand::Restore(args) => Command::Restore {
             revision: args.revision,
         },
-        MemoryCommand::Refresh(RefreshArgs {}) => return refresh(ctx, false),
+        MemoryCommand::Refresh(RefreshArgs {}) => Command::Refresh,
+        MemoryCommand::Prepare(PrepareArgs {}) => Command::Prepare,
+        MemoryCommand::Apply(ApplyArgs {}) => {
+            let mut raw = Vec::new();
+            std::io::stdin()
+                .take(MAX_APPLY_INPUT)
+                .read_to_end(&mut raw)
+                .map_err(|source| CliError::Read {
+                    what: String::from("stdin"),
+                    source,
+                })?;
+            let request: ApplyRefreshRequest = serde_json::from_slice(&raw).map_err(|err| {
+                CliError::Usage(format!(
+                    "memory apply expects JSON on stdin ({{basis, cursor_to, session_ids, backlog, passed_stems, answer}}): {err}"
+                ))
+            })?;
+            Command::Apply {
+                provider: ctx.provider(),
+                request: Box::new(request),
+                routine: false,
+            }
+        }
     };
     Ok(output(exec(ctx, command)?, ctx, page))
-}
-
-/// `memory refresh` with the `claude` CLI as the profile model: the memory
-/// app's refresh. `routine` is the plugin's routine tool, whose audit
-/// lines name no subject.
-pub(crate) fn refresh(ctx: &Context, routine: bool) -> Result<Output, CliError> {
-    let command = Command::Refresh {
-        provider: ctx.provider(),
-        models: Box::new(|config| Box::new(ctx.models(config)) as Box<dyn Models>),
-        routine,
-    };
-    Ok(output(exec(ctx, command)?, ctx, false))
 }
 
 /// The output of `outcome`. `page` is `memory show --page`.
@@ -262,27 +315,39 @@ fn output(outcome: Outcome, ctx: &Context, page: bool) -> Output {
             Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
             written,
         ),
-        Outcome::Refreshed(written) => {
-            let payload = match written.map(|written| *written) {
-                None => RefreshPayload {
-                    result: "nothing_new",
-                    revision: None,
-                    sessions: 0,
-                    backlog: 0,
-                    milestones: Vec::new(),
-                    removed: Vec::new(),
-                },
-                Some(written) => RefreshPayload {
+        Outcome::RefreshedNothingNew => Output::written(
+            Record::MemoryRefresh(Box::new(RefreshPayload {
+                result: "nothing_new",
+                revision: None,
+                sessions: 0,
+                backlog: 0,
+                milestones: Vec::new(),
+                removed: Vec::new(),
+            })),
+            false,
+        ),
+        Outcome::Prepared(prepared) => Output::Show {
+            record: Record::MemoryPrepare(prepared),
+        },
+        Outcome::Applied(outcome) => match *outcome {
+            ApplyRefreshOutcome::Written(written) => Output::written(
+                Record::MemoryRefresh(Box::new(RefreshPayload {
                     result: "written",
                     revision: written.revision,
                     sessions: written.sessions,
                     backlog: written.backlog,
                     milestones: written.milestones,
                     removed: written.removed,
-                },
-            };
-            let changed = payload.result == "written";
-            Output::written(Record::MemoryRefresh(Box::new(payload)), changed)
-        }
+                })),
+                true,
+            ),
+            ApplyRefreshOutcome::Retry { code, correction } => Output::Show {
+                record: Record::MemoryRefreshRetry(Box::new(RefreshRetryPayload {
+                    status: "retry",
+                    code,
+                    correction,
+                })),
+            },
+        },
     }
 }

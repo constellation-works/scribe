@@ -26,6 +26,7 @@ pub mod fs;
 pub mod group_close;
 pub mod host;
 pub mod markers;
+pub mod memory_refresh;
 pub mod origin;
 pub mod payload;
 pub mod project;
