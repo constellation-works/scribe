@@ -55,7 +55,7 @@ pub(crate) struct SearchArgs {
     #[arg(long, value_name = "KIND", value_enum)]
     pub(crate) kind: Option<KindArg>,
 
-    /// Only entries filed under this tag, by its name as `tag list` prints it; sessions and messages carry no tag [default: any]
+    /// Only entries filed under this tag's name or alias; sessions and messages carry no tag [default: any]
     #[arg(long, value_name = "TAG")]
     pub(crate) tag: Option<TagName>,
 

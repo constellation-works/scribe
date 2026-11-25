@@ -353,16 +353,7 @@ fn group_filters_apply_before_limits_ranking_and_lookups() {
     let entries = invoke(
         &f,
         A,
-        &[
-            "entry",
-            "list",
-            "--tag",
-            "decisions",
-            "--limit",
-            "1",
-            "--group",
-            "g-1",
-        ],
+        &["entry", "list", "--limit", "1", "--group", "g-1"],
         0,
     );
     assert_eq!(entries["total"], 1);

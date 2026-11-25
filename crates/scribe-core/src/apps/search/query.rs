@@ -48,6 +48,12 @@ pub fn run<E>(
     let group = group.map(|id| store.read().groups().get(id)).transpose()?;
     let members = group.as_ref().map(crate::group::Group::members);
     let config = store.read().tags().config()?;
+    let mut query = query.clone();
+    if let Some(tag) = &query.tag
+        && let Some(definition) = config.tags.resolve(tag.as_str())
+    {
+        query.tag = Some(definition.name.clone());
+    }
     let entries = store.read().entries().list_where(
         &EntryFilter::default(),
         crate::apps::entry::of_members(members.as_ref()),
@@ -73,7 +79,7 @@ pub fn run<E>(
     };
     let mut read_only_copy = false;
     let found = if query.kind == Some(RecordKind::Message) {
-        let (found, copy) = stored_messages(query)?;
+        let (found, copy) = stored_messages(&query)?;
         read_only_copy = copy;
         found
     } else {
@@ -84,7 +90,7 @@ pub fn run<E>(
             tags: &config.tags,
             user: &config.user,
         };
-        search::search(query, corpus).map_err(usage)?
+        search::search(&query, corpus).map_err(usage)?
     };
     // A default search that finds no entry or session says when stored
     // messages match, since a line the user typed is only ever a message.

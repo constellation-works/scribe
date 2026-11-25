@@ -1,9 +1,11 @@
 //! `scribe entry list`. Read-only: no lock, no audit, no write.
 
-/// What `entry list` reads: the filter as typed, its `--related` and
-/// `--since`/`--until` still to resolve and check.
+use crate::apps::tag::ConfigReads;
+
+/// What `entry list` reads: the filter with its tag and `--related` still to
+/// resolve, and `--since`/`--until` still to check.
 pub struct ListInput {
-    /// The filter; its `related` and `dates` are replaced.
+    /// The filter; its `tag`, `related` and `dates` are resolved.
     pub filter: crate::EntryFilter,
     /// `--since`.
     pub since: Option<time::Date>,
@@ -40,6 +42,12 @@ pub fn list<E: crate::runtime::PortError>(
 ) -> std::result::Result<Listed, crate::runtime::errors::ReadError<E>> {
     use crate::runtime::errors::ReadError;
     let mut filter = input.filter;
+    if let Some(tag) = filter.tag.clone() {
+        let config = ctx.store.read().tags().config()?;
+        if let Some(definition) = config.tags.resolve(tag.as_str()) {
+            filter.tag = Some(definition.name.clone());
+        }
+    }
     filter.related =
         crate::runtime::resolve::relateds_preserving_input(ctx, input.provider, &filter.related)?;
     filter.dates = crate::DateRange::checked(input.since, input.until).map_err(ReadError::Usage)?;

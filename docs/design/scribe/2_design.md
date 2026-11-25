@@ -1912,10 +1912,10 @@ approval adds ` | handoff mode: <mode>` and ` | approved by <agent> on your
 instruction "<quote>" (<session>, <date>)`. The suffixes and labels are not
 cut. A consumer that needs a bound on the length must apply its own.
 
-`--tag <tag>` (ORB-27683) keeps only the entries filed under that tag, by
-its exact name as `entry list --tag` matches it: an alias does not match
-([store spec, known gaps](./specs/store.md)). It combines with the query and
-the other filters, under the same visibility rules. It implies entries:
+`--tag <tag>` (ORB-27683) keeps only the entries filed under that tag,
+resolving its name or alias through the configured tag table, as `entry
+list --tag` does. It combines with the query and the other filters, under
+the same visibility rules. It implies entries:
 `--kind session` or `--kind message` with it is a usage error (exit 2), and a
 search with a tag never falls back to stored messages, since they carry no
 tag. The echoed criteria name it as `--tag <tag>`, after `--kind`.

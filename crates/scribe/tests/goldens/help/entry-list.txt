@@ -3,7 +3,7 @@ List entries, oldest first
 Usage: scribe entry list [OPTIONS]
 
 Options:
-      --tag <TAG>           Only entries filed under this tag, by its name as `tag list` prints it [default: any]
+      --tag <TAG>           Only entries filed under this tag's name or alias [default: any]
       --status <STATUS>     Only entries with this status [default: any] [possible values: active, superseded, retired, forgotten]
       --project <PROJECT>   Only entries recorded in this project (a repository slug, or global) [default: any]
       --group <ID>          Only entries of member sessions in this group (id, unique prefix, or project group slug)

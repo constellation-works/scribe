@@ -257,55 +257,73 @@ fn search_filters_narrow_and_the_limit_cuts() {
 fn search_tag_keeps_one_tags_entries_combined_with_the_other_filters() {
     let fx = Fixture::new();
     fx.seed();
-    // decisions-2 is the active decisions entry, decisions-1 superseded and
-    // hidden; preferences-1 is another tag and mentions no merge.
-    let tagged = ok_json(&fx, &["search", "merge", "--tag", "decisions"]);
-    assert_eq!(ids(&tagged, "hits", "cite"), ["decisions-2"]);
+    // `rituals` is an unknown legacy tag, so its literal value continues to
+    // filter the stored entry. The entry is retired and appears only when
+    // hidden records are requested.
+    let visible = ok(&fx, &["search", "full gate", "--tag", "rituals"]);
+    assert!(visible.stdout.is_empty());
+    assert!(text(&visible.stderr).contains("--include-hidden"));
+    let tagged = ok_json(
+        &fx,
+        &[
+            "search",
+            "full gate",
+            "--tag",
+            "rituals",
+            "--include-hidden",
+        ],
+    );
+    assert_eq!(ids(&tagged, "hits", "cite"), ["rituals-1"]);
     assert_eq!(tagged["hits"][0]["kind"], "entry");
     assert_eq!(tagged["total"], 1);
-    let shown = ok_json(
-        &fx,
-        &["search", "merge", "--tag", "decisions", "--include-hidden"],
-    );
-    let mut cites = ids(&shown, "hits", "cite");
-    cites.sort();
-    assert_eq!(cites, ["decisions-1", "decisions-2"]);
     // The date and project filters still apply under the tag.
     let before = ok_json(
         &fx,
         &[
             "search",
-            "merge",
+            "full gate",
             "--tag",
-            "decisions",
+            "rituals",
             "--until",
-            "2026-10-31",
+            "2026-09-14",
             "--include-hidden",
         ],
     );
-    assert_eq!(ids(&before, "hits", "cite"), ["decisions-1"]);
+    assert!(ids(&before, "hits", "cite").is_empty());
     let other_project = ok(
         &fx,
         &[
             "search",
-            "merge",
+            "full gate",
             "--tag",
-            "decisions",
+            "rituals",
             "--project",
-            "orbit",
+            "constellation-works/scribe",
+            "--include-hidden",
         ],
     );
     assert!(other_project.stdout.is_empty());
     // The echoed criteria name the tag, and no message count is offered for
     // a tag: messages carry none.
-    let none = ok(&fx, &["search", "merge", "--tag", "rituals"]);
+    let none = ok(&fx, &["search", "full gate", "--tag", "unknown-tag"]);
     assert!(none.stdout.is_empty());
     let notice = text(&none.stderr);
     assert!(
-        notice.contains("no records match \"merge\" --tag rituals"),
+        notice.contains("no records match \"full gate\" --tag unknown-tag"),
         "{notice}"
     );
     assert!(!notice.contains("stored message"), "{notice}");
+}
+
+#[test]
+fn search_tag_alias_selects_its_configured_tag() {
+    let fx = Fixture::new();
+    fx.seed();
+    let canonical = ok_json(&fx, &["search", "commit", "--tag", "preferences"]);
+    let alias = ok_json(&fx, &["search", "commit", "--tag", "pref"]);
+    assert_eq!(ids(&canonical, "hits", "cite"), ["preferences-1"]);
+    assert_eq!(ids(&alias, "hits", "cite"), ["preferences-1"]);
+    assert_eq!(alias["total"], 1);
 }
 
 #[test]
@@ -426,6 +444,24 @@ fn entry_list_filters_by_topics_related_dates_and_author() {
         ],
     );
     assert!(text(&empty.stderr).contains("--since 2027-01-01"));
+}
+
+#[test]
+fn entry_list_tag_alias_selects_its_configured_tag() {
+    let fx = Fixture::new();
+    fx.seed();
+    let canonical = ok_json(&fx, &["entry", "list", "--tag", "preferences"]);
+    let alias = ok_json(&fx, &["entry", "list", "--tag", "pref"]);
+    assert_eq!(ids(&canonical, "entries", "id"), ["preferences-1"]);
+    assert_eq!(ids(&alias, "entries", "id"), ["preferences-1"]);
+    assert!(
+        ids(
+            &ok_json(&fx, &["entry", "list", "--tag", "unknown-tag"]),
+            "entries",
+            "id"
+        )
+        .is_empty()
+    );
 }
 
 #[test]

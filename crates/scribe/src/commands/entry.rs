@@ -130,7 +130,7 @@ pub(crate) enum EntryCommand {
 /// Arguments to `entry list`.
 #[derive(Debug, Args)]
 pub(crate) struct ListArgs {
-    /// Only entries filed under this tag, by its name as `tag list` prints it [default: any]
+    /// Only entries filed under this tag's name or alias [default: any]
     #[arg(long, value_name = "TAG")]
     pub(crate) tag: Option<TagName>,
 
