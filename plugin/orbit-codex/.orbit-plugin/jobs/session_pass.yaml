@@ -1,4 +1,3 @@
-# The scribe-session-pass routine's job: one call to scribe.session-pass.
 schemaVersion: 2
 kind: Job
 metadata:
@@ -7,12 +6,137 @@ spec:
   state: enabled
   kind: workflow
   max_active_runs: 1
+  default_input:
+    sessions: []
+    resolve: false
+    max_sessions: null
+    deadline_epoch_s: null
   steps:
-    - id: session-pass
-      timeout_seconds: 300
-      spec:
-        type: deterministic
-        action: plugin.tool_call
-        config:
-          tool: scribe.session-pass
-          input: {}
+    # Fan-in seeds an empty cursor and replaces it with the committed
+    # continuation after each iteration.
+    - id: seed_cursor
+      fan_out:
+        items: "[]"
+        worker:
+          id: unused_seed
+          spec:
+            type: deterministic
+            action: plugin.tool_call
+            config:
+              tool: scribe.session-pass-prepare
+      fan_in:
+        join: { mode: all }
+        collect: pass_cursor
+    - id: windows
+      loop:
+        max_iterations: 25
+        # Leave room inside the routine timeout for a window already started
+        # to use both 120-second activity attempts.
+        timeout_seconds: "90"
+        break_when: "{{ steps.prepare.output.done }} == true"
+        steps:
+          - id: prepare
+            timeout_seconds: 60
+            spec:
+              type: deterministic
+              action: plugin.tool_call
+              config:
+                tool: scribe.session-pass-prepare
+            default_input:
+              input:
+                sessions: "{{ input.sessions }}"
+                resolve: "{{ input.resolve }}"
+                max_sessions: "{{ input.max_sessions }}"
+                deadline_epoch_s: "{{ input.deadline_epoch_s }}"
+                progress: "{{ steps.pass_cursor.output }}"
+          # The skipped second worker gives the join a successful branch so
+          # the fallback can record backoff and report the activity failure.
+          - id: distill
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: distill_window
+                when: "{{ item }} == true && {{ steps.prepare.output.needs_model }} == true"
+                target: activity:scribe_session_distill
+                default_input:
+                  request: "{{ steps.prepare.output.window_request }}"
+                  crew: "{{ steps.prepare.output.session_distill_crew }}"
+            fan_in:
+              join: { mode: any }
+          - id: fail_distill
+            when: "{{ steps.prepare.output.needs_model }} == true && {{ steps.distill.output }} == [null,null]"
+            target: activity:scribe_session_pass_fail
+            default_input:
+              input:
+                abort: true
+                basis: "{{ steps.prepare.output.basis }}"
+          - id: apply
+            timeout_seconds: 60
+            spec:
+              type: deterministic
+              action: plugin.tool_call
+              config:
+                tool: scribe.session-pass-apply
+            default_input:
+              input:
+                basis: "{{ steps.prepare.output.basis }}"
+                cursor: "{{ steps.prepare.output.cursor }}"
+                answer: "{{ steps.distill.output }}"
+          - id: compress
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: compress_header
+                when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_header"
+                target: activity:scribe_session_header_compress
+                default_input:
+                  request: "{{ steps.apply.output.header_request }}"
+                  crew: "{{ steps.prepare.output.session_header_crew }}"
+            fan_in:
+              join: { mode: any }
+          - id: distill_retry
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: distill_corrected_window
+                when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_window"
+                target: activity:scribe_session_distill
+                default_input:
+                  request: "{{ steps.apply.output.window_request }}"
+                  crew: "{{ steps.prepare.output.session_distill_crew }}"
+            fan_in:
+              join: { mode: any }
+          - id: fail_retry
+            when: "{{ steps.apply.output.status }} == retry_header && {{ steps.compress.output }} == [null,null] || {{ steps.apply.output.status }} == retry_window && {{ steps.distill_retry.output }} == [null,null]"
+            target: activity:scribe_session_pass_fail
+            default_input:
+              input:
+                abort: true
+                basis: "{{ steps.prepare.output.basis }}"
+          - id: carry
+            fan_out:
+              items: "[true]"
+              worker:
+                id: apply_retry
+                timeout_seconds: 60
+                spec:
+                  type: deterministic
+                  action: plugin.tool_call
+                  config:
+                    tool: scribe.session-pass-apply
+                default_input:
+                  input:
+                    basis: "{{ steps.prepare.output.basis }}"
+                    cursor: "{{ steps.apply.output.cursor }}"
+                    answer: "{{ steps.distill.output }}"
+                    retry_answer: "{{ steps.distill_retry.output }}"
+                    header: "{{ steps.compress.output }}"
+                    correction: "{{ steps.apply.output.correction }}"
+                    repair: true
+                    previous_status: "{{ steps.apply.output.status }}"
+            fan_in:
+              join: { mode: all }
+              collect: pass_cursor

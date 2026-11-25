@@ -30,8 +30,10 @@ pub mod memory_refresh;
 pub mod origin;
 pub mod payload;
 pub mod project;
+pub mod session_distill;
 pub mod text;
 pub mod transcript;
+pub mod voice;
 pub mod window;
 
 #[cfg(test)]

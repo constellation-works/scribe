@@ -22,8 +22,9 @@ command's arguments are marked the same way. `scribe mark list` shows the
 markers with no entry from scribe.
 
 `/scribe on` in Claude Code, or an exact `$scribe on` in Codex, catalogs that
-session. `scribe session pass` then writes one record per session whose pass is
-due, and proposes unmarked preferences and standards from your own turns.
+session. The Orbit job `scribe-session-pass` writes records for due sessions
+and proposes qualifying claims from your turns. `scribe session pass` settles
+empty or unchanged windows and points you to the job when it finds new work.
 `scribe proposal list --state open --json` shows the quotes and the source
 turns. `#scribe approve <id>` creates the entry as yours, citing the original
 turn. `#scribe reject <id>` closes it for good.
@@ -105,6 +106,7 @@ scribe session show <id> --log
 scribe session show <id> --json
 scribe session pass --json
 scribe session pass --session <id> --json
+orbit job run scribe-session-pass --input 'sessions=["<id>"]'
 scribe session rebuild <id> --author <name> --confirm
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
@@ -296,9 +298,10 @@ replay. The host-owned file checks prevent accidents. A process with the same
 OS account can still forge them. Agents must not call hooks to impersonate you
 or relax the author rules.
 
-`scribe session pass` routes each opted-in session to its provider, including
-an archived final pass. `session rebuild` uses the record's provider.
-Discovery only reads:
+Session pass reads each opted-in transcript from its recorded provider,
+including archived Codex rollouts. Orbit selects the model through the
+`session_distill_crew` and `session_header_crew` plugin settings. Both
+default to `haiku`. `session rebuild` uses the record's provider.
 
 ```sh
 scribe --provider codex transcript list --since 2026-11-01 --min-turns 1 --json
@@ -306,7 +309,7 @@ scribe --provider codex transcript show <id> --json
 scribe session pass --session <id> --json
 ```
 
-Codex model work defaults to Luna (`gpt-6-luna`), with no fallback. Override it
+Interim Codex catalog and rebuild model work defaults to Luna (`gpt-6-luna`), with no fallback. Override it
 in the private store's `config.toml`. Missing keys keep the defaults in
 `ModelIds::codex()` (`crates/scribe-core/src/config.rs`):
 
@@ -319,8 +322,7 @@ credentials = ["OPENAI_API_KEY"]   # an existing Codex login also works
 ```
 
 `[models]` keeps the Claude defaults. It also accepts `provider = "codex"` for
-global routing, and then defaults its model ids to Luna. Global group-close summaries
-otherwise use `[models]`. The `annotation` and `consistency` keys still load
+global routing, and then defaults its model ids to Luna. The `annotation` and `consistency` keys still load
 but are unused. `--provider codex` selects the Codex
 model table for those CLI calls. An explicit id is honored. Model children run
 ephemeral, without your instructions, plugins, hooks, shell, apps, web search
@@ -329,15 +331,11 @@ output and terminates the process group. Schemas are validated, tool items are
 refused, secrets are masked in diagnostics, and temporary schemas and logs are
 removed. A missing CLI, login or model is an error, not a fall back to Claude.
 
-For Luna-backed Orbit session passes, install the generated
-[plugin/orbit-codex](../plugin/orbit-codex/README.md) variant. It needs
-`codex_home`, `codex_runtime_tmp` and `codex_installation_id`, and an Orbit
-build that can write the exact files the manifest names. Codex needs its `tmp`
-directory and `installation_id` file writable at startup, even for an ephemeral
-model call. Its auth, configuration and transcripts stay read-only. Scribe
-copies no credentials and requests no whole-home write. The default
-`plugin/.orbit-plugin/` stays the Claude-only package. Neither variant exposes an agent-callable tool, and both ship routines disabled. Upgrading preserves
-existing enablement and schedules.
+Configure `codex_home` in the [Orbit plugin](../plugin/.orbit-plugin/README.md)
+to read Codex transcripts. The [generated variant](../plugin/orbit-codex/README.md)
+remains available. Orbit runs its configured crews under its own provider
+settings. Both plugin variants ship routines disabled and preserve existing
+enablement and schedules on upgrade.
 
 Lifecycle and trust: [Codex hooks](https://learn.chatgpt.com/docs/hooks).
 Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks).

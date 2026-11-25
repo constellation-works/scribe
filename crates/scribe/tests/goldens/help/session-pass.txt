@@ -1,12 +1,12 @@
-Write session records for due or named sessions
+Settle due or named sessions when no new window needs distillation
 
-Writes the record of each session whose pass is due, or of the sessions named, with the session model.
+Settles eligible sessions deterministically and prints the Orbit job command when new windows need distillation.
 
 Usage: scribe session pass [OPTIONS]
 
 Options:
       --session <ID>
-          Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+          Settle this switched-on session, even during backoff; accepts a unique prefix of at least four characters and can be repeated
 
   -h, --help
           Print help (see a summary with '-h')
@@ -29,29 +29,13 @@ Global options:
       --json
           Shorthand for --format json
 
-The plugin routine ships disabled; once enabled on a host it runs every
-5 minutes. Also run this command by hand where each configured provider CLI
-is on PATH. Each session uses its stored provider (Codex defaults to Luna). Takes
-at most five due sessions per run, processing every new-message window
-(default 40 messages / 15000 characters; [catalog] window_messages and
-window_chars). Each window rewrites the header and open segment, appends
-new segments and checkpoints the record. Sealed segments stay unchanged;
-[catalog] segment_windows (default 3) bounds how long a segment stays open.
---json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 claims per session per run, only from the user's turns
-that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
-until 20 candidate proposals are open. Review with scribe proposal list;
-only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
-Under a tag whose route is write (idea ships so), the pass writes up to 3
-ideas per session per run itself, with their outcome (open, or parked in
-the user's words); an idea that became a task in the session is not written.
-List them with scribe entry list --tag idea --author-kind scribe; cancel one
-with #scribe retire <id> or #scribe forget <id>.
-A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
-then at most 60 minutes. --session retries immediately. Exits 1 when any
-pass failed, naming each failed session, its error code and short reason.
+The scribe-session-pass Orbit routine ships disabled. Once enabled on a
+configured host it runs every five minutes. Run the job by hand to distill
+new windows. It takes up to five due sessions per run and checkpoints each
+window before reading the next. Named sessions bypass retry backoff.
 
 Examples:
   scribe session pass
-  scribe session pass --session <id> --session <id>
-  scribe session pass --json | jq '.passes[] | select(.result == "failed")'
+  scribe session pass --session <id> --json
+  orbit job run scribe-session-pass
+  orbit job run scribe-session-pass --input 'sessions=["<id>"]'

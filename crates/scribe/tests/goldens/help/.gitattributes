@@ -1,0 +1,2 @@
+# Clap indents blank lines in long help. Keep the captured bytes.
+*.txt whitespace=-blank-at-eol

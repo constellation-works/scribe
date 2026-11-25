@@ -1,119 +1,113 @@
-//! `scribe session pass`: the arguments, then the session app's pass.
+//! Arguments and JSON I/O for the session app's deterministic pass commands.
 
-use super::Exec;
 use super::passed;
-use crate::commands::RunLimits;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
-use scribe_core::apps::session::{self as app, Command, PassInput, exec};
+use scribe_core::SessionId;
+use scribe_core::apps::session::{
+    ApplyInput, Command, FailInput, Outcome, PrepareInput, SessionPassInput, exec,
+};
 use scribe_core::composition::Context;
-use scribe_core::{Config, Models, SessionId};
+use serde_json::Value;
+use std::io::Read;
 
 /// Redact, flatten and bound a failure reason, as a pass report has it.
 #[cfg(test)]
 pub(super) use scribe_core::apps::session::short_reason;
 
-pub(in crate::commands) const COMMAND: &str = app::PASS_COMMAND;
-
-pub(super) const PASS_EXAMPLES: &str = "\
-The plugin routine ships disabled; once enabled on a host it runs every
-5 minutes. Also run this command by hand where each configured provider CLI
-is on PATH. Each session uses its stored provider (Codex defaults to Luna). Takes
-at most five due sessions per run, processing every new-message window
-(default 40 messages / 15000 characters; [catalog] window_messages and
-window_chars). Each window rewrites the header and open segment, appends
-new segments and checkpoints the record. Sealed segments stay unchanged;
-[catalog] segment_windows (default 3) bounds how long a segment stays open.
---json reports windows, segments, seals and how many due sessions remain.
-Also proposes up to 3 claims per session per run, only from the user's turns
-that fire a trigger of a tag's capture rules (see scribe tag show <tag>),
-until 20 candidate proposals are open. Review with scribe proposal list;
-only a typed #scribe approve <id> writes an entry; #scribe reject <id> drops it.
-Under a tag whose route is write (idea ships so), the pass writes up to 3
-ideas per session per run itself, with their outcome (open, or parked in
-the user's words); an idea that became a task in the session is not written.
-List them with scribe entry list --tag idea --author-kind scribe; cancel one
-with #scribe retire <id> or #scribe forget <id>.
-A failed pass stays due with automatic retry delays of 5, 10, 20, 40,
-then at most 60 minutes. --session retries immediately. Exits 1 when any
-pass failed, naming each failed session, its error code and short reason.
+pub(super) const PASS_EXAMPLES: &str =
+    "The scribe-session-pass Orbit routine ships disabled. Once enabled on a
+configured host it runs every five minutes. Run the job by hand to distill
+new windows. It takes up to five due sessions per run and checkpoints each
+window before reading the next. Named sessions bypass retry backoff.
 
 Examples:
   scribe session pass
-  scribe session pass --session <id> --session <id>
-  scribe session pass --json | jq '.passes[] | select(.result == \"failed\")'";
+  scribe session pass --session <id> --json
+  orbit job run scribe-session-pass
+  orbit job run scribe-session-pass --input 'sessions=[\"<id>\"]'";
 
-/// Arguments to `session pass`.
+/// Arguments to session pass.
 #[derive(Debug, Args)]
 pub(crate) struct PassArgs {
-    /// Pass this session (its id or a unique prefix of at least four characters) now, ignoring retry backoff and whether a pass is due (it must be switched on); repeat for several [default: every due session, at most five]
+    /// Settle this switched-on session, even during backoff; accepts a unique prefix of at least four characters and can be repeated
     #[arg(long = "session", value_name = "ID")]
     pub(crate) sessions: Vec<SessionId>,
 }
 
-/// Pass the due sessions, or the sessions `--session` names (each a prefix
-/// of its id).
-pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
-    let max = if args.sessions.is_empty() {
-        scribe_core::pass::MAX_PER_RUN
+pub(super) fn run(args: PassArgs, ctx: &Context) -> Result<Output, CliError> {
+    let input = SessionPassInput {
+        sessions: args.sessions,
+        resolve: true,
+        ..Default::default()
+    };
+    Ok(passed(exec(ctx, Command::Pass(input, ctx.host()))?, ctx))
+}
+
+/// Parsed by both the CLI and the plugin backend before accessing a store.
+pub(in crate::commands) enum Step {
+    Prepare(PrepareInput),
+    Apply(Box<ApplyInput>),
+    Fail(FailInput),
+}
+
+impl Step {
+    pub(in crate::commands) fn parse(name: &str, input: Value) -> Result<Self, CliError> {
+        let invalid = |err| CliError::Usage(format!("{name} input: {err}"));
+        match name {
+            "session-pass-prepare" => Ok(Self::Prepare(
+                serde_json::from_value(input).map_err(invalid)?,
+            )),
+            "session-pass-apply" => Ok(Self::Apply(Box::new(
+                serde_json::from_value(input).map_err(invalid)?,
+            ))),
+            "session-pass-fail" => Ok(Self::Fail(serde_json::from_value(input).map_err(invalid)?)),
+            _ => Err(CliError::Usage(format!("unknown pass step {name}"))),
+        }
+    }
+
+    pub(in crate::commands) fn run(self, ctx: &Context) -> Result<Value, CliError> {
+        let host = ctx.host();
+        let command = match self {
+            Self::Prepare(input) => Command::PassPrepare(input, host),
+            Self::Apply(input) => Command::PassApply(input, host),
+            Self::Fail(input) => Command::PassFail(input, host),
+        };
+        let value = match exec(ctx, command)? {
+            Outcome::PassPrepared(prepared) => serde_json::to_value(prepared),
+            Outcome::PassApplied(applied) => serde_json::to_value(applied),
+            Outcome::PassFailed(pass) => Ok(serde_json::json!({"pass": pass})),
+            Outcome::Listed(_)
+            | Outcome::Shown(_)
+            | Outcome::Passed(_)
+            | Outcome::Activity(_)
+            | Outcome::Transcripts(_)
+            | Outcome::Transcript(_) => {
+                unreachable!("pass step returns its corresponding outcome")
+            }
+        };
+        value.map_err(|err| CliError::Output(err.into()))
+    }
+}
+
+pub(super) fn step_stdin(name: &str, ctx: &Context) -> Result<Output, CliError> {
+    let mut raw = Vec::new();
+    std::io::stdin()
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|source| CliError::Read {
+            what: "stdin".into(),
+            source,
+        })?;
+    if raw.len() > 1024 * 1024 {
+        return Err(scribe_core::CommandError::Usage("pass input exceeds 1 MiB".into()).into());
+    }
+    let input = if raw.is_empty() && name == "session-pass-prepare" {
+        serde_json::json!({})
     } else {
-        args.sessions.len()
+        serde_json::from_slice(&raw)
+            .map_err(|err| scribe_core::CommandError::Usage(format!("{name} input: {err}")))?
     };
-    pass(
-        ctx,
-        exec,
-        &args.sessions,
-        true,
-        |config: &Config| ctx.models(config),
-        RunLimits::new(max),
-    )
-}
-
-/// [`run`] with the `Models` adapter `models` builds for the config, so a
-/// test can answer with a fake, and within `limits`: the plugin's tool
-/// starts no session after its start-by time, so a call ends inside
-/// Orbit's backend timeout. `only` names the sessions to pass whether or
-/// not they are due; empty takes the due ones.
-#[cfg(test)]
-pub(in crate::commands) fn run_with<M: Models>(
-    ctx: &Context,
-    models: impl FnMut(&Config) -> M,
-    limits: RunLimits,
-    only: &[SessionId],
-) -> Result<Output, CliError> {
-    pass(ctx, app::exec_unaudited, only, false, models, limits)
-}
-
-/// [`run_with`], audited: the plugin's routine tool.
-pub(in crate::commands) fn run_audited<M: Models>(
-    ctx: &Context,
-    models: impl FnMut(&Config) -> M,
-    limits: RunLimits,
-    only: &[SessionId],
-) -> Result<Output, CliError> {
-    pass(ctx, exec, only, false, models, limits)
-}
-
-/// A pass over `sessions` (resolved as typed when `resolve`), each with the
-/// adapter `models` builds for its config, run by `exec`: the session app's
-/// audited `exec`, or the unaudited one the tests drive.
-fn pass<M: Models>(
-    ctx: &Context,
-    exec: Exec,
-    sessions: &[SessionId],
-    resolve: bool,
-    mut models: impl FnMut(&Config) -> M,
-    limits: RunLimits,
-) -> Result<Output, CliError> {
-    let mut each = |config: &Config| Box::new(models(config)) as Box<dyn Models + '_>;
-    let models: app::ModelsEach<'_> = &mut each;
-    let input = PassInput {
-        sessions,
-        resolve,
-        models,
-        limits,
-        host: ctx.host(),
-    };
-    Ok(passed(exec(ctx, Command::Pass(input))?, ctx))
+    Step::parse(name, input)?.run(ctx).map(Output::PassStep)
 }

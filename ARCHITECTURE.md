@@ -81,7 +81,8 @@ environment variable, or branches on a record's state.
 | `init`, `store`, `export` | `admin` |
 
 `plugin call` serves the Orbit plugin's tools. Its routine and workflow tools
-(`session-pass`, `consistency-scan`, `memory-refresh-prepare`,
+(`session-pass-prepare`, `session-pass-apply`, `session-pass-fail`,
+`consistency-scan`, `memory-refresh-prepare`,
 `memory-refresh-apply`, `group-close-prepare`, `group-close-apply`) have no
 flow of their own. The handler resolves the envelope's root with `Context::at`
 and calls the app's `exec` (or command handler that owns the work).
@@ -183,9 +184,9 @@ so the guard holds each to the same order.
   parses `config.toml`; `Context::redactor` and `Context::models` build from a
   parsed `Config`. `runtime/host/` implements the ports on the `Context`.
 - `providers/` holds everything about calling a model until ORB-27911
-  removes scribe's own model calls. Only three flows still use it: session pass,
-  catalog and rebuild. Group close and memory refresh use deterministic
-  prepare/apply flows; their Orbit jobs perform the model step.
+  removes scribe's own model calls. Session catalog and rebuild still use it.
+  Session pass, group close and memory refresh use deterministic prepare/apply
+  flows. Their Orbit jobs perform the model step.
 
 ## `scribe-store`
 

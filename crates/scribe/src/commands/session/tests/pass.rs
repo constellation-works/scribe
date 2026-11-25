@@ -1,11 +1,14 @@
-//! `session pass` with a fake `Models` (2_design.md §5.3): one record per
+//! Session pass prepare and apply with fixed answers (2_design.md §5.3): one record per
 //! due session, `scribed_through` advanced, no entries, the previous record
 //! kept when the answer is invalid, terms kept only when verbatim from
 //! Daniel's turns, and a session never switched on never read.
 
-use crate::commands::session::pass::{run_with, short_reason};
-use crate::output::{Output, PassPayload};
+use crate::commands::session::pass::short_reason;
+use crate::output::PassPayload;
 use scribe_core::PassVerbs;
+use scribe_core::apps::session::{
+    self, ApplyInput, ApplyStatus, Command, FailInput, Outcome, PassReport, PrepareInput,
+};
 use scribe_core::composition::Context;
 use scribe_core::composition::Env as AppEnv;
 use scribe_core::control::{self, Switch};
@@ -15,7 +18,7 @@ use scribe_core::models::{
 };
 use scribe_core::testing::StoreTestReads;
 use scribe_core::testing::ViewTestReads;
-use scribe_core::{Models, Redactor, SessionId};
+use scribe_core::{Redactor, SessionId};
 use serde_json::json;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -26,17 +29,17 @@ const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without 
 const ASSISTANT: &str = "Level 4 crews merge their own pull requests after green CI.";
 const NEVER_SAID: &str = "this session was never switched on and must stay unread";
 
-/// A `Models` answering the first session request with `first`, when set,
+/// Fixed responses, answering the first session request with `first`, when set,
 /// and every other with `answer`, keeping each request.
-struct FakeModels {
+struct Answers {
     first: RefCell<Option<Result<SessionAnswer, ModelError>>>,
     answer: Result<SessionAnswer, ModelError>,
     asked: RefCell<Vec<SessionRequest>>,
     compressed: RefCell<Vec<SessionHeaderRequest>>,
 }
 
-impl Models for &FakeModels {
-    fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
+impl Answers {
+    fn window(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         self.asked.borrow_mut().push(request.clone());
         self.first
             .take()
@@ -64,7 +67,7 @@ impl Models for &FakeModels {
             })
     }
 
-    fn session_header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
+    fn header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
         self.compressed.borrow_mut().push(request.clone());
         self.answer.clone().map(|a| SessionHeader {
             title: a.title,
@@ -72,6 +75,133 @@ impl Models for &FakeModels {
             goals: a.goals,
             next: a.next,
         })
+    }
+}
+
+fn drive(
+    ctx: &Context,
+    responses: &Answers,
+    sessions: &[SessionId],
+    expire_after_window: bool,
+) -> PassReport {
+    let mut progress = json!([]);
+    let mut deadline = None;
+    let mut passes: Vec<PassPayload> = Vec::new();
+    let remaining =
+        loop {
+            let input: PrepareInput = serde_json::from_value(json!({
+                "sessions": sessions, "progress": progress, "deadline_epoch_s": deadline,
+            }))
+            .unwrap();
+            let Outcome::PassPrepared(prepared) =
+                session::exec_unaudited(ctx, Command::PassPrepare(input, ctx.host())).unwrap()
+            else {
+                panic!("prepared window");
+            };
+            let cursor = serde_json::to_value(&prepared.cursor).unwrap();
+            if prepared.done {
+                break usize::try_from(cursor["remaining"].as_u64().unwrap()).unwrap()
+                    + cursor["sessions"].as_array().unwrap().len().saturating_sub(
+                        usize::try_from(cursor["next"].as_u64().unwrap()).unwrap(),
+                    );
+            }
+            progress = json!([{"cursor": cursor}]);
+            if !prepared.needs_model {
+                passes.extend(prepared.settled);
+                continue;
+            }
+            let request = serde_json::from_value(prepared.window_request.clone().unwrap()).unwrap();
+            let answered = responses.window(&request);
+            let on_failure = |err: ModelError| {
+                let failure = FailInput {
+                    basis: prepared.basis.clone(),
+                    error_code: Some(err.code().into()),
+                    reason: Some(err.to_string()),
+                };
+                let Outcome::PassFailed(Some(payload)) =
+                    session::exec_unaudited(ctx, Command::PassFail(failure, ctx.host())).unwrap()
+                else {
+                    panic!("failure backoff");
+                };
+                *payload
+            };
+            let answer = match answered {
+                Ok(answer) => answer,
+                Err(err) => {
+                    passes.push(on_failure(err));
+                    break 1;
+                }
+            };
+            let apply = |input| {
+                let input: ApplyInput = serde_json::from_value(input).unwrap();
+                let Outcome::PassApplied(applied) =
+                    session::exec_unaudited(ctx, Command::PassApply(Box::new(input), ctx.host()))
+                        .unwrap()
+                else {
+                    panic!("applied answer");
+                };
+                applied
+            };
+            let mut input = json!({"cursor": cursor, "basis": prepared.basis, "answer": answer});
+            let mut applied = apply(input.clone());
+            match applied.status {
+                ApplyStatus::RetryHeader => {
+                    let request =
+                        serde_json::from_value(applied.header_request.take().unwrap()).unwrap();
+                    match responses.header(&request) {
+                        Ok(header) => input["header"] = json!(header),
+                        Err(err) => {
+                            passes.push(on_failure(err));
+                            break 1;
+                        }
+                    }
+                }
+                ApplyStatus::RetryWindow => {
+                    let request =
+                        serde_json::from_value(applied.window_request.take().unwrap()).unwrap();
+                    match responses.window(&request) {
+                        Ok(answer) => input["retry_answer"] = json!(answer),
+                        Err(err) => {
+                            passes.push(on_failure(err));
+                            break 1;
+                        }
+                    }
+                }
+                ApplyStatus::Idle | ApplyStatus::Written | ApplyStatus::Failed => {}
+            }
+            if matches!(
+                applied.status,
+                ApplyStatus::RetryHeader | ApplyStatus::RetryWindow
+            ) {
+                input["previous_status"] = json!(applied.status);
+                input["repair"] = json!(true);
+                applied = apply(input);
+            }
+            if let Some(mut payload) = applied.pass {
+                if let Some(previous) = passes
+                    .pop()
+                    .filter(|previous| previous.session == payload.session)
+                {
+                    payload.windows += previous.windows;
+                    payload.dropped_terms += previous.dropped_terms;
+                    payload.segments_sealed += previous.segments_sealed;
+                    payload.warnings.splice(..0, previous.warnings);
+                }
+                passes.push(payload);
+            }
+            progress = json!([{"cursor": applied.cursor}]);
+            if expire_after_window {
+                deadline = Some(ctx.now().unix_timestamp());
+            }
+        };
+    PassReport {
+        passes,
+        remaining,
+        notices: Vec::new(),
+        catalog: false,
+        switch_written: false,
+        persisted_targets: Vec::new(),
+        memory_targets: Vec::new(),
     }
 }
 
@@ -182,17 +312,8 @@ impl Setup {
             .unwrap();
     }
 
-    fn run(&self, models: &FakeModels) -> Vec<PassPayload> {
-        let Output::Pass(report) = run_with(
-            &self.ctx,
-            |_| models,
-            crate::commands::RunLimits::new(scribe_core::pass::MAX_PER_RUN),
-            &[],
-        )
-        .unwrap() else {
-            panic!("a pass report");
-        };
-        report.passes
+    fn run(&self, models: &Answers) -> Vec<PassPayload> {
+        drive(&self.ctx, models, &[], false).passes
     }
 
     /// The `ON` record as its file reads (`scribe export`).
@@ -212,8 +333,8 @@ impl Setup {
     }
 }
 
-fn fake(answer: Result<SessionAnswer, ModelError>) -> FakeModels {
-    FakeModels {
+fn fixed(answer: Result<SessionAnswer, ModelError>) -> Answers {
+    Answers {
         first: RefCell::new(None),
         answer,
         asked: RefCell::new(Vec::new()),
@@ -226,7 +347,7 @@ fn a_due_session_gets_one_record_and_its_terms_are_daniels_words_only() {
     let setup = Setup::new();
     setup.switch_on();
     let never_before = std::fs::read(setup.transcript(NEVER)).unwrap();
-    let models = fake(Ok(answer()));
+    let models = fixed(Ok(answer()));
 
     let passes = setup.run(&models);
     assert_eq!(passes.len(), 1);
@@ -272,13 +393,13 @@ fn a_due_session_gets_one_record_and_its_terms_are_daniels_words_only() {
 fn the_next_pass_reads_only_what_came_after_scribed_through() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     setup.append(&[
         line("user", "u-2", "Next, the release crew."),
         line("assistant", "a-2", "Noted, the release crew next."),
     ]);
     setup.mark_due();
-    let models = fake(Ok(answer()));
+    let models = fixed(Ok(answer()));
     let passes = setup.run(&models);
     assert_eq!(passes[0].passes, Some(2));
     let asked = models.asked.borrow();
@@ -297,7 +418,7 @@ fn the_next_pass_reads_only_what_came_after_scribed_through() {
     // Due again with nothing new: settled without asking the model.
     drop(asked);
     setup.mark_due();
-    let idle = fake(Ok(answer()));
+    let idle = fixed(Ok(answer()));
     let passes = setup.run(&idle);
     assert_eq!(passes[0].result, "unchanged");
     assert!(idle.asked.borrow().is_empty());
@@ -308,7 +429,7 @@ fn the_next_pass_reads_only_what_came_after_scribed_through() {
 fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     let before = setup.record_text();
     setup.append(&[line("user", "u-2", "More on levels.")]);
     setup.mark_due();
@@ -332,7 +453,7 @@ fn an_invalid_answer_keeps_the_previous_record_and_the_pass_due() {
                     .retry_after = None
             })
             .unwrap();
-        let passes = setup.run(&fake(bad));
+        let passes = setup.run(&fixed(bad));
         assert_eq!(passes[0].result, "failed");
         assert!(passes[0].error_code.is_some());
         assert_eq!(setup.record_text(), before);
@@ -347,7 +468,7 @@ fn an_over_budget_header_is_compressed_once_without_resending_the_window() {
     setup.switch_on();
     let mut over = answer();
     over.summary = "s".repeat(1201);
-    let models = fake(Ok(answer()));
+    let models = fixed(Ok(answer()));
     *models.first.borrow_mut() = Some(Ok(over));
 
     let passes = setup.run(&models);
@@ -367,7 +488,7 @@ fn an_over_budget_header_is_compressed_once_without_resending_the_window() {
 }
 
 #[test]
-fn repeated_header_misses_are_repaired_after_the_fake_models_retry() {
+fn repeated_header_misses_are_repaired_after_the_fixed_retry() {
     for field in ["summary", "goals", "next", "title"] {
         let setup = Setup::new();
         setup.switch_on();
@@ -379,7 +500,7 @@ fn repeated_header_misses_are_repaired_after_the_fake_models_retry() {
             "title" => a.title = format!("A sentence. {}", "é".repeat(120)),
             _ => unreachable!(),
         }
-        let models = fake(Ok(a));
+        let models = fixed(Ok(a));
 
         let passes = setup.run(&models);
 
@@ -429,7 +550,7 @@ fn repeated_segment_misses_are_repaired_without_changing_sealed_history() {
         let mut second = first.new[0].clone();
         second.starts_at = String::from("a-1");
         first.new.push(second);
-        setup.run(&fake(Ok(first)));
+        setup.run(&fixed(Ok(first)));
         let id = ON.parse().unwrap();
         let before = setup.ctx.store().session(&id).unwrap().record;
         assert_eq!(before.log[0].state, scribe_core::SegmentState::Sealed);
@@ -476,7 +597,7 @@ fn repeated_segment_misses_are_repaired_without_changing_sealed_history() {
             }
             _ => unreachable!(),
         }
-        let models = fake(Ok(a));
+        let models = fixed(Ok(a));
 
         let passes = setup.run(&models);
 
@@ -527,10 +648,10 @@ fn repeated_segment_misses_are_repaired_without_changing_sealed_history() {
 }
 
 #[test]
-fn a_fake_model_can_omit_open_without_changing_its_content() {
+fn a_fixed_answer_can_omit_open_without_changing_its_content() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     let id = ON.parse().unwrap();
     let before = setup.ctx.store().session(&id).unwrap().record.log[0].clone();
     setup.append(&[line("user", "u-2", "More on levels.")]);
@@ -538,7 +659,7 @@ fn a_fake_model_can_omit_open_without_changing_its_content() {
     let mut a = answer();
     a.open = None;
     a.new.clear();
-    let models = fake(Ok(a));
+    let models = fixed(Ok(a));
 
     assert_eq!(setup.run(&models)[0].result, "written");
 
@@ -554,14 +675,14 @@ fn a_fake_model_can_omit_open_without_changing_its_content() {
 fn session_end_with_nothing_new_marks_the_record_final_without_a_model() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     let id: SessionId = ON.parse().unwrap();
     setup
         .ctx
         .store()
         .update_control(|s| control::mark_final(s, &id))
         .unwrap();
-    let models = fake(Ok(answer()));
+    let models = fixed(Ok(answer()));
     let passes = setup.run(&models);
     assert_eq!(passes[0].result, "written");
     assert!(models.asked.borrow().is_empty());
@@ -581,13 +702,8 @@ fn a_plugin_deadline_between_windows_preserves_the_checkpoint_for_the_next_run()
             .collect::<Vec<_>>(),
     );
     setup.switch_on();
-    let models = fake(Ok(answer()));
-    // Expired before entry: the first window may start, no later one may.
-    let limits = crate::commands::RunLimits::new(scribe_core::pass::MAX_PER_RUN)
-        .start_by(std::time::Instant::now());
-    let Output::Pass(report) = run_with(&setup.ctx, |_| &models, limits, &[]).unwrap() else {
-        panic!("a pass report");
-    };
+    let models = fixed(Ok(answer()));
+    let report = drive(&setup.ctx, &models, &[], true);
     assert_eq!(report.remaining, 1);
     assert_eq!(report.passes[0].windows, 1);
     assert_eq!(models.asked.borrow().len(), 1);
@@ -628,7 +744,7 @@ fn surfaced_failure_reason_is_redacted_flattened_and_limited() {
 fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     let before = setup.record_text();
     setup.append(&[
         line("user", "u-2", "New thread."),
@@ -692,16 +808,8 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
     a.new = vec![new("u-2"); 4];
     cases.push((a, "at most 3"));
     for (bad, reason) in cases {
-        let models = fake(Ok(bad));
-        let Output::Pass(report) = run_with(
-            &setup.ctx,
-            |_| &models,
-            crate::commands::RunLimits::new(1),
-            &[ON.parse().unwrap()],
-        )
-        .unwrap() else {
-            panic!("report")
-        };
+        let models = fixed(Ok(bad));
+        let report = drive(&setup.ctx, &models, &[ON.parse().unwrap()], false);
         assert_eq!(report.passes[0].error_code, Some("session_answer_invalid"));
         let asked = models.asked.borrow();
         let compressed = models.compressed.borrow();
@@ -720,7 +828,7 @@ fn invalid_segment_answers_retry_once_with_the_refusal_and_preserve_the_record()
 fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
     let setup = Setup::new();
     setup.switch_on();
-    setup.run(&fake(Ok(answer())));
+    setup.run(&fixed(Ok(answer())));
     let mut turns = vec![
         line("user", "u-2", "Finish first thread."),
         line("assistant", "a-2", "Second thread."),
@@ -748,7 +856,7 @@ fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
             related: vec![String::from("repo:scribe")],
         })
         .to_vec();
-    assert_eq!(setup.run(&fake(Ok(a)))[0].result, "written");
+    assert_eq!(setup.run(&fixed(Ok(a)))[0].result, "written");
     let record = setup
         .ctx
         .store()
@@ -779,7 +887,7 @@ fn new_segments_derive_ranges_and_sealed_text_is_absent_from_later_requests() {
         .unwrap();
     setup.append(&[line("assistant", "a-3", "Continue third thread.")]);
     setup.mark_due();
-    let models = fake(Ok(answer()));
+    let models = fixed(Ok(answer()));
     setup.run(&models);
     let asked = models.asked.borrow();
     let p = asked[0].previous.as_ref().unwrap();
@@ -830,7 +938,7 @@ fn windows_seal_at_the_configured_limit_and_the_last_final_window() {
                 .update_control(|s| control::mark_final(s, &ON.parse().unwrap()))
                 .unwrap();
         }
-        let models = fake(Ok(answer()));
+        let models = fixed(Ok(answer()));
         let report = setup.run(&models);
         let record = setup
             .ctx

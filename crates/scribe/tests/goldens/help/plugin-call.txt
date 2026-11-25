@@ -31,4 +31,4 @@ stdout, exiting 0 whenever a reply was printed. The store is the plugin's
 [plugins.scribe] root setting, an absolute path.
 
 Examples:
-  printf '%s' '{"schema_version":1,"tool":"scribe.session-pass","input":{},"context":{"config":{"root":"/home/me/.scribe"}}}' | scribe plugin call
+  printf '%s' '{"schema_version":1,"tool":"scribe.session-pass-prepare","input":{},"context":{"config":{"root":"/home/me/.scribe"}}}' | scribe plugin call

@@ -2,14 +2,9 @@
 //! adapters that reach a model through the `claude` and `codex` CLIs
 //! (docs/design/scribe/specs/architecture.md, "Providers (interim)").
 //!
-//! Scribe's own model calls are being removed (ORB-27911). Until an Orbit job
-//! replaces them, five flows call a model through this port: session pass,
-//! catalog and rebuild, memory refresh and group close. No other flow names
-//! it, and only this module names `std::process`
-//! (scripts/check-dependency-direction.sh).
-//!
-//! The request and answer shapes the port carries ([`crate::models`]) are in
-//! `models.rs` beside it.
+//! The interim session catalog and rebuild CLI flows use these adapters.
+//! Their session request and answer shapes are shared with Orbit activities
+//! through scribe-tools.
 
 mod cli;
 pub mod models;

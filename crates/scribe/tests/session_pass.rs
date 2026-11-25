@@ -2,7 +2,7 @@
 //! (docs/design/scribe/2_design.md §5, §10 S4): `/scribe on|off|status`
 //! switching a session and blocking the prompt, the `Stop` and `SessionEnd`
 //! hooks marking a pass due without a model, and `scribe session pass`
-//! writing one record per due session through a fake `claude`.
+//! settling sessions and the prepare/apply tools writing their windows from fixed answers.
 //!
 //! Every run is the built binary with a temp `HOME` whose
 //! `.claude/projects/` holds the test transcripts; nothing touches the real
@@ -14,11 +14,17 @@ mod support;
 use scribe_core::PassVerbs;
 use scribe_core::testing::ViewTestReads;
 use serde_json::{Value, json};
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
-use support::{Fixture, context_of, make_private, text};
+use support::{
+    Fixture, context_of, make_private,
+    pass::{self, ActivityFailure},
+    text,
+};
 
 const ON: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 const NEVER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e60";
@@ -1646,12 +1652,16 @@ fn the_trigger_is_checked_again_under_the_lock_against_the_config_then() {
     s.write(ON, &[line("user", "u-1", quote)]);
     s.scribe("/scribe on");
     let config = s.fx.root().join("config.toml");
-    let mut script = format!(
-        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\numask 077\nprintf '%s\\n' '[tags.preferences.capture]' 'triggers = [\"from now on\"]' > '{}'\n",
-        config.display()
-    );
-    script.push_str(&response(&candidate_answer(quote, "u-1", "preferences")));
-    s.fx.fake_program("claude", &script);
+    let changed = config.clone();
+    s.answer(&candidate_answer(quote, "u-1", "preferences"));
+    s.before_answer.replace(Some(Box::new(move || {
+        std::fs::write(
+            &changed,
+            "[tags.preferences.capture]\ntriggers = [\"from now on\"]\n",
+        )
+        .unwrap();
+        make_private(&changed);
+    })));
     s.run(&["session", "pass", "--session", ON, "--json"], b"");
     assert!(s.prompts()[0].contains("message u-1 (the user's turn): tag preferences"));
     assert!(config.exists(), "the fake model rewrote the config");
@@ -1746,6 +1756,14 @@ struct Setup {
     project: PathBuf,
     cwd: PathBuf,
     path: OsString,
+    responses: RefCell<Responses>,
+    before_answer: RefCell<Option<Box<dyn FnOnce()>>>,
+}
+
+enum Responses {
+    Fixed(Value, bool),
+    Sequence(Vec<Option<Value>>),
+    Failure(&'static str, String),
 }
 
 fn line(kind: &str, uuid: &str, text: &str) -> Value {
@@ -1773,6 +1791,8 @@ impl Setup {
             project,
             cwd,
             path,
+            responses: RefCell::new(Responses::Fixed(answer(), false)),
+            before_answer: RefCell::new(None),
         };
         setup.answer(&answer());
         setup.write(ON, &[line("user", "u-1", &format!("Crews. {DEFINED}."))]);
@@ -1810,6 +1830,8 @@ impl Setup {
     /// The fake `claude`: saves its stdin (the prompt) and answers `body`
     /// as `claude -p --output-format json` does.
     fn answer(&self, body: &Value) {
+        self.responses
+            .replace(Responses::Fixed(body.clone(), false));
         let script = format!(
             "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\n{}",
             response(body)
@@ -1828,6 +1850,8 @@ impl Setup {
 
     /// Scripted answers across process invocations; `None` fails that call.
     fn answers(&self, answers: &[Option<Value>]) {
+        self.responses
+            .replace(Responses::Sequence(answers.to_vec()));
         let mut script = String::from(
             "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
         );
@@ -1843,8 +1867,117 @@ impl Setup {
         self.fx.fake_program("claude", &script);
     }
 
+    /// Run the pass workflow with fixed activity responses. Aggregate its
+    /// per-step output for the existing end-to-end record assertions.
+    fn run_pass(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+        let sessions: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--session")
+            .map(|pair| pair[1])
+            .collect();
+        let result = pass::run(
+            |step, input| pass::cli_step(&self.fx, env, step, input),
+            json!({"sessions": sessions, "resolve": true}),
+            |request, header| self.fixed_response(request, header),
+        );
+        let result = match result {
+            Ok(result) => result,
+            Err(mut output) => {
+                if output.status.success() {
+                    // Plugin tool failures are encoded in the envelope.
+                    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+                    output.stderr = serde_json::to_vec(&reply["error"]).unwrap();
+                    output.stdout.clear();
+                    output.status = std::process::ExitStatus::from_raw(1 << 8);
+                }
+                return output;
+            }
+        };
+        let mut warnings = Vec::new();
+        let mut failures = Vec::new();
+        for payload in result["passes"].as_array().unwrap() {
+            warnings.extend(
+                payload["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| w.as_str().unwrap().to_owned()),
+            );
+            if let Some(code) = payload["error_code"].as_str() {
+                failures.push(format!(
+                    "{} {code}: {}",
+                    payload["session"].as_str().unwrap(),
+                    payload["error"].as_str().unwrap()
+                ));
+            }
+        }
+        if !failures.is_empty() {
+            let diagnostic = format!(
+                "{} session pass(es) failed: {}",
+                failures.len(),
+                failures.join(", ")
+            );
+            warnings.push(if args.contains(&"--json") {
+                json!({"code": "session_pass_failed", "error": diagnostic}).to_string()
+            } else {
+                format!("error: {diagnostic}")
+            });
+        }
+        Output {
+            status: std::process::ExitStatus::from_raw(i32::from(!failures.is_empty()) << 8),
+            stdout: serde_json::to_vec(&result).unwrap(),
+            stderr: warnings
+                .join(
+                    "
+",
+                )
+                .into_bytes(),
+        }
+    }
+
+    fn fixed_response(&self, request: &Value, header: bool) -> Result<Value, ActivityFailure> {
+        let index = self.prompts().len();
+        let prompt = if header {
+            serde_json::from_value::<scribe_core::models::SessionHeaderRequest>(request.clone())
+                .unwrap()
+                .prompt()
+        } else {
+            serde_json::from_value::<scribe_core::models::SessionWindowInput>(request.clone())
+                .unwrap()
+                .prompt()
+        };
+        std::fs::write(self.fx.home().join(format!("claude-stdin-{index}")), prompt).unwrap();
+        if let Some(change) = self.before_answer.take() {
+            change();
+        }
+        let responses = self.responses.borrow();
+        let (answer, force_new) = match &*responses {
+            Responses::Fixed(answer, force_new) => (Some(answer.clone()), *force_new),
+            Responses::Sequence(answers) => (answers.get(index).cloned().flatten(), false),
+            Responses::Failure(code, reason) => {
+                return Err(ActivityFailure {
+                    code,
+                    reason: reason.clone(),
+                });
+            }
+        };
+        let mut answer = with_claim_contexts(
+            &answer.ok_or_else(|| ActivityFailure::failed("the model failed"))?,
+        );
+        if header {
+            Ok(pass::header(&answer))
+        } else {
+            pass::fill_window(&mut answer, request, force_new);
+            Ok(answer)
+        }
+    }
+
     fn run(&self, args: &[&str], input: &[u8]) -> Output {
-        let out = self.run_any(args, input);
+        let out = if args.starts_with(&["session", "pass"]) {
+            self.run_pass(args, &[])
+        } else {
+            self.run_any(args, input)
+        };
         assert_eq!(
             out.status.code(),
             Some(0),
@@ -2116,18 +2249,11 @@ fn replayed(kind: &str, uuid: &str, text: &str) -> Value {
     line
 }
 
-/// The fake `claude` answers `body` with every `__window_first__` replaced
-/// by the id of the first message in the window it was sent, as a model
-/// opening a new segment at the window's first message does.
+/// Use the prepared first message as the fixed answer's segment start.
 fn answer_at_window_first(setup: &Setup, body: &Value) {
-    let envelope = json!({"type":"result", "subtype":"success", "is_error":false,
-                          "result":"", "structured_output":body});
-    setup.fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nfirst=$(sed -n 's/^--- .* · \\(.*\\) ---$/\\1/p' \"$HOME/claude-stdin-$n\" | head -1)\nprintf '%s\\n' '{envelope}' | sed \"s/__window_first__/$first/g\"\n"
-        ),
-    );
+    setup
+        .responses
+        .replace(Responses::Fixed(body.clone(), true));
 }
 
 #[test]
@@ -2375,7 +2501,7 @@ fn repeated_header_budget_misses_are_repaired_after_retry_and_reported() {
         setup.answers(&[Some(over.clone()), Some(over)]);
         setup.scribe("/scribe on");
 
-        let out = setup.run_any(&["session", "pass", "--json"], b"");
+        let out = setup.run_pass(&["session", "pass", "--json"], &[]);
 
         assert_eq!(out.status.code(), Some(0), "{field}: {}", text(&out.stderr));
         let report: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -2416,13 +2542,10 @@ fn segment_text_repairs_keep_new_segments_and_redact_before_writing() {
     ]);
     setup.answer(&over);
     setup.config("[redact]\nenv = [\"TEST_SECRET\"]\n");
-    let mut cmd = setup
-        .fx
-        .cmd(&["session", "pass", "--session", ON, "--json"]);
-    cmd.env("PATH", &setup.path)
-        .env("TEST_SECRET", "sensitive-value-123");
-
-    let out = setup.run_with(cmd, b"");
+    let out = setup.run_pass(
+        &["session", "pass", "--session", ON, "--json"],
+        &[("TEST_SECRET", "sensitive-value-123")],
+    );
 
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -2547,7 +2670,7 @@ fn header_length_retries_cover_every_prose_field_and_recheck_the_result() {
             (field != "model_failure").then_some(invalid),
         ]);
 
-        let out = setup.run_any(&["session", "pass", "--json"], b"");
+        let out = setup.run_pass(&["session", "pass", "--json"], &[]);
 
         assert_eq!(out.status.code(), Some(1));
         let report: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -2619,7 +2742,7 @@ fn impossible_unexpected_open_conversions_are_refused_with_a_reason() {
         setup.answer(&body);
         setup.scribe("/scribe on");
 
-        let out = setup.run_any(&["session", "pass", "--json"], b"");
+        let out = setup.run_pass(&["session", "pass", "--json"], &[]);
 
         assert_eq!(out.status.code(), Some(1));
         let report: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -2704,7 +2827,7 @@ fn a_failed_middle_window_keeps_progress_and_resumes_with_strict_term_citations(
     setup.answers(&[Some(first), None, Some(later), Some(answer())]);
     setup.scribe("/scribe on");
     setup.hook("session-end", &setup.payload("SessionEnd"));
-    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--json"], &[]);
     assert_eq!(out.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 1);
@@ -2749,7 +2872,7 @@ fn character_windows_and_each_windows_field_limits_are_enforced() {
     over["summary"] = json!(format!("{}\n## Injected", "s".repeat(1201)));
     setup.answers(&[Some(answer()), Some(over.clone()), Some(over)]);
     setup.scribe("/scribe on");
-    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--json"], &[]);
     assert_eq!(out.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["error_code"], "session_answer_invalid");
@@ -2771,7 +2894,7 @@ fn failures_back_off_while_due_and_explicit_sessions_ignore_the_delay() {
     setup.scribe("/scribe on");
     setup.answers(&[None, None, Some(answer())]);
     for failures in 1..=2 {
-        let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+        let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
         assert_eq!(out.status.code(), Some(1));
         let control = setup.control();
         assert_eq!(control["due"], true);
@@ -3001,14 +3124,11 @@ fn a_pass_refuses_when_a_configured_redact_name_is_unset() {
     assert_eq!(setup.control()["due"], true, "the pass stays due");
     assert!(setup.prompts().is_empty(), "no model call before refusal");
 
-    // With the name supplied, the same pass writes as usual.
-    let out = setup
-        .fx
-        .cmd(&["session", "pass", "--json"])
-        .env("PATH", &setup.path)
-        .env("SCRIBE_UNSET_REDACT_TOKEN", "a-value-that-must-be-masked")
-        .output()
-        .unwrap();
+    // The same selection can prepare and commit with the masking value set.
+    let out = setup.run_pass(
+        &["session", "pass", "--json"],
+        &[("SCRIBE_UNSET_REDACT_TOKEN", "a-value-that-must-be-masked")],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "written");
@@ -3078,7 +3198,7 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
     let mut over = answer();
     over["summary"] = json!(format!("{}\n## Injected", "s".repeat(1201)));
     setup.answer(&over);
-    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--json"], &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
@@ -3094,11 +3214,14 @@ const BROKEN: &str = "#!/bin/sh\ncat >/dev/null\nexit 3\n";
 fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
     let setup = Setup::new();
     setup.scribe("/scribe on");
-    setup.fx.fake_program("claude", BROKEN);
+    setup.responses.replace(Responses::Failure(
+        "model_failed",
+        "the model failed".into(),
+    ));
     // More failures in a row than the old give-up bound of three: each one
     // leaves the session due, whatever its code.
     for run in 1..=4 {
-        let out = setup.run_any(&["session", "pass", "--session", ON], b"");
+        let out = setup.run_pass(&["session", "pass", "--session", ON], &[]);
         assert_eq!(out.status.code(), Some(1), "run {run}");
         let stderr = text(&out.stderr);
         assert!(
@@ -3115,7 +3238,7 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
         assert!(setup.record(ON).is_none());
     }
     // --json still prints the report, and the error object on stderr.
-    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["error_code"], "model_failed");
@@ -3142,8 +3265,11 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
     );
 
     // No claude at all (model_unavailable) is no different.
-    std::fs::remove_file(setup.fx.elsewhere("bin/claude")).unwrap();
-    let out = setup.run_any(&["session", "pass", "--session", ON], b"");
+    setup.responses.replace(Responses::Failure(
+        "model_unavailable",
+        "the model could not be started".into(),
+    ));
+    let out = setup.run_pass(&["session", "pass", "--session", ON], &[]);
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("model_unavailable"));
     assert_eq!(setup.control()["due"], true);
@@ -3165,15 +3291,14 @@ fn a_failed_pass_redacts_the_model_reason_in_json_and_the_aggregate_error() {
     let setup = Setup::new();
     setup.config(&format!("[redact]\nenv = [\"{SECRET_NAME}\"]\n"));
     setup.scribe("/scribe on");
-    let script =
-        format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' 'model error: {SECRET}' >&2\nexit 3\n");
-    setup.fx.fake_program("claude", &script);
-    let mut command = setup
-        .fx
-        .cmd(&["session", "pass", "--session", ON, "--json"]);
-    command.env("PATH", &setup.path).env(SECRET_NAME, SECRET);
-
-    let out = setup.run_with(command, b"");
+    setup.responses.replace(Responses::Failure(
+        "model_failed",
+        format!("model error: {SECRET}"),
+    ));
+    let out = setup.run_pass(
+        &["session", "pass", "--session", ON, "--json"],
+        &[(SECRET_NAME, SECRET)],
+    );
 
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -3211,6 +3336,13 @@ fn session_names_a_switched_on_session_whose_due_was_cleared_and_passes_it() {
     assert_eq!(setup.pass()["passes"], json!([]), "nothing is due");
     assert!(setup.prompts().is_empty());
 
+    let queued = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    assert_eq!(queued.status.code(), Some(0));
+    let settlement: Value = serde_json::from_slice(&queued.stdout).unwrap();
+    assert_eq!(settlement, json!({"passes": [], "remaining": 1}));
+    assert!(text(&queued.stderr).contains("orbit job run scribe-session-pass"));
+    assert!(setup.record(ON).is_none());
+
     let out = setup.run(
         &[
             "session",
@@ -3241,7 +3373,7 @@ fn session_names_a_switched_on_session_whose_due_was_cleared_and_passes_it() {
         "{stderr}"
     );
     setup.scribe("/scribe off");
-    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(error["code"], "session_not_on");
@@ -3249,45 +3381,64 @@ fn session_names_a_switched_on_session_whose_due_was_cleared_and_passes_it() {
     assert!(setup.record(NEVER).is_none());
 }
 
-/// `scribe.session-pass` as Orbit calls it: the reply envelope.
-fn plugin_pass(setup: &Setup) -> Value {
+fn plugin_pass(setup: &Setup, name: &str, input: Value) -> Value {
     let config = json!({
-        "root": setup.fx.root(),
-        "transcripts": setup.fx.home().join(".claude/projects"),
+        "root": setup.fx.root(), "transcripts": setup.fx.home().join(".claude/projects"),
     });
-    let envelope = json!({"schema_version": 1, "tool": "scribe.session-pass", "input": {},
-                          "context": {"config": config}});
-    let mut cmd = setup.fx.cmd(&["plugin", "call"]);
-    cmd.env_remove("SCRIBE_ROOT").env("PATH", &setup.path);
-    let out = setup.run_with(cmd, envelope.to_string().as_bytes());
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    serde_json::from_slice(&out.stdout).unwrap()
+    pass::plugin_step(&setup.fx, &[], name, input, &config).unwrap()
 }
 
 #[test]
-fn the_plugin_tool_answers_session_pass_failed_and_keeps_the_session_due() {
+fn the_plugin_failure_tool_records_backoff_and_keeps_the_session_due() {
     let setup = Setup::new();
+    setup.config("[instructions]\nsession = 'Keep decisions for {user}.'\nsession_header = 'Shorten this for {user}.'\n");
     setup.scribe("/scribe on");
-    setup.fx.fake_program("claude", BROKEN);
-    let reply = plugin_pass(&setup);
-    assert_eq!(reply["ok"], false, "{reply}");
-    assert_eq!(reply["error"]["code"], "session_pass_failed", "{reply}");
-    assert_eq!(reply["error"]["retryable"], false, "{reply}");
-    let message = reply["error"]["message"].as_str().unwrap();
-    assert!(
-        message.contains(&format!("{ON} model_failed: the model failed")),
-        "{message}"
+    let prepared = plugin_pass(&setup, "prepare", json!({}));
+    assert_eq!(prepared["needs_model"], true);
+    assert_eq!(prepared["session_distill_crew"], "haiku");
+    assert_eq!(prepared["session_header_crew"], "haiku");
+    assert_eq!(
+        prepared["window_request"]["instructions"],
+        "Keep decisions for the user."
     );
+    let failed = plugin_pass(&setup, "fail", json!({"basis": prepared["basis"]}));
+    assert_eq!(failed["pass"]["result"], "failed");
+    assert_eq!(failed["pass"]["error_code"], "model_failed");
     assert_eq!(setup.control()["due"], true);
 
-    setup.answer(&answer());
-    let reply = plugin_pass(&setup);
-    assert_eq!(reply["output"]["passes"], json!([]));
-    assert_eq!(reply["output"]["remaining"], 1);
+    let waiting = plugin_pass(&setup, "prepare", json!({}));
+    assert_eq!(waiting["done"], true);
+    assert_eq!(waiting["cursor"]["remaining"], 1);
     setup.expire_retry();
-    let reply = plugin_pass(&setup);
-    assert_eq!(reply["ok"], true, "{reply}");
-    assert_eq!(reply["output"]["passes"][0]["result"], "written", "{reply}");
+    let prepared = plugin_pass(&setup, "prepare", json!({}));
+    let answer = setup
+        .fixed_response(&prepared["window_request"], false)
+        .unwrap();
+    let mut over = answer.clone();
+    over["summary"] = json!("s".repeat(1201));
+    let retry = plugin_pass(
+        &setup,
+        "apply",
+        json!({
+            "basis": prepared["basis"], "cursor": prepared["cursor"], "answer": over,
+        }),
+    );
+    assert_eq!(retry["status"], "retry_header");
+    assert_eq!(
+        retry["header_request"]["instructions"],
+        "Shorten this for the user."
+    );
+    assert!(setup.record(ON).is_none());
+
+    let reply = plugin_pass(
+        &setup,
+        "apply",
+        json!({
+            "basis": prepared["basis"], "cursor": prepared["cursor"], "answer": over,
+            "repair": true, "previous_status": "retry_header", "header": pass::header(&answer),
+        }),
+    );
+    assert_eq!(reply["status"], "written", "{reply}");
     assert_eq!(setup.control()["due"], false);
 }
 
@@ -3456,7 +3607,7 @@ fn s9_answers_write_bounded_segments_instead_of_one_outcome() {
         "topics": [], "related": []
     })));
     setup.answer(&body);
-    let out = setup.run_any(&["session", "pass", "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--json"], &[]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let record = setup.record(ON).unwrap();
     assert_eq!(record["log"].as_array().unwrap().len(), 3);
@@ -3478,27 +3629,17 @@ fn a_pass_refuses_when_the_record_changed_since_it_was_loaded() {
             line("assistant", "a-2", "Done."),
         ],
     );
-    // The fake model waits while the test publishes a rebuilt record (a
-    // new `updated` revision and summary), as a rebuild that finished
-    // while the pass was running would. No timing race is involved.
     let root = setup.fx.root();
-    let hold = support::Hold::new(&setup.fx.home(), move || {
+    setup.before_answer.replace(Some(Box::new(move || {
         support::sql(
             &root,
             &format!(
                 "UPDATE sessions SET updated = '2030-01-01T00:00:00Z',
-                 summary = 'Rebuilt summary.' WHERE provider_session = '{ON}'"
+                      summary = 'Rebuilt summary.' WHERE provider_session = '{ON}'"
             ),
         );
-    });
-    let script = format!(
-        "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\nif [ \"$n\" = 1 ]; then\n{}fi\n{}",
-        hold.script(),
-        response(&answer())
-    );
-    setup.fx.fake_program("claude", &script);
-    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
-    hold.join();
+    })));
+    let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["result"], "failed");
@@ -3754,14 +3895,10 @@ fn a_pass_window_that_fails_rolls_its_closures_back_and_audits_none() {
         "CREATE TRIGGER staged_failure BEFORE UPDATE ON sessions WHEN NEW.has_record = 1
          BEGIN SELECT RAISE(ABORT, 'staged failure'); END;",
     );
-    let out = setup.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+    let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["passes"][0]["result"], "failed");
-    assert_eq!(
-        report["passes"][0]["error_code"], "store_database",
-        "{report}"
-    );
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "store_database", "{error}");
 
     let stored = support::proposals_doc(&setup.fx.root());
     assert_eq!(stored["proposals"][0]["state"], "open");
@@ -5060,19 +5197,33 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
         s.scribe("/scribe on");
         seed_retired_candidate(&s, ON);
         let control_path = s.fx.root().join("control.json");
-        let mut script = String::from(
-            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
-        );
-        script.push_str(&format!("0) {} ;;\n", response(&answer())));
-        script.push_str(&format!(
-            "1) ln -sf /dev/null '{}' ; echo 'model boom' >&2 ; exit 3 ;;\n",
-            control_path.display()
-        ));
-        script.push_str("*) exit 4 ;;\nesac\n");
-        s.fx.fake_program("claude", &script);
+        s.answers(&[Some(answer()), None]);
+        let staged = control_path.clone();
+        let preserved = s.fx.elsewhere("previous-control.json");
+        let save = preserved.clone();
+        // Finish exactly one window before introducing the refusal.
+        let prepared = pass::cli_step(&s.fx, &[], "prepare", json!({"sessions": [ON]})).unwrap();
+        let fixed = s
+            .fixed_response(&prepared["window_request"], false)
+            .unwrap();
+        let applied = pass::cli_step(
+            &s.fx,
+            &[],
+            "apply",
+            json!({
+                "basis": prepared["basis"], "cursor": prepared["cursor"], "answer": fixed
+            }),
+        )
+        .unwrap();
+        assert_eq!(applied["status"], "written");
+        s.before_answer.replace(Some(Box::new(move || {
+            if staged.exists() {
+                std::fs::rename(&staged, save).unwrap();
+            }
+            std::os::unix::fs::symlink("/dev/null", staged).unwrap();
+        })));
 
-        let audit_before = s.audit_lines();
-        let out = s.run_any(&["session", "pass", "--session", ON, "--json"], b"");
+        let out = s.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
         let stderr = text(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{stderr}");
         let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);
@@ -5080,14 +5231,14 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
 
         // The export refuses the staged symlink; the symlink did its job.
         std::fs::remove_file(&control_path).unwrap();
+        if preserved.exists() {
+            std::fs::rename(preserved, &control_path).unwrap();
+        }
         let stored = support::proposals_doc(&s.fx.root());
         assert_eq!(stored["proposals"][0]["state"], "rejected");
         assert_eq!(stored["proposals"][0]["closed_reason"], "tag_retired");
 
-        let new_audit: Vec<Value> = support::audit_lines(&s.fx.root())
-            .into_iter()
-            .skip(audit_before)
-            .collect();
+        let new_audit: Vec<Value> = support::audit_lines(&s.fx.root()).into_iter().collect();
         assert_eq!(
             new_audit
                 .iter()
@@ -5396,10 +5547,10 @@ fn a_context_needing_redaction_is_kept_redacted_and_a_quote_needing_it_is_omitte
     s.answer(&body);
     s.config("[redact]\nenv = [\"TEST_SECRET\"]\n");
     s.scribe("/scribe on");
-    let mut cmd = s.fx.cmd(&["session", "pass", "--session", ON, "--json"]);
-    cmd.env("PATH", &s.path)
-        .env("TEST_SECRET", "sensitive-value-123");
-    let out = s.run_with(cmd, b"");
+    let out = s.run_pass(
+        &["session", "pass", "--session", ON, "--json"],
+        &[("TEST_SECRET", "sensitive-value-123")],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let listed = proposals(&s);
     assert_eq!(listed["total"], 1, "{listed}");
@@ -5443,9 +5594,10 @@ fn a_context_and_subject_at_their_caps_stay_when_redaction_lengthens_them() {
     s.answer(&body);
     s.config("[redact]\nenv = [\"TEST_SECRET\"]\n");
     s.scribe("/scribe on");
-    let mut cmd = s.fx.cmd(&["session", "pass", "--session", ON, "--json"]);
-    cmd.env("PATH", &s.path).env("TEST_SECRET", SECRET);
-    let out = s.run_with(cmd, b"");
+    let out = s.run_pass(
+        &["session", "pass", "--session", ON, "--json"],
+        &[("TEST_SECRET", SECRET)],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let listed = proposals(&s);
     assert_eq!(listed["total"], 1, "{listed}");
@@ -6096,7 +6248,7 @@ fn a_pass_writes_a_dated_now_item_as_its_file_and_keeps_an_undated_one_pending()
 #[test]
 fn a_pass_over_a_session_never_switched_on_writes_no_memory() {
     let s = memory_setup();
-    let out = s.run_any(&["session", "pass", "--session", NEVER, "--json"], b"");
+    let out = s.run_pass(&["session", "pass", "--session", NEVER, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     s.run(&["session", "pass", "--json"], b"");
     assert!(s.prompts().is_empty(), "the model was never called");

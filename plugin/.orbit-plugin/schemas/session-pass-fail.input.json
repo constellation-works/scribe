@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "abort": { "type": "boolean" },
+    "basis": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "basis"
+  ],
+  "additionalProperties": false
+}

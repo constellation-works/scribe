@@ -570,21 +570,20 @@ fn the_routine_tools_run_the_commands_against_the_configured_store() {
     assert_eq!(audit.len(), 1);
     assert!(audit.iter().all(|l| l["command"] == "consistency scan"));
 
-    let reply = plugin(&s, "scribe.session-pass", &config);
-    assert_eq!(
-        reply,
-        json!({"ok": true, "output": {"passes": [], "remaining": 0}})
-    );
+    let reply = plugin(&s, "scribe.session-pass-prepare", &config);
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["output"]["done"], true);
+    assert_eq!(reply["output"]["settled"], json!([]));
     assert_eq!(s.audit().len(), 1, "nothing due: no audit line");
 
     // Unset settings, including the manifest's defaults, are refused.
     for (tool, config) in [
         (
-            "scribe.session-pass",
+            "scribe.session-pass-prepare",
             json!({"root": root, "transcripts": ""}),
         ),
         (
-            "scribe.session-pass",
+            "scribe.session-pass-prepare",
             json!({"root": "/var/tmp", "transcripts": transcripts}),
         ),
         ("scribe.consistency-scan", json!({"root": "/var/tmp"})),

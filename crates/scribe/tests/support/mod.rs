@@ -9,6 +9,7 @@
 // subset of it.
 #![allow(dead_code)]
 
+pub mod pass;
 pub mod replay;
 
 use scribe_core::testing::StoreTestReads;

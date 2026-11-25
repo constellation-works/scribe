@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "resolve": {
+      "type": "boolean"
+    },
+    "max_sessions": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "deadline_epoch_s": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "progress": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 1
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

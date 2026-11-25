@@ -41,6 +41,9 @@ pub(crate) enum CliError {
         #[source]
         source: io::Error,
     },
+    /// A deterministic session pass step failed.
+    #[error("{message}")]
+    SessionPassStep { code: &'static str, message: String },
     /// `session pass --session` named a session that is not switched on.
     #[error(
         "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
@@ -88,7 +91,7 @@ pub(crate) enum CliError {
     /// `session catalog` named a session that already has a record or a
     /// switch it did not write.
     #[error(
-        "session {0} already has a record or was switched on; use 'scribe session pass --session {0}' or 'scribe session rebuild {0} --author <name> --confirm'"
+        "session {0} already has a record or was switched on; use 'orbit job run scribe-session-pass' with this session, or 'scribe session rebuild {0} --author <name> --confirm'"
     )]
     SessionCataloged(scribe_core::SessionId),
     /// No Claude Code transcript has this id.
@@ -117,6 +120,7 @@ impl CliError {
             Self::RedactEnvUnset(_) => "redact_env_unset",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
+            Self::SessionPassStep { code, .. } => code,
             Self::SessionNotOn(_) => "session_not_on",
             Self::SegmentNotFound { .. } => "segment_not_found",
             Self::ConfirmRequired { .. } | Self::ForgetConfirmRequired(_) => "confirm_required",
@@ -160,6 +164,7 @@ impl CliError {
             | Self::NoDataDir
             | Self::HookPayload(_)
             | Self::Read { .. }
+            | Self::SessionPassStep { .. }
             | Self::SessionNotOn(_)
             | Self::ConfirmRequired { .. }
             | Self::ForgetConfirmRequired(_)
@@ -185,6 +190,9 @@ impl From<CommandError> for CliError {
             CommandError::RedactEnvUnset(names) => Self::RedactEnvUnset(names),
             CommandError::HookPayload(why) => Self::HookPayload(why),
             CommandError::Read { what, source } => Self::Read { what, source },
+            CommandError::SessionPassStep { code, message } => {
+                Self::SessionPassStep { code, message }
+            }
             CommandError::SessionNotOn(id) => Self::SessionNotOn(id),
             CommandError::SegmentNotFound { session, n, count } => {
                 Self::SegmentNotFound { session, n, count }

@@ -4,8 +4,9 @@
 //! resumes without moving `since`.
 
 use super::super::catalog::{self, CatalogArgs};
+use crate::output::Output;
 use crate::output::PassFailure;
-use crate::output::{Output, PassReport};
+use scribe_core::apps::session::PassReport;
 use scribe_core::composition::Context;
 use scribe_core::composition::Env as AppEnv;
 use scribe_core::control::{self, Switch};
@@ -408,17 +409,28 @@ fn a_daniel_catalog_switch_is_finished_as_a_catalog_by_an_ordinary_pass() {
     setup.write_at(&[("u-1", &old, &format!("Crews. {DEFINED}."))]);
     catalog::begin(&setup.ctx, &setup.id(), scribe_core::Author::user()).unwrap();
 
-    let models = fake(Ok(answer()));
-    let Output::Pass(report) = super::super::pass::run_with(
+    use scribe_core::apps::session::{self, Command, Outcome, PrepareInput};
+    let Outcome::PassPrepared(prepared) = session::exec_unaudited(
         &setup.ctx,
-        |_| &models,
-        crate::commands::RunLimits::new(5),
-        &[],
+        Command::PassPrepare(PrepareInput::default(), setup.ctx.host()),
     )
     .unwrap() else {
-        panic!("session pass returns a pass report");
+        panic!("prepared window")
     };
-    assert_eq!(report.passes[0].result, "written");
+    let mut answer = answer();
+    answer.new[0].starts_at = "u-1".into();
+    let input = serde_json::from_value(serde_json::json!({
+       "basis": prepared.basis, "cursor": prepared.cursor, "answer": answer,
+    }))
+    .unwrap();
+    let Outcome::PassApplied(applied) = session::exec_unaudited(
+        &setup.ctx,
+        Command::PassApply(Box::new(input), setup.ctx.host()),
+    )
+    .unwrap() else {
+        panic!("applied window")
+    };
+    assert_eq!(applied.pass.unwrap().result, "written");
     let view = setup.ctx.store().session(&setup.id()).unwrap();
     assert_eq!(view.record.status, SessionStatus::Final);
     assert!(

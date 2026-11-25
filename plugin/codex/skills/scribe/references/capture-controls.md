@@ -16,7 +16,7 @@ The human types these lines (in Codex, `$scribe` in place of `/scribe`):
 - `/scribe group <slug>` to create or join an open project group;
 - `/scribe group add <slug> <session-id>...` to add past sessions to one;
 - `/scribe catalog <id>` to catalog a past session as theirs. Its windows run
-  at the next `scribe session pass`.
+  on the next `scribe-session-pass` Orbit job run.
 
 If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
@@ -79,13 +79,14 @@ nothing. Before the host persists a prompt, recording may be pending until
 Stop verifies it. Relay the hook's actual status. These checks prevent
 accidents. They do not authenticate a process running as the same OS user.
 
-Codex-origin model work defaults to **Luna (`gpt-6-luna`)** through the Codex
-CLI, with no fallback. Configure `[codex.models]` for explicit model or
-transport overrides. Claude defaults remain under `[models]`. Global asks use
-`[models]` unless the caller selects `--provider codex`.
+The standalone catalog and rebuild commands use the provider model settings
+in `[models]` or `[codex.models]`. Orbit chooses session-pass models by the
+`session_distill_crew` and `session_header_crew` settings.
 
-Stop and SessionEnd mark opted-in sessions due; catalog passes run through
-`scribe session pass` from an authorized scheduler or shell. Init enables no
-scheduler. The CLI must be authenticated and the selected model available.
+Stop and SessionEnd mark opted-in sessions due. `scribe session pass` settles
+sessions with no new window and prints the job command when there is more work.
+Run `orbit job run scribe-session-pass` from an authorized workspace. To select
+a switched-on session explicitly, add `--input 'sessions=["<id>"]'`.
+The Orbit routine ships disabled.
 Agents must not bypass hook trust or change scheduling merely to make a
 recording status look successful.

@@ -36,6 +36,11 @@ const HELP: &[(&str, &[&str])] = &[
     ("session-list", &["session", "list", "--help"]),
     ("session-show", &["session", "show", "--help"]),
     ("session-pass", &["session", "pass", "--help"]),
+    (
+        "session-pass-prepare",
+        &["session", "pass-prepare", "--help"],
+    ),
+    ("session-pass-apply", &["session", "pass-apply", "--help"]),
     ("session-rebuild", &["session", "rebuild", "--help"]),
     ("session-deactivate", &["session", "deactivate", "--help"]),
     ("session-activate", &["session", "activate", "--help"]),
@@ -502,18 +507,14 @@ fn failed_session_pass_matches_golden() {
         text(&switched.stderr)
     );
 
-    let path = fx.fake_program(
-        "claude",
-        "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":true,\"result\":\"golden model refusal\"}'\n",
-    );
-    let out = run_with_input(
-        &fx,
-        &["session", "pass", "--session", SESSION, "--json"],
-        b"",
-        Some(&path),
-    );
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    let failures: Vec<String> = check("output/session-pass-failed.json", &text(&out.stdout))
+    // Exercise the actual failure tool's output with a prepared window.
+    let prepared =
+        support::pass::cli_step(&fx, &[], "prepare", json!({"sessions": [SESSION]})).unwrap();
+    let failed = support::pass::cli_step(&fx, &[], "fail", json!({
+        "basis": prepared["basis"], "error_code": "model_failed", "reason": "golden model refusal",
+    })).unwrap();
+    let output = serde_json::to_string_pretty(&failed).unwrap() + "\n";
+    let failures: Vec<String> = check("output/session-pass-failed.json", &output)
         .into_iter()
         .collect();
     report(&failures);
@@ -580,22 +581,13 @@ fn message_search_hint_matches_goldens() {
         "related": [],
         "terms": []
     });
-    let reply = fx.elsewhere("claude-reply.json");
-    std::fs::write(
-        &reply,
-        json!({"type":"result", "is_error":false, "result":"", "structured_output":answer})
-            .to_string(),
+    let pass = support::pass::run(
+        |step, input| support::pass::cli_step(&fx, &[], step, input),
+        json!({"sessions": [SESSION]}),
+        |_, _| Ok(answer.clone()),
     )
     .unwrap();
-    let script = format!("#!/bin/sh\ncat > /dev/null\ncat '{}'\n", reply.display());
-    let path = fx.fake_program("claude", &script);
-    let pass = run_with_input(
-        &fx,
-        &["session", "pass", "--session", SESSION, "--json"],
-        b"",
-        Some(&path),
-    );
-    assert_eq!(pass.status.code(), Some(0), "{}", text(&pass.stderr));
+    assert_eq!(pass["passes"][0]["result"], "written");
 
     let commands: &[(&str, &[&str])] = &[
         ("search-message-hint", &["search", "rollout"]),

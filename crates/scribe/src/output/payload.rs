@@ -1774,7 +1774,7 @@ impl PassFailure for PassReport {
                 return crate::error::CliError::PassFailed(format!("{} session rebuild(s) failed: {}; checkpoint kept; repeat 'scribe session rebuild <id> --author <name> --confirm' to resume", failed.len(), failed.join(", ")));
             }
             crate::error::CliError::PassFailed(format!(
-                "{} session pass(es) failed: {}; each stays due with retry backoff; use 'scribe session pass --session <id>' to retry now",
+                "{} session pass(es) failed: {}; each stays due with retry backoff; use 'orbit job run scribe-session-pass' with explicit sessions to retry now",
                 failed.len(),
                 failed.join(", ")
             ))
@@ -1951,8 +1951,6 @@ pub(crate) struct DeactivatedPayload {
 /// `{"ok":false,"error":{...}}`), in every output mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PluginReply {
-    /// `scribe.session-pass` ran.
-    Pass(PassReport),
     /// `scribe.consistency-scan` ran.
     Scan(Box<ScanReport>),
     /// A deterministic tool result.
@@ -2054,6 +2052,8 @@ pub(crate) enum Output {
     Hook(HookReply),
     /// A session pass's report.
     Pass(PassReport),
+    /// A session pass prepare or apply result.
+    PassStep(serde_json::Value),
     /// A consistency scan's report.
     Scan(Box<ScanReport>),
     /// A plugin tool call's envelope.

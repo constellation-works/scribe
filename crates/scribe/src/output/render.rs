@@ -871,13 +871,6 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
         error: &'a super::payload::PluginError,
     }
     match reply {
-        PluginReply::Pass(report) => serde_json::to_writer(
-            &mut *out,
-            &Ok {
-                ok: true,
-                output: report,
-            },
-        ),
         PluginReply::Scan(report) => serde_json::to_writer(
             &mut *out,
             &Ok {

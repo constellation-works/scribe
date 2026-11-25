@@ -1,8 +1,8 @@
 //! The `session` app: session records and the passes that write them
 //! (`scribe session`, `scribe transcript`; 2_design.md §6, §11, §15).
 //!
-//! `list`, `show` and the `transcript` reads read only. `pass`, `catalog`
-//! and `rebuild` call a model and write records; `activate` and
+//! `list`, `show` and the `transcript` reads read only. `pass` settles or
+//! prepares and applies Orbit windows. `catalog` and `rebuild` write records; `activate` and
 //! `deactivate` write one record. The links, the activity switch, a
 //! continuation's handoff and its predecessor are here too, for the hooks
 //! and the consistency scan.
@@ -26,7 +26,10 @@ pub use activity::{
 };
 pub use catalog::{Begun, CatalogError, CatalogInput};
 pub use list::{ListInput, Listed};
-pub use pass::{CATALOG_COMMAND, PASS_COMMAND, PassInput, PassPayload, PassReport, PassRunError};
+pub use pass::{
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
+    PassPayload, PassReport, PassRunError, PrepareInput, Prepared, SessionPassInput,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
 #[cfg(any(test, feature = "test-support"))]
@@ -61,9 +64,6 @@ use time::OffsetDateTime;
 /// config, once.
 pub type ModelsOnce<'i> = Box<dyn FnOnce(&Config) -> Box<dyn Models + 'i> + 'i>;
 
-/// The model adapter a `pass` builds for each session's config.
-pub type ModelsEach<'i> = &'i mut dyn FnMut(&Config) -> Box<dyn Models + 'i>;
-
 /// A `session` or `transcript` command.
 pub enum Command<'i> {
     /// `session list`.
@@ -76,7 +76,13 @@ pub enum Command<'i> {
         segment: Option<NonZeroU32>,
     },
     /// `session pass`.
-    Pass(PassInput<'i, ModelsEach<'i>>),
+    Pass(SessionPassInput, crate::Label),
+    /// Select a pass window or settle a session deterministically.
+    PassPrepare(PrepareInput, crate::Label),
+    /// Verify a supplied answer and apply it to a prepared pass window.
+    PassApply(Box<ApplyInput>, crate::Label),
+    /// Record retry backoff for a failed Orbit step.
+    PassFail(FailInput, crate::Label),
     /// `session catalog`.
     Catalog(CatalogInput<'i, ModelsOnce<'i>>),
     /// `session rebuild`.
@@ -123,10 +129,12 @@ impl Command<'_> {
                 command: REBUILD_COMMAND,
                 stepwise: true,
             }),
-            Self::Pass(_) => Some(AuditMeta {
-                command: PASS_COMMAND,
-                stepwise: true,
-            }),
+            Self::Pass(..) | Self::PassPrepare(..) | Self::PassApply(..) | Self::PassFail(..) => {
+                Some(AuditMeta {
+                    command: PASS_COMMAND,
+                    stepwise: false,
+                })
+            }
             Self::Deactivate(_) => Some(AuditMeta {
                 command: DEACTIVATE_COMMAND,
                 stepwise: false,
@@ -149,7 +157,10 @@ impl Command<'_> {
         match self {
             Self::List(_)
             | Self::Show { .. }
-            | Self::Pass(_)
+            | Self::Pass(..)
+            | Self::PassPrepare(..)
+            | Self::PassApply(..)
+            | Self::PassFail(..)
             | Self::TranscriptList { .. }
             | Self::TranscriptShow { .. } => AuditSubject::default(),
             // A prefix is resolved before the line is written; an id that
@@ -193,6 +204,12 @@ pub enum Outcome {
     Shown(Box<Shown>),
     /// What a `pass`, `catalog` or `rebuild` did.
     Passed(Box<PassReport>),
+    /// A prepared pass window or model-free settlement.
+    PassPrepared(Box<Prepared>),
+    /// A pass apply or retry outcome.
+    PassApplied(Box<ApplyOutput>),
+    /// Backoff for the active session, if its basis is still current.
+    PassFailed(Option<Box<PassPayload>>),
     /// The record an `activate` or `deactivate` left.
     Activity(Box<ActivityWritten>),
     /// The uncataloged transcripts; `None` when there is no transcripts
@@ -277,22 +294,17 @@ pub(crate) fn run<E: PortError>(
     Ok(match command {
         Command::List(input) => Outcome::Listed(Box::new(list::list(ctx, *input)?)),
         Command::Show { id, segment } => Outcome::Shown(Box::new(show::show(ctx, &id, segment)?)),
-        Command::Pass(input) => {
-            let PassInput {
-                sessions,
-                resolve,
-                models,
-                limits,
-                host,
-            } = input;
-            let input = PassInput {
-                sessions,
-                resolve,
-                models: |config: &Config| Adapter(models(config)),
-                limits,
-                host,
-            };
-            Outcome::Passed(Box::new(pass::run(ctx, input)?))
+        Command::Pass(input, host) => {
+            Outcome::Passed(Box::new(pass::settle_only(ctx, &host, input)?))
+        }
+        Command::PassPrepare(input, host) => {
+            Outcome::PassPrepared(Box::new(pass::prepare(ctx, &host, input)?))
+        }
+        Command::PassApply(input, host) => {
+            Outcome::PassApplied(Box::new(pass::apply(ctx, &host, *input)?))
+        }
+        Command::PassFail(input, host) => {
+            Outcome::PassFailed(pass::fail(ctx, &host, input)?.map(Box::new))
         }
         Command::Catalog(input) => {
             let CatalogInput {
@@ -498,6 +510,23 @@ impl Audited for Outcome {
     fn lines(&self) -> Vec<Line> {
         match self {
             Self::Passed(report) => pass_lines(report),
+            Self::PassPrepared(prepared) => prepared.settled.iter().filter_map(pass_line).collect(),
+            Self::PassApplied(applied) => applied
+                .pass
+                .as_ref()
+                .and_then(pass_line)
+                .into_iter()
+                .chain(
+                    applied
+                        .persisted_targets
+                        .iter()
+                        .chain(&applied.memory_targets)
+                        .map(|id| Line::success(Some(id.clone()))),
+                )
+                .collect(),
+            Self::PassFailed(failure) => {
+                failure.as_deref().and_then(pass_line).into_iter().collect()
+            }
             Self::Activity(written) => Line::written(
                 Some(format!("session:{}", written.view.record.id)),
                 written.changed,
@@ -510,24 +539,20 @@ impl Audited for Outcome {
     }
 }
 
-/// One line per pass that is not waiting: a success, or a failure with its
-/// code. A catalog that wrote its switch logs the switch as one more success
-/// line first, but only when no window failed: a failed catalog is one
-/// failure outcome, whose line names the session whose switch it left due.
-/// Then one success line per target the run persisted and per memory target.
+fn pass_line(pass: &PassPayload) -> Option<Line> {
+    if pass.result == "waiting" {
+        return None;
+    }
+    let target = Some(format!("session:{}", pass.session));
+    Some(match pass.error_code {
+        Some(code) => Line::failure(target, code),
+        None => Line::success(target),
+    })
+}
+
+/// One line per settled or failed pass and per persisted target.
 fn pass_lines(report: &PassReport) -> Vec<Line> {
-    let mut lines: Vec<Line> = report
-        .passes
-        .iter()
-        .filter(|p| p.result != "waiting")
-        .map(|p| {
-            let target = Some(format!("session:{}", p.session));
-            match p.error_code {
-                Some(code) => Line::failure(target, code),
-                None => Line::success(target),
-            }
-        })
-        .collect();
+    let mut lines: Vec<Line> = report.passes.iter().filter_map(pass_line).collect();
     let failed = lines
         .iter()
         .any(|line| line.status == crate::AuditStatus::Failure);

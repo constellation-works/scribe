@@ -19,9 +19,9 @@ pub(crate) use payload::{
     BriefPayload, CoveredPayload, DeactivatedPayload, DeactivationFailure, EntryPayload,
     ExportPayload, GroupBackfill, GroupBackfillMember, HitPayload, Kin, MemoryBlockPayload,
     MemoryPayload, MemoryRulesPayload, MemoryScanPayload, MigratePayload, Output, PassFailure,
-    PassReport, PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records,
-    RefreshPayload, RefreshRetryPayload, RevisionPayload, ScanReport, SessionHandoffsPayload,
-    SessionPayload, TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
+    PluginError, PluginReply, ProposalPayload, ReappliedPayload, Record, Records, RefreshPayload,
+    RefreshRetryPayload, RevisionPayload, ScanReport, SessionHandoffsPayload, SessionPayload,
+    TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
 pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
@@ -82,6 +82,7 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>)
             | Output::List { .. }
             | Output::Show { .. }
             | Output::Written { .. }
+            | Output::PassStep(_)
             | Output::GroupEvidence(_)
             | Output::GroupBackfill(_)
             | Output::Hook(_)
@@ -201,7 +202,7 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
     let color = match output {
         // Machine output: the encoder escapes control characters itself,
         // and quotes stay verbatim.
-        Output::Hook(_) | Output::Plugin(_) => None,
+        Output::Hook(_) | Output::Plugin(_) | Output::PassStep(_) => None,
         Output::Init(_)
         | Output::List { .. }
         | Output::Show { .. }
@@ -237,7 +238,7 @@ fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
         Output::Show { record } | Output::Written { record, .. } => {
             render::show(&mut out, sink, shorts, record)?;
         }
-        Output::GroupEvidence(value) => {
+        Output::GroupEvidence(value) | Output::PassStep(value) => {
             serde_json::to_writer_pretty(&mut out, value).map_err(io::Error::from)?;
             writeln!(out)?;
         }

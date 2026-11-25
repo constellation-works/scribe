@@ -4,10 +4,14 @@
 mod run;
 
 pub use run::{
-    CATALOG_COMMAND, PASS_COMMAND, PassInput, PassPayload, PassReport, PassRunError,
-    attributed_project, run, short_reason,
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
+    PassPayload, PassReport, PassRunError, PrepareInput, Prepared, SessionPassInput,
+    attributed_project, short_reason,
 };
-pub(crate) use run::{CatalogJob, RunFailure, distill, run_catalog, window_warnings};
+pub(crate) use run::{
+    CatalogJob, RunFailure, apply, distill, fail, prepare, run_catalog, settle_only,
+    window_warnings,
+};
 
 use crate::apps::memory::check_sensitive_drafts;
 use crate::apps::memory::{WindowMemory, plan_window};
@@ -34,6 +38,7 @@ pub struct ClaimsWritten {
 }
 
 /// The pass verbs, implemented for [`Store`].
+#[cfg(any(test, feature = "test-support"))]
 pub trait PassVerbs {
     /// Finish a session pass under the store lock: write `record` (when the
     /// pass produced one) whole, its free text
@@ -124,6 +129,7 @@ pub trait PassVerbs {
     ) -> Result<ClaimsWritten>;
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl PassVerbs for Store {
     fn settle_pass(
         &self,
@@ -140,6 +146,7 @@ impl PassVerbs for Store {
             PassWrite::Settle(ran_final),
             expected,
             redactor,
+            None,
         )
     }
 
@@ -158,6 +165,7 @@ impl PassVerbs for Store {
             PassWrite::Checkpoint,
             expected,
             redactor,
+            None,
         )
     }
 
@@ -176,6 +184,7 @@ impl PassVerbs for Store {
             PassWrite::CatalogLive,
             expected,
             redactor,
+            None,
         )
     }
 
@@ -193,6 +202,7 @@ impl PassVerbs for Store {
             PassWrite::CatalogFinal,
             expected,
             redactor,
+            None,
         )
     }
 
@@ -207,20 +217,8 @@ impl PassVerbs for Store {
         messages: &[crate::message::NewMessage],
         redactor: &Redactor,
     ) -> Result<PassWritten> {
-        let session = record.id.clone();
-        write_pass_candidates(
-            self,
-            &session,
-            Some(record),
-            kind,
-            expected,
-            PassParts {
-                candidates,
-                memory,
-                messages,
-                run_candidates: true,
-            },
-            redactor,
+        write_window(
+            self, record, expected, kind, candidates, memory, messages, redactor, None,
         )
     }
 
@@ -235,6 +233,36 @@ impl PassVerbs for Store {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn write_window(
+    store: &Store,
+    record: SessionRecord,
+    expected: Option<time::OffsetDateTime>,
+    kind: PassWrite,
+    candidates: &[crate::pass::PassClaim],
+    memory: Option<&WindowMemory>,
+    messages: &[crate::message::NewMessage],
+    redactor: &Redactor,
+    expected_switch: Option<&crate::SessionControl>,
+) -> Result<PassWritten> {
+    let session = record.id.clone();
+    write_pass_candidates(
+        store,
+        &session,
+        Some(record),
+        kind,
+        expected,
+        PassParts {
+            candidates,
+            memory,
+            messages,
+            run_candidates: true,
+            expected_switch,
+        },
+        redactor,
+    )
+}
+
 /// The parts of a pass window besides its record.
 struct PassParts<'a> {
     /// Claims to open.
@@ -245,6 +273,7 @@ struct PassParts<'a> {
     messages: &'a [crate::message::NewMessage],
     /// Whether to open `candidates` (and close retired-tag ones).
     run_candidates: bool,
+    expected_switch: Option<&'a crate::SessionControl>,
 }
 
 fn write_pass(
@@ -254,6 +283,7 @@ fn write_pass(
     kind: PassWrite,
     expected: Option<time::OffsetDateTime>,
     redactor: &Redactor,
+    expected_switch: Option<&crate::SessionControl>,
 ) -> Result<Option<SessionRecord>> {
     Ok(write_pass_candidates(
         store,
@@ -266,6 +296,7 @@ fn write_pass(
             memory: None,
             messages: &[],
             run_candidates: false,
+            expected_switch,
         },
         redactor,
     )?
@@ -292,7 +323,11 @@ fn write_pass_candidates(
         // a linked record still matches and its links are merged below.
         let mut loaded = tx.sessions().loaded()?;
         let current = loaded.take(session).transpose()?;
-        if current.as_ref().map(|c| c.updated) != expected {
+        if current.as_ref().map(|c| c.updated) != expected
+            || parts
+                .expected_switch
+                .is_some_and(|switch| loaded.control.get(session) != Some(switch))
+        {
             return Err(Error::RecordChanged {
                 id: session.clone(),
             });

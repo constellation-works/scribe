@@ -1,7 +1,7 @@
 //! Deterministic recovery after the model's one correction attempt.
 
 use super::{BUDGETS, Distilled, Invalid, SEGMENT_CHARS, check, check_with_rules};
-use crate::models::{
+use crate::session_distill::{
     Budgets, NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, SessionRequest,
 };
 

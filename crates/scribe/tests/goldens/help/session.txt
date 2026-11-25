@@ -5,14 +5,16 @@ Lists and shows cataloged session records, and writes them with pass and catalog
 Usage: scribe session [OPTIONS] <COMMAND>
 
 Commands:
-  list        List session records, newest first
-  show        Show one session record
-  pass        Write session records for due or named sessions
-  rebuild     Rebuild a session record from its full transcript
-  deactivate  Hide an outdated session with a reason
-  activate    Show an inactive session or pin it against hiding
-  catalog     Switch a past session on and catalog its transcript
-  help        Print this message or the help of the given subcommand(s)
+  list          List session records, newest first
+  show          Show one session record
+  pass          Settle due or named sessions when no new window needs distillation
+  pass-prepare  Prepare one session window or settle a session without a model
+  pass-apply    Verify a supplied session answer and apply it or request a retry
+  rebuild       Rebuild a session record from its full transcript
+  deactivate    Hide an outdated session with a reason
+  activate      Show an inactive session or pin it against hiding
+  catalog       Switch a past session on and catalog its transcript
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

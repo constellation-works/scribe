@@ -76,7 +76,7 @@ fn listed<'a>(manifest: &'a Value, kind: &str) -> Vec<&'a str> {
 }
 
 #[test]
-fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
+fn the_routines_ship_disabled_and_target_their_jobs() {
     let manifest = manifest();
     let jobs: Vec<Value> = listed(&manifest, "jobs").into_iter().map(yaml).collect();
     let mut single_step_tools = Vec::new();
@@ -116,6 +116,34 @@ fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
             );
             continue;
         }
+        if job_name == "scribe-session-pass" {
+            assert_eq!(routine["trigger"]["cron"].as_str(), Some("*/5 * * * *"));
+            assert_eq!(routine["policy"]["overlap"].as_str(), Some("forbid"));
+            assert_eq!(job["spec"]["max_active_runs"].as_u64(), Some(1));
+            let iteration = &steps[1]["loop"];
+            assert_eq!(iteration["max_iterations"].as_u64(), Some(25));
+            let distill = yaml("activities/session_distill.yaml");
+            let header = yaml("activities/session_header_compress.yaml");
+            for (activity, schema) in [
+                (distill, scribe_core::models::session_schema_with_memory()),
+                (
+                    header,
+                    scribe_core::models::SESSION_HEADER_SCHEMA.to_owned(),
+                ),
+            ] {
+                let spec = &activity["spec"];
+                assert_eq!(spec["fsProfile"].as_str(), Some("reviewer"));
+                assert_eq!(spec["require_response_envelope"].as_bool(), Some(true));
+                assert_eq!(spec["tools"].as_sequence().unwrap().len(), 0);
+                assert_eq!(spec["on_denial"].as_str(), Some("terminate"));
+                let actual = serde_json::to_value(&spec["output_schema_json"]).unwrap();
+                assert_eq!(
+                    actual,
+                    serde_json::from_str::<serde_json::Value>(&schema).unwrap()
+                );
+            }
+            continue;
+        }
         assert_eq!(steps.len(), 1, "{name}");
         let config = &steps[0]["spec"]["config"];
         assert_eq!(
@@ -126,10 +154,7 @@ fn the_routines_ship_disabled_and_each_runs_one_routine_tool() {
     }
     assert!(saw_memory_refresh, "scribe-memory-refresh routine exists");
     single_step_tools.sort();
-    assert_eq!(
-        single_step_tools,
-        ["scribe.consistency-scan", "scribe.session-pass"]
-    );
+    assert_eq!(single_step_tools, ["scribe.consistency-scan"]);
 }
 
 #[test]
@@ -145,7 +170,9 @@ fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
     assert_eq!(
         names,
         [
-            "session-pass",
+            "session-pass-prepare",
+            "session-pass-apply",
+            "session-pass-fail",
             "consistency-scan",
             "memory-refresh-prepare",
             "memory-refresh-apply",
