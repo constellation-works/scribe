@@ -7317,8 +7317,8 @@ Following [ORB-27911] (`ask`, the tmux popup, and the model steps in `Stop` and 
 | Caller | App flow | Current trigger | What the model produces |
 |---|---|---|---|
 | `session pass` | `apps/session/pass/run.rs` | `scribe-session-pass` routine (`*/5 * * * *`), `scribe session pass` | `SessionAnswer` (and `SessionHeader` on length retry) per window |
-| `session catalog` | `apps/session/catalog.rs` -> `run_catalog` | `scribe session catalog <id>` (note: `/scribe catalog <id>` only writes the switch) | `SessionAnswer` (and `SessionHeader`) for each window of the named session |
-| `session rebuild` | `apps/session/rebuild.rs` | `scribe session rebuild <id> --confirm` | `SessionAnswer` (and `SessionHeader`) with `memory: false`, `candidate_limit: 0`, `write_limit: 0` |
+| `session catalog` | `apps/session/catalog.rs` -> `run_catalog` | `scribe session catalog <id> --author opus` (note: `/scribe catalog <id>` only writes the switch) | `SessionAnswer` (and `SessionHeader`) for each window of the named session |
+| `session rebuild` | `apps/session/rebuild.rs` | `scribe session rebuild <id> --author opus --confirm` | `SessionAnswer` (and `SessionHeader`) with `memory: false`, `candidate_limit: 0`, `write_limit: 0` |
 | `memory refresh` | `apps/memory/refresh.rs`, `apps/memory/verbs.rs` | `scribe-memory-refresh` routine (`0 5 * * 0`), `scribe memory refresh` | `ProfileAnswer` (`profile.md` + promoted `milestones`) |
 | `group close` summary | `apps/group/close.rs`, `apps/group/verbs/close.rs` | `scribe group close <id> [--quote '<span>']` | 1–4,000-character closing summary from `CloseEvidence` |
 
