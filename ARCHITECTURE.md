@@ -38,7 +38,11 @@ runs at the same step and under the same lock. `forgotten_refusal` is the
 deliberate exception. A forgotten session is a tombstone, and every writer
 that touches a session must refuse it under the write lock, including the
 store's own internal writers, so the refusal stays beside `Error` in the
-store's `error.rs` rather than in one app.
+store's `error.rs` rather than in one app. `export_target_exists` is the
+second: `export` refuses a target that is not an empty directory inside
+the store (`repository/sessions.rs::prepare_target`). The check is the
+precondition of the store's own filesystem write, and only the store
+touches the filesystem, so the admin app does not hold it.
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with
