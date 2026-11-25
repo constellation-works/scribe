@@ -4,4 +4,4 @@
 mod messages;
 mod rules;
 
-pub(crate) use scribe_domain::fixtures::{T0, entry, segment, session};
+pub(crate) use scribe_store::fixtures::{T0, entry, segment, session};

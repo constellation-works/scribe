@@ -8,7 +8,7 @@ use crate::tag::TagTable;
 #[must_use]
 pub fn record_tag_refusal(mark: &Mark, tags: &TagTable) -> Option<CheckRefusal> {
     mark.hint(tags)
-        .filter(|tag| crate::entry::is_decision_or_item(tag.as_str()))
+        .filter(|tag| tag.is_decision_or_item())
         .map(|_| CheckRefusal::RecordTag)
 }
 

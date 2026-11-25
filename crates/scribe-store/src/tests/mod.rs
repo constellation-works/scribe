@@ -3,8 +3,8 @@
 //! store's tests that call the use cases are in scribe-core
 //! (`src/tests/store/`); the helpers both share are in [`crate::testing`].
 
+pub(crate) use crate::fixtures::{T0, entry, session};
 pub(crate) use crate::testing::private_tempdir;
-pub(crate) use scribe_domain::fixtures::{T0, entry, session};
 
 mod audit;
 mod digest;

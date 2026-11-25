@@ -523,7 +523,7 @@ impl Store {
                 e.status == crate::EntryStatus::Active
                     && e.tag.as_str() == crate::handoff::HANDOFF_TAG
             })
-            .flat_map(crate::handoff::session_ids)
+            .flat_map(crate::entry::Entry::session_ids)
             .collect();
         let mut ids = Self::session_id_universe(&loaded, &handoffs);
         ids.extend(self.group_session_ids()?);
@@ -695,7 +695,7 @@ impl Store {
                     e.status == crate::EntryStatus::Active
                         && e.tag.as_str() == crate::handoff::HANDOFF_TAG
                 })
-                .flat_map(crate::handoff::session_ids)
+                .flat_map(crate::entry::Entry::session_ids)
                 .collect()
         } else {
             Vec::new()

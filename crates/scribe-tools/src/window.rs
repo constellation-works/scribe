@@ -6,7 +6,7 @@
 //! its request from them.
 
 use crate::transcript::{Message, user_turn};
-use scribe_domain::entry::Speaker;
+use scribe_store::entry::Speaker;
 
 /// The most characters of one message a prompt carries. A longer message is
 /// cut and the cut is marked (STD-03 R15); the span the model returns is

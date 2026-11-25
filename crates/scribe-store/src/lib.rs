@@ -61,6 +61,9 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 mod contracts;
+// The entry and handoff shapes, as modules: callers name them by path
+// (`scribe_store::entry::Entry`, `scribe_store::handoff::MAX_CHARS`).
+pub use contracts::{entry, handoff};
 // The group shapes at the path the store's code names them by.
 use contracts::group;
 // The message shapes at the path the store's code names them by.
@@ -109,6 +112,8 @@ pub use repository::sessions::{
     SessionRow,
 };
 pub use repository::{Snapshot, Tx};
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures;
 #[cfg(feature = "test-support")]
 mod seed;
 
@@ -120,22 +125,22 @@ use repository::audit;
 // The domain at the paths this code had as scribe-core's `store` module.
 #[cfg(test)]
 use crate as store;
+use crate::entry::{ContentFrom, EntryStatus, Instruction, Speaker};
 use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::session::{ControlState, SessionId, SessionRecord};
 use scribe_domain::{
-    Author, AuthorKind, ContentFrom, EntryStatus, Instruction, Label, LinkType, Project, Related,
-    RelatedKind, SessionError, SessionStatus, Speaker,
+    Author, AuthorKind, Label, LinkType, Project, Related, RelatedKind, SessionError, SessionStatus,
 };
-use scribe_domain::{entry, handoff, record, session};
+use scribe_domain::{record, session};
 // The domain names the redaction tests (`tests/redact.rs`) and their
 // shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
 // in the domain.
 #[cfg(any(test, feature = "test-support"))]
-use scribe_domain::{
-    AnswerIn, AuthorName, Decision, ItemAnswer, ItemClosure, OpenItem, Outcome, OutcomeState,
-};
+use crate::entry::{AnswerIn, Decision, ItemAnswer, ItemClosure, OpenItem, Outcome, OutcomeState};
 #[cfg(test)]
-use scribe_domain::{Window, WindowTurn};
+use crate::entry::{Window, WindowTurn};
+#[cfg(any(test, feature = "test-support"))]
+use scribe_domain::AuthorName;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

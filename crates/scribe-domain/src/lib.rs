@@ -1,16 +1,15 @@
 //! scribe's domain: the records and the pure rules over them, with no I/O.
 //!
-//! Entries ([`Entry`], [`EntryId`], [`TagName`], [`Cite`]) are in `entry`;
-//! session records, the on/off state
+//! Session records, the on/off state
 //! and the due rule ([`SessionRecord`], its log of [`Segment`]s,
-//! [`ControlState`], [`Cadence`]) in `session`; the shared metadata ([`Project`], [`Topic`], [`Related`],
+//! [`ControlState`], [`Cadence`]) are in `session`; the shared metadata ([`Project`], [`Topic`], [`Related`],
 //! [`Author`]) in `record`; the rules
 //! that select and judge records in their modules. The typed `Error` is the store's (`scribe-store`'s
-//! `error`), and so are proposals and the tag table (`scribe-store`'s
-//! `contracts::proposal` and `contracts::tag`).
+//! `error`), and so are entries and handoffs, proposals and the tag table
+//! (`scribe-store`'s `contracts::{entry, handoff, proposal, tag}`).
 //!
-//! The modules sit in three rings, each importing only its own and the ones
-//! before it: base, records, rules (ARCHITECTURE.md;
+//! The modules sit in two rings, each importing only its own and the ones
+//! before it: base, records (ARCHITECTURE.md;
 //! `scripts/check-dependency-direction.sh`). It never touches the file
 //! system, the network, a process or the environment: `scribe-store` holds
 //! the records and `scribe-core` runs the use cases over both.
@@ -18,20 +17,11 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod entry;
-pub mod handoff;
 pub mod provider;
 pub mod record;
 pub mod session;
 pub use provider::Provider;
 
-pub use entry::{
-    AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
-    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, InvalidItemState, ItemAnswer,
-    ItemClosure, ItemState, NewEntry, OpenItem, Outcome, OutcomeState, Speaker, TagName, Window,
-    WindowTurn,
-};
-pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
 pub use record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
     RelatedKind, Topic, Topics, parse_day,

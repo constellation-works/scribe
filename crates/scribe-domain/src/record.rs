@@ -756,17 +756,20 @@ pub mod nullable_date {
         date.format(FORMAT).unwrap_or_else(|_| date.to_string())
     }
 
-    pub(crate) fn serialize<S: Serializer>(
-        date: &Option<Date>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    /// Serialize an optional date as `YYYY-MM-DD` or `null`.
+    pub fn serialize<S: Serializer>(date: &Option<Date>, serializer: S) -> Result<S::Ok, S::Error> {
         match date {
             Some(date) => serializer.serialize_str(&format(*date)),
             None => serializer.serialize_none(),
         }
     }
 
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    /// Deserialize `YYYY-MM-DD` or `null` into an optional date.
+    ///
+    /// # Errors
+    ///
+    /// When the text is not a `YYYY-MM-DD` date.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Date>, D::Error> {
         Option::<String>::deserialize(deserializer)?

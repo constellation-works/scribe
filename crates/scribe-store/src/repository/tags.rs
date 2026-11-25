@@ -66,7 +66,7 @@ impl Store {
     /// The store tags (`scribe tag add`), without writing.
     pub(crate) fn store_tags(&self) -> Result<Vec<StoreTag>> {
         let mut tags = self.read_or_empty(docs::tags)?;
-        tags.retain(|tag| !crate::entry::is_decision_or_item(tag.name.as_str()));
+        tags.retain(|tag| !tag.name.is_decision_or_item());
         Ok(tags)
     }
 

@@ -8,4 +8,4 @@ mod transcript;
 mod trigger;
 mod verbatim;
 
-pub(crate) use scribe_domain::fixtures::{T0, entry};
+pub(crate) use scribe_store::fixtures::{T0, entry};

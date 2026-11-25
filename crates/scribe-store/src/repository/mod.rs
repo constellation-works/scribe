@@ -120,7 +120,7 @@ mod sealed {
 /// start a write of its own outside the use case's transaction and audit.
 ///
 /// ```compile_fail
-/// # fn put(store: &scribe_store::Store, entry: &scribe_domain::entry::Entry) {
+/// # fn put(store: &scribe_store::Store, entry: &scribe_store::entry::Entry) {
 /// store.read().entries().put(entry, true).unwrap();
 /// # }
 /// ```
@@ -137,7 +137,7 @@ mod sealed {
 /// ```
 /// # fn put(
 /// #     store: &scribe_store::Store,
-/// #     entry: &scribe_domain::entry::Entry,
+/// #     entry: &scribe_store::entry::Entry,
 /// #     event: &scribe_store::AuditEvent,
 /// # ) {
 /// let _ = store.read().entries().get(&entry.id);

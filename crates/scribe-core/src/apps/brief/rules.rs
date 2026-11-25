@@ -236,7 +236,7 @@ pub fn build(
         .iter()
         .filter(|e| e.status == EntryStatus::Active && e.tag.as_str() == handoff::HANDOFF_TAG)
     {
-        for sid in handoff::session_ids(entry) {
+        for sid in entry.session_ids() {
             by_session.entry(sid).or_default().push(entry);
         }
     }

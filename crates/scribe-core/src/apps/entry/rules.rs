@@ -25,12 +25,13 @@
 //! - Whose words an entry holds and how a line names them ([`voice`]): the
 //!   entry, proposal and search apps use it; entry is the lowest.
 
+pub mod handoff;
 pub mod instruction;
 pub mod message;
 pub mod voice;
 
 use crate::apps::tag::check_agent_author;
-use crate::entry::{Entry, EntryId, EntryStatus, TagName, is_decision_or_item};
+use crate::entry::{Entry, EntryId, EntryStatus, TagName};
 use crate::proposal::{Proposal, ProposalId, ProposalState};
 use crate::record::{AuthorKind, patch};
 use crate::store::Pickup;
@@ -438,7 +439,7 @@ pub fn check_quote(def: &crate::TagDef, quote: Option<&str>) -> Result<()> {
 
 /// Refuse `--spoken` under a tag that has its own entry fields.
 pub fn check_spoken_tag(def: &crate::TagDef) -> Result<()> {
-    if def.name.as_str() == crate::handoff::HANDOFF_TAG || is_decision_or_item(def.name.as_str()) {
+    if def.name.as_str() == crate::handoff::HANDOFF_TAG || def.name.is_decision_or_item() {
         return Err(refusal(
             WriteRefusal::NotMemoryTag,
             format!("{} has its own entry fields; omit --spoken", def.name),

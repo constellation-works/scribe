@@ -117,7 +117,7 @@ map; a new module fails the check until it is given a ring.
 | Ring | Modules |
 |------|---------|
 | 1. base | `record`, `provider` |
-| 2. records | `session`, `entry`, `handoff` |
+| 2. records | `session` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -300,6 +300,25 @@ PR 5-16 moved `tag`:
   `tag update` patch (`TagPatch`). `MAX_FINDINGS_PER_SESSION` went to
   `apps/entry/rules.rs`, its only user's rules. The core's `crate::tag`
   re-exports all of them.
+
+PR 5-17 moved `entry` and `handoff`:
+
+- The entry shapes went to the store's `contracts/entry.rs` and
+  `contracts/entry/records.rs` whole: `Entry`, its ids, statuses, cites,
+  outcomes, windows, patches, filters and the decision and open-item
+  fields, with their own-shape methods. The store exposes them as the module
+  `scribe_store::entry`. `is_decision_or_item` became the contract method
+  `TagName::is_decision_or_item`.
+- The handoff shape went to `contracts/handoff.rs` (`scribe_store::handoff`):
+  `HANDOFF_TAG`, `Mode`, `HEADINGS` and `MAX_CHARS`, and
+  `handoff::session_ids` became the contract method `Entry::session_ids`.
+  The checks a handoff write must pass (`check`, `check_related`,
+  `session_refs_changed`, `is_handoff`, `for_session` and their errors)
+  went to `apps/entry/rules/handoff.rs`. The core's `crate::handoff`
+  re-exports both halves.
+- The `entry` fixture went to the store's `fixtures.rs` (behind
+  `test-support`), which re-exports the domain's session fixtures until
+  those records move.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:
