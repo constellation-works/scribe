@@ -96,7 +96,7 @@ print(json.dumps({'type':'turn.completed','usage':{}}))
 }
 
 #[test]
-fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation() {
+fn verified_skill_opt_in_capture_pass_citations_off_and_provider_isolation() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
     // A settling command typed before this turn is history: it is not
@@ -161,54 +161,24 @@ fn verified_skill_opt_in_capture_luna_pass_citations_off_and_provider_isolation(
         before,
         "duplicate delivery is a no-op"
     );
-    let path = fake_model(&f);
-    let out = f
-        .cmd(&["session", "pass", "--session", ID, "--json"])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{} {}",
-        text(&out.stdout),
-        text(&out.stderr)
-    );
+    let passed = cli_pass(&f);
+    assert_eq!(passed["passes"][0]["result"], "written");
     let record: Value =
         serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
     assert_eq!(record["provider"], "codex");
-    let calls = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
-    let call: Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
-    let args = call["args"].as_array().unwrap();
-    assert!(
-        args.windows(2)
-            .any(|a| a == [json!("--model"), json!("gpt-6-luna")])
-    );
-    assert!(
-        args.windows(2)
-            .any(|a| a == [json!("--disable"), json!("hooks")])
-    );
-    assert!(args.contains(&json!("--ephemeral")));
-    assert!(call["env"].get("SCRIBE_ROOT").is_none());
-    assert!(
-        !PathBuf::from(call["cwd"].as_str().unwrap()).exists(),
-        "isolated runtime directory removed"
-    );
+    assert_eq!(model_calls(&f), 0);
     let hits: Value =
         serde_json::from_slice(&f.ok(&["search", "compact widgets", "--json"]).stdout).unwrap();
     assert!(!hits["hits"].as_array().unwrap().is_empty());
     c.typed("off", "next", "$scribe off");
     c.write();
     c.hook(&f, "UserPromptSubmit", "next", "$scribe off");
-    let no_pass = f
-        .cmd(&["session", "pass", "--json"])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
-    assert!(no_pass.status.success());
+    let no_pass = f.ok(&["session", "pass", "--json"]);
     assert_eq!(
-        std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap(),
-        calls
+        serde_json::from_slice::<Value>(&no_pass.stdout).unwrap()["passes"],
+        json!([])
     );
+    assert_eq!(model_calls(&f), 0);
     // The default Claude session remains independent even in the same store.
     let claude = f
         .home()
@@ -283,25 +253,33 @@ fn subagents_unsafe_paths_and_missing_identity_never_record() {
     assert!(!support::has_control(&f.root()));
 }
 
-fn plugin_pass(f: &Fixture, path: &std::ffi::OsStr) -> Value {
-    let input = json!({"schema_version":1,"tool":"scribe.session-pass","input":{},"context":{"config":{"root":f.root(),"codex_home":f.home().join(".codex"),"transcripts":""}}});
-    let mut child = f
-        .cmd(&["plugin", "call"])
-        .env("PATH", path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.to_string().as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    serde_json::from_slice(&out.stdout).unwrap()
+fn widget_answer(_: &Value, _: bool) -> Result<Value, support::pass::ActivityFailure> {
+    Ok(json!({
+        "title":"Compact widgets", "summary":"Chose compact widgets.", "goals":"Choose widgets",
+        "next":[], "topics":["widgets"], "related":[], "terms":[],
+        "open":{"heading":"Widget choice","text":"Chose compact widgets.","topics":["widgets"],"related":[]},
+        "new":[]
+    }))
+}
+
+fn cli_pass(f: &Fixture) -> Value {
+    support::pass::run(
+        |step, input| support::pass::cli_step(f, &[], step, input),
+        json!({"sessions": [ID]}),
+        widget_answer,
+    )
+    .unwrap()
+}
+
+fn plugin_pass(f: &Fixture) -> Value {
+    let config =
+        json!({"root": f.root(), "codex_home": f.home().join(".codex"), "transcripts": ""});
+    support::pass::run(
+        |step, input| support::pass::plugin_step(f, &[], step, input, &config),
+        json!({}),
+        widget_answer,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -330,13 +308,8 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
         1
     );
     assert!(!f.root().exists());
-    let model = fake_model(&f);
-    let never = plugin_pass(&f, &model);
-    assert_eq!(never["ok"], true);
-    assert!(
-        !f.home().join("model-calls.jsonl").exists(),
-        "never-on transcript not cataloged"
-    );
+    assert_eq!(plugin_pass(&f)["passes"], json!([]));
+    assert_eq!(model_calls(&f), 0);
     c.typed("on", "live", "/scribe on");
     c.typed("choice", "live", "We choose compact widgets.");
     c.write();
@@ -347,18 +320,12 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
     std::fs::rename(&c.path, &moved).unwrap();
     c.path = moved;
     c.hook(&f, "SessionEnd", "live", "");
-    let passed = plugin_pass(&f, &model);
-    assert_eq!(passed["ok"], true, "{passed}");
+    assert_eq!(plugin_pass(&f)["passes"][0]["result"], "written");
     let record: Value =
         serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
     assert_eq!(record["provider"], "codex");
     assert_eq!(record["status"], "final");
-    let calls = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
-    let call: Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
-    assert_eq!(
-        call["env"]["CODEX_HOME"],
-        f.home().join(".codex").to_string_lossy().as_ref()
-    );
+    assert_eq!(model_calls(&f), 0);
 }
 
 #[test]
@@ -414,39 +381,17 @@ fn codex_windows_seal_resume_and_rebuild_and_explicit_model_override() {
     let config = f.root().join("config.toml");
     std::fs::write(&config,"[catalog]\nwindow_messages=2\nsegment_windows=1\n[codex.models]\nsession='explicit-luna-id'\n").unwrap();
     support::make_private(&config);
-    let path = fake_model(&f);
-    let run = || {
-        f.cmd(&["session", "pass", "--session", ID, "--json"])
-            .env("PATH", &path)
-            .output()
-            .unwrap()
-    };
-    let first = run();
-    assert!(
-        first.status.success(),
-        "{} {}",
-        text(&first.stdout),
-        text(&first.stderr)
-    );
+    let first = cli_pass(&f);
+    assert_eq!(first["passes"][0]["result"], "written");
+    assert_eq!(first["passes"][0]["windows"], 3);
     let record: Value =
         serde_json::from_slice(&f.ok(&["session", "show", ID, "--log", "--json"]).stdout).unwrap();
     assert_eq!(record["log"].as_array().unwrap().len(), 3);
     assert_eq!(record["log"][0]["state"], "sealed");
-    let calls = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
-    assert_eq!(calls.lines().count(), 3);
-    let call: Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
-    assert!(
-        call["args"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("explicit-luna-id"))
-    );
-    let again = run();
-    assert!(again.status.success());
-    assert_eq!(
-        std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap(),
-        calls
-    );
+    let again = cli_pass(&f);
+    assert_eq!(again["passes"][0]["result"], "unchanged");
+    assert_eq!(model_calls(&f), 0);
+    let path = fake_model(&f);
     let rebuilt = f
         .cmd(&[
             "session",
@@ -470,6 +415,20 @@ fn codex_windows_seal_resume_and_rebuild_and_explicit_model_override() {
         serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
     assert_eq!(record["provider"], "codex");
     assert_eq!(record["rebuilt_by"]["name"], "sol");
+    let calls = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
+    let call: Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
+    let args = call["args"].as_array().unwrap();
+    assert!(
+        args.windows(2)
+            .any(|a| a == [json!("--model"), json!("explicit-luna-id")])
+    );
+    assert!(
+        args.windows(2)
+            .any(|a| a == [json!("--disable"), json!("hooks")])
+    );
+    assert!(args.contains(&json!("--ephemeral")));
+    assert!(call["env"].get("SCRIBE_ROOT").is_none());
+    assert!(!PathBuf::from(call["cwd"].as_str().unwrap()).exists());
 }
 
 #[test]

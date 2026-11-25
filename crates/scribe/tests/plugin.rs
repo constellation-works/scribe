@@ -95,7 +95,6 @@ fn unknown_tools_are_refused() {
 fn the_routine_tools_refuse_any_input_key() {
     let s = Setup::new();
     for tool in [
-        "scribe.session-pass",
         "scribe.consistency-scan",
         "scribe.memory-refresh-prepare",
         "scribe.memory-refresh-apply",
@@ -103,6 +102,10 @@ fn the_routine_tools_refuse_any_input_key() {
         let reply = s.reply(tool, json!({"limit": 1}), s.root_config());
         assert_eq!(error_code(&reply), "invalid_input", "{tool}");
     }
+    let pass_cfg =
+        json!({"root": s.fx.root(), "transcripts": s.fx.home().join(".claude/projects")});
+    let invalid = s.reply("scribe.session-pass-prepare", json!({"limit": 1}), pass_cfg);
+    assert_eq!(error_code(&invalid), "invalid_input");
     // Store-backed memory-refresh-prepare -> retry -> apply -> nothing_new round-trip.
     let cfg = json!({"root": s.fx.root().to_str().unwrap(), "profile_refresh_crew": "haiku"});
     let prepared = s.reply("scribe.memory-refresh-prepare", json!({}), cfg.clone());
@@ -161,7 +164,9 @@ fn a_malformed_envelope_is_one_error_envelope() {
     assert_eq!(error_code(&s.reply_raw(b"not json")), "invalid_envelope");
     assert_eq!(
         error_code(
-            &s.reply_raw(br#"{"schema_version":2,"tool":"scribe.session-pass","input":{}}"#)
+            &s.reply_raw(
+                br#"{"schema_version":2,"tool":"scribe.session-pass-prepare","input":{}}"#
+            )
         ),
         "invalid_envelope"
     );

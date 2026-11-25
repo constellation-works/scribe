@@ -326,7 +326,7 @@ pub struct MemoryContext {
 }
 
 /// A pending candidate as the session model reads it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PendingContext {
     /// `pending-<n>`.
     pub id: String,

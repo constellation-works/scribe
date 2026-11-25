@@ -580,46 +580,26 @@ fn session_show_brief_and_retire_handle_multiple_handoffs_on_recorded_and_off_se
         ("u-2", "user", on_req),
     ]);
     on_tr.prompt(&fx, "/scribe on");
-    let fake_pass = fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' '{}'\n",
-            json!({
-                "type": "result",
-                "subtype": "success",
-                "is_error": false,
-                "result": "",
-                "structured_output": {
-                    "title": "Brief refactor",
-                    "summary": "Refactored brief builder.",
-                    "goals": "Surface handoffs in brief.",
-                    "open": null,
-                    "new": [{
-                        "starts_at": "u-1",
-                        "heading": "Brief work",
-                        "text": "Refactored brief builder.",
-                        "topics": [],
-                        "related": []
-                    }],
-                    "next": ["Write tests."],
-                    "topics": ["brief"],
-                    "related": [],
-                    "terms": [],
-                    "candidates": [],
-                    "memory": []
-                }
-            })
-        ),
-    );
-    let mut pass_cmd = fx.cmd(&["session", "pass", "--session", ON_SESSION, "--json"]);
-    pass_cmd.env("PATH", &fake_pass);
-    let pass_out = pass_cmd.output().unwrap();
-    assert_eq!(
-        pass_out.status.code(),
-        Some(0),
-        "{}",
-        text(&pass_out.stderr)
-    );
+    let answer = json!({
+        "title": "Brief refactor",
+        "summary": "Refactored brief builder.",
+        "goals": "Surface handoffs in brief.",
+        "open": null,
+        "new": [{"starts_at": "u-1", "heading": "Brief work", "text": "Refactored brief builder.", "topics": [], "related": []}],
+        "next": ["Write tests."],
+        "topics": ["brief"],
+        "related": [],
+        "terms": [],
+        "candidates": [],
+        "memory": []
+    });
+    let pass = support::pass::run(
+        |step, input| support::pass::cli_step(&fx, &[], step, input),
+        json!({"sessions": [ON_SESSION]}),
+        |_, _| Ok(answer.clone()),
+    )
+    .unwrap();
+    assert_eq!(pass["passes"][0]["result"], "written");
 
     let on_rel = format!("session:{ON_SESSION}");
     let h3 = json_of(&fx.ok(&[
@@ -837,17 +817,17 @@ not = "One-off remarks."
             "date": "2026-11-22"
         }]
     });
-    let claude = fx.fake_program(
-        "claude",
-        &format!(
-            "#!/bin/sh\ncat > \"$HOME/pass-stdin\"\nprintf '{{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":%s}}\\n' '{}'\n",
-            pass_answer
-        ),
-    );
-    let mut cmd = fx.cmd(&["session", "pass", "--session", ON_SESSION, "--json"]);
-    cmd.env("PATH", &claude);
-    let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let mut prompt = Value::Null;
+    let pass = support::pass::run(
+        |step, input| support::pass::cli_step(&fx, &[], step, input),
+        json!({"sessions": [ON_SESSION]}),
+        |request, _| {
+            prompt = request.clone();
+            Ok(pass_answer.clone())
+        },
+    )
+    .unwrap();
+    assert_eq!(pass["passes"][0]["result"], "written");
 
     // Zero proposed claims and zero memory items were created from the handoff text.
     let proposals = json_of(&fx.ok(&["proposal", "list", "--json"]));
@@ -863,7 +843,7 @@ not = "One-off remarks."
     );
 
     // The handoff entry body was not fed as a preferences/notes exclusion either.
-    let prompt = std::fs::read_to_string(fx.home().join("pass-stdin")).unwrap();
+    let prompt = prompt.to_string();
     assert!(
         !prompt.contains("handoff-1"),
         "pass prompt should not include stored handoff entries:\n{prompt}"

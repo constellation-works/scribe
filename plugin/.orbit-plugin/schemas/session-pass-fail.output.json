@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "pass": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "pass"
+  ],
+  "additionalProperties": false
+}

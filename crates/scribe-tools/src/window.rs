@@ -17,7 +17,7 @@ pub const PROMPT_MESSAGE_CHARS: usize = 8_000;
 pub const CUT_MARK: &str = "[… cut]";
 
 /// One message of a session, as the session model reads it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PassMessage {
     /// The transcript message's uuid.
     pub uuid: String,

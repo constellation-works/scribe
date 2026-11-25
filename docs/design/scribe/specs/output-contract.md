@@ -912,10 +912,11 @@ one line with its code; a no-op or a status writes none.
 ## Session pass report
 
 `scribe session pass --json` prints `{"passes": [<pass>, ...],
-"remaining": <integer>}`: one pass per due session handled this run (at
-most five, by session id, or explicitly named sessions) and the due sessions
-left for the next run, including those waiting for retry backoff and a
-partly processed session stopped between windows by the routine deadline. A
+"remaining": <integer>}`: one settlement per due session handled (up to
+five by default, in session id order, or explicitly named sessions). Remaining
+includes eligible sessions with new windows and sessions waiting for backoff.
+When new windows need distillation the CLI prints the Orbit job command on
+stderr. A
 pass is `{"session", "result", "error_code", "passes", "dropped_terms",
 "gave_up", "windows", "warnings", "error"}`: `result` is `written`, `unchanged`
 (nothing new; `due` cleared without a model call), `waiting` (no transcript
@@ -992,7 +993,7 @@ retries wait 5, 10, 20, 40, then at most 60 minutes; `--session <id>` ignores
 backoff. When any pass failed, the report is printed as usual and
 the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
 session pass(es) failed: <id> <code>: <reason>, ...; each stays due with retry
-backoff; use 'scribe session pass --session <id>' to retry now` (or that message in the JSON error object
+backoff; use 'orbit job run scribe-session-pass' with explicit sessions to retry now` (or that message in the JSON error object
 under `--json`). `--session <id>` naming a session that is not on exits 1
 with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code only; the
@@ -1207,15 +1208,17 @@ Removed with `scribe question ask` and the Orbit tool `scribe.ask`
 
 `scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
 "tool": "scribe.<verb>", "input", "context": {"config": {"root",
-"transcripts", "codex_home", "group_summary_crew", "profile_refresh_crew"}, …}}`) on stdin and prints exactly one
+"transcripts", "codex_home", "group_summary_crew", "profile_refresh_crew",
+"session_distill_crew", "session_header_crew"}, …}}`) on stdin and prints exactly one
 compact line, in every mode, then exits 0. The plugin tools are
-`scribe.session-pass`, `scribe.consistency-scan`,
+`scribe.session-pass-prepare`, `scribe.session-pass-apply`,
+`scribe.session-pass-fail`, `scribe.consistency-scan`,
 `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply`,
 `scribe.group-close-prepare` and `scribe.group-close-apply`,
 the tools of `plugin/.orbit-plugin/plugin.yaml` ([2_design.md §1](../2_design.md#1-boundary-and-surfaces), [§19](../2_design.md#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved)).
 A success is `{"ok": true, "output": <output>}`, where `<output>` is the
-session pass report for `scribe.session-pass`, the consistency scan report
-for `scribe.consistency-scan`, the prepared refresh payload plus `crew` for
+prepare, apply or failure payload for the respective session-pass tool,
+the consistency scan report for `scribe.consistency-scan`, the prepared refresh payload plus `crew` for
 `scribe.memory-refresh-prepare`, and `{"status": "written"|"retry", "result",
 "revision", "sessions", "backlog", "milestones", "removed", "code",
 "correction"}` for `scribe.memory-refresh-apply`. A failure is `{"ok": false, "error": {"code",
@@ -1225,7 +1228,7 @@ for `scribe.consistency-scan`, the prepared refresh payload plus `crew` for
 `root` that is missing, empty, relative or the manifest's `/var/tmp` default
 is `not_configured`. A non-empty `codex_home` must be absolute, or the call is
 `not_configured`, and every tool checks it the same way. `transcripts`, Claude
-Code's projects directory, must be absolute for `scribe.session-pass` unless
+Code's projects directory, must be absolute for the session-pass tools unless
 `codex_home` is set and `transcripts` is empty or absent. That Codex-only
 configuration runs the pass with no Claude transcripts directory, reading the
 Codex rollouts under `codex_home` (its `sessions` and `archived_sessions`). A
@@ -1241,18 +1244,26 @@ both packages.
 `internal_error` (a routine that returned no report), a model code, a store
 code, or `session_pass_failed`.
 
-**Retry.** `retryable` is `true` for one propagated error only: `store_locked`
-from a routine tool. Model codes (`model_timeout`, `model_unavailable`,
-`model_failed`, `model_malformed`) are `retryable: false`, so the envelope
-never asks the host to retry a model failure. `scribe.consistency-scan`,
-`scribe.memory-refresh-prepare` and `scribe.memory-refresh-apply` call
-no model. `scribe.session-pass` returns `session_pass_failed` (`retryable:
-false`) when any pass in its report failed. Its message is the CLI's, naming
-each failed session with its code and short reason, and the report is not
-returned. A session's model failure therefore reaches the envelope inside that
-message, not as a model code. Each failed session stays due, and the next run
-retries it on the backoff of the session pass report (5, 10, 20, 40, then at
-most 60 minutes; `--session <id>` ignores backoff). On `profile_*` refusals
+**Session-pass steps.** Prepare takes optional `sessions`, `resolve`,
+`max_sessions`, `deadline_epoch_s` and `progress`. It returns `done`,
+`needs_model`, `settled`, `cursor`, `basis` and `window_request`. The
+plugin also returns the configured crew names. Apply takes `basis`, `cursor`
+and `answer` and returns `status`, `cursor`, `pass`, `error_code`,
+`correction`, `header_request` and `window_request`. A retry forwards the
+first status as `previous_status`, the correction, and `repair: true`.
+For `retry_header`, supply the original `answer` and the compressed
+`header`. For `retry_window`, supply `retry_answer`. Unused request and
+report fields are null. Forward `[{"cursor": <cursor>}]` as `progress` to
+prepare the next window. The CLI's `session pass-prepare` and
+`session pass-apply` exchange those JSON payloads directly. The failure
+tool receives the prepared `basis` and returns `{"pass": <pass or null>}`.
+Orbit's fallback requests an error envelope after backoff is recorded.
+
+**Retry.** A propagated `store_locked` can be retryable. A refused final
+session answer returns `status: "failed"` after recording backoff. Provider
+failures and checked-answer failures leave the latest committed windows
+in place. Automatic retries wait 5, 10, 20, 40, then at most 60 minutes.
+On `profile_*` refusals
 with `allow_retry: true`, `scribe.memory-refresh-apply` returns an `ok: true`
 `{"status": "retry", "code", "correction"}` payload so the
 `scribe-memory-refresh` job can run one conditional retry; a final refusal

@@ -118,7 +118,8 @@ Invariants:
 | `hook` | `hook` |
 | `init`, `store`, `export`, `plugin` | `admin` |
 
-A `plugin` routine or workflow tool (`session-pass`, `consistency-scan`,
+A `plugin` routine or workflow tool (`session-pass-prepare`, `session-pass-apply`,
+`session-pass-fail`, `consistency-scan`,
 `memory-refresh-prepare`, `memory-refresh-apply`, `group-close-prepare`,
 `group-close-apply`) has no flow of its own. The binary's `plugin` handler
 resolves the envelope's root (`Context::at`) and calls the app's `exec` (or
@@ -236,20 +237,19 @@ sees it.
 
 ### Providers (interim)
 
-Scribe's own model calls are being removed (ORB-27911). Session pass, session
-catalog and session rebuild retain their callers until Orbit jobs replace them.
-Group close and memory refresh use deterministic prepare/apply flows and Orbit
-jobs, as approved in §19 of the design.
+Scribe's own model calls are being removed (ORB-27911). Session catalog and session rebuild retain their callers until Orbit jobs replace them.
+Session pass, group close and memory refresh use deterministic prepare/apply
+flows and Orbit jobs, as approved in §19 of the design.
 
 Until then:
 
 - `core/providers/` holds everything about calling a model: the `Models`
-  port (`providers/mod.rs`), the request and answer shapes
+  port (`providers/mod.rs`), the remaining adapter inputs
   (`providers/models.rs`), and the CLI adapters with their process
   supervision (`providers/cli.rs`, `providers/cli/`).
-- Only `providers/` spawns a process. Only the five callers' flows import
-  `providers`, with their apps' `mod.rs` and `runtime/errors.rs`; the guard
-  script lists them by path.
+- Only `providers/` spawns a process. The provider adapter is reached by
+  the interim catalog and rebuild commands. The guard script lists the
+  allowed imports by path.
 - When a caller's job exists, its import goes. When the last one goes, the
   folder is deleted with the `[models]` config section. The credential names
   in `[models] credentials` also select what redaction masks: they move to
@@ -353,9 +353,9 @@ Invariants:
   capture hooks read transcripts, so that code must be reachable from an
   app. Whatever an Orbit activity calls is an ordinary command mapped to an
   app, and that app uses these functions.
-- When a model step leaves scribe, the pure halves of that flow (building
-  the input a job hands its agent, checking the shape of what the agent
-  returns) move here. Their names and shapes wait for open-item-19.
+- `session_distill` holds shared window and header requests and answers,
+  budgeting, citation validation and repair. The session app builds them
+  from the store, applies capture rules and commits the checked windows.
 
 ## Where each current file goes
 

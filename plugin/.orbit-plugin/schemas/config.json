@@ -24,6 +24,16 @@
       "type": "string",
       "minLength": 1,
       "description": "Orbit crew used to rebuild the memory profile."
+    },
+    "session_distill_crew": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Orbit crew for session window distillation. Defaults to haiku."
+    },
+    "session_header_crew": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Orbit crew for session header compression. Defaults to haiku."
     }
   },
   "additionalProperties": false

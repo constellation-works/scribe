@@ -1,14 +1,22 @@
-//! `scribe session pass` and the catalog's windows (ORB-27707 step 3): the
-//! pass's step sequence, over the store and the ports in [`Ctx`]. The CLI
-//! parses, calls [`run`] and renders the [`PassReport`].
+//! Shared session window reads and writes for Orbit pass steps and the
+//! interim catalog flow.
 
-use super::PassVerbs;
+use crate::models::PassMessage;
+
+mod workflow;
+
+pub use workflow::{
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, FailInput, PrepareInput, Prepared,
+    SessionPassInput,
+};
+pub(crate) use workflow::{apply, fail, prepare, settle_only};
+
 use crate::apps::tag::ConfigReads;
 use crate::control;
 use crate::models::SessionRequest;
 use crate::runtime::audit::PersistedAudit;
 use crate::runtime::resolve::refuse_forgotten;
-use crate::runtime::{Ctx, PortError, RunLimits, TranscriptState};
+use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::{
     Config, Label, Models, Project, Provider, Redactor, SessionControl, SessionFilter, SessionId,
     SessionRecord, memory, pass, transcript,
@@ -25,21 +33,6 @@ pub const CATALOG_COMMAND: &str = "session catalog";
 
 const MAX_LISTED: usize = 200;
 
-/// What a session pass runs over.
-pub struct PassInput<'i, F> {
-    /// The sessions named; empty takes the due ones.
-    pub sessions: &'i [SessionId],
-    /// Resolve each named id as a prefix first (the CLI's `--session`);
-    /// the plugin and the tests name full ids.
-    pub resolve: bool,
-    /// The `Models` adapter for a session's config.
-    pub models: F,
-    /// How many sessions and windows this run may start.
-    pub limits: RunLimits,
-    /// This host, as records name it.
-    pub host: Label,
-}
-
 /// Why a session pass did not run.
 #[derive(Debug)]
 pub enum PassRunError<E> {
@@ -49,6 +42,10 @@ pub enum PassRunError<E> {
     SessionNotOn(SessionId),
     /// A port refused (the redaction port's unset `[redact] env`).
     Port(E),
+    /// Invalid continuation or answer input.
+    Input(&'static str),
+    /// A deterministic step failed.
+    Step(PassError),
 }
 
 impl<E> From<crate::Error> for PassRunError<E> {
@@ -125,8 +122,7 @@ pub struct PassPayload {
     pub memory_refused: std::collections::BTreeMap<&'static str, usize>,
 }
 
-/// What `session pass` did; `--json` and the `scribe.session-pass` tool
-/// print it as `{"passes", "remaining"}`.
+/// Report for CLI settlements, session catalog and session rebuild.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PassReport {
     /// One per session passed, in id order.
@@ -150,181 +146,6 @@ pub struct PassReport {
     /// audit line each, ids only.
     #[serde(skip)]
     pub memory_targets: Vec<String>,
-}
-
-/// Run the session pass over the due sessions, or over `input.sessions`
-/// whether or not they are due: each session's new windows, distilled by
-/// the model, committed one transaction per window.
-///
-/// # Errors
-///
-/// [`PassRunError`]: a store error, a named session not switched on, or the
-/// redaction port's refusal. A failed session is a `failed` payload, not an
-/// error.
-pub fn run<E: PortError, M: Models>(
-    ctx: &Ctx<'_, E>,
-    input: PassInput<'_, impl FnMut(&Config) -> M>,
-) -> Result<PassReport, PassRunError<E>> {
-    let PassInput {
-        sessions,
-        resolve,
-        mut models,
-        limits,
-        host,
-    } = input;
-    // A prefix names its session; an id nothing matches is kept, so the
-    // pass refuses it as not switched on.
-    let resolved;
-    let only: &[SessionId] = if resolve {
-        resolved = sessions
-            .iter()
-            .map(|id| match ctx.store.read().sessions().resolve(id) {
-                Err(crate::Error::SessionNotFound { .. }) => Ok(id.clone()),
-                other => other,
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        &resolved
-    } else {
-        sessions
-    };
-    let store = ctx.store;
-    let state = store.read().sessions().control()?;
-    for id in only {
-        refuse_forgotten(store, id)?;
-    }
-    let due = if only.is_empty() {
-        control::due(&state)
-    } else {
-        control::chosen(&state, only).map_err(PassRunError::SessionNotOn)?
-    };
-    let mut remaining = 0usize;
-    let due: Vec<_> = due
-        .into_iter()
-        .filter(|(_, c)| {
-            let ready = !only.is_empty() || c.retry_after.is_none_or(|at| ctx.clock.now() >= at);
-            if !ready {
-                remaining = remaining.saturating_add(1);
-            }
-            ready
-        })
-        .collect();
-    if due.is_empty() {
-        return Ok(PassReport {
-            passes: Vec::new(),
-            remaining,
-            notices: vec![if remaining == 0 {
-                String::from("no session pass is due")
-            } else {
-                format!("{remaining} due session pass(es) waiting for retry backoff")
-            }],
-            catalog: false,
-            switch_written: false,
-            persisted_targets: Vec::new(),
-            memory_targets: Vec::new(),
-        });
-    }
-    let config = store.read().tags().config()?;
-    let redactor = ctx
-        .redaction
-        .redactor(&config)
-        .map_err(PassRunError::Port)?;
-    let found = crate::apps::session::list_sessions(
-        &store.read(),
-        &SessionFilter {
-            include_inactive: true,
-            ..Default::default()
-        },
-        None,
-    )?;
-    let mut topics: BTreeSet<String> = BTreeSet::new();
-    let mut terms: BTreeSet<String> = BTreeSet::new();
-    for record in &found.listing.items {
-        topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
-        terms.extend(record.terms.iter().map(|t| t.term.clone()));
-    }
-    let known = Known {
-        topics: topics.into_iter().take(MAX_LISTED).collect(),
-        terms: terms.into_iter().take(MAX_LISTED).collect(),
-        records: &found.listing.items,
-    };
-    let corrupt: Vec<(String, String)> = found
-        .skipped
-        .iter()
-        .filter_map(|s| {
-            Some((
-                s.path.file_stem()?.to_str()?.to_owned(),
-                s.error.to_string(),
-            ))
-        })
-        .collect();
-    let mut passes = Vec::new();
-    let mut persisted_targets = Vec::new();
-    let mut memory_targets = Vec::new();
-    let mut persisted = PersistedAudit::new(store, PASS_COMMAND, ctx.clock.now());
-    for (n, (id, switch)) in due.into_iter().enumerate() {
-        if !limits.may_start(n) {
-            remaining = remaining.saturating_add(1);
-            continue;
-        }
-        let config = config.for_provider(switch.provider);
-        let adapter = models(&config);
-        let mut job = Job {
-            ctx,
-            provider: switch.provider,
-            host: &host,
-            config: &config,
-            redactor: &redactor,
-            id: &id,
-            switch: &switch,
-            candidate_slots: pass::MAX_CANDIDATES,
-            write_slots: pass::MAX_COLLECTED,
-            memory: MemoryTally::default(),
-            windows: 0,
-            segments_sealed: 0,
-            segments: None,
-            dropped_terms: 0,
-            warnings: Vec::new(),
-            incomplete: false,
-            catalog: None,
-            persisted_targets: Vec::new(),
-        };
-        let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str())
-        {
-            Err(PassError::new("store_corrupt", reason.clone()))
-        } else {
-            let previous = found.listing.items.iter().find(|r| r.id == id);
-            job.run(previous, &known, &adapter, &limits)
-        };
-        // Record any persisted closures before `job.failed` can return `Err`
-        // and bypass `Output::Pass`.
-        persisted.extend(job.persisted_targets.iter().cloned());
-        persisted.extend(job.memory.targets.iter().cloned());
-        let payload = match result {
-            Ok(done) => {
-                if done.result != "waiting" {
-                    persisted.record(format!("session:{}", done.session));
-                }
-                done
-            }
-            Err(failure) => job.failed(failure)?,
-        };
-        passes.push(payload);
-        persisted_targets.extend(job.persisted_targets);
-        memory_targets.extend(job.memory.targets);
-        if job.incomplete {
-            remaining = remaining.saturating_add(1);
-        }
-    }
-    persisted.disarm();
-    Ok(PassReport {
-        passes,
-        remaining,
-        notices: Vec::new(),
-        catalog: false,
-        switch_written: false,
-        persisted_targets,
-        memory_targets,
-    })
 }
 
 /// Run one `session catalog` after its switch is written. No deadline and
@@ -361,17 +182,7 @@ pub(crate) fn run_catalog<E: PortError, M: Models>(
         None,
     )
     .map_err(RunFailure::Core)?;
-    let mut topics: BTreeSet<String> = BTreeSet::new();
-    let mut terms: BTreeSet<String> = BTreeSet::new();
-    for record in &found.listing.items {
-        topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
-        terms.extend(record.terms.iter().map(|t| t.term.clone()));
-    }
-    let known = Known {
-        topics: topics.into_iter().take(MAX_LISTED).collect(),
-        terms: terms.into_iter().take(MAX_LISTED).collect(),
-        records: &found.listing.items,
-    };
+    let known = Known::new(&found.listing.items);
     let corrupt: Vec<(String, String)> = found
         .skipped
         .iter()
@@ -401,16 +212,15 @@ pub(crate) fn run_catalog<E: PortError, M: Models>(
         segments: None,
         dropped_terms: 0,
         warnings: Vec::new(),
-        incomplete: false,
+        check_switch: false,
         catalog: Some(CatalogRun { project, ended }),
         persisted_targets: Vec::new(),
     };
-    let limits = RunLimits::new(1);
     let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str()) {
         Err(PassError::new("store_corrupt", reason.clone()))
     } else {
         let previous = found.listing.items.iter().find(|r| &r.id == id);
-        job.run(previous, &known, &adapter, &limits)
+        job.run(previous.cloned(), &known, &adapter)
     };
     // Record any persisted closures before `job.failed` can return `Err` and
     // bypass `Output::Pass`.
@@ -440,6 +250,37 @@ struct Known<'a> {
     records: &'a [SessionRecord],
 }
 
+impl<'a> Known<'a> {
+    fn new(records: &'a [SessionRecord]) -> Self {
+        let mut topics: BTreeSet<String> = BTreeSet::new();
+        let mut terms: BTreeSet<String> = BTreeSet::new();
+        for record in records {
+            topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
+            terms.extend(record.terms.iter().map(|t| t.term.clone()));
+        }
+        Self {
+            topics: topics.into_iter().take(MAX_LISTED).collect(),
+            terms: terms.into_iter().take(MAX_LISTED).collect(),
+            records,
+        }
+    }
+}
+
+struct Conversation {
+    messages: Vec<transcript::Message>,
+    conversation: Vec<PassMessage>,
+    cwd: String,
+}
+
+struct Window {
+    request: SessionRequest,
+    project: Project,
+    offset: usize,
+    end: usize,
+    last: bool,
+    through: String,
+}
+
 /// One session's pass.
 struct Job<'a, E> {
     ctx: &'a Ctx<'a, E>,
@@ -462,7 +303,7 @@ struct Job<'a, E> {
     segments: Option<usize>,
     dropped_terms: usize,
     warnings: Vec<String>,
-    incomplete: bool,
+    check_switch: bool,
     /// Set for `session catalog`: the project of the first record, and
     /// whether the transcript's last message is at least a day old.
     catalog: Option<CatalogRun>,
@@ -512,16 +353,25 @@ struct CatalogRun {
 /// A session pass failure, with the stable code kept separate from its
 /// redacted, bounded diagnostic.
 #[derive(Debug)]
-pub(crate) struct PassError {
+pub struct PassError {
     pub(crate) code: &'static str,
+    write_error: bool,
     pub(crate) message: String,
 }
 
 impl PassError {
+    fn write(err: crate::Error) -> Self {
+        Self {
+            write_error: true,
+            ..Self::new(err.code(), err.to_string())
+        }
+    }
+
     fn new(code: &'static str, message: impl Into<String>) -> Self {
         let message = message.into();
         Self {
             code,
+            write_error: false,
             message: if message.trim().is_empty() {
                 code.to_owned()
             } else {
@@ -554,12 +404,33 @@ pub fn short_reason(redactor: &Redactor, message: &str) -> String {
 impl<E: PortError> Job<'_, E> {
     fn run<M: Models>(
         &mut self,
-        previous: Option<&SessionRecord>,
+        mut previous: Option<SessionRecord>,
         known: &Known<'_>,
         adapter: &M,
-        limits: &RunLimits,
     ) -> Result<PassPayload, PassError> {
-        self.segments = previous.map(|p| p.log.len());
+        self.segments = previous.as_ref().map(|p| p.log.len());
+        let Some(data) = self.read_transcript()? else {
+            return self.nothing_new(previous.as_ref(), true);
+        };
+        loop {
+            let Some(window) = self.next_window(previous.as_ref(), known, &data, None)? else {
+                return self.nothing_new(previous.as_ref(), false);
+            };
+            let distilled = distill(
+                self.id,
+                window.request.clone(),
+                &data.conversation[..window.end],
+                adapter,
+                self.config.voice(crate::voice::ModelUse::SessionHeader),
+            )?;
+            previous = self.commit(previous.as_ref(), &data, &window, distilled)?;
+            if window.last {
+                return Ok(self.payload("written", previous.as_ref()));
+            }
+        }
+    }
+
+    fn read_transcript(&mut self) -> Result<Option<Conversation>, PassError> {
         let Some(path) = self
             .ctx
             .transcripts
@@ -569,11 +440,11 @@ impl<E: PortError> Job<'_, E> {
             .find(|(found, _)| found == self.id)
             .map(|(_, path)| path)
         else {
-            return self.nothing_new(previous, true);
+            return Ok(None);
         };
         match self.ctx.transcripts.check(self.provider, &path, self.id) {
             Ok(TranscriptState::Present) => {}
-            Ok(TranscriptState::Missing) => return self.nothing_new(previous, true),
+            Ok(TranscriptState::Missing) => return Ok(None),
             Err(reason) => {
                 tracing::warn!(session = %self.id, %reason, "not passing: the transcript check failed");
                 return Err(PassError::new("provenance_failed", reason));
@@ -597,306 +468,339 @@ impl<E: PortError> Job<'_, E> {
                     .is_some_and(|last| transcript::is_day_old(last, self.ctx.clock.now())),
             });
         }
-        let final_pass = match &self.catalog {
-            Some(catalog) => catalog.ended,
-            None => self.switch.final_pass,
-        };
         let messages = transcript::parse(&bytes);
         let conversation = pass::conversation(&messages);
-        if conversation.is_empty() {
-            return self.nothing_new(previous, true);
-        }
-        let mut offset = pass::start_after(
-            &conversation,
+        Ok((!conversation.is_empty()).then(|| Conversation {
+            messages,
+            conversation,
+            cwd: transcript::cwd(&bytes).unwrap_or_default(),
+        }))
+    }
+
+    fn is_final(&self) -> bool {
+        self.catalog
+            .as_ref()
+            .map_or(self.switch.final_pass, |catalog| catalog.ended)
+    }
+
+    fn next_window(
+        &self,
+        previous: Option<&SessionRecord>,
+        known: &Known<'_>,
+        data: &Conversation,
+        // Replaying a prepared window uses its original endpoint/final flag
+        // even when the host transcript has grown in the meantime.
+        prepared_end: Option<(&str, bool)>,
+    ) -> Result<Option<Window>, PassError> {
+        let conversation = &data.conversation;
+        let offset = pass::start_after(
+            conversation,
             previous.and_then(|p| p.scribed_through.as_deref()),
         );
-        let mut expected = previous.map(|p| p.updated);
-        let mut previous = previous.cloned();
+        let limit = match prepared_end {
+            Some((uuid, _)) => conversation[offset..]
+                .iter()
+                .position(|m| m.uuid == uuid)
+                .map(|n| offset + n + 1)
+                .ok_or_else(|| {
+                    PassError::new("record_changed", "prepared transcript window disappeared")
+                })?,
+            None => conversation.len(),
+        };
+        let window = pass::window_with_limits(
+            &conversation[offset..limit],
+            None,
+            self.config.catalog_window,
+        );
+        let Some(through) = window.messages.last().map(|m| m.uuid.clone()) else {
+            return Ok(None);
+        };
+        let end = offset + window.messages.len();
+        let last = end == conversation.len();
+        let final_pass = self.is_final() && prepared_end.map_or(last, |(_, was_last)| was_last);
         // The linked sessions' latest records, read once: context only.
-        let mut links = previous
-            .as_ref()
-            .map(|p| p.links.clone())
-            .unwrap_or_default();
+        let mut links = previous.map(|p| p.links.clone()).unwrap_or_default();
         for link in &self.switch.pending_links {
             if !links.contains(link) {
                 links.push(link.clone());
             }
         }
         let linked = pass::linked_context(&links, known.records);
-        loop {
-            let window =
-                pass::window_with_limits(&conversation[offset..], None, self.config.catalog_window);
-            let Some(through) = window.messages.last().map(|m| m.uuid.clone()) else {
-                return self.nothing_new(previous.as_ref(), false);
-            };
-            let first_message = window.messages.first().map(|m| m.uuid.clone());
-            let window_meta = window
-                .messages
-                .iter()
-                .map(|m| {
-                    (
-                        m.uuid.clone(),
-                        messages
-                            .iter()
-                            .find(|sent| sent.uuid == m.uuid)
-                            .map_or(self.ctx.clock.now(), |sent| sent.at),
-                    )
-                })
-                .collect();
-            if self.windows > 0 && !limits.may_continue() {
-                self.incomplete = true;
-                return Ok(self.payload("written", previous.as_ref()));
-            }
-            // Citation validation includes older windows, never future messages.
-            let end = offset + window.messages.len();
-            let last = end == conversation.len();
-            let mut topics: BTreeSet<_> = known.topics.iter().cloned().collect();
-            let mut terms: BTreeSet<_> = known.terms.iter().cloned().collect();
-            if let Some(record) = &previous {
-                topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
-                terms.extend(record.terms.iter().map(|t| t.term.clone()));
-            }
-            let mut request = pass::request(
-                &self.config.models.session,
-                previous.as_ref(),
-                linked.clone(),
-                window,
-                topics.into_iter().take(MAX_LISTED).collect(),
-                terms.into_iter().take(MAX_LISTED).collect(),
-                final_pass && last,
-                self.config.voice(crate::voice::ModelUse::Session),
-            );
-            // The trigger gate (2_design.md §11.2): no Daniel turn in the
-            // window fires a capture tag's trigger, no claim is requested.
-            let (turns, rules) = pass::capture_request(&self.config.tags, &request.messages);
-            request.candidate_limit = if turns.is_empty() {
-                0
+        let mut topics: BTreeSet<_> = known.topics.iter().cloned().collect();
+        let mut terms: BTreeSet<_> = known.terms.iter().cloned().collect();
+        if let Some(record) = previous {
+            topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
+            terms.extend(record.terms.iter().map(|t| t.term.clone()));
+        }
+        let mut request = pass::request(
+            &self.config.models.session,
+            previous,
+            linked,
+            window,
+            topics.into_iter().take(MAX_LISTED).collect(),
+            terms.into_iter().take(MAX_LISTED).collect(),
+            final_pass,
+            self.config.voice(crate::voice::ModelUse::Session),
+        );
+        // The trigger gate (2_design.md §11.2): no Daniel turn in the
+        // window fires a capture tag's trigger, no claim is requested.
+        let (turns, rules) = pass::capture_request(&self.config.tags, &request.messages);
+        request.candidate_limit = if turns.is_empty() {
+            0
+        } else {
+            self.candidate_slots
+        };
+        request.write_limit = if turns.is_empty() {
+            0
+        } else {
+            self.write_slots
+        };
+        request.candidate_turns = turns;
+        request.candidate_rules = rules;
+        let mut project = if data.cwd.is_empty() {
+            Project::sanitized("")
+        } else {
+            self.ctx.transcripts.project_of(Path::new(&data.cwd))
+        };
+        // `--project`, or the transcript-list attribution, only for the
+        // first record. A resumed catalog keeps the record's project, as
+        // does every later window (the write exclusions need it now).
+        if let Some(record) = previous {
+            project = record.project.clone();
+        } else if let Some(catalog) = &self.catalog {
+            project = catalog.project.clone();
+        }
+        let entries = self
+            .ctx
+            .store
+            .read()
+            .entries()
+            .list(&Default::default())
+            .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+        let proposals = self
+            .ctx
+            .store
+            .read()
+            .proposals()
+            .all()
+            .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+        // Retired-tag open candidates will be closed under the lock before
+        // the cap is counted, so count only open candidates whose tag is
+        // still in the tag table here.
+        if proposals
+            .iter()
+            .filter(|p| {
+                p.kind == crate::ProposalKind::Candidate
+                    && p.state == crate::ProposalState::Open
+                    && p.candidate
+                        .as_ref()
+                        .is_some_and(|c| self.config.tags.get(&c.tag).is_some())
+            })
+            .count()
+            >= pass::MAX_OPEN_CANDIDATES
+        {
+            request.candidate_limit = 0;
+        }
+        request.candidate_exclusions =
+            pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
+        request.write_exclusions =
+            pass::write_exclusions(&entries.listing.items, &project, &request);
+        // Memory (2_design.md §15.5): only from a session switched on,
+        // as every pass's is, within the invocation's slots; the signal
+        // (§15.6) is asked of every window.
+        let (memory_now, memory_pending) = self
+            .ctx
+            .store
+            .read()
+            .memory()
+            .context(self.id)
+            .map_err(|err| PassError::new(err.code(), err.to_string()))?;
+        request.memory = true;
+        request.memory_limit = self.memory.slots;
+        request.memory_now = memory_now;
+        request.memory_pending = memory_pending;
+        Ok(Some(Window {
+            request,
+            project,
+            offset,
+            end,
+            last,
+            through,
+        }))
+    }
+
+    fn commit(
+        &mut self,
+        previous: Option<&SessionRecord>,
+        data: &Conversation,
+        window: &Window,
+        distilled: pass::Distilled,
+    ) -> Result<Option<SessionRecord>, PassError> {
+        let Window {
+            offset, end, last, ..
+        } = *window;
+        let messages = data.messages.as_slice();
+        let conversation = data.conversation.as_slice();
+        let through = window.through.clone();
+        let first_message = window.request.messages.first().map(|m| m.uuid.clone());
+        let expected = previous.map(|p| p.updated);
+        let memory_limit = window.request.memory_limit;
+        let now = self.ctx.clock.now();
+        let window_meta = window
+            .request
+            .messages
+            .iter()
+            .map(|m| {
+                (
+                    m.uuid.clone(),
+                    messages
+                        .iter()
+                        .find(|sent| sent.uuid == m.uuid)
+                        .map_or(now, |sent| sent.at),
+                )
+            })
+            .collect();
+        let masks = |text: &str| self.redactor.mask(text) != text;
+        let checked = memory::check(
+            &distilled.memory,
+            &conversation[offset..end],
+            memory_limit,
+            &masks,
+        );
+        self.memory.slots = self.memory.slots.saturating_sub(checked.used);
+        let (memory_drafts, unverified) = memory::drafts(checked.checked, messages);
+        // Candidate slots are spent by what the model returned; write
+        // slots only by what the store wrote, below, since a drafted idea
+        // may still be dropped (a task outcome, a duplicate) and must not
+        // shrink a later window's limit.
+        let write_answers = distilled
+            .candidates
+            .iter()
+            .filter(|c| {
+                c.tag
+                    .parse()
+                    .ok()
+                    .and_then(|tag| self.config.tags.get(&tag))
+                    .is_some_and(|tag| tag.capture.writes())
+            })
+            .count();
+        self.candidate_slots = self
+            .candidate_slots
+            .saturating_sub(distilled.candidates.len() - write_answers);
+        let candidate_answers = distilled.candidates.clone();
+        let signal = distilled.signal;
+        let dropped = distilled.dropped_terms;
+        let warnings = window_warnings(self.windows + 1, &distilled);
+        // The window's first and last messages' times bound the segment.
+        let sent = |uuid: Option<&str>| {
+            uuid.and_then(|u| messages.iter().find(|m| m.uuid == u))
+                .map_or(now, |m| m.at)
+        };
+        let from = sent(first_message.as_deref());
+        let to = sent(Some(&through));
+        let meta = pass::PassMeta {
+            id: self.id.clone(),
+            project: window.project.clone(),
+            provider: Label::sanitized(self.provider.as_str(), self.provider.as_str()),
+            host: self.host.clone(),
+            cwd: data.cwd.clone(),
+            started: messages.first().map_or(now, |m| m.at),
+            on_since: self.switch.since.unwrap_or(now),
+            through: Some(through),
+            first_message,
+            from,
+            to,
+            now,
+            final_pass: self.is_final() && last,
+            window: window_meta,
+            segment_windows: self.config.segment_windows,
+            origin: if self.catalog.is_some() {
+                crate::SegmentOrigin::Catalog
             } else {
-                self.candidate_slots
-            };
-            request.write_limit = if turns.is_empty() {
-                0
-            } else {
-                self.write_slots
-            };
-            request.candidate_turns = turns;
-            request.candidate_rules = rules;
-            let cwd = transcript::cwd(&bytes).unwrap_or_default();
-            let mut project = if cwd.is_empty() {
-                Project::sanitized("")
-            } else {
-                self.ctx.transcripts.project_of(Path::new(&cwd))
-            };
-            // `--project`, or the transcript-list attribution, only for the
-            // first record. A resumed catalog keeps the record's project, as
-            // does every later window (the write exclusions need it now).
-            if let Some(record) = &previous {
-                project = record.project.clone();
-            } else if let Some(catalog) = &self.catalog {
-                project = catalog.project.clone();
-            }
-            let entries = self
-                .ctx
-                .store
-                .read()
-                .entries()
-                .list(&Default::default())
-                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
-            let proposals = self
-                .ctx
-                .store
-                .read()
-                .proposals()
-                .all()
-                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
-            // Retired-tag open candidates will be closed under the lock before
-            // the cap is counted, so count only open candidates whose tag is
-            // still in the tag table here.
-            if proposals
-                .iter()
-                .filter(|p| {
-                    p.kind == crate::ProposalKind::Candidate
-                        && p.state == crate::ProposalState::Open
-                        && p.candidate
-                            .as_ref()
-                            .is_some_and(|c| self.config.tags.get(&c.tag).is_some())
-                })
-                .count()
-                >= pass::MAX_OPEN_CANDIDATES
-            {
-                request.candidate_limit = 0;
-            }
-            request.candidate_exclusions =
-                pass::candidate_exclusions(&entries.listing.items, &proposals, &request);
-            request.write_exclusions =
-                pass::write_exclusions(&entries.listing.items, &project, &request);
-            // Memory (2_design.md §15.5): only from a session switched on,
-            // as every pass's is, within the invocation's slots; the signal
-            // (§15.6) is asked of every window.
-            let (memory_now, memory_pending) = self
-                .ctx
-                .store
-                .read()
-                .memory()
-                .context(self.id)
-                .map_err(|err| PassError::new(err.code(), err.to_string()))?;
-            request.memory = true;
-            request.memory_limit = self.memory.slots;
-            request.memory_now = memory_now;
-            request.memory_pending = memory_pending;
-            let memory_limit = request.memory_limit;
-            let distilled = distill(
-                self.id,
-                request,
-                &conversation[..end],
-                adapter,
-                self.config.voice(crate::voice::ModelUse::SessionHeader),
-            )?;
-            let masks = |text: &str| self.redactor.mask(text) != text;
-            let checked = memory::check(
-                &distilled.memory,
-                &conversation[offset..end],
-                memory_limit,
-                &masks,
-            );
-            self.memory.slots = self.memory.slots.saturating_sub(checked.used);
-            let (memory_drafts, unverified) = memory::drafts(checked.checked, &messages);
-            // Candidate slots are spent by what the model returned; write
-            // slots only by what the store wrote, below, since a drafted idea
-            // may still be dropped (a task outcome, a duplicate) and must not
-            // shrink a later window's limit.
-            let write_answers = distilled
-                .candidates
-                .iter()
-                .filter(|c| {
-                    c.tag
-                        .parse()
-                        .ok()
-                        .and_then(|tag| self.config.tags.get(&tag))
-                        .is_some_and(|tag| tag.capture.writes())
-                })
-                .count();
-            self.candidate_slots = self
-                .candidate_slots
-                .saturating_sub(distilled.candidates.len() - write_answers);
-            let candidate_answers = distilled.candidates.clone();
-            let signal = distilled.signal;
-            let dropped = distilled.dropped_terms;
-            let warnings = window_warnings(self.windows + 1, &distilled);
-            let now = self.ctx.clock.now();
-            // The window's first and last messages' times bound the segment.
-            let sent = |uuid: Option<&str>| {
-                uuid.and_then(|u| messages.iter().find(|m| m.uuid == u))
-                    .map_or(now, |m| m.at)
-            };
-            let from = sent(first_message.as_deref());
-            let to = sent(Some(&through));
-            let meta = pass::PassMeta {
-                id: self.id.clone(),
-                project,
-                provider: Label::sanitized(self.provider.as_str(), self.provider.as_str()),
-                host: self.host.clone(),
-                cwd,
-                started: messages.first().map_or(now, |m| m.at),
-                on_since: self.switch.since.unwrap_or(now),
-                through: Some(through),
-                first_message,
-                from,
-                to,
-                now,
-                final_pass: final_pass && last,
-                window: window_meta,
-                segment_windows: self.config.segment_windows,
-                origin: if self.catalog.is_some() {
-                    crate::SegmentOrigin::Catalog
-                } else {
-                    crate::SegmentOrigin::Pass
-                },
-            };
-            let sealed_before = previous.as_ref().map_or(0, |p| {
-                p.log
-                    .iter()
-                    .filter(|s| s.state == crate::SegmentState::Sealed)
-                    .count()
-            });
-            let record = self.stamp_catalog(pass::record(previous.as_ref(), distilled, meta));
-            let sealed_after = record
-                .log
+                crate::SegmentOrigin::Pass
+            },
+        };
+        let sealed_before = previous.map_or(0, |p| {
+            p.log
                 .iter()
                 .filter(|s| s.state == crate::SegmentState::Sealed)
-                .count();
-            let candidates =
-                pass::candidate_drafts(&candidate_answers, &messages, &record, &self.config.tags);
-            let mode = if !last {
-                super::PassWrite::Checkpoint
-            } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
-                super::PassWrite::CatalogFinal
-            } else if self.catalog.is_some() {
-                super::PassWrite::CatalogLive
-            } else {
-                super::PassWrite::Settle(self.switch.final_pass)
-            };
-            let pass_memory = crate::apps::memory::WindowMemory {
-                drafts: memory_drafts,
-                signal: signal
-                    .zip(record.scribed_through.clone())
-                    .map(|(s, t)| (t, s)),
-                final_pass: record.status == crate::SessionStatus::Final,
-            };
-            // The window's messages commit in the transaction that
-            // advances the record's cursor (2_design.md §15.7, phase 6).
-            let kept = crate::message::window(
-                &record.id,
-                &conversation[offset..end],
-                &messages,
-                &candidates,
-            );
-            let written = match self.ctx.store.write_pass_window(
-                record,
-                expected,
-                mode,
-                &candidates,
-                Some(&pass_memory),
-                &kept,
-                self.redactor,
-            ) {
-                Ok(written) => written,
-                // The window's closures and entries commit with it, so a
-                // failure leaves none of them to audit.
-                Err(err) => return Err(PassError::new(err.code(), err.to_string())),
-            };
-            self.write_slots = self
-                .write_slots
-                .saturating_sub(written.written_entries.len());
-            previous = written.record;
-            self.memory.refuse(checked.refused);
-            self.memory.refuse(unverified);
-            self.memory.refuse(written.memory.refused);
-            self.memory.written += written.memory.written.len();
-            self.memory.pending += written.memory.pending;
-            for target in written.memory.written {
-                if !self.memory.targets.contains(&target) {
-                    self.memory.targets.push(target);
-                }
-            }
-            self.persisted_targets.extend(
-                written
-                    .closed_candidates
-                    .into_iter()
-                    .map(|p| p.id.to_string())
-                    .chain(written.written_entries.iter().map(ToString::to_string)),
-            );
-            expected = previous.as_ref().map(|p| p.updated);
-            self.segments_sealed += sealed_after.saturating_sub(sealed_before);
-            self.segments = previous.as_ref().map(|r| r.log.len());
-            self.windows = self.windows.saturating_add(1);
-            self.dropped_terms = self.dropped_terms.saturating_add(dropped);
-            self.warnings.extend(warnings);
-            offset = end;
-            if last {
-                return Ok(self.payload("written", previous.as_ref()));
+                .count()
+        });
+        let record = self.stamp_catalog(pass::record(previous, distilled, meta));
+        let sealed_after = record
+            .log
+            .iter()
+            .filter(|s| s.state == crate::SegmentState::Sealed)
+            .count();
+        let candidates =
+            pass::candidate_drafts(&candidate_answers, messages, &record, &self.config.tags);
+        let mode = if !last {
+            super::PassWrite::Checkpoint
+        } else if self.catalog.as_ref().is_some_and(|c| c.ended) {
+            super::PassWrite::CatalogFinal
+        } else if self.catalog.is_some() {
+            super::PassWrite::CatalogLive
+        } else {
+            super::PassWrite::Settle(self.switch.final_pass)
+        };
+        let pass_memory = crate::apps::memory::WindowMemory {
+            drafts: memory_drafts,
+            signal: signal
+                .zip(record.scribed_through.clone())
+                .map(|(s, t)| (t, s)),
+            final_pass: record.status == crate::SessionStatus::Final,
+        };
+        // The window's messages commit in the transaction that
+        // advances the record's cursor (2_design.md §15.7, phase 6).
+        let kept = crate::message::window(
+            &record.id,
+            &conversation[offset..end],
+            messages,
+            &candidates,
+        );
+        let written = match super::write_window(
+            self.ctx.store,
+            record,
+            expected,
+            mode,
+            &candidates,
+            Some(&pass_memory),
+            &kept,
+            self.redactor,
+            self.check_switch.then_some(self.switch),
+        ) {
+            Ok(written) => written,
+            // The window's closures and entries commit with it, so a
+            // failure leaves none of them to audit.
+            Err(err) => return Err(PassError::write(err)),
+        };
+        self.write_slots = self
+            .write_slots
+            .saturating_sub(written.written_entries.len());
+        let record = written.record;
+        self.memory.refuse(checked.refused);
+        self.memory.refuse(unverified);
+        self.memory.refuse(written.memory.refused);
+        self.memory.written += written.memory.written.len();
+        self.memory.pending += written.memory.pending;
+        for target in written.memory.written {
+            if !self.memory.targets.contains(&target) {
+                self.memory.targets.push(target);
             }
         }
+        self.persisted_targets.extend(
+            written
+                .closed_candidates
+                .into_iter()
+                .map(|p| p.id.to_string())
+                .chain(written.written_entries.iter().map(ToString::to_string)),
+        );
+        self.segments_sealed += sealed_after.saturating_sub(sealed_before);
+        self.segments = record.as_ref().map(|r| r.log.len());
+        self.windows = self.windows.saturating_add(1);
+        self.dropped_terms = self.dropped_terms.saturating_add(dropped);
+        self.warnings.extend(warnings);
+        Ok(record)
     }
 
     /// Nothing to send the model. At session end the record (if any) is
@@ -969,13 +873,19 @@ impl<E: PortError> Job<'_, E> {
         record: Option<SessionRecord>,
         expected: Option<time::OffsetDateTime>,
     ) -> Result<Option<SessionRecord>, PassError> {
-        self.ctx
-            .store
-            .settle_catalog_final(self.id, record, expected, self.redactor)
-            .map_err(|err| {
-                tracing::warn!(session = %self.id, %err, "cannot finish the catalog");
-                PassError::new(err.code(), err.to_string())
-            })
+        super::write_pass(
+            self.ctx.store,
+            self.id,
+            record,
+            super::PassWrite::CatalogFinal,
+            expected,
+            self.redactor,
+            self.check_switch.then_some(self.switch),
+        )
+        .map_err(|err| {
+            tracing::warn!(session = %self.id, %err, "cannot finish the catalog");
+            PassError::write(err)
+        })
     }
 
     /// Write `record` (if any) and settle the switch, in one store call.
@@ -987,19 +897,19 @@ impl<E: PortError> Job<'_, E> {
         record: Option<SessionRecord>,
         expected: Option<time::OffsetDateTime>,
     ) -> Result<Option<SessionRecord>, PassError> {
-        self.ctx
-            .store
-            .settle_pass(
-                self.id,
-                record,
-                self.switch.final_pass,
-                expected,
-                self.redactor,
-            )
-            .map_err(|err| {
-                tracing::warn!(session = %self.id, %err, "cannot write the session pass");
-                PassError::new(err.code(), err.to_string())
-            })
+        super::write_pass(
+            self.ctx.store,
+            self.id,
+            record,
+            super::PassWrite::Settle(self.switch.final_pass),
+            expected,
+            self.redactor,
+            self.check_switch.then_some(self.switch),
+        )
+        .map_err(|err| {
+            tracing::warn!(session = %self.id, %err, "cannot write the session pass");
+            PassError::write(err)
+        })
     }
 
     /// The previous record is kept and the pass stays due, so the next run
@@ -1009,7 +919,11 @@ impl<E: PortError> Job<'_, E> {
             tx.sessions()
                 .change_control(|state| control::fail(state, self.id, self.ctx.clock.now()))
         })?;
-        Ok(PassPayload {
+        Ok(self.failure_payload(failure))
+    }
+
+    fn failure_payload(&self, failure: PassError) -> PassPayload {
+        PassPayload {
             session: self.id.to_string(),
             result: "failed",
             error_code: Some(failure.code),
@@ -1027,7 +941,7 @@ impl<E: PortError> Job<'_, E> {
             memory_proposed: 0,
             memory_pending: self.memory.pending,
             memory_refused: self.memory.refused.clone(),
-        })
+        }
     }
 
     fn payload(&self, result: &'static str, record: Option<&SessionRecord>) -> PassPayload {
@@ -1084,10 +998,7 @@ pub(crate) fn distill<M: Models>(
                 pass::compression_request(&answer, conversation, &request, header_voice)
             {
                 let header = adapter.session_header(&compress).map_err(retry_failure)?;
-                answer.title = header.title;
-                answer.summary = header.summary;
-                answer.goals = header.goals;
-                answer.next = header.next;
+                answer.replace_header(header);
             } else {
                 let retry = SessionRequest {
                     correction: Some(refusal.clone()),
@@ -1145,6 +1056,11 @@ impl From<PassRunError<crate::runtime::errors::CommandError>>
             PassRunError::Core(e) => Self::Core(e),
             PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
             PassRunError::Port(e) => e,
+            PassRunError::Input(message) => Self::Usage(message.to_owned()),
+            PassRunError::Step(error) => Self::SessionPassStep {
+                code: error.code,
+                message: error.message,
+            },
         }
     }
 }

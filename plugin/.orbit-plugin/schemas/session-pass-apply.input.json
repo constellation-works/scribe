@@ -1,0 +1,76 @@
+{
+  "type": "object",
+  "properties": {
+    "basis": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "cursor": {
+      "type": "object"
+    },
+    "answer": {
+      "type": [
+        "object",
+        "array",
+        "null"
+      ],
+      "maxItems": 2,
+      "items": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "header": {
+      "type": [
+        "object",
+        "array",
+        "null"
+      ],
+      "maxItems": 2,
+      "items": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "retry_answer": {
+      "type": [
+        "object",
+        "array",
+        "null"
+      ],
+      "maxItems": 2,
+      "items": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "repair": {
+      "type": "boolean"
+    },
+    "previous_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "correction": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "basis",
+    "cursor"
+  ],
+  "additionalProperties": false
+}

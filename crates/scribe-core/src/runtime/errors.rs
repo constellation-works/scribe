@@ -124,6 +124,14 @@ pub enum CommandError {
         #[source]
         source: std::io::Error,
     },
+    /// A deterministic session pass step could not finish.
+    #[error("{message}")]
+    SessionPassStep {
+        /// Stable error code.
+        code: &'static str,
+        /// Diagnostic.
+        message: String,
+    },
     /// `session pass --session` named a session that is not switched on.
     #[error(
         "session {0} is not switched on, so it is never passed; /scribe on in that session switches it on"
@@ -171,7 +179,7 @@ pub enum CommandError {
     /// `session catalog` named a session that already has a record or a
     /// switch it did not write.
     #[error(
-        "session {0} already has a record or was switched on; use 'scribe session pass --session {0}' or 'scribe session rebuild {0} --author <name> --confirm'"
+        "session {0} already has a record or was switched on; use 'orbit job run scribe-session-pass' with this session, or 'scribe session rebuild {0} --author <name> --confirm'"
     )]
     SessionCataloged(crate::SessionId),
     /// No Claude Code transcript has this id.
@@ -198,6 +206,7 @@ impl CommandError {
             Self::RedactEnvUnset(_) => "redact_env_unset",
             Self::HookPayload(_) => "hook_payload_invalid",
             Self::Read { .. } => "io_error",
+            Self::SessionPassStep { code, .. } => code,
             Self::SessionNotOn(_) => "session_not_on",
             Self::SegmentNotFound { .. } => "segment_not_found",
             Self::ConfirmRequired { .. } | Self::ForgetConfirmRequired(_) => "confirm_required",

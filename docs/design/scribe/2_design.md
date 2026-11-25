@@ -55,20 +55,22 @@ STD-01 grammar:
 (a launcher that execs the installed binary as `scribe plugin call`), `schemas/`,
 `routines/` and `jobs/`: three routines (`scribe-session-pass`,
 `scribe-consistency` and `scribe-memory-refresh`, each seeded `enabled: false`)
-and their three jobs, listed under `spec.definitions`. The backend is
-`type: exec` with `timeout_ms: 300000`, Orbit's cap: a session pass starts no
-session after 50 s, and one session is at most two 121 s asks; a memory refresh
-is one 120 s call; the consistency scan calls no model. Tools:
+and their jobs, listed under `spec.definitions`. The exec backend caps a
+deterministic call at 300 seconds. Model activities run in Orbit.
 
 | Tool | `execution_kind` | `agent_callable` | `mcp_scope` | Envelope `output` |
 |---|---|---|---|---|
-| `scribe.session-pass` | `mutating` | `false` | `none` | the session pass report |
-| `scribe.consistency-scan` | `mutating` | `false` | `none` | the consistency scan report |
-| `scribe.memory-refresh` | `mutating` | `false` | `none` | the memory refresh JSON |
+| `scribe.session-pass-prepare` | `mutating` | `false` | `none` | selected window or settlement |
+| `scribe.session-pass-apply` | `mutating` | `false` | `none` | write, retry or failure status |
+| `scribe.session-pass-fail` | `mutating` | `false` | `none` | activity failure backoff |
+| `scribe.consistency-scan` | `mutating` | `false` | `none` | consistency scan report |
+| `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply` | `mutating` | `false` | `none` | refresh inputs and result |
+| `scribe.group-close-prepare` | `read_only` | `false` | `none` | group evidence |
+| `scribe.group-close-apply` | `mutating` | `false` | `none` | close result |
 
-The Codex-enabled package, `plugin/orbit-codex/.orbit-plugin/`, declares the same
-three tools, routines and jobs and the same `timeout_ms`; its schema describes
-`codex_home` as required. The envelope's configuration and retry rules are in
+The Codex-enabled package declares the same tools, routines and jobs and the
+same `timeout_ms`. Its schema describes `codex_home` as required.
+The envelope's configuration and retry rules are in
 [output-contract.md, Plugin envelope](specs/output-contract.md#plugin-envelope).
 
 Orbit defaults `mcp_scope` to `workspace`, so every tool sets `none`
@@ -149,8 +151,7 @@ and exits 0: errors are `invalid_envelope`, `unknown_tool`, `invalid_input`,
 `not_configured`, `not_implemented`, a model code (`model_timeout` and
 `model_failed` retryable) or a store code. It is read-only and not audited.
 
-As built (S6; the third tool, `scribe.memory-refresh`, came with §15.6 and is in
-the live table above): the two routine tools were wired to the CLI's code, and
+Historical S6 implementation, superseded for passes by [§19.3.2](#1932-session-pass-scribe-session-pass-job-and-routine): the two routine tools were wired to the CLI's code, and
 the tree gained `routines/session_pass.yaml` and `routines/consistency.yaml`
 (seeded by `orbit plugin enable` as `scribe-session-pass`, `*/5 * * * *`,
 and `scribe-consistency`, `0 6 * * 1`, both `enabled: false`) and
@@ -1224,15 +1225,16 @@ it reads `control.json`, and when the session is on and either
 have arrived, it sets `due` under the lock. `scribe hook session-end` sets
 `due` with `final: true`. The plugin ships `scribe-session-pass` seeded
 disabled for each host to review. Once enabled with `orbit routine enable`,
-it runs every 5 minutes (`*/5 * * * *`) through the `scribe.session-pass`
-job. Daniel can also run `scribe session pass` by hand where `claude` is on
-`PATH`. Both take at most five due sessions per run, with a 120-second
-budget per model call. Daniel reversed the manual-only choice on
+it runs every 5 minutes (`*/5 * * * *`) through the `scribe-session-pass`
+Orbit job. The job takes at most five due sessions per run. Each model
+activity has a 120-second budget. Daniel reversed the manual-only choice on
 2026-11-10: "perhaps routine was not a bad idea then? let's add that back"
 ([4_decisions.md](./4_decisions.md#consecutive-windows-and-bounded-retries-keep-session-passes-cheap)).
 Failures keep the session due and delay automatic retries by 5, 10, 20,
 40, then at most 60 minutes; a completed pass resets this state.
-`scribe session pass --session <id>` bypasses backoff.
+The job bypasses backoff for explicitly named sessions sent as
+`--input 'sessions=["<id>"]'`. `scribe session pass --session <id>`
+can settle a named session without invoking a model.
 No process is detached from a hook ([4_decisions.md](./4_decisions.md#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child)).
 
 For cadence (S4), after capture recovery and cite filling, the `Stop` hook
@@ -1245,12 +1247,12 @@ transcript is read, and the turns rule counts Daniel's turns after
 write only when the state changes, and neither calls a model. The
 `scribe-session-pass` routine and the Orbit job are S5's (the Orbit plugin
 tree); until then `scribe session pass` runs by hand or from cron.
-As built (S5): the plugin declares `scribe.session-pass`, but the routine,
+Historical S5 implementation: the plugin declared `scribe.session-pass`, but the routine,
 its job and the tool's wiring ship with the consistency routine in S6
 ([§10](#10-slice-plan): "the two routines ship seeded disabled"), so the
 tool answers `not_implemented` and `scribe session pass` still runs by hand
 or from cron.
-As built (S6): the routine and its job ship, seeded disabled, and the tool
+Historical S6 implementation before §19.3.2: the routine and its job shipped, seeded disabled, and the tool
 runs the same code as `scribe session pass`; it reads the transcripts under
 the plugin's `transcripts` setting and starts no later session or window
 once 50 s have passed, so one call ends inside Orbit's 300 s backend
@@ -1356,11 +1358,10 @@ As built (S4), in `scribe-core::pass` and `commands/session/pass.rs`:
   `status: final`. Each window is checkpointed under the lock; the last
   settles `due` and resets retry state. A failed pass keeps the latest
   checkpoint and leaves `due` set with bounded retry backoff:
-  the run prints its report and then exits 1 naming each failed session
-  and its code, and `scribe.session-pass` answers `session_pass_failed`
-  ([4_decisions.md](./4_decisions.md#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)).
-- `scribe session pass --session <id>` (repeatable) passes the sessions
-  named whether or not they are due, ignoring backoff, each once and
+  the apply or failure tool reports the session and its stable code
+  ([§19.3.2](#1932-session-pass-scribe-session-pass-job-and-routine)).
+- A pass job with explicit `sessions` selects the sessions named whether
+  or not they are due, ignoring backoff, each once and
   without the five-per-run cap, so a session whose `due` was cleared can be passed
   again; a session that is not on is refused (`session_not_on`) and never
   read, and the switch's `final` flag counts as for a due pass.
@@ -2192,15 +2193,14 @@ none.
   stored, so a pair the model found unrelated is offered on every scan
   until one entry stops being active; the cap of 40 pairs, newest first,
   bounds the cost, but an old unrelated pair can keep a newer one waiting.
-- **One routine call does less than the CLI run.** Orbit caps a plugin
-  call at 300 s, so `scribe.session-pass` starts no later session or window
-  after 50 s and
-  `scribe.consistency-scan` no batch after 170 s; the rest waits for the
-  next run (every five minutes once enabled, or next week for the scan).
-- **Cataloging requires host opt-in.** The routine ships disabled; records
-  wait until the host enables it or Daniel runs `scribe session pass`.
-  Repeated failures can delay retries up to an hour; `--session <id>`
-  retries immediately. `scribe session list` shows `due` so the gap is visible.
+- **Passes can span runs.** Each job starts at most 25 iterations. A
+  90-second loop budget gates the start of each iteration so a window can
+  finish its two 120-second activity attempts within the routine timeout.
+  Eligible sessions and unprocessed windows wait for the next run.
+- **Cataloging requires host opt-in.** The routine ships disabled. Enable
+  it on the host or run `orbit job run scribe-session-pass`. Automatic
+  retries can wait up to an hour. A job input explicitly naming sessions
+  bypasses backoff. `scribe session list` shows which sessions are due.
 - **A guessed referent is still an entry.** When Haiku fails, the fallback
   records the previous assistant message; the echo says so, but an
   unattended guess stays until Daniel retires it with `#scribe retire`.
@@ -2323,7 +2323,7 @@ Claude Code package.
   reports status; `on` twice is a no-op that says so.
 - `scribe hook stop` marks due by minutes or turns; `session-end` marks
   final; neither calls a model.
-- `scribe session pass` with a fake `Models` writes one record per due
+- Session pass prepare and apply with fixed answers write one record per due
   session within budgets, advances `scribed_through`, writes no entries,
   and keeps the previous record when the model output is invalid.
 - A session never switched on is never read (a test transcript for it is
@@ -7320,9 +7320,9 @@ store with shipped decisions.
 
 Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Daniel answered the four questions of [§19.7](#197-decisions-on-the-open-questions) and approved this section on 2026-11-25 in the chief's chat, to "Approve section 19 with your four answers, so the scribe captain can build it?": "Approve" (quoted on [ORB-28109]). The approval carried one condition: the section uses `agent_invoke` activities, as his words on [ORB-27911] say, or states why `agent_loop` is needed. [§19.2](#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs) states it. The five callers are deleted last, once their jobs are in place ([§19.5](#195-deletions-and-configuration-migration-after-approval)).
 
-### 19.1 Scope and current boundary
+### 19.1 Scope and starting boundary
 
-Following [ORB-27911] (`ask`, the tmux popup, and the model steps in `Stop` and `consistency scan` removed) and [specs/architecture.md](./specs/architecture.md#providers-interim), five callers still invoke a model in-process through `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`):
+Following [ORB-27911] (`ask`, the tmux popup, and the model steps in `Stop` and `consistency scan` removed) and [specs/architecture.md](./specs/architecture.md#providers-interim), the five original callers invoked a model in-process through `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`):
 
 | Caller | App flow | Current trigger | What the model produces |
 |---|---|---|---|
@@ -7394,17 +7394,17 @@ The `scribe-session-pass` routine (`*/5 * * * *`, seeded `enabled: false`, `poli
      - Takes optional `{sessions, resolve, max_sessions: 5, deadline_epoch_s}` (and tracks per-run window/session budget in its input or `remaining` cursor).
      - Picks the next eligible window across due sessions (`on && due && retry_after <= now`, up to `MAX_PER_RUN = 5` distinct sessions per job run, or the named `--session` list).
      - **Model-free short-circuits**: if a due session has no transcript or no messages yet (`waiting`), `prepare` leaves it due and moves to the next session; if a due session has nothing after `scribed_through` (`unchanged` or `final_pass` finalization), `prepare` settles it atomically in `scribe.db` right away without launching an `agent_loop`, returning `{done: false, needs_model: false, settled: [...]}` (or `{done: true}` once nothing remains).
-     - Otherwise returns `{done: false, needs_model: true, session_id, expected_updated, window_end_uuid, last_window, window_request, tally_state}`.
-   - **`distill` (`when: "{{ steps.prepare.output.needs_model }} == true"`, `agent_loop`: `scribe_session_distill`)**: produces `SessionAnswer`.
-   - **`apply` (`when: "{{ steps.prepare.output.needs_model }} == true"`, `plugin.tool_call`: `scribe.session-pass-apply`)**:
+     - Otherwise returns `{done: false, needs_model: true, basis, window_request, cursor}`. The basis records the session id, control switch, record revision, window endpoint and transcript digest. The cursor carries admission and remaining claim and memory slots.
+   - **`distill`** dispatches `scribe_session_distill` only when `needs_model` is true and collects its `SessionAnswer`. The job uses fan-in to carry structured outputs and to reach the failure tool when a provider step fails.
+   - **`apply` (`plugin.tool_call`: `scribe.session-pass-apply`)**: a model-free iteration carries its cursor forward. With an answer:
      - Runs `pass::check` against the re-read transcript slice up to `window_end_uuid` and the `window_request`.
      - **Valid**: validates candidates, memory elements, redaction, `current.updated == expected_updated`, and sealed segments; commits `write_pass_window` (and `control::settle` when `last_window` is `true`, keeping `due: true` on intermediate windows); records `session pass` audit rows; returns `{status: "written", ...}`.
      - **Header-only budget overrun**: returns `{status: "retry_header", header_request}` without touching `scribe.db`.
-     - **Other refusal**: returns `{status: "retry_window", correction}` without touching `scribe.db`.
+     - **Other refusal**: returns `{status: "retry_window", correction, window_request}` without writing to `scribe.db`.
    - **Targeted retry (`when` on `retry_header` / `retry_window`)**:
      - `compress` (`when: "{{ steps.apply.output.status }} == retry_header"`, `agent_loop`: `scribe_session_header_compress`) or `distill_retry` (`when: "{{ steps.apply.output.status }} == retry_window"`, `agent_loop`: `scribe_session_distill` with `correction`).
-     - `apply_retry` (`when: "{{ steps.apply.output.status }} != written"`, `plugin.tool_call`: `scribe.session-pass-apply` with `repair: true`): validates the retried answer, applies deterministic `pass::repair` if only repairable bounds/start misses remain, and commits; if still invalid, records `control::fail` (`5, 10, 20, 40, 60` min backoff, keeping `due: true`), audits the failure code, and returns `{status: "failed", error_code}`.
-2. **Failure / interruption handling**: if an `agent_loop` step fails (provider timeout or capacity error), a `failure_activity` / fallback `plugin.tool_call` (`scribe.session-pass-fail`) records `control::fail` backoff on the active `session_id`; because only `last_window` clears `due`, an interrupted multi-window pass keeps prior persisted windows and stays due for the next run.
+     - `apply_retry` carries the cursor or checks the targeted retry through `scribe.session-pass-apply` with `repair: true`: validates the retried answer, applies deterministic `pass::repair` if only repairable bounds/start misses remain, and commits; if still invalid, records `control::fail` (`5, 10, 20, 40, 60` min backoff, keeping `due: true`), audits the failure code, and returns `{status: "failed", error_code}`.
+2. **Failure / interruption handling**: if an `agent_loop` step fails (provider timeout or capacity error), a fallback deterministic activity calls `scribe.session-pass-fail` to record backoff against the active basis and report the failure; because only `last_window` clears `due`, an interrupted multi-window pass keeps prior persisted windows and stays due for the next run.
 
 #### 19.3.3 `session catalog` (`scribe-session-catalog` job and CLI switch)
 
@@ -7476,7 +7476,7 @@ Once approved and built:
 - **CLI (`scribe`)**:
   - `group evidence <id>` and `group close <id> (--summary <text> | --no-summary) [--if-evidence <sha256>]`
   - `session catalog <id> --author <name> [--project <slug>]` writes the catalog switch deterministically and prints the queued switch + `orbit job run scribe-session-catalog` command.
-  - `session pass` runs only deterministic settlement (empty/waiting/final-without-new-messages) when no model is needed, and otherwise directs the caller to `orbit job run scribe-session-pass` (or exposes `prepare`/`apply` subcommands under `session` and `memory` so an interactive agent can drive a window or profile refresh directly via CLI if desired, sharing the exact `apps/{session,memory}` flows).
+  - `session pass` handles model-free settlements and directs the caller to `orbit job run scribe-session-pass` when new windows need distillation. `session pass-prepare` and `session pass-apply` read JSON on stdin and use the same app flows as the plugin tools.
 
 ### 19.5 Deletions and configuration migration (after approval)
 

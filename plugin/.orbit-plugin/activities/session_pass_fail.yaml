@@ -1,0 +1,10 @@
+schemaVersion: 2
+kind: Activity
+metadata:
+  name: scribe_session_pass_fail
+spec:
+  type: deterministic
+  description: Record backoff for the session whose Orbit activity failed.
+  action: plugin.tool_call
+  config:
+    tool: scribe.session-pass-fail

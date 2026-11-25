@@ -69,11 +69,19 @@ pub(crate) enum SessionCommand {
     /// Shows one session record: its metadata, links, children, header and the log's table of contents.
     #[command(after_help = SHOW_EXAMPLES)]
     Show(ShowArgs),
-    /// Write session records for due or named sessions
+    /// Settle due or named sessions when no new window needs distillation
     ///
-    /// Writes the record of each session whose pass is due, or of the sessions named, with the session model.
+    /// Settles eligible sessions deterministically and prints the Orbit job command when new windows need distillation.
     #[command(after_help = pass::PASS_EXAMPLES)]
     Pass(pass::PassArgs),
+    /// Prepare one session window or settle a session without a model
+    ///
+    /// Reads a selection and optional continuation as JSON on stdin. Writes a prepared window, settlement, or completion as JSON.
+    PassPrepare,
+    /// Verify a supplied session answer and apply it or request a retry
+    ///
+    /// Reads the prepared basis, cursor and answer as JSON on stdin. Writes the apply status, cursor and any retry instructions as JSON.
+    PassApply,
     /// Rebuild a session record from its full transcript
     ///
     /// Replaces a session record with a log rebuilt from its transcript, resuming interrupted windows.
@@ -182,7 +190,9 @@ pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliE
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
         SessionCommand::Rebuild(args) => rebuild::run(&args, ctx),
-        SessionCommand::Pass(args) => pass::run(&args, ctx),
+        SessionCommand::Pass(args) => pass::run(args, ctx),
+        SessionCommand::PassPrepare => pass::step_stdin("session-pass-prepare", ctx),
+        SessionCommand::PassApply => pass::step_stdin("session-pass-apply", ctx),
         SessionCommand::Deactivate(args) => activity::deactivate(args, ctx),
         SessionCommand::Activate(args) => activity::activate(args, ctx),
         SessionCommand::Catalog(args) => catalog::run(&args, ctx),
@@ -386,6 +396,9 @@ pub(in crate::commands) fn output(outcome: Outcome, view: View<'_>, ctx: &Contex
         Outcome::Activity(written) => activity::output(*written),
         Outcome::Transcripts(found) => crate::commands::transcript::listed(found, view.transcripts),
         Outcome::Transcript(surveyed) => crate::commands::transcript::shown(*surveyed),
+        Outcome::PassPrepared(_) | Outcome::PassApplied(_) | Outcome::PassFailed(_) => {
+            unreachable!("pass steps use their JSON handler")
+        }
     }
 }
 

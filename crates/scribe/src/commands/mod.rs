@@ -31,6 +31,7 @@ mod transcript;
 use crate::error::CliError;
 use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
+#[cfg(test)]
 pub(crate) use scribe_core::RunLimits;
 use scribe_core::composition::Context;
 use scribe_core::{DateRange, Skipped};
@@ -147,7 +148,11 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
                     | Record::Transcript(_)
             )
         }
-        Output::Init(_) | Output::Hook(_) | Output::Plugin(_) | Output::GroupEvidence(_) => false,
+        Output::Init(_)
+        | Output::Hook(_)
+        | Output::Plugin(_)
+        | Output::PassStep(_)
+        | Output::GroupEvidence(_) => false,
     };
     if !prints_sessions {
         return scribe_core::ShortIds::default();

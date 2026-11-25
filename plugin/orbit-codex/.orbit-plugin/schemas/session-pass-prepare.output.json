@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "boolean"
+    },
+    "needs_model": {
+      "type": "boolean"
+    },
+    "settled": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 1
+    },
+    "cursor": {
+      "type": "object"
+    },
+    "basis": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "window_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "session_distill_crew": {
+      "type": "string"
+    },
+    "session_header_crew": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "done",
+    "needs_model",
+    "settled",
+    "cursor",
+    "basis",
+    "window_request",
+    "session_distill_crew",
+    "session_header_crew"
+  ],
+  "additionalProperties": false
+}

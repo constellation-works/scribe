@@ -8,23 +8,12 @@
 //! `{"ok": false, "error": {"code", "message", "retryable"}}`, exiting 0
 //! either way (a non-zero exit is an execution error to the host).
 //!
-//! - `scribe.session-pass` runs `session pass` (the `scribe-session-pass`
-//!   routine's job), `scribe.consistency-scan` runs `consistency scan`
-//!   (the `scribe-consistency` routine's), and `scribe.memory-refresh-prepare` /
-//!   `scribe.memory-refresh-apply` back the `scribe-memory-refresh` workflow job
-//!   (and `scribe.group-close-prepare` / `scribe.group-close-apply` back
-//!   `scribe-group-close`). All are `agent_callable: false` and `mcp_scope: none`
-//!   in `plugin.yaml`. So
-//!   that a call ends inside Orbit's 300 s backend timeout, no session
-//!   after the first starts once [`PASS_START_BY`] has passed; what is
-//!   left is reported as remaining for the next run. The consistency scan
-//!   and memory-refresh prepare/apply call no model and need no such bound.
+//! The session-pass, memory-refresh and group-close tools prepare and
+//! apply Orbit activities. The consistency scan runs deterministically.
 //!
 //! The store root comes from `[plugins.scribe] root`, and the transcripts
 //! directory from `[plugins.scribe] transcripts`, never from `SCRIBE_ROOT`
-//! or `HOME`: the plugin's sandbox grants access to those paths alone. A
-//! session-pass run with any failed pass is an error envelope,
-//! `session_pass_failed`.
+//! or `HOME`: the plugin's sandbox grants access to those paths.
 //! The routine tools write,
 //! and are audited inside the call (each app's exec runs the core's audit
 //! guard with the routine's audit declared here), under the same command names as
@@ -32,22 +21,15 @@
 //! change — `plugin call` itself has no audit entry, because which store a
 //! call writes is known only once the envelope is read (4_decisions.md).
 
-use super::{RunLimits, consistency, session};
+use super::{consistency, session};
 use crate::error::CliError;
-use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply};
+use crate::output::{Output, PluginError, PluginReply};
 use clap::{Args, Subcommand};
 use scribe_core::composition::Context;
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-
-/// How long after a call starts `scribe.session-pass` may start another
-/// session: a session may take two 121-second asks, and the call must end
-/// inside Orbit's 300-second backend timeout.
-const PASS_START_BY: Duration = Duration::from_secs(50);
-
 pub(super) const PLUGIN_EXAMPLES: &str = "\
 The Orbit plugin's backend runs this; it is not meant to be typed.
 
@@ -60,7 +42,7 @@ stdout, exiting 0 whenever a reply was printed. The store is the plugin's
 [plugins.scribe] root setting, an absolute path.
 
 Examples:
-  printf '%s' '{\"schema_version\":1,\"tool\":\"scribe.session-pass\",\"input\":{},\"context\":{\"config\":{\"root\":\"/home/me/.scribe\"}}}' | scribe plugin call";
+  printf '%s' '{\"schema_version\":1,\"tool\":\"scribe.session-pass-prepare\",\"input\":{},\"context\":{\"config\":{\"root\":\"/home/me/.scribe\"}}}' | scribe plugin call";
 
 /// The namespace the plugin's tools live in.
 const NAMESPACE: &str = "scribe";
@@ -155,7 +137,9 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
     match verb {
         "group-close-prepare" => group_close(&envelope.input, &envelope.context.config, false),
         "group-close-apply" => group_close(&envelope.input, &envelope.context.config, true),
-        "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
+        "session-pass-prepare" | "session-pass-apply" | "session-pass-fail" => {
+            session_pass(verb, envelope.input, &envelope.context.config)
+        }
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
         "memory-refresh-prepare" => {
             memory_refresh_prepare(&envelope.input, &envelope.context.config)
@@ -237,7 +221,6 @@ fn transcripts_dir(config: &Value) -> Result<PathBuf, PluginReply> {
 /// The reply for a routine command's result.
 fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> PluginReply {
     match result {
-        Ok(Output::Pass(report)) => PluginReply::Pass(report),
         Ok(Output::Scan(report)) => PluginReply::Scan(report),
         Ok(_) => failure(
             "internal_error",
@@ -251,10 +234,34 @@ fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> Plu
     }
 }
 
-fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
-    if let Err(reply) = routine_input("scribe.session-pass", input) {
-        return reply;
-    }
+fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
+    let mut input = if input.is_null() {
+        serde_json::json!({})
+    } else {
+        input
+    };
+    let abort = if verb == "session-pass-fail" {
+        match input
+            .as_object_mut()
+            .and_then(|input| input.remove("abort"))
+        {
+            Some(Value::Bool(abort)) => abort,
+            None => false,
+            Some(_) => {
+                return failure(
+                    "invalid_input",
+                    "session-pass-fail abort must be a boolean",
+                    false,
+                );
+            }
+        }
+    } else {
+        false
+    };
+    let step = match session::pass::Step::parse(verb, input) {
+        Ok(step) => step,
+        Err(err) => return failure("invalid_input", message_of(&err), false),
+    };
     let root = match store_root(config) {
         Ok(root) => root,
         Err(reply) => return reply,
@@ -278,31 +285,30 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
         Err(reply) => return reply,
     };
     let routine = Context::at(root, transcripts).with_codex_home(codex_home);
-    let limits =
-        RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    let result = session::pass::run_audited(&routine, |config| routine.models(config), limits, &[]);
-    let reply = routine_reply(session::pass::COMMAND, result);
-    pass_reply(reply)
-}
-
-/// The routine's reply for a session pass report: an error envelope when any
-/// pass in it failed, as the CLI exits 1, so the tool result and the Orbit
-/// run are not a success. The message names each failed session with its
-/// code and redacted reason; the audit lines carry the codes only.
-fn pass_reply(reply: PluginReply) -> PluginReply {
-    let failed = match &reply {
-        PluginReply::Pass(report) => failed_passes(report),
-        PluginReply::Scan(_) | PluginReply::Data(_) | PluginReply::Error(_) => None,
-    };
-    failed.unwrap_or(reply)
-}
-
-/// The error for a pass report with a failed pass, `None` when none failed:
-/// the CLI's message with each session's code and redacted reason. Not
-/// retryable: each failed session stays due, and the next run retries it.
-fn failed_passes(report: &PassReport) -> Option<PluginReply> {
-    let err = report.failure()?;
-    Some(failure(err.code(), err.to_string(), false))
+    match step.run(&routine) {
+        Ok(value) if abort => {
+            let message = value["pass"]["session"].as_str().map_or_else(
+                || "the session distillation activity failed".to_owned(),
+                |id| format!("the distillation activity failed for session {id}"),
+            );
+            failure("model_failed", message, false)
+        }
+        Ok(mut value) => {
+            if verb == "session-pass-prepare" {
+                for key in ["session_distill_crew", "session_header_crew"] {
+                    let crew = config
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("haiku");
+                    value[key] = Value::String(crew.to_owned());
+                }
+            }
+            PluginReply::Data(value)
+        }
+        Err(CliError::Usage(message)) => failure("invalid_input", message, false),
+        Err(err) => failure(err.code(), message_of(&err), err.code() == "store_locked"),
+    }
 }
 
 /// Optional explicit provider state root shared by every plugin model path.

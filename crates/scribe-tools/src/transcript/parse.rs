@@ -39,7 +39,7 @@ pub const FIRST_TURNS: usize = 5;
 pub const ENDED_AFTER: time::Duration = time::Duration::hours(24);
 
 /// One message of the conversation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Message {
     /// The line's `uuid`.
     pub uuid: String,

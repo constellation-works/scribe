@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "idle",
+        "written",
+        "failed",
+        "retry_header",
+        "retry_window"
+      ]
+    },
+    "cursor": {
+      "type": "object"
+    },
+    "pass": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "header_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "window_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "correction": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "cursor",
+    "pass",
+    "error_code",
+    "header_request",
+    "window_request",
+    "correction"
+  ],
+  "additionalProperties": false
+}

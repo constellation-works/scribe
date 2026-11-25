@@ -7,14 +7,14 @@ schemaVersion: 1
 kind: PluginTest
 tests:
 - name: session_pass_without_a_store_root_is_not_configured
-  tool: session-pass
+  tool: session-pass-prepare
   input: {}
   expect:
     error:
       code: not_configured
       retryable: false
 - name: session_pass_with_an_input_key_is_invalid
-  tool: session-pass
+  tool: session-pass-prepare
   input:
     limit: 1
   expect:

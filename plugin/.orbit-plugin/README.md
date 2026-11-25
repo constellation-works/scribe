@@ -1,30 +1,18 @@
 # scribe — Orbit plugin
 
-The Orbit side of scribe ([design](../../docs/design/scribe/2_design.md#1-boundary-and-surfaces)):
-three routine tools that keep the user's store current, none of them
-advertised to agents. The backend is the installed `scribe` binary (`bin/scribe-plugin` execs
-`scribe plugin call`); this tree holds only the manifest, schemas and tests.
-The Claude Code hooks that write entries are a separate package,
-`plugin/claude-code/`.
+The Orbit plugin keeps opted-in session records, proposals and memory current.
+It uses `scribe plugin call` as its exec backend. Every tool has
+`agent_callable: false` and `mcp_scope: none`.
 
-| Tool | Kind | MCP | State |
-|---|---|---|---|
-| `scribe.session-pass` | mutating, not agent-callable | none | live; routine ships disabled, runs every 5 minutes once enabled; also runs by hand |
-| `scribe.consistency-scan` | mutating, not agent-callable | none | live; the `scribe-consistency` routine runs it |
-| `scribe.memory-refresh` | mutating, not agent-callable | none | live; the `scribe-memory-refresh` routine runs it |
+| Job | Deterministic tools | Seeded routine |
+|---|---|---|
+| `scribe-session-pass` | `scribe.session-pass-prepare`, `scribe.session-pass-apply`, `scribe.session-pass-fail` | Every five minutes, disabled |
+| `scribe-consistency` | `scribe.consistency-scan` | Mondays at 06:00, disabled |
+| `scribe-memory-refresh` | `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply` | Sundays at 05:00, disabled |
+| `scribe-group-close` | `scribe.group-close-prepare`, `scribe.group-close-apply` | None |
 
-`routines/` and `jobs/` hold the three routines, seeded by `orbit plugin
-enable` with `enabled: false`: `scribe-session-pass` (`*/5 * * * *`, the
-records of sessions whose pass is due, as `scribe session pass` writes them;
-enabled on each host after review; the user can also run it by hand where
-`claude` is on `PATH`) and `scribe-consistency` (`0 6 * * 1`, proposals,
-as `scribe consistency scan` opens them) and `scribe-memory-refresh`
-(`0 5 * * 0`, `memory/profile.md` rebuilt from the week's sessions and
-`now` items past their 14 days settled, as `scribe memory refresh` does;
-one 120 s model call). Each runs one job step that
-calls its tool. A call starts no later session or window after 50 s and no
-batch after 170 s, to end inside Orbit's 300 s limit; the rest waits for the next run. No tool settles a
-proposal: that is `#scribe approve|reject` in a typed prompt.
+Settle proposals through typed `#scribe approve|reject` prompts.
+[Plugin design](../../docs/design/scribe/2_design.md#1-boundary-and-surfaces)
 
 ## Install (operator)
 
@@ -69,44 +57,34 @@ Orbit config and check one call:
 [plugins.scribe]
 root = "/home/<user>/.scribe"     # absolute; every tool answers not_configured until set
 transcripts = "/home/<user>/.claude/projects"   # optional when codex_home is set
-codex_home = "/home/<user>/.codex"             # optional Codex active/archive transcripts + existing auth
+codex_home = "/home/<user>/.codex"             # optional Codex active and archived transcripts
+session_distill_crew = "haiku"
+session_header_crew = "haiku"
 ```
 
 ```sh
-orbit tool run scribe.session-pass --input '{}'   # passes the sessions that are due, if any
+orbit job run scribe-session-pass
+orbit job run scribe-session-pass --input 'sessions=["<id>"]'
 ```
 
-(`orbit config set plugins.scribe.root <path>` sets a key the same way.)
-The routines ship disabled so the operator can review each host's setup,
-following Orbit's convention. `orbit routine list` shows them; enable the
-session routine with `orbit routine enable scribe-session-pass` once the
-store and transcripts are configured and `claude` is reachable from the
-Orbit clock's `PATH`. Once enabled it runs every 5 minutes; the shipped default remains disabled.
+Orbit keeps one active session-pass run at a time. Enable the five-minute
+routine with `orbit routine enable scribe-session-pass` once the store,
+transcript roots and activity crews are configured.
 
-Also run `scribe session pass` by hand (due sessions, five per run) or
-`scribe session pass --session <id>` (a named session, due or not, ignoring
-retry backoff). New messages run in consecutive windows, default 40
-messages / 15000 characters, configurable via `[catalog] window_messages`
-and `window_chars`. Every valid window checkpoints the record; a failure
-keeps that progress and the next run resumes at its failed window.
-Automatic retries wait 5, 10, 20, 40, then at most 60 minutes while the
-session stays due; a completed pass resets backoff. JSON adds `windows`
-per session (persisted this run), and `remaining` includes sessions waiting
-for backoff or the routine's time budget. On macOS, verify `claude` is
-reachable from the clock's environment before enabling the routine.
-After a plugin change, refresh the package and upgrade the plugin:
+The job admits up to five due sessions by default and runs at most 25
+iterations. It stops starting windows after 90 seconds to leave time for
+the in-flight window and its retry. Passes use consecutive windows of up to 40 messages and 15,000
+characters by default. Set `[catalog] window_messages` and `window_chars`
+to change those limits. Each valid window checkpoints the record. A failed
+window preserves those checkpoints and keeps the session due. Automatic
+retries wait 5, 10, 20, 40, then at most 60 minutes. An explicitly named
+session bypasses backoff. `[instructions] session` and `session_header`
+override activity guidance before the fixed answer contract.
 
-```sh
-claude plugin marketplace update scribe-local
-claude plugin update scribe@scribe-local
-PLUGIN_SRC="$(mktemp -d)/.orbit-plugin"   # a fresh copy of the current tree
-cp -R plugin/.orbit-plugin "$PLUGIN_SRC"
-orbit plugin upgrade scribe "$PLUGIN_SRC" --grant fs,network,env_pass
-```
-
-`claude plugin update` applies on the next Claude Code restart. On a fresh
-install, `claude plugin install scribe --marketplace ./plugin` registers the
-package and its `SessionStart` hook instead.
+`scribe session pass` settles eligible sessions locally and prints the Orbit
+job command when new windows need distillation. `scribe session pass-prepare`
+and `scribe session pass-apply` accept the same JSON as the plugin tools on
+stdin and emit their results on stdout.
 
 The grants are: `fs` (read and write the store root, read the transcripts
 directory), `network` (the `claude` CLI) and `env_pass`
@@ -126,13 +104,7 @@ PATH="$PWD/target/debug:$PATH" orbit plugin test plugin/.orbit-plugin \
   --grant fs,network,env_pass  # the YAML goldens
 ```
 
-This default package preserves Claude-only installations. Its optional
-`codex_home` read setting permits Codex transcript discovery, but read access
-alone is insufficient for a Codex model child: even ephemeral Codex startup
-needs narrow writes to its `tmp` directory and `installation_id` file. For
-Luna-backed passes, use the generated Codex-enabled variant in
-[`../orbit-codex/`](../orbit-codex/README.md), configure its three explicit paths,
-and re-consent the rendered grants. It keeps provider auth/config/transcripts
-read-only and copies no credentials. `OPENAI_API_KEY` remains an alternative to
-existing login. Both variants retain the same tool/routine surface; never-on
-sessions remain untouched.
+The default package reads opted-in Codex transcripts when `codex_home` is
+configured. The [generated Codex package](../orbit-codex/README.md) remains
+available with its existing grants. Session-pass activities use Orbit's
+crew settings for both transcript providers.
