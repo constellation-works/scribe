@@ -1,17 +1,17 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-23
+last_updated: 2026-11-24
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (proposed 2026-11-24, not built) replaces the five remaining model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs, keeping the callers in `providers/` until Daniel approves.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656, ORB-28068]
 ---
 
 # scribe — Design
@@ -2003,6 +2003,8 @@ cite with `message: null`: the `Stop` hook fills entries' message ids, not
 proposals'.
 
 ## 8. Models
+
+> **Interim until [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-proposed) is approved:** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. Only the five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) still call `Models` through `crates/scribe-core/src/providers/` until Daniel approves the replacement design in §19.
 
 | Use | Config key | Default | Called from | Budget |
 |---|---|---|---|---|
@@ -7276,6 +7278,192 @@ store with shipped decisions.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
 
+## 19. Replacing the five model callers with Orbit jobs and CLI primitives (proposed)
+
+Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Nothing is deleted or implemented here, and the open questions in [§19.7](#197-open-questions-for-daniel) remain for him to confirm.
+
+### 19.1 Scope and current boundary
+
+Following [ORB-27911] (`ask`, the tmux popup, and the model steps in `Stop` and `consistency scan` removed) and [specs/architecture.md](./specs/architecture.md#providers-interim), five callers still invoke a model in-process through `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`):
+
+| Caller | App flow | Current trigger | What the model produces |
+|---|---|---|---|
+| `session pass` | `apps/session/pass/run.rs` | `scribe-session-pass` routine (`*/5 * * * *`), `scribe session pass` | `SessionAnswer` (and `SessionHeader` on length retry) per window |
+| `session catalog` | `apps/session/catalog.rs` -> `run_catalog` | `scribe session catalog <id>` (note: `/scribe catalog <id>` only writes the switch) | `SessionAnswer` (and `SessionHeader`) for each window of the named session |
+| `session rebuild` | `apps/session/rebuild.rs` | `scribe session rebuild <id> --confirm` | `SessionAnswer` (and `SessionHeader`) with `memory: false`, `candidate_limit: 0`, `write_limit: 0` |
+| `memory refresh` | `apps/memory/refresh.rs`, `apps/memory/verbs.rs` | `scribe-memory-refresh` routine (`0 5 * * 0`), `scribe memory refresh` | `ProfileAnswer` (`profile.md` + promoted `milestones`) |
+| `group close` summary | `apps/group/close.rs`, `apps/group/verbs/close.rs` | `scribe group close <id> [--quote '<span>']` | 1–4,000-character closing summary from `CloseEvidence` |
+
+All other paths (`UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `consistency scan`, `search`, `brief`, `entry`, `mark`, `proposal`, `tag`) already call no model.
+
+### 19.2 Core split: deterministic `scribe` boundary vs. Orbit `agent_loop` jobs
+
+Daniel's direction ([ORB-27911]):
+
+> "scribe should just be a cli tool, exposing tools for agents to query/update. Any operations that require agent invocations (e.g. session pass; delete \"ask\" entirely, not needed) should be executed as orbit jobs with agent_invoke activities, passing the transcript data or whatever."
+
+Under [specs/architecture.md](./specs/architecture.md), **scribe starts no model and spawns no child process**, and **scribe does not call Orbit**. Every operation that previously called `Models` splits into three pure/deterministic responsibilities owned by `scribe` and one model-execution step owned by Orbit:
+
+```text
++-----------------------------------+       +--------------------------------------+
+| 1. prepare (deterministic)        |       | 2. reason (Orbit agent_loop)         |
+| plugin.tool_call / CLI            | ----> | fsProfile: reviewer, tools: []       |
+| - provenance & transcript reads   | JSON  | - receives bounded prepared JSON     |
+| - windowing, triggers, exclusions |       | - no direct scribe.db / file access  |
+| - captures optimistic basis       |       | - returns structured JSON envelope   |
++-----------------------------------+       +--------------------------------------+
+                                                               |
+                                                               v  JSON answer
+                                            +--------------------------------------+
+                                            | 3. apply (deterministic)             |
+                                            | plugin.tool_call / CLI               |
+                                            | - budgets, headings, verbatim quotes |
+                                            | - redactor, finance/sensitive gates  |
+                                            | - pass::repair (on final retry)      |
+                                            | - checks basis / updated / seals     |
+                                            | - atomic scribe.db commit + audit    |
+                                            +--------------------------------------+
+```
+
+This boundary preserves every security and correctness guarantee of the current in-process callers:
+
+1. **No raw store or transcript writes by the agent.** The `agent_loop` activities run with `fsProfile: reviewer`, `require_response_envelope: true`, `on_denial: terminate`, `output_schema_json` matching the existing contract schema, and no tool grants (`tools: []` plus a `tool_disallow_list` covering all mutating Orbit tools). They never read `scribe.db` directly, never read raw transcripts outside the bounded prepared window, and never bypass provenance checks.
+2. **Offline plugin backend (`network: none`).** Once `scribe` stops spawning `claude` and `codex`, `plugin/.orbit-plugin/plugin.yaml` removes `claude` from `requires.programs` (keeping `[scribe]`), narrows `permissions.network` from `any` to `none`, and empties `permissions.env_pass` (no `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` enters `scribe plugin call`). `permissions.fs` retains `read: ["{{config.root}}", "{{config.transcripts}}", "{{config.codex_home}}"]` and `write: ["{{config.root}}", "{{plugin_state}}"]` so the deterministic `plugin.tool_call` steps continue to read transcripts and commit to `scribe.db` on any host.
+3. **All verification remains deterministic code.** Verbatim term and candidate quotes, `own_span` and trigger-admission rechecks, `Pinned` byte-identity, `profile::check` entry-link and sensitive gates, sealed-segment immutability, redaction, memory journals, and audit rows all execute inside `apply` under the `scribe.db` write transaction.
+4. **Pure preparation and validation in `scribe-tools`.** Per [specs/architecture.md](./specs/architecture.md#scribe-tools), the pure request-serialization shapes (`SessionRequest` / `SessionHeaderRequest` / `ProfileRequest` / `CloseEvidence` payloads) and pure answer-shape / repair helpers live in `scribe-tools`, while store-coupled load/commit flows live in `apps/{session,memory,group}/`.
+
+### 19.3 Replacing each of the five callers
+
+#### 19.3.1 Shared session distillation (`session pass`, `session catalog`, `session rebuild`)
+
+`session pass`, `session catalog`, and `session rebuild` share the same per-window schema and validation pipeline (`pass::request`, `pass::check`, `pass::compression_request`, `pass::repair`, `pass::record`), differing only in session selection, whether claims/memory are requested, and where the window commits.
+
+Accordingly, `plugin/.orbit-plugin/` defines two shared `agent_loop` activities:
+
+- `scribe_session_distill`: takes one prepared `SessionWindowInput` (bounded `previous` header + open segment + sealed table of contents, `linked` summaries, `messages` up to 40 turns / 15,000 chars, `topics`, `terms`, optional `candidate_turns`/`candidate_rules`/exclusions, optional `memory_now`/`memory_pending`, `budgets`, `final_pass`, `user_noun`, and optional `correction`), with `output_schema_json` set to the `SessionAnswer` schema (making `memory` and `signal` empty/optional when `memory` is `false`).
+- `scribe_session_header_compress`: takes `SessionHeaderRequest` (`title`, `summary`, `goals`, `next`, `budgets`, `correction`) and returns `SessionHeader` (`SESSION_HEADER_SCHEMA`) when the only defect is a header budget overrun.
+
+Why window-by-window in a job `loop:`: window $k + 1$ reads the `previous` record, `scribed_through` cursor, open segment, `memory_pending` candidates, and remaining `candidate_slots` / `write_slots` committed by window $k$.
+
+#### 19.3.2 `session pass` (`scribe-session-pass` job and routine)
+
+The `scribe-session-pass` routine (`*/5 * * * *`, seeded `enabled: false`, `policy.overlap: forbid`) targets the multi-step workflow job `scribe-session-pass` (`max_active_runs: 1`).
+
+1. **Iteration (`loop`, `max_iterations: 25`, `break_when: "{{ steps.prepare.output.done }} == true"`):**
+   - **`prepare` (`plugin.tool_call`: `scribe.session-pass-prepare`)**:
+     - Takes optional `{sessions, resolve, max_sessions: 5, deadline_epoch_s}` (and tracks per-run window/session budget in its input or `remaining` cursor).
+     - Picks the next eligible window across due sessions (`on && due && retry_after <= now`, up to `MAX_PER_RUN = 5` distinct sessions per job run, or the named `--session` list).
+     - **Model-free short-circuits**: if a due session has no transcript or no messages yet (`waiting`), `prepare` leaves it due and moves to the next session; if a due session has nothing after `scribed_through` (`unchanged` or `final_pass` finalization), `prepare` settles it atomically in `scribe.db` right away without launching an `agent_loop`, returning `{done: false, needs_model: false, settled: [...]}` (or `{done: true}` once nothing remains).
+     - Otherwise returns `{done: false, needs_model: true, session_id, expected_updated, window_end_uuid, last_window, window_request, tally_state}`.
+   - **`distill` (`when: "{{ steps.prepare.output.needs_model }} == true"`, `agent_loop`: `scribe_session_distill`)**: produces `SessionAnswer`.
+   - **`apply` (`when: "{{ steps.prepare.output.needs_model }} == true"`, `plugin.tool_call`: `scribe.session-pass-apply`)**:
+     - Runs `pass::check` against the re-read transcript slice up to `window_end_uuid` and the `window_request`.
+     - **Valid**: validates candidates, memory elements, redaction, `current.updated == expected_updated`, and sealed segments; commits `write_pass_window` (and `control::settle` when `last_window` is `true`, keeping `due: true` on intermediate windows); records `session pass` audit rows; returns `{status: "written", ...}`.
+     - **Header-only budget overrun**: returns `{status: "retry_header", header_request}` without touching `scribe.db`.
+     - **Other refusal**: returns `{status: "retry_window", correction}` without touching `scribe.db`.
+   - **Targeted retry (`when` on `retry_header` / `retry_window`)**:
+     - `compress` (`when: "{{ steps.apply.output.status }} == retry_header"`, `agent_loop`: `scribe_session_header_compress`) or `distill_retry` (`when: "{{ steps.apply.output.status }} == retry_window"`, `agent_loop`: `scribe_session_distill` with `correction`).
+     - `apply_retry` (`when: "{{ steps.apply.output.status }} != written"`, `plugin.tool_call`: `scribe.session-pass-apply` with `repair: true`): validates the retried answer, applies deterministic `pass::repair` if only repairable bounds/start misses remain, and commits; if still invalid, records `control::fail` (`5, 10, 20, 40, 60` min backoff, keeping `due: true`), audits the failure code, and returns `{status: "failed", error_code}`.
+2. **Failure / interruption handling**: if an `agent_loop` step fails (provider timeout or capacity error), a `failure_activity` / fallback `plugin.tool_call` (`scribe.session-pass-fail`) records `control::fail` backoff on the active `session_id`; because only `last_window` clears `due`, an interrupted multi-window pass keeps prior persisted windows and stays due for the next run.
+
+#### 19.3.3 `session catalog` (`scribe-session-catalog` job and CLI switch)
+
+- **CLI `scribe session catalog <id> --author <name> [--project <slug>] [--provider ...]`** runs only `catalog::begin` deterministically:
+  1. Resolves the transcript on this host, refuses forgotten sessions and already-cataloged sessions (`session_cataloged`), and runs the transcript provenance check.
+  2. Writes the control switch (`cataloged_by: {at, by: agent(<name>)}`, `on: true`, `due: true`, `provider`, optional `project` override) and audits the switch write.
+  3. Prints the switch result and instructs the caller to run `orbit job run scribe-session-catalog --input '{"session":"<id>","author":"<name>"}'` (or let the `scribe-session-pass` routine pick it up on its next run, since `switch.cataloged_by.is_some()` already runs in catalog mode). `/scribe catalog <id>` in `UserPromptSubmit` already behaves this way.
+- **Orbit job `scribe-session-catalog` (`input: {session, author, project?, provider?}`, `max_active_runs: 1`)**:
+  - Starts with `begin` (`plugin.tool_call`: `scribe.session-catalog-begin`, idempotent when resuming a catalog switch), then runs the same `loop` (`prepare` -> `scribe_session_distill` -> `apply` with optional header/window retry) in catalog mode (`origin: catalog`, no 5-session cap, `ended` from the 24-hour rule -> `CatalogFinal` on the last window).
+
+#### 19.3.4 `session rebuild` (`scribe-session-rebuild` job)
+
+`scribe-session-rebuild` (`input: {session, author, confirm}`, `max_active_runs: 1`) runs as an Orbit job using the same `scribe_session_distill` and `scribe_session_header_compress` activities:
+
+1. **`prepare` loop (`plugin.tool_call`: `scribe.session-rebuild-prepare`)**:
+   - Enforces `confirm: true` (`confirm_required`) and `!session_busy` (`on && due`), checks transcript provenance, reads or resumes the private rebuild checkpoint (`rebuild_checkpoint` in `scribe.db`), captures `expected_updated` from the visible record, and emits the next window (`memory: false`, `candidate_limit: 0`, `write_limit: 0`, `origin: rebuild`) — or `{ready_to_finish: true, expected_updated}` once `offset == conversation.len()`.
+2. **`distill` -> `apply` (`plugin.tool_call`: `scribe.session-rebuild-apply`)**:
+   - Runs `scribe_session_distill` (plus optional 1-round retry and `pass::repair`) and commits each window to the rebuild checkpoint without touching the visible record or control switch.
+3. **`finish` (`plugin.tool_call`: `scribe.session-rebuild-finish`)**:
+   - Under one `scribe.db` write transaction, checks `current.updated == expected_updated` and `!session_busy`, preserves `started`, `created`, `links`, `active`, `keep_active`, `active_change`, and `cataloged_by`, stamps `rebuilt_by`, promotes the checkpoint (`put_from_checkpoint`), and audits `session rebuild`.
+   - If `current.updated` advanced while the job was running, `finish` returns `{finished: false, next_expected}` so the outer loop folds in the newer messages and tries `finish` again — preserving the current `rebuild.rs` race guarantee without holding an OS file lock across subprocesses.
+
+#### 19.3.5 `memory refresh` (`scribe-memory-refresh` job and routine)
+
+The `scribe-memory-refresh` routine (`0 5 * * 0`, seeded `enabled: false`, `policy.overlap: forbid`) targets the workflow job `scribe-memory-refresh` (`max_active_runs: 1`):
+
+1. **`prepare` (`plugin.tool_call`: `scribe.memory-refresh-prepare`)**:
+   - Replays any open `memory_journal` first, builds `ProfileInputs` and `Basis` (`latest`, `file_sha256`, `cursor`, `now` stems), and returns `{nothing_new: true}` if `sessions.is_empty() && corrections.is_none() && passed.is_empty()`. When `nothing_new` is `true`, no agent step runs and nothing is written.
+   - Otherwise returns `{nothing_new: false, basis, cursor_to, session_ids, inputs}` (current `profile.md`, `corrections` diff, `hints`, up to 40 session summaries + 3 highest-signal verbatim turn sets, `now`, `passed`, `milestones`, `preferences`, `user_noun`).
+2. **`refresh` (`when: "{{ steps.prepare.output.nothing_new }} == false"`, `agent_loop`: `scribe_profile_refresh`, `output_schema_json: PROFILE_SCHEMA`, `fsProfile: reviewer`, `tools: []`)**:
+   - Produces `ProfileAnswer` (`{profile, milestones}`).
+3. **`apply` (`when: "{{ steps.prepare.output.nothing_new }} == false"`, `plugin.tool_call`: `scribe.memory-refresh-apply`)**:
+   - Runs `write_refresh`: verifies `Basis` still matches (`memory_changed`) and no read session was forgotten, validates `profile::check` (7 headings in order, `Pinned` byte-identical, <= 6,000 chars, every `<tag>-<n>` in `known`, redactor/finance/sensitive gates) and milestone bounds, commits the new revision, milestones, history rows, cursor, and `memory_journal`, writes `profile.md` / milestone files / removals, closes the journal, and audits `memory refresh`.
+   - If `profile::check` or milestone validation refuses, returns `{status: "retry", correction}` without writing; one conditional `refresh_retry` (`scribe_profile_refresh` with `correction`) + `apply_retry` runs before failing with the refusal code.
+
+#### 19.3.6 `group close` summary (`--summary` flag, `group evidence`, and `scribe-group-close` job)
+
+Resolves the open question in [specs/architecture.md](./specs/architecture.md#not-decided-here): **yes, `scribe group close <id>` takes `--summary`**, paired with a read-only evidence command and an optional Orbit job:
+
+1. **New read-only verb `scribe group evidence <id> [--quote '<span>'] [--json]`**:
+   - Checks closer authorization (calling session matches opener or current holder of opener's seat, or `--quote '<span>'` verifies typed consent naming `g-<n>`), reads bounded `CloseEvidence` (`title`, up to 16 active `handoffs`, up to 32 stored user `turns`, `related`), computes `evidence_sha256`, and prints the snapshot with no lock and no audit line.
+2. **Updated `scribe group close <id> [--quote '<span>'] (--summary <text> | --summary - | --no-summary) [--if-evidence <sha256>]`**:
+   - Re-checks closer authorization (and `--quote` when provided).
+   - With `--summary <text>` (or `-` from stdin): redacts the summary, requires 1–4,000 characters before and after redaction (`invalid_text`), and appends `\n\nFor work missing from the handoffs, see <related>.` when `related` is non-empty.
+   - With `--no-summary`: closes the group with `summary: null` (or related-refs note only if present) without calling a model.
+   - Omitting both `--summary` and `--no-summary` refuses with a usage error (`exit 2`) pointing to `scribe group evidence <id>` + `--summary` and `orbit job run scribe-group-close`.
+   - When `--if-evidence <sha256>` is supplied, the `scribe.db` write transaction verifies that the group's current `CloseEvidence` digest still matches before setting `closed` and `summary` (refusing with `group_evidence_changed` if new handoffs or turns arrived while the summary was drafted).
+   - Already-closed groups still return the current record unchanged (`changed: false`).
+3. **Interactive vs. automated callers**:
+   - Interactive agents (the normal callers of `group close`) already run inside a model session: they call `scribe group evidence <id> --json`, draft the summary directly, and run `scribe group close <id> --summary ... --if-evidence <sha256>` with no Orbit job dispatch needed.
+   - For headless automation or when Daniel runs a close outside a live agent session, the Orbit job `scribe-group-close` (`input: {group, session, provider, quote?}`) runs `scribe.group-close-prepare` (same authorization + `CloseEvidence` + `evidence_sha256`) -> `scribe_group_summarize` (`agent_loop`, returning `{summary}` 1–4,000 chars) -> `scribe.group-close-apply` (same redaction + `--if-evidence` check + atomic close).
+
+### 19.4 Surface summary (CLI and Orbit plugin)
+
+Once approved and built:
+
+- **Plugin `plugin/.orbit-plugin/`**:
+  - Deterministic `exec` tools (`agent_callable: false`, `mcp_scope: none`):
+    - `scribe.consistency-scan` (unchanged)
+    - `scribe.session-pass-prepare`, `scribe.session-pass-apply`, `scribe.session-pass-fail`
+    - `scribe.session-catalog-begin`
+    - `scribe.session-rebuild-prepare`, `scribe.session-rebuild-apply`, `scribe.session-rebuild-finish`
+    - `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply`
+    - `scribe.group-close-prepare`, `scribe.group-close-apply`
+  - `agent_loop` activities (`fsProfile: reviewer`, `require_response_envelope: true`, `tools: []`):
+    - `scribe_session_distill`, `scribe_session_header_compress`, `scribe_profile_refresh`, `scribe_group_summarize`
+  - Jobs: `scribe-consistency` (unchanged), `scribe-session-pass`, `scribe-session-catalog`, `scribe-session-rebuild`, `scribe-memory-refresh`, `scribe-group-close`.
+  - Routines (seeded `enabled: false`): `consistency`, `session-pass`, `memory-refresh`.
+- **CLI (`scribe`)**:
+  - `group evidence <id>` and `group close <id> (--summary <text> | --no-summary) [--if-evidence <sha256>]`
+  - `session catalog <id> --author <name> [--project <slug>]` writes the catalog switch deterministically and prints the queued switch + `orbit job run scribe-session-catalog` command.
+  - `session pass` runs only deterministic settlement (empty/waiting/final-without-new-messages) when no model is needed, and otherwise directs the caller to `orbit job run scribe-session-pass` (or exposes `prepare`/`apply` subcommands under `session` and `memory` so an interactive agent can drive a window or profile refresh directly via CLI if desired, sharing the exact `apps/{session,memory}` flows).
+
+### 19.5 Deletions and configuration migration (after approval)
+
+Only after Daniel approves this design and the Orbit jobs are in place:
+
+1. Delete `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`) and remove `ModelsOnce`, `ModelsEach`, and `ModelsFor` from `apps/{session,memory,group}/mod.rs`.
+2. Update `scripts/check-dependency-direction.sh` and `ARCHITECTURE.md` to remove the `providers/` exceptions (`std::process`, `std::fs`, and the five-caller allowlist; remove `rustix`/`tempfile` from `scribe-core` dependencies if nothing else uses them).
+3. In `config.rs`, deprecate `[models]` and `[codex.models]` (accepting them with load warnings during transition) and move the default credential names (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) into `[redact] env` defaults so redaction continues to mask them without `[models]` ([specs/architecture.md](./specs/architecture.md#providers-interim)). Keep `[user] name` so `prepare` carries it to Orbit activities.
+4. Remove `claude` from `plugin/.orbit-plugin/plugin.yaml` `requires.programs`, set `permissions.network: none`, clear `permissions.env_pass`, and retire `plugin/orbit-codex/.orbit-plugin/` (pending confirmation in [§19.7](#197-open-questions-for-daniel)).
+5. Update `skills/scribe/` (`session-groups.md`, `memory.md`, `capture-controls.md`, `store-maintenance.md`), `README.md`, CLI help, goldens, and `4_decisions.md`.
+
+### 19.6 Concerns & Honest Limitations
+
+- **No OS lock held across Orbit steps.** Unlike the in-process `rebuild-<id>.lock`, Orbit runs separate `plugin.tool_call` -> `agent_loop` -> `plugin.tool_call` steps in distinct subprocesses. Correctness relies on `max_active_runs: 1` per job and optimistic concurrency inside `scribe.db` (`expected_updated` and sealed-segment equality for passes/rebuilds, `Basis` for memory refresh, `evidence_sha256` for group close), which may reject and retry a window if a concurrent writer modifies the same record mid-call.
+- **Step checkpoint payload size in Orbit.** Orbit's `PipelineState` persists every top-level step output in `job_run_states`. Bounding `scribe-session-pass` to `max_iterations: 25` windows per run (leaving extra windows in `remaining` for the next 5-minute routine run) and keeping `prepare` JSON free of redundant prompt prose bounds checkpoint growth.
+- **Standalone hosts without Orbit.** Because `scribe` itself calls no model, `scribe session rebuild`, `scribe memory refresh`, and automated `scribe session pass` require either Orbit (`orbit job run` / routines) or an interactive agent driving the `prepare`/`apply` CLI verbs.
+- **Job schema validation against installed Orbit.** The exact `loop` + `when` + `plugin.tool_call` + `agent_loop` YAML shapes must be validated with `orbit plugin validate` and `orbit plugin test` against the host Orbit version during implementation.
+
+### 19.7 Open questions for Daniel
+
+Before implementation begins, Daniel's confirmation is needed on four choices:
+
+1. **Crew / model routing for `agent_loop` activities.** Should `scribe_session_distill` and `scribe_session_header_compress` draw from `workflow.low_complexity_crews` (Haiku-tier) while `scribe_profile_refresh` and `scribe_group_summarize` draw from `workflow.medium_complexity_crews` (Sonnet-tier), or should Orbit define dedicated `workflow.purpose_crews.scribe_*` keys (or explicit `crew` overrides on the plugin definitions)?
+2. **Disposition of `[instructions]` in `config.toml`.** Should `[instructions]` (`session`, `session_header`, `profile`) be retired once prompts live in `plugin/.orbit-plugin/activities/*.yaml` (accepted with a deprecation warning), or emitted by `prepare` so user overrides in `~/.scribe/config.toml` still customize the `agent_loop` prompt?
+3. **Retiring `plugin/orbit-codex/.orbit-plugin/`.** Once `scribe` no longer spawns `codex`, `codex_runtime_tmp` and `codex_installation_id` write grants are unnecessary; `plugin/.orbit-plugin/` already accepts read-only `codex_home` for rollout parsing. Confirm retiring `plugin/orbit-codex/.orbit-plugin/` and `scripts/sync-orbit-packages.py` when `providers/` is deleted.
+4. **Omitted `--summary` on `scribe group close <id>`.** Confirm whether omitting `--summary` should fail closed (`exit 2`, pointing to `scribe group evidence <id>` + `--summary` and `orbit job run scribe-group-close`), with `--no-summary` available when closing without a summary is explicitly wanted.
+
 ## Task References
 
 - [ORB-21747] — designed the standalone scribe plugin.
@@ -7345,6 +7533,10 @@ store with shipped decisions.
   decisions and open items are quoted there.
 - [ORB-25162] — the standards plugin's decision intake, which reads a
   `decision` action tag.
+- [ORB-28068] — proposed §19: replace the five remaining model callers
+  (`session pass`, `session catalog`, `session rebuild`, `memory refresh`,
+  `group close` summary) with deterministic `prepare`/`apply` primitives and
+  Orbit `agent_loop` jobs; callers stay in `providers/` until Daniel approves.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
