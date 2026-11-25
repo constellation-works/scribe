@@ -2,12 +2,13 @@
 //! (docs/design/scribe/2_design.md §14.5).
 
 use super::Marks;
+use super::{Access, ReadWrite};
 use crate::MarkRecord;
 use crate::db::{self, docs};
 use crate::error::Result;
 use crate::{SessionId, Store};
 
-impl Marks<'_> {
+impl<A: Access> Marks<'_, A> {
     /// Every marker outcome of `session`, in file order.
     ///
     /// # Errors
@@ -26,6 +27,16 @@ impl Marks<'_> {
         self.store.all_marks()
     }
 
+    /// The markers no entry or answer settled yet, of `session` or of every
+    /// session, in file order. Reads only.
+    pub fn uncataloged(&self, session: Option<&SessionId>) -> Result<Vec<MarkRecord>> {
+        self.store.uncataloged_marks(session)
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Marks<'_, ReadWrite> {
     /// Replace the marks.
     ///
     /// # Errors
@@ -33,12 +44,6 @@ impl Marks<'_> {
     /// The store's write errors.
     pub fn put_all(&self, marks: &[MarkRecord]) -> Result<()> {
         self.store.write_marks(marks)
-    }
-
-    /// The markers no entry or answer settled yet, of `session` or of every
-    /// session, in file order. Reads only.
-    pub fn uncataloged(&self, session: Option<&SessionId>) -> Result<Vec<MarkRecord>> {
-        self.store.uncataloged_marks(session)
     }
 }
 

@@ -17,6 +17,7 @@
 //!   phase 8), and a read only counts them.
 
 use super::Memory;
+use super::{Access, ReadWrite};
 use crate::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, Revision, Writer, codec};
 use crate::error::refusal;
 use crate::error::{Error, Result};
@@ -26,7 +27,7 @@ use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-impl Memory<'_> {
+impl<A: Access> Memory<'_, A> {
     /// The memory's profile, `now` items and milestones.
     ///
     /// # Errors
@@ -45,6 +46,24 @@ impl Memory<'_> {
         self.store.memory_file(id)
     }
 
+    /// Profile revision `n`. Reads only.
+    pub fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
+        self.store.profile_revision(n)
+    }
+
+    /// The `now` items and `session`'s pending candidates the session pass
+    /// reads before its model call. Reads only.
+    pub fn context(
+        &self,
+        session: &SessionId,
+    ) -> Result<(Vec<MemoryContext>, Vec<PendingContext>)> {
+        self.store.memory_context(session)
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Memory<'_, ReadWrite> {
     /// One memory write in the write under way: `f` reads the rows and the
     /// files as the open journals leave them and returns what to commit,
     /// which is journaled, and applied to the files once the write commits.
@@ -68,20 +87,6 @@ impl Memory<'_> {
     /// The store's write errors.
     pub fn scrub_copies(&self, journal: &MemoryJournal) -> Result<()> {
         self.store.scrub_copies(journal)
-    }
-
-    /// Profile revision `n`. Reads only.
-    pub fn profile_revision(&self, n: i64) -> Result<ProfileRevision> {
-        self.store.profile_revision(n)
-    }
-
-    /// The `now` items and `session`'s pending candidates the session pass
-    /// reads before its model call. Reads only.
-    pub fn context(
-        &self,
-        session: &SessionId,
-    ) -> Result<(Vec<MemoryContext>, Vec<PendingContext>)> {
-        self.store.memory_context(session)
     }
 }
 

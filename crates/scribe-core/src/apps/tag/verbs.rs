@@ -6,7 +6,7 @@ use super::ConfigReads;
 use super::rules::check_agent_author;
 use super::rules::check_description;
 use crate::record::patch;
-use crate::repository::Tags;
+use crate::repository::{Access, Tags};
 use crate::store::refusal;
 use crate::{
     Author, AuthorKind, AuthorName, Redactor, Result, Store, StoreTag, TagName, TagPatch, TagTable,
@@ -173,7 +173,7 @@ impl TagVerbs for Store {
 
 /// The checks of a new tag, over the tags `tags` reads (a read, or the
 /// write under way).
-fn check_new_tag(store: &Store, tags: Tags<'_>, tag: &StoreTag) -> Result<()> {
+fn check_new_tag<A: Access>(store: &Store, tags: Tags<'_, A>, tag: &StoreTag) -> Result<()> {
     check_description(&tag.description)?;
     let configured = tags.configured()?.tags;
     if let Some(held) = configured.resolve(tag.name.as_str()) {

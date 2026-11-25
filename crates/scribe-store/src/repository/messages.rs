@@ -1,12 +1,13 @@
 //! The message repository: stored session messages and their search.
 
 use super::Messages;
+use super::{Access, ReadWrite};
 use crate::db;
 use crate::error::Result;
 use crate::message::{MessageSearch, NewMessage};
 use crate::{Entry, Proposal, Redactor, SessionId, Store};
 
-impl Messages<'_> {
+impl<A: Access> Messages<'_, A> {
     /// Stored messages matching `tokens`.
     ///
     /// # Errors
@@ -15,7 +16,11 @@ impl Messages<'_> {
     pub fn search(&self, tokens: &[String]) -> Result<MessageSearch> {
         self.store.search_messages(tokens)
     }
+}
 
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Messages<'_, ReadWrite> {
     /// Store `messages`, masked by `redactor`; returns how many rows
     /// changed.
     ///

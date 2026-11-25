@@ -364,6 +364,57 @@ fn an_approval_and_its_audit_line_commit_together() {
     );
 }
 
+/// A record write through a [`Store::write`]'s repositories commits with
+/// the transaction, its audit line beside it, and an `Err` rolls both back;
+/// the `Snapshot`'s repositories only read (their writes do not compile,
+/// see `repository::ReadOnly`).
+#[test]
+fn a_tx_repository_write_and_its_audit_line_commit_or_roll_back_together() {
+    let dir = private_tempdir();
+    let root = dir.path().join("store");
+    let store = seeded(&root);
+    let third = entry("preferences-3", 2, "the release train leaves on Fridays");
+    let line = AuditEvent {
+        at: NOW,
+        command: String::from("entry add"),
+        status: AuditStatus::Success,
+        target: Some(String::from("preferences-3")),
+        error_code: None,
+        author: None,
+        instruction_session: None,
+        instruction_message: None,
+        issue: None,
+        duration_ms: 1,
+    };
+    let lines = |store: &Store| {
+        let (events, _) = store.read().audit().events().unwrap();
+        events.iter().filter(|e| e.at == NOW).count()
+    };
+    let held = |store: &Store| store.read().entries().get(&third.id).is_ok();
+
+    let failed: Result<(), Error> = store.write(|tx| {
+        tx.entries().put(&third, true)?;
+        tx.audit().record(&line)?;
+        assert!(
+            store.read().entries().get(&third.id).is_ok(),
+            "a read inside the write sees its pending row"
+        );
+        Err(Error::corrupt(&root, "a failure after the write"))
+    });
+    assert!(failed.is_err());
+    assert!(!held(&store), "the rolled-back write left no entry");
+    assert_eq!(lines(&store), 0);
+
+    store
+        .write(|tx| {
+            tx.entries().put(&third, true)?;
+            tx.audit().record(&line)
+        })
+        .unwrap();
+    assert!(held(&store));
+    assert_eq!(lines(&store), 1);
+}
+
 /// `store migrate` imports an archive in the write's transaction: a
 /// failure after it rolls back the import and its audit line and keeps
 /// the directory; success commits both and removes the directory.

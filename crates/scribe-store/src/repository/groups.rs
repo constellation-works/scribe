@@ -1,5 +1,6 @@
 //! The group repository: session groups, their seats and their rows.
 
+use super::{Access, ReadWrite};
 use super::{GroupRows, Groups, RowError};
 use crate::LastGroup;
 use crate::error::Result;
@@ -7,7 +8,7 @@ use crate::group::Group;
 use crate::message::MessageSearch;
 use crate::{Project, SessionId};
 
-impl Groups<'_> {
+impl<A: Access> Groups<'_, A> {
     /// Every group, newest first, with seats and their active handoffs.
     ///
     /// # Errors
@@ -35,21 +36,6 @@ impl Groups<'_> {
     /// store's read errors.
     pub fn number(&self, input: &str) -> Result<i64> {
         self.store.group_number(input)
-    }
-
-    /// Run `f` over the group rows in one write step, `action` naming the
-    /// write in a database error (`"join group in"`). Inside a [`Tx`] it is
-    /// part of that write.
-    ///
-    /// # Errors
-    ///
-    /// `f`'s error, and the store's write errors.
-    pub fn rows<T>(
-        &self,
-        action: &'static str,
-        f: impl FnOnce(&GroupRows<'_>) -> Result<T>,
-    ) -> Result<T> {
-        self.store.group_rows(action, f)
     }
 
     /// Run `f` over the group rows in one read; `T::default()` before the
@@ -99,5 +85,24 @@ impl Groups<'_> {
     /// Reads only.
     pub fn search_messages(&self, group: &str, tokens: &[String]) -> Result<MessageSearch> {
         self.store.search_group_messages(group, tokens)
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Groups<'_, ReadWrite> {
+    /// Run `f` over the group rows in one write step, `action` naming the
+    /// write in a database error (`"join group in"`), part of the
+    /// [`Tx`](super::Tx)'s write.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, and the store's write errors.
+    pub fn rows<T>(
+        &self,
+        action: &'static str,
+        f: impl FnOnce(&GroupRows<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.store.group_rows(action, f)
     }
 }

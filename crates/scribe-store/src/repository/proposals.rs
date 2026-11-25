@@ -3,12 +3,13 @@
 
 use super::Proposals;
 use super::ids::resolve;
+use super::{Access, ReadWrite};
 use crate::db::{self, docs};
 use crate::error::Result;
 use crate::error::refusal;
 use crate::{EntryId, Proposal, ProposalId, ProposalKind, Store, WriteRefusal};
 
-impl Proposals<'_> {
+impl<A: Access> Proposals<'_, A> {
     /// The proposal an exact id or a unique prefix of at least four
     /// characters names.
     ///
@@ -54,7 +55,11 @@ impl Proposals<'_> {
     pub fn all(&self) -> Result<Vec<Proposal>> {
         self.store.proposals()
     }
+}
 
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Proposals<'_, ReadWrite> {
     /// Write the proposals that changed against the stored ones.
     ///
     /// # Errors

@@ -15,6 +15,7 @@
 use super::Sessions;
 use super::ids::resolve;
 use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
+use super::{Access, ReadWrite};
 use crate::WriteRefusal;
 use crate::db::MemoryCommit;
 use crate::db::sessions::{self as rows, SessionTx};
@@ -31,7 +32,7 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-impl Sessions<'_> {
+impl<A: Access> Sessions<'_, A> {
     /// Every session scribe knows: records, unreadable rows, numbers,
     /// switches and tombstones.
     ///
@@ -66,6 +67,133 @@ impl Sessions<'_> {
         self.store.checkpoint_of(original)
     }
 
+    /// The session an id, a unique prefix or an `s-<n>` names, also counting
+    /// sessions known only through a handoff.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::SessionNotFound`], `id_ambiguous`, and the store's read
+    /// errors.
+    pub fn resolve_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_handoff(input)
+    }
+
+    /// The ids of the forgotten sessions.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn forgotten_ids(&self) -> Result<Vec<SessionId>> {
+        Ok(crate::db::sessions::read_forgotten(&self.store.root)?
+            .map(|forgotten| forgotten.into_keys().collect())
+            .unwrap_or_default())
+    }
+
+    /// Whether a group seats `id`.
+    ///
+    /// # Errors
+    ///
+    /// The store's errors.
+    pub fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
+        self.store.has_group_membership(id)
+    }
+
+    /// One session's record, its switch and the other records that read ([`Store::session`]).
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn get(&self, id: &SessionId) -> Result<SessionRow> {
+        self.store.session(id)
+    }
+
+    /// Every session's `s-<n>`.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
+        self.store.session_numbers()
+    }
+
+    /// Every switch and Codex cursor.
+    ///
+    /// # Errors
+    ///
+    /// The store's read errors.
+    pub fn control(&self) -> Result<ControlState> {
+        self.store.control()
+    }
+
+    /// The full id of the one session `input` names, or whose id starts with
+    /// it. Reads only.
+    pub fn resolve(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session(input)
+    }
+
+    /// [`Sessions::resolve_or_handoff`], returning an id matching no known
+    /// session as typed. Reads only.
+    pub fn resolve_or_typed(&self, input: &SessionId) -> Result<SessionId> {
+        self.store.resolve_session_or_typed(input)
+    }
+
+    /// [`Sessions::resolve_or_typed`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_or_typed_with(
+        &self,
+        input: &SessionId,
+        extra_ids: &[String],
+    ) -> Result<SessionId> {
+        self.store.resolve_session_or_typed_with(input, extra_ids)
+    }
+
+    /// Every session id the store knows: the universe display prefixes must
+    /// be unique in. Reads only.
+    pub fn ids(&self) -> Result<Vec<String>> {
+        self.store.session_ids()
+    }
+
+    /// `related` with a `session:` id prefix replaced by the full id
+    ///. Reads only.
+    pub fn resolve_related(&self, related: &Related) -> Result<Related> {
+        self.store.resolve_related(related)
+    }
+
+    /// [`Sessions::resolve_related`], also counting `extra_ids` in the
+    /// session id universe. Reads only.
+    pub fn resolve_related_with(&self, related: &Related, extra_ids: &[String]) -> Result<Related> {
+        self.store.resolve_related_with(related, extra_ids)
+    }
+
+    /// [`Sessions::resolve_related`] over a list. Reads only.
+    pub fn resolve_relateds(&self, related: &[Related]) -> Result<Vec<Related>> {
+        self.store.resolve_relateds(related)
+    }
+
+    /// [`Sessions::resolve_related_with`] over a list. Reads only.
+    pub fn resolve_relateds_with(
+        &self,
+        related: &[Related],
+        extra_ids: &[String],
+    ) -> Result<Vec<Related>> {
+        self.store.resolve_relateds_with(related, extra_ids)
+    }
+
+    /// Whether `#scribe forget` erased `id`. Reads only.
+    pub fn is_forgotten(&self, id: &SessionId) -> Result<bool> {
+        crate::db::sessions::read_is_forgotten(&self.store.root, id)
+    }
+
+    /// The file a session record lives in, by the month it started.
+    #[must_use]
+    pub fn path(&self, record: &SessionRecord) -> std::path::PathBuf {
+        self.store.session_path(record)
+    }
+}
+
+/// The writes, on the repository a [`Tx`](super::Tx) gives: a
+/// [`Snapshot`](super::Snapshot)'s cannot write.
+impl Sessions<'_, ReadWrite> {
     /// Keep `record` as its session's rebuild checkpoint; `false` when the
     /// session has no row.
     ///
@@ -138,17 +266,6 @@ impl Sessions<'_> {
         self.store.erase_session(id, number, now, documents)
     }
 
-    /// The session an id, a unique prefix or an `s-<n>` names, also counting
-    /// sessions known only through a handoff.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::SessionNotFound`], `id_ambiguous`, and the store's read
-    /// errors.
-    pub fn resolve_or_handoff(&self, input: &SessionId) -> Result<SessionId> {
-        self.store.resolve_session_or_handoff(input)
-    }
-
     /// Set the session's `field` to `value`; returns how many rows changed,
     /// 0 when the session has no record or was forgotten.
     ///
@@ -162,53 +279,6 @@ impl Sessions<'_> {
         value: &str,
     ) -> Result<usize> {
         self.store.set_session_field(id, field, value)
-    }
-
-    /// The ids of the forgotten sessions.
-    ///
-    /// # Errors
-    ///
-    /// The store's read errors.
-    pub fn forgotten_ids(&self) -> Result<Vec<SessionId>> {
-        Ok(crate::db::sessions::read_forgotten(&self.store.root)?
-            .map(|forgotten| forgotten.into_keys().collect())
-            .unwrap_or_default())
-    }
-
-    /// Whether a group seats `id`.
-    ///
-    /// # Errors
-    ///
-    /// The store's errors.
-    pub fn has_group_membership(&self, id: &SessionId) -> Result<bool> {
-        self.store.has_group_membership(id)
-    }
-
-    /// One session's record, its switch and the other records that read ([`Store::session`]).
-    ///
-    /// # Errors
-    ///
-    /// The store's read errors.
-    pub fn get(&self, id: &SessionId) -> Result<SessionRow> {
-        self.store.session(id)
-    }
-
-    /// Every session's `s-<n>`.
-    ///
-    /// # Errors
-    ///
-    /// The store's read errors.
-    pub fn numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
-        self.store.session_numbers()
-    }
-
-    /// Every switch and Codex cursor.
-    ///
-    /// # Errors
-    ///
-    /// The store's read errors.
-    pub fn control(&self) -> Result<ControlState> {
-        self.store.control()
     }
 
     /// Write `record` whole in the transaction under way.
@@ -250,75 +320,10 @@ impl Sessions<'_> {
         self.store.sessions_tx(|tx| tx.drop_checkpoint(id))
     }
 
-    /// The full id of the one session `input` names, or whose id starts with
-    /// it. Reads only.
-    pub fn resolve(&self, input: &SessionId) -> Result<SessionId> {
-        self.store.resolve_session(input)
-    }
-
-    /// [`Sessions::resolve_or_handoff`], returning an id matching no known
-    /// session as typed. Reads only.
-    pub fn resolve_or_typed(&self, input: &SessionId) -> Result<SessionId> {
-        self.store.resolve_session_or_typed(input)
-    }
-
-    /// [`Sessions::resolve_or_typed`], also counting `extra_ids` in the
-    /// session id universe. Reads only.
-    pub fn resolve_or_typed_with(
-        &self,
-        input: &SessionId,
-        extra_ids: &[String],
-    ) -> Result<SessionId> {
-        self.store.resolve_session_or_typed_with(input, extra_ids)
-    }
-
-    /// Every session id the store knows: the universe display prefixes must
-    /// be unique in. Reads only.
-    pub fn ids(&self) -> Result<Vec<String>> {
-        self.store.session_ids()
-    }
-
-    /// `related` with a `session:` id prefix replaced by the full id
-    ///. Reads only.
-    pub fn resolve_related(&self, related: &Related) -> Result<Related> {
-        self.store.resolve_related(related)
-    }
-
-    /// [`Sessions::resolve_related`], also counting `extra_ids` in the
-    /// session id universe. Reads only.
-    pub fn resolve_related_with(&self, related: &Related, extra_ids: &[String]) -> Result<Related> {
-        self.store.resolve_related_with(related, extra_ids)
-    }
-
-    /// [`Sessions::resolve_related`] over a list. Reads only.
-    pub fn resolve_relateds(&self, related: &[Related]) -> Result<Vec<Related>> {
-        self.store.resolve_relateds(related)
-    }
-
-    /// [`Sessions::resolve_related_with`] over a list. Reads only.
-    pub fn resolve_relateds_with(
-        &self,
-        related: &[Related],
-        extra_ids: &[String],
-    ) -> Result<Vec<Related>> {
-        self.store.resolve_relateds_with(related, extra_ids)
-    }
-
-    /// Whether `#scribe forget` erased `id`. Reads only.
-    pub fn is_forgotten(&self, id: &SessionId) -> Result<bool> {
-        crate::db::sessions::read_is_forgotten(&self.store.root, id)
-    }
-
     /// Change the on/off state in the write under way: `change` gets the
     /// current state, and it is written only when it changed.
     pub fn change_control<T>(&self, change: impl FnOnce(&mut ControlState) -> T) -> Result<T> {
         self.store.change_control(change)
-    }
-
-    /// The file a session record lives in, by the month it started.
-    #[must_use]
-    pub fn path(&self, record: &SessionRecord) -> std::path::PathBuf {
-        self.store.session_path(record)
     }
 }
 

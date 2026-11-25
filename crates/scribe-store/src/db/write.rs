@@ -471,11 +471,18 @@ impl Store {
         Ok(())
     }
 
-    /// [`Audit::record`](crate::repository::Audit::record), in the store's own
-    /// tests' call syntax. Test support: it moves with the tests.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn record_audit(&self, event: &AuditEvent) -> Result<()> {
-        self.read().audit().record(event)
+    /// Record one audit line: the command's audit guard's write
+    /// ([`Audit::record`](crate::repository::Audit::record)). Inside the
+    /// command's write it commits with that write; outside one it is its
+    /// own insert, which waits for no lock. The one audit write a caller
+    /// makes without a [`Tx`](crate::Tx): a [`Snapshot`](crate::Snapshot)'s
+    /// audit repository only reads.
+    ///
+    /// # Errors
+    ///
+    /// As [`Audit::record`](crate::repository::Audit::record).
+    pub fn record_audit(&self, event: &AuditEvent) -> Result<()> {
+        crate::repository::Audit::<crate::repository::ReadWrite>::over(self).record(event)
     }
 
     /// Insert `event` in a transaction of its own that waits for no other
