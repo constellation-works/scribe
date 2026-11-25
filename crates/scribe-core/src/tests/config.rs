@@ -84,6 +84,33 @@ fn a_referent_model_still_loads_with_a_warning_that_it_is_unused() {
 }
 
 #[test]
+fn removal_is_an_instruction_key_that_no_model_table_takes() {
+    // 4_decisions.md "The consistency scan and Stop call no model": the
+    // accepted keys differ per table. `removal` names an instruction text.
+    let kept = r#"
+[models]
+annotation = "x"
+consistency = "y"
+
+[codex.models]
+annotation = "x"
+consistency = "y"
+
+[instructions]
+annotation = "Keep it."
+consistency = "Keep it."
+removal = "Keep it."
+"#;
+    assert!(Config::parse(kept).is_ok());
+    for table in ["models", "codex.models"] {
+        let err = Config::parse(&format!("[{table}]\nremoval = \"x\"\n")).unwrap_err();
+        assert!(err.message.contains("removal"), "{table}: {err}");
+    }
+    let err = Config::parse("[instructions]\nremoval = \" \"\n").unwrap_err();
+    assert!(err.message.contains("removal"), "{err}");
+}
+
+#[test]
 fn an_unknown_key_or_bad_value_is_refused_naming_it() {
     // STD-02 R28: refused at load, never defaulted.
     let err = Config::parse("[models]\nask = \"x\"\nanswer = \"y\"\n").unwrap_err();

@@ -5137,9 +5137,13 @@ goes; `scribe mark list` stays, listing markers with no entry from scribe.
 The scan keeps re-applying approvals, closing retired-tag candidates,
 opening `stale` proposals and deactivating sessions by age; it drops pair
 judging and the `removed` route, and its report drops the nine fields that
-counted them. `[models]`, `[codex.models]` and `[instructions]` keep
-accepting and checking their `annotation`, `consistency` and `removal`
-keys, unused, so existing `config.toml` files still load.
+counted them. `[models]` and `[codex.models]` keep accepting and checking
+their `annotation` and `consistency` keys, which name model ids and are
+unused. `[instructions]` keeps accepting and checking its `annotation`,
+`consistency` and `removal` keys, which name instruction texts and are
+unused. `removal` is no model key: `[models]` and `[codex.models]` refuse
+it as an unknown key, so a config that sets it there fails to load. Existing
+`config.toml` files that set only the accepted keys still load.
 
 ### Consequences
 
