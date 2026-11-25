@@ -170,7 +170,14 @@ pub use apps::search::rules as search;
 pub use runtime::RunLimits;
 pub use runtime::audit::{Audit, AuditMeta, AuditSubject};
 pub use runtime::errors::CommandError;
-pub(crate) use scribe_domain::session;
+/// `session` at its old path: the session shapes and the store's log check
+/// (`scribe_store::session`), the cadence (`config`), and the session
+/// records' rules (`apps/session`).
+pub(crate) mod session {
+    pub use crate::apps::session::rules::sessions::*;
+    pub use crate::config::Cadence;
+    pub use scribe_store::session::*;
+}
 #[cfg(not(test))]
 pub(crate) use scribe_store as store;
 pub use transcript::codex;

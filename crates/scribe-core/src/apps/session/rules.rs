@@ -7,6 +7,8 @@
 //! - [`message`]: the messages a pass keeps from its window;
 //! - [`pass`]: a session pass, from a switched-on session's transcript to
 //!   its distilled record;
+//! - [`sessions`]: the session records' rules: a new link's check, the
+//!   children and tree derived from links, and the cadence's due rule;
 //! - here: the checks of a session write, a hand-set field, an activity
 //!   change by an agent, and a rebuild while a pass owns the session.
 
@@ -14,6 +16,7 @@ pub mod activity;
 pub mod control;
 pub mod message;
 pub mod pass;
+pub mod sessions;
 
 use crate::apps::entry::check_content;
 use crate::apps::tag::check_agent_author;

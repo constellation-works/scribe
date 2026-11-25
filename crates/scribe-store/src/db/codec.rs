@@ -19,13 +19,14 @@
 //!   newer build wrote is refused by version;
 //! - the memory files' codec (`now` items and milestones).
 
+use super::log::check_log;
 use crate::Author;
 use crate::entry::Entry;
 use crate::error::{Error, Result};
 use crate::proposal::Proposal;
 use crate::proposal::{ProposalKind, ProposalState};
 use crate::session::{
-    ControlState, HEADER_SECTIONS, LOG_SECTION, SessionControl, SessionId, SessionRecord, check_log,
+    ControlState, HEADER_SECTIONS, LOG_SECTION, SessionControl, SessionId, SessionRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

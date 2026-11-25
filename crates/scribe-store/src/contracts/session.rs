@@ -1,5 +1,5 @@
-//! Session records, the on/off control state, and the rule that marks a
-//! session pass due.
+//! Session records and the on/off control state. The rule that marks a
+//! session pass due is the session app's (`Cadence::pass_due`).
 //!
 //! A session record is one file, `sessions/<yyyy>/<mm>/<id>.md`: YAML
 //! frontmatter, a **header** of three Markdown sections (`## Summary`,
@@ -18,17 +18,17 @@
 //! A record's `links` say how the session relates to other sessions
 //! (`spawned_from`, `continues`), as Daniel asserted them with
 //! `/scribe on --from` or `/scribe link`. A link is stored once, on the
-//! child; a parent's children are derived at read time ([`children`]) and
-//! the parent record is never rewritten for them. [`check_link`] refuses an
-//! unknown target, a self-link and a cycle.
+//! child; a parent's children are derived at read time (the session app's
+//! `children`) and the parent record is never rewritten for them. Its
+//! `check_link` refuses an unknown target, a self-link and a cycle.
 
 use crate::record::{Author, DateRange, Label, Listing, Project, Related, Topic, Topics, nullable};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::str::FromStr;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 /// The longest `active_change.reason`, in characters.
 pub const REASON_CHARS: usize = 300;
@@ -363,73 +363,6 @@ pub struct Segment {
     pub text: String,
 }
 
-/// Why a record's log is malformed. The store reports it as
-/// `store_corrupt`, naming the file.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LogError {
-    /// Segment numbers are not 1, 2, 3, … in order.
-    #[error("log item {index} has n {found}; segments are numbered from 1 without gaps")]
-    Numbering {
-        /// The position, from 1.
-        index: usize,
-        /// The number found.
-        found: u32,
-    },
-    /// A segment other than the last is open, or a final record has one.
-    #[error("segment {0} is open; only the last segment of an open record may be open")]
-    Open(u32),
-    /// A heading is empty, too long or more than one line.
-    #[error("segment {0}'s heading must be one line of 1-{max} characters", max = SEGMENT_HEADING_CHARS)]
-    Heading(u32),
-    /// A segment not written by the upgrade has no message range.
-    #[error("segment {0} has no first_message or last_message; only an upgraded segment may")]
-    Messages(u32),
-    /// `active_change.reason` is over its budget.
-    #[error("active_change.reason has {0} characters; the limit is {max}", max = REASON_CHARS)]
-    Reason(usize),
-}
-
-/// Check a record's log and activity metadata: segments numbered from 1
-/// without gaps, only the last one open and none when `final`, headings one
-/// line of at most [`SEGMENT_HEADING_CHARS`], message ids present unless
-/// the segment came from the upgrade, and the change reason within budget.
-///
-/// # Errors
-///
-/// The first rule broken.
-pub fn check_log(record: &SessionRecord) -> Result<(), LogError> {
-    let last = record.log.len();
-    for (i, segment) in record.log.iter().enumerate() {
-        let n = segment.n.get();
-        if usize::try_from(n).ok() != Some(i + 1) {
-            return Err(LogError::Numbering {
-                index: i + 1,
-                found: n,
-            });
-        }
-        let open_allowed = i + 1 == last && record.status == SessionStatus::Open;
-        if segment.state == SegmentState::Open && !open_allowed {
-            return Err(LogError::Open(n));
-        }
-        let chars = segment.heading.chars().count();
-        if chars == 0 || chars > SEGMENT_HEADING_CHARS || segment.heading.contains('\n') {
-            return Err(LogError::Heading(n));
-        }
-        if segment.origin != SegmentOrigin::Upgrade
-            && (segment.first_message.is_none() || segment.last_message.is_none())
-        {
-            return Err(LogError::Messages(n));
-        }
-    }
-    if let Some(change) = &record.active_change {
-        let chars = change.reason.chars().count();
-        if chars > REASON_CHARS {
-            return Err(LogError::Reason(chars));
-        }
-    }
-    Ok(())
-}
-
 /// A phrase Daniel coined or defined in a session, kept in his exact words
 /// so `ask` can find where he said it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -530,137 +463,6 @@ impl LinkError {
             Self::NotCataloged => "link_session_off",
         }
     }
-}
-
-/// Whether `link` may be added to `child`'s links. `known` holds every
-/// session scribe knows (a record or a switch); `graph` every session's
-/// links, recorded or pending. `Ok(false)` means the link is already there
-/// and nothing changes; `Ok(true)` that it is new and valid.
-///
-/// # Errors
-///
-/// The target is `child` itself, unknown, would close a cycle (following
-/// links of either type from the target reaches `child`), or `child`
-/// already has another `spawned_from` parent.
-pub fn check_link(
-    child: &SessionId,
-    link: &SessionLink,
-    known: &BTreeSet<SessionId>,
-    graph: &BTreeMap<SessionId, Vec<SessionLink>>,
-) -> Result<bool, LinkError> {
-    if &link.session == child {
-        return Err(LinkError::SelfLink);
-    }
-    if !known.contains(&link.session) {
-        return Err(LinkError::UnknownSession(link.session.clone()));
-    }
-    let own = graph.get(child).map_or(&[][..], Vec::as_slice);
-    if own.contains(link) {
-        return Ok(false);
-    }
-    if link.kind == LinkType::SpawnedFrom
-        && let Some(parent) = own.iter().find(|l| l.kind == LinkType::SpawnedFrom)
-    {
-        return Err(LinkError::Conflict(parent.session.clone()));
-    }
-    // Walk every link out of the target; reaching the child is a loop.
-    let mut seen: BTreeSet<&SessionId> = BTreeSet::new();
-    let mut stack = vec![&link.session];
-    while let Some(at) = stack.pop() {
-        if at == child {
-            return Err(LinkError::Cycle(link.session.clone()));
-        }
-        if seen.insert(at) {
-            stack.extend(graph.get(at).into_iter().flatten().map(|l| &l.session));
-        }
-    }
-    Ok(true)
-}
-
-/// A session that links to another one, seen from the one it links to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Child {
-    /// How the child relates to this session.
-    pub kind: LinkType,
-    /// The child session.
-    pub session: SessionId,
-    /// The child's record title.
-    pub title: String,
-}
-
-/// Every session's children, derived from the records' links: for each
-/// linked-to id, the records that link to it, oldest first (by `started`,
-/// then id). A session with no children has no key.
-#[must_use]
-pub fn children(records: &[SessionRecord]) -> BTreeMap<SessionId, Vec<Child>> {
-    let mut sorted: Vec<&SessionRecord> = records.iter().collect();
-    sorted.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.id.cmp(&b.id)));
-    let mut out: BTreeMap<SessionId, Vec<Child>> = BTreeMap::new();
-    for record in sorted {
-        for link in &record.links {
-            out.entry(link.session.clone()).or_default().push(Child {
-                kind: link.kind,
-                session: record.id.clone(),
-                title: record.title.clone(),
-            });
-        }
-    }
-    out
-}
-
-/// The session a record nests under in a tree: its `spawned_from` parent,
-/// else the first session it `continues`.
-#[must_use]
-pub fn tree_parent(record: &SessionRecord) -> Option<&SessionId> {
-    record
-        .links
-        .iter()
-        .find(|l| l.kind == LinkType::SpawnedFrom)
-        .or_else(|| record.links.first())
-        .map(|l| &l.session)
-}
-
-/// `records` in tree order with each one's depth: every root (a record
-/// whose tree parent is not among `records`) in the given order, each
-/// followed depth-first by the records nested under it, in the given order.
-/// Every record appears exactly once; links never form a cycle, and a
-/// record reached twice is not repeated.
-#[must_use]
-pub fn tree_order(records: &[SessionRecord]) -> Vec<(usize, usize)> {
-    let index: BTreeMap<&SessionId, usize> = records
-        .iter()
-        .enumerate()
-        .map(|(i, r)| (&r.id, i))
-        .collect();
-    let mut nested: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    let mut roots = Vec::new();
-    for (i, record) in records.iter().enumerate() {
-        match tree_parent(record).and_then(|p| index.get(p)) {
-            Some(&parent) if parent != i => nested.entry(parent).or_default().push(i),
-            Some(_) | None => roots.push(i),
-        }
-    }
-    let mut out = Vec::with_capacity(records.len());
-    let mut placed = vec![false; records.len()];
-    let mut stack: Vec<(usize, usize)> = roots.into_iter().rev().map(|i| (0, i)).collect();
-    loop {
-        while let Some((depth, i)) = stack.pop() {
-            if std::mem::replace(&mut placed[i], true) {
-                continue;
-            }
-            out.push((depth, i));
-            if let Some(kids) = nested.get(&i) {
-                stack.extend(kids.iter().rev().map(|&k| (depth + 1, k)));
-            }
-        }
-        // A loop with no root (only hand-edited files can make one) still
-        // lists each of its records once, as roots.
-        match placed.iter().position(|p| !p) {
-            Some(i) => stack.push((0, i)),
-            None => break,
-        }
-    }
-    out
 }
 
 /// A stored session record.
@@ -865,45 +667,6 @@ impl ControlState {
     #[must_use]
     pub fn get(&self, id: &SessionId) -> Option<&SessionControl> {
         self.sessions.get(id)
-    }
-}
-
-/// How often an opted-in session gets a pass: `[catalog]` in `config.toml`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Cadence {
-    /// Minutes since the last pass.
-    pub every_minutes: NonZeroU32,
-    /// User turns since the last pass.
-    pub every_turns: NonZeroU32,
-}
-
-impl Default for Cadence {
-    fn default() -> Self {
-        Self {
-            every_minutes: NonZeroU32::new(20).unwrap_or(NonZeroU32::MIN),
-            every_turns: NonZeroU32::new(10).unwrap_or(NonZeroU32::MIN),
-        }
-    }
-}
-
-impl Cadence {
-    /// The due rule the `Stop` hook applies after each reply: a session that
-    /// is on needs a pass once `every_minutes` have passed since
-    /// `last_pass`, or `every_turns` user turns have arrived since it. A
-    /// session that is off is never due; one already due stays due.
-    #[must_use]
-    pub fn pass_due(
-        &self,
-        control: &SessionControl,
-        last_pass: OffsetDateTime,
-        now: OffsetDateTime,
-        turns_since: u32,
-    ) -> bool {
-        if !control.on {
-            return false;
-        }
-        let waited = now - last_pass >= Duration::minutes(i64::from(self.every_minutes.get()));
-        control.due || waited || turns_since >= self.every_turns.get()
     }
 }
 

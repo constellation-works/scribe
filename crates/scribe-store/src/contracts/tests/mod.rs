@@ -5,6 +5,7 @@ mod entry;
 mod mark;
 mod memory;
 mod proposal;
+mod session;
 mod tag;
 
-pub(crate) use crate::fixtures::{T0, entry};
+pub(crate) use crate::fixtures::{T0, entry, session};

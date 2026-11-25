@@ -5,7 +5,7 @@
 //! says whether the session has ended, `active` whether its content still
 //! describes something current. An inactive session is hidden, not removed.
 //! The persisted shapes of the last change of `active` or `keep_active` and
-//! of a catalog marker live on the record ([`crate::session`]) and are
+//! of a catalog marker live on the record ([`scribe_store::session`]) and are
 //! re-exported here; this module holds (S10) the change itself:
 //! [`set_active`] applies a `manual`, `age` or `removed` route to a loaded
 //! record, and [`past_age`] says which sessions the `age` route takes.

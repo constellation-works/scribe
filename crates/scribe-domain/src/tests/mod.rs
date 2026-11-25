@@ -4,6 +4,3 @@
 //! `store/tests/`.
 
 mod record;
-mod session;
-
-pub(crate) use crate::fixtures::{T0, session};

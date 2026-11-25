@@ -23,10 +23,11 @@
 //! The functions take a connection or a transaction the caller opened; the
 //! store holds its lock around every write.
 
+use super::log::check_log;
 use super::memory::read;
 use super::{DB_FILE, Fallible, db_error, optimize_fts, stamp};
 use crate::error::{Error, Result};
-use crate::session::{ControlState, SessionControl, SessionId, SessionRecord, check_log};
+use crate::session::{ControlState, SessionControl, SessionId, SessionRecord};
 use rusqlite::types::Value as Sql;
 use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value};
