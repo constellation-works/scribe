@@ -85,9 +85,9 @@ pub(crate) enum Command {
     /// Ranks entries, session headers and segments for words, best first, with no model call.
     #[command(after_help = search::SEARCH_EXAMPLES)]
     Search(search::SearchArgs),
-    /// Propose superseding or retiring entries via scan
+    /// Propose retiring entries due for review and deactivate stale sessions
     ///
-    /// Proposes superseding or retiring entries a later one replaced or that are due for review, and deactivates stale or removed-feature sessions via scan.
+    /// Proposes retiring entries due for review and deactivates sessions past the age limit, with no model call.
     #[command(subcommand, after_help = consistency::CONSISTENCY_EXAMPLES)]
     Consistency(ConsistencyCommand),
     /// Import the file store's archives into scribe.db

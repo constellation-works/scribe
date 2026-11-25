@@ -19,7 +19,7 @@ Find:
   transcript   List uncataloged provider transcripts and show one, writing nothing
 
 Upkeep:
-  consistency  Propose superseding or retiring entries via scan
+  consistency  Propose retiring entries due for review and deactivate stale sessions
   mark         List the #scribe markers not cataloged yet and retry them
   store        Import the file store's archives into scribe.db
   export       Write every session to a directory as Markdown or JSONL
