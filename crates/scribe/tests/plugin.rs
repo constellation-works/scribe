@@ -40,6 +40,9 @@ impl Setup {
         let mut cmd = self.fx.cmd(&["plugin", "call"]);
         cmd.env_remove("SCRIBE_ROOT")
             .env("PATH", &self.path)
+            // The fixture's config.toml names GITHUB_TOKEN under [redact] env;
+            // memory-refresh-apply builds the redactor and refuses
+            // (redact_env_unset) when a configured name has no value.
             .env("GITHUB_TOKEN", "ghp_testtoken1234567890")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

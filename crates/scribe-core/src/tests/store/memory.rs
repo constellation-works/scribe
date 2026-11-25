@@ -247,11 +247,16 @@ fn apply_at(
     allow_retry: bool,
     now: OffsetDateTime,
 ) -> std::result::Result<ApplyRefreshOutcome, MemoryError<crate::runtime::errors::CommandError>> {
-    let host = Context::at(store.root().to_path_buf(), None);
-    let mut ctx = host.core();
-    let clock = FixedClock(now);
-    ctx.clock = &clock;
-    let request = ApplyRefreshRequest {
+    apply_request(store, request_for(prepared, answer, allow_retry), now)
+}
+
+/// The apply request a job builds from `prepared`, unchanged.
+fn request_for(
+    prepared: &PreparedRefresh,
+    answer: ProfileAnswer,
+    allow_retry: bool,
+) -> ApplyRefreshRequest {
+    ApplyRefreshRequest {
         basis: prepared.basis.clone().expect("basis present"),
         cursor_to: prepared.cursor_to.clone(),
         session_ids: prepared.session_ids.clone(),
@@ -259,7 +264,18 @@ fn apply_at(
         passed_stems: prepared.passed_stems.clone(),
         answer,
         allow_retry,
-    };
+    }
+}
+
+fn apply_request(
+    store: &Store,
+    request: ApplyRefreshRequest,
+    now: OffsetDateTime,
+) -> std::result::Result<ApplyRefreshOutcome, MemoryError<crate::runtime::errors::CommandError>> {
+    let host = Context::at(store.root().to_path_buf(), None);
+    let mut ctx = host.core();
+    let clock = FixedClock(now);
+    ctx.clock = &clock;
     let MemoryOutcome::Applied(outcome) = crate::apps::memory::run(
         &ctx,
         MemoryCommand::Apply {
@@ -539,6 +555,145 @@ fn a_passed_now_item_becomes_a_milestone_or_history_after_fourteen_days() {
     assert_eq!(view.milestones[0].sources, std::slice::from_ref(&r.id));
 }
 
+fn refused_code(
+    result: std::result::Result<
+        ApplyRefreshOutcome,
+        MemoryError<crate::runtime::errors::CommandError>,
+    >,
+) -> &'static str {
+    match result {
+        Err(MemoryError::Core(err)) => err.code(),
+        other => panic!("expected a core refusal, got {other:?}"),
+    }
+}
+
+/// `apply` recomputes what `prepare` covers under the write lock: a request
+/// naming a current `now` item as passed is refused, even with
+/// `allow_retry`, and nothing is written.
+#[test]
+fn an_apply_naming_a_current_now_item_as_passed_is_refused() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    let redactor = Redactor::default();
+    let r = record(1, T0);
+    let window = pass(
+        vec![
+            draft("Release ships", Some(date!(2026 - 11 - 05))),
+            draft("Sister's wedding", Some(date!(2026 - 12 - 12))),
+        ],
+        false,
+    );
+    store.write_pass_memory(&window, &redactor, &r).unwrap();
+    let now = T0 + Duration::days(25);
+    let prepared = prepare_at(&store, now);
+    let current = store
+        .memory_view()
+        .unwrap()
+        .now
+        .into_iter()
+        .find(|n| n.stem.as_str() == "2026-12-12-sister-s-wedding")
+        .unwrap()
+        .stem;
+    let mut forged = request_for(&prepared, answer(profile::template()), true);
+    forged.passed_stems.push(current);
+    assert_eq!(
+        refused_code(apply_request(&store, forged, now)),
+        "memory_changed"
+    );
+    let view = store.memory_view().unwrap();
+    assert_eq!(view.now.len(), 2, "nothing was removed");
+    assert_eq!(
+        prepare_at(&store, now).passed_stems,
+        prepared.passed_stems,
+        "the passed item is still due"
+    );
+    // The request as prepared still commits.
+    assert!(matches!(
+        apply_at(&store, &prepared, answer(profile::template()), false, now).unwrap(),
+        ApplyRefreshOutcome::Written(_)
+    ));
+}
+
+/// A forged `cursor_to` or `session_ids` is refused: the cursor cannot move
+/// into the future or past a session the request did not read, and every id
+/// must be a session after the cursor.
+#[test]
+fn an_apply_with_a_forged_cursor_or_session_ids_is_refused() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path().join("store"));
+    sessions(&store, 3, T0);
+    let now = T0 + Duration::days(10);
+    let prepared = prepare_at(&store, now);
+    assert_eq!(prepared.session_ids.len(), 3);
+    let built = with_section(&profile::template(), "Projects", "- scribe.");
+    let first = id(1).to_string();
+    let forge = |edit: &dyn Fn(&mut ApplyRefreshRequest)| {
+        let mut request = request_for(&prepared, answer(built.clone()), false);
+        edit(&mut request);
+        refused_code(apply_request(&store, request, now))
+    };
+    // A future cursor would skip every later session for good.
+    assert_eq!(
+        forge(&|r| r.cursor_to.as_mut().unwrap().at = now + Duration::days(365)),
+        "memory_changed"
+    );
+    // A cursor past a session the request did not read.
+    assert_eq!(
+        forge(&|r| r.session_ids.retain(|s| *s != first)),
+        "memory_changed"
+    );
+    // A session id that is not a session after the cursor.
+    assert_eq!(
+        forge(&|r| r.session_ids.push(id(9).to_string())),
+        "memory_changed"
+    );
+    // Session ids without a cursor.
+    assert_eq!(forge(&|r| r.cursor_to = None), "memory_changed");
+    // The request as prepared commits, and its backlog is recomputed.
+    let ApplyRefreshOutcome::Written(written) =
+        apply_at(&store, &prepared, answer(built.clone()), false, now).unwrap()
+    else {
+        panic!("expected written");
+    };
+    assert_eq!((written.sessions, written.backlog), (3, 0));
+    assert!(prepare_at(&store, now).nothing_new);
+}
+
+/// `memory refresh` hands a model rebuild to Orbit with an error, but the
+/// format-24 archive its prepare made stays committed (it is stepwise).
+#[test]
+fn a_refresh_that_needs_orbit_keeps_its_format_twenty_four_archive() {
+    let dir = private_tempdir();
+    let store = seed(&dir.path().join("store"), &Seed::default());
+    sessions(&store, 1, T0);
+    let mem = store.root().join("memory");
+    fs::create_dir_all(&mem).unwrap();
+    let path = mem.join("m-1.md");
+    fs::write(&path, LEGACY).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(store.root(), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&mem, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let host = Context::at(store.root().to_path_buf(), None);
+    let err = crate::apps::memory::exec(&host, MemoryCommand::Refresh)
+        .err()
+        .expect("a new session needs a model run");
+    assert!(err.to_string().contains("scribe-memory-refresh"), "{err}");
+    assert!(!path.exists(), "the archive stays");
+    let archived: i64 = rusqlite::Connection::open(store.root().join(db::DB_FILE))
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM archive_records WHERE path = 'memory/m-1.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, 1);
+}
+
 const LEGACY: &str = "---\nformat: 24\nkind: memory\nid: m-1\nsection: now\nstatus: active\n\
      statement: Said the release ships on 2026-12-01.\n\
      occurrences: [{n: 1, session: 0b8ef4a6-0c6a-4d77-9c41-000000000001, quote: \"the release ships on december 1\"}]\n---\n";
@@ -599,4 +754,32 @@ fn format_twenty_four_items_are_counted_then_archived_by_the_next_write() {
         0,
         "forget erases it"
     );
+}
+
+/// `prepare` bounds what goes to the model as the in-process prompt did
+/// (STD-08 R1): the profile to `PROFILE_CHARS`.
+#[test]
+fn prepare_bounds_the_profile_it_hands_the_model() {
+    let dir = private_tempdir();
+    let store = seed(&dir.path().join("store"), &Seed::default());
+    sessions(&store, 1, T0);
+    let now = T0 + Duration::days(10);
+    let built = with_section(&profile::template(), "Projects", "- scribe.");
+    let ApplyRefreshOutcome::Written(_) = apply_at(
+        &store,
+        &prepare_at(&store, now),
+        answer(built.clone()),
+        false,
+        now,
+    )
+    .unwrap() else {
+        panic!("expected written");
+    };
+    // The user pastes a long block by hand.
+    let long = with_section(&built, "Goals", &"x".repeat(crate::models::PROFILE_CHARS));
+    let file = store.root().join("memory/profile.md");
+    fs::write(&file, &long).unwrap();
+    let inputs = prepare_at(&store, now).inputs.unwrap();
+    let cut: String = long.chars().take(crate::models::PROFILE_CHARS).collect();
+    assert_eq!(inputs.profile, format!("{cut}{}", crate::models::CUT_MARK));
 }
