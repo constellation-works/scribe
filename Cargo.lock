@@ -398,7 +398,6 @@ dependencies = [
  "rusqlite",
  "rustix",
  "scribe-core",
- "scribe-domain",
  "scribe-store",
  "scribe-tools",
  "serde",
@@ -411,22 +410,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "scribe-domain"
-version = "0.3.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
- "time",
-]
-
-[[package]]
 name = "scribe-store"
 version = "0.3.0"
 dependencies = [
  "rusqlite",
  "rustix",
- "scribe-domain",
  "serde",
  "serde_json",
  "sha2",
@@ -442,7 +430,6 @@ name = "scribe-tools"
 version = "0.3.0"
 dependencies = [
  "rustix",
- "scribe-domain",
  "scribe-store",
  "serde",
  "serde_json",

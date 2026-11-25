@@ -86,7 +86,7 @@ impl Store {
     }
 
     /// The stored messages matching any of `tokens` (ranking tokens, as
-    /// [`scribe_domain::text::tokens`] gives them) as a word prefix, best FTS5
+    /// `scribe-tools`'s `text::tokens` gives them) as a word prefix, best FTS5
     /// `bm25()` first. Read-only: no lock, no write (STD-01 R31). A missing
     /// root or database matches nothing.
     ///

@@ -5,6 +5,8 @@
 //! - The checks of an agent-channel write that every app's writes share
 //!   ([`check_agent_author`]; the tag app is its lowest user), and of a store
 //!   tag write (`scribe tag add`, `scribe tag update`).
+//! - [`patch`], the add-and-remove edit of a list field that `tag update`
+//!   and `entry update` both apply; the tag app is its lowest user.
 
 pub mod tags;
 
@@ -75,4 +77,14 @@ pub fn check_description(description: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Remove `remove` from `items`, then append each of `add` not already there.
+pub fn patch<T: Clone + PartialEq>(items: &mut Vec<T>, add: &[T], remove: &[T]) {
+    items.retain(|item| !remove.contains(item));
+    for item in add {
+        if !items.contains(item) {
+            items.push(item.clone());
+        }
+    }
 }

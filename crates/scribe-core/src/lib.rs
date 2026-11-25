@@ -138,7 +138,7 @@ pub mod message {
     pub use crate::apps::session::rules::message::window;
     pub use scribe_store::{MessageMatch, MessageSearch, NewMessage};
 }
-/// The model request and answer shapes (`scribe-domain`), with the
+/// The model request and answer shapes (`providers/models.rs`), with the
 /// [`Models`] port and its [`ModelError`](providers::ModelError) from
 /// [`providers`] at their old paths.
 pub mod models {
@@ -162,8 +162,13 @@ pub(crate) mod proposal {
         ProposalError, ProposalId, ProposalKind, ProposalState, Quote, SUBJECT_CHARS,
     };
 }
-pub(crate) use scribe_domain::provider;
-pub(crate) use scribe_domain::record;
+pub(crate) use scribe_store::provider;
+/// `record` at its old path: the shared record metadata (the store's
+/// contracts) and the list patch (`apps/tag`).
+pub(crate) mod record {
+    pub use crate::apps::tag::rules::patch;
+    pub use scribe_store::record::*;
+}
 pub mod providers;
 pub(crate) mod runtime;
 pub use apps::search::rules as search;

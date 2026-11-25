@@ -1,8 +1,9 @@
 //! Persistence: the scribe store (`scribe.db` and the memory files) and
 //! everything that touches disk.
 //!
-//! The business logic is in `scribe-domain`, with no I/O (`entry`, `tag`,
-//! `session`, `proposal`, `verbatim`); this crate is the only one
+//! The record shapes are this crate's `contracts/` (`entry`, `tag`,
+//! `session`, `proposal`, `record`, …), with no I/O, and the rules over
+//! them are scribe-core's apps; this crate is the only one
 //! that reads or writes the data root, so a second backend replaces this
 //! crate and nothing else. `scribe-core` re-exports it as its `store`
 //! module. It is split by responsibility:
@@ -63,7 +64,8 @@
 mod contracts;
 // The entry and handoff shapes, as modules: callers name them by path
 // (`scribe_store::entry::Entry`, `scribe_store::handoff::MAX_CHARS`).
-pub use contracts::{entry, handoff};
+pub use contracts::{entry, handoff, provider, record};
+pub use provider::Provider;
 /// The session shapes (the store's contracts) and the log check the store
 /// applies to every record it reads or writes (`db/log.rs`), at one path:
 /// `scribe_store::session::SessionRecord`, `scribe_store::session::check_log`.
@@ -134,11 +136,10 @@ use repository::audit;
 use crate as store;
 use crate::entry::{ContentFrom, EntryStatus, Instruction, Speaker};
 use crate::entry::{Entry, EntryFilter, EntryId};
+use crate::record::{Author, AuthorKind, Label, Project, Related, RelatedKind};
 use crate::session::{
     ControlState, LinkType, SessionError, SessionId, SessionRecord, SessionStatus,
 };
-use scribe_domain::record;
-use scribe_domain::{Author, AuthorKind, Label, Project, Provider, Related, RelatedKind};
 // The domain names the redaction tests (`tests/redact.rs`) and their
 // shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
 // in the domain.
@@ -148,10 +149,10 @@ use crate::entry::{AnswerIn, Decision, ItemAnswer, ItemClosure, OpenItem, Outcom
 use crate::entry::{Window, WindowTurn};
 // The session tests (`contracts/tests/session.rs`) name it at the root, as
 // they did in the domain.
+#[cfg(any(test, feature = "test-support"))]
+use crate::record::AuthorName;
 #[cfg(test)]
 use crate::session::ShortIds;
-#[cfg(any(test, feature = "test-support"))]
-use scribe_domain::AuthorName;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
