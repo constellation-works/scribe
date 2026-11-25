@@ -54,9 +54,9 @@ pub struct SearchQuery {
     pub terms: String,
     /// Only this kind of record.
     pub kind: Option<RecordKind>,
-    /// Only entries filed under this tag, by its exact name as `entry list`
-    /// matches it. Sessions and messages carry no tag, so a set tag keeps
-    /// none of them.
+    /// Only entries filed under this tag; the search app resolves its name
+    /// or alias before ranking. Sessions and messages carry no tag, so a
+    /// set tag keeps none of them.
     pub tag: Option<TagName>,
     /// Only records of this project.
     pub project: Option<Project>,

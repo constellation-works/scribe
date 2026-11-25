@@ -1530,9 +1530,19 @@ fn entries_under_decisions_in_a_store_without_that_tag_stay_readable_and_settlea
     assert_eq!(row["entries"], 2, "{row}");
     assert_eq!(row["configured"], false, "{row}");
 
-    let list = fx.ok(&["entry", "list", "--tag", "decisions", "--json"]);
+    // `decisions` now resolves to the shipped `decision` tag. List without a
+    // tag to verify the historical entries remain readable under their
+    // original stored tag.
+    let list = fx.ok(&["entry", "list", "--json"]);
     let list: Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(list["total"], 2, "{list}");
+    let listed: Vec<&str> = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap())
+        .collect();
+    assert!(listed.contains(&"decisions-1"), "{listed:?}");
+    assert!(listed.contains(&"decisions-2"), "{listed:?}");
     let shown = fx.ok(&["entry", "show", "decisions-2", "--json"]);
     let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert!(

@@ -109,10 +109,7 @@ fn every_filter_selects_what_it_names() {
             .map(|r| r["id"].as_str().unwrap().to_owned())
             .collect()
     };
-    assert_eq!(
-        ids(&["entry", "list", "--tag", "decisions"]),
-        ["decisions-1", "decisions-2"]
-    );
+    assert_eq!(ids(&["entry", "list", "--tag", "rituals"]), ["rituals-1"]);
     assert_eq!(
         ids(&["entry", "list", "--status", "active"]),
         ["preferences-1", "decisions-2"]
@@ -124,16 +121,9 @@ fn every_filter_selects_what_it_names() {
     );
     assert_eq!(
         ids(&[
-            "entry",
-            "list",
-            "--tag",
-            "decisions",
-            "--topic",
-            "merge-policy",
-            "--status",
-            "superseded"
+            "entry", "list", "--tag", "rituals", "--topic", "ci", "--status", "retired"
         ]),
-        ["decisions-1"]
+        ["rituals-1"]
     );
     assert_eq!(
         ids(&["session", "list", "--topic", "design"]),
