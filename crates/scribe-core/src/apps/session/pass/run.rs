@@ -6,19 +6,17 @@ use crate::models::PassMessage;
 mod workflow;
 
 pub use workflow::{
-    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, FailInput, PASS_START_BY_SECONDS,
+    ActivityAnswer, ApplyInput, CatalogSelection, ApplyOutput, ApplyStatus, FailInput, PASS_START_BY_SECONDS,
     PrepareInput, Prepared, SessionPassInput,
 };
-pub(crate) use workflow::{apply, fail, prepare, settle_only};
+pub(crate) use workflow::{apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only};
 
-use crate::apps::tag::ConfigReads;
 use crate::control;
 use crate::models::SessionRequest;
-use crate::runtime::audit::PersistedAudit;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::{
-    Config, Label, Models, Project, Provider, Redactor, SessionControl, SessionFilter, SessionId,
+    Config, Label, Project, Provider, Redactor, SessionControl, SessionId,
     SessionRecord, memory, pass, transcript,
 };
 use serde::Serialize;
@@ -52,24 +50,6 @@ impl<E> From<crate::Error> for PassRunError<E> {
     fn from(err: crate::Error) -> Self {
         Self::Core(err)
     }
-}
-
-/// Why a catalog's windows did not run: a store error or a port's refusal.
-#[derive(Debug)]
-pub(crate) enum RunFailure<E> {
-    Core(crate::Error),
-    Port(E),
-}
-
-/// One cataloged session's run, after `session catalog` began it.
-pub(crate) struct CatalogJob<'a> {
-    pub(crate) provider: Provider,
-    pub(crate) host: &'a Label,
-    pub(crate) id: &'a SessionId,
-    pub(crate) switch: &'a SessionControl,
-    pub(crate) project: Project,
-    pub(crate) ended: bool,
-    pub(crate) author: &'a str,
 }
 
 /// What a session pass did for one session.
@@ -148,100 +128,6 @@ pub struct PassReport {
     pub memory_targets: Vec<String>,
 }
 
-/// Run one `session catalog` after its switch is written. No deadline and
-/// no five-session cap. `project` is used only when the session has no
-/// record yet. `ended` marks the last window final and turns the switch off.
-pub(crate) fn run_catalog<E: PortError, M: Models>(
-    ctx: &Ctx<'_, E>,
-    models: impl FnOnce(&Config) -> M,
-    caught: CatalogJob<'_>,
-) -> Result<PassReport, RunFailure<E>> {
-    let CatalogJob {
-        provider,
-        host,
-        id,
-        switch,
-        project,
-        ended,
-        author,
-    } = caught;
-    let store = ctx.store;
-    let config = store
-        .read()
-        .tags()
-        .config()
-        .map_err(RunFailure::Core)?
-        .for_provider(provider);
-    let redactor = ctx.redaction.redactor(&config).map_err(RunFailure::Port)?;
-    let found = crate::apps::session::list_sessions(
-        &store.read(),
-        &SessionFilter {
-            include_inactive: true,
-            ..Default::default()
-        },
-        None,
-    )
-    .map_err(RunFailure::Core)?;
-    let known = Known::new(&found.listing.items);
-    let corrupt: Vec<(String, String)> = found
-        .skipped
-        .iter()
-        .filter_map(|s| {
-            Some((
-                s.path.file_stem()?.to_str()?.to_owned(),
-                s.error.to_string(),
-            ))
-        })
-        .collect();
-    let adapter = models(&config);
-    let mut persisted =
-        PersistedAudit::new(store, CATALOG_COMMAND, ctx.clock.now()).with_author(author);
-    let mut job = Job {
-        ctx,
-        provider,
-        host,
-        config: &config,
-        redactor: &redactor,
-        id,
-        switch,
-        candidate_slots: pass::MAX_CANDIDATES,
-        write_slots: pass::MAX_COLLECTED,
-        memory: MemoryTally::default(),
-        windows: 0,
-        segments_sealed: 0,
-        segments: None,
-        dropped_terms: 0,
-        warnings: Vec::new(),
-        check_switch: false,
-        catalog: Some(CatalogRun { project, ended }),
-        persisted_targets: Vec::new(),
-    };
-    let result = if let Some((_, reason)) = corrupt.iter().find(|(stem, _)| stem == id.as_str()) {
-        Err(PassError::new("store_corrupt", reason.clone()))
-    } else {
-        let previous = found.listing.items.iter().find(|r| &r.id == id);
-        job.run(previous.cloned(), &known, &adapter)
-    };
-    // Record any persisted closures before `job.failed` can return `Err` and
-    // bypass `Output::Pass`.
-    persisted.extend(job.persisted_targets.iter().cloned());
-    persisted.extend(job.memory.targets.iter().cloned());
-    let passes = vec![match result {
-        Ok(done) => done,
-        Err(failure) => job.failed(failure).map_err(RunFailure::Core)?,
-    }];
-    persisted.disarm();
-    Ok(PassReport {
-        passes,
-        remaining: 0,
-        notices: Vec::new(),
-        catalog: true,
-        switch_written: false,
-        persisted_targets: job.persisted_targets,
-        memory_targets: job.memory.targets,
-    })
-}
-
 /// The store's topics and terms, offered to the model for reuse, and its
 /// records, for a linked session's context.
 struct Known<'a> {
@@ -304,9 +190,11 @@ struct Job<'a, E> {
     dropped_terms: usize,
     warnings: Vec<String>,
     check_switch: bool,
-    /// Set for `session catalog`: the project of the first record, and
+    /// Set for a catalog switch: the project of the first record, and
     /// whether the transcript's last message is at least a day old.
     catalog: Option<CatalogRun>,
+    /// The catalog job's `--project`, used in place of the attribution.
+    catalog_project: Option<Project>,
     /// Open candidate proposals closed because their tag is no longer in the
     /// tag table, and entries the pass wrote itself under `write` tags, for
     /// audit logging.
@@ -364,7 +252,7 @@ impl PassError {
         Self::new(err.code(), err.to_string())
     }
 
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         let message = message.into();
         Self {
             code,
@@ -398,34 +286,6 @@ pub fn short_reason(redactor: &Redactor, message: &str) -> String {
 }
 
 impl<E: PortError> Job<'_, E> {
-    fn run<M: Models>(
-        &mut self,
-        mut previous: Option<SessionRecord>,
-        known: &Known<'_>,
-        adapter: &M,
-    ) -> Result<PassPayload, PassError> {
-        self.segments = previous.as_ref().map(|p| p.log.len());
-        let Some(data) = self.read_transcript()? else {
-            return self.nothing_new(previous.as_ref(), true);
-        };
-        loop {
-            let Some(window) = self.next_window(previous.as_ref(), known, &data, None)? else {
-                return self.nothing_new(previous.as_ref(), false);
-            };
-            let distilled = distill(
-                self.id,
-                window.request.clone(),
-                &data.conversation[..window.end],
-                adapter,
-                self.config.voice(crate::voice::ModelUse::SessionHeader),
-            )?;
-            previous = self.commit(previous.as_ref(), &data, &window, distilled)?;
-            if window.last {
-                return Ok(self.payload("written", previous.as_ref()));
-            }
-        }
-    }
-
     fn read_transcript(&mut self) -> Result<Option<Conversation>, PassError> {
         let Some(path) = self
             .ctx
@@ -456,8 +316,10 @@ impl<E: PortError> Job<'_, E> {
         // `cataloged_by`, and an ended transcript ends final and off.
         if self.catalog.is_none() && self.switch.cataloged_by.is_some() {
             self.catalog = Some(CatalogRun {
-                project: attributed_project(&bytes, self.config, |cwd| {
-                    self.ctx.transcripts.project_of(cwd)
+                project: self.catalog_project.clone().unwrap_or_else(|| {
+                    attributed_project(&bytes, self.config, |cwd| {
+                        self.ctx.transcripts.project_of(cwd)
+                    })
                 }),
                 ended: transcript::survey(&bytes)
                     .ended
@@ -908,16 +770,6 @@ impl<E: PortError> Job<'_, E> {
         })
     }
 
-    /// The previous record is kept and the pass stays due, so the next run
-    /// retries it.
-    fn failed(&self, failure: PassError) -> Result<PassPayload, crate::Error> {
-        self.ctx.store.write(|tx| {
-            tx.sessions()
-                .change_control(|state| control::fail(state, self.id, self.ctx.clock.now()))
-        })?;
-        Ok(self.failure_payload(failure))
-    }
-
     fn failure_payload(&self, failure: PassError) -> PassPayload {
         PassPayload {
             session: self.id.to_string(),
@@ -961,56 +813,6 @@ impl<E: PortError> Job<'_, E> {
             memory_refused: self.memory.refused.clone(),
         }
     }
-}
-
-/// The session's transcript: `<dir>/<project-dir>/<id>.jsonl`, the first
-/// project directory (by name) that has one. Claude Code names the project
-/// directory after the session's cwd, which the store does not keep.
-pub(crate) fn distill<M: Models>(
-    id: &SessionId,
-    request: SessionRequest,
-    conversation: &[crate::models::PassMessage],
-    adapter: &M,
-    header_voice: crate::voice::Voice,
-) -> Result<pass::Distilled, PassError> {
-    let mut answer = adapter.session(&request).map_err(|err| {
-        tracing::warn!(session = %id, %err, "the session model failed");
-        PassError::new(err.code(), err.to_string())
-    })?;
-    // One more ask in the same pass, naming what was refused: a model
-    // can't count characters exactly, so a near miss is common. A refusal
-    // the retry or the repair resolves is logged at info; only a pass that
-    // still fails warns, naming both refusals. Repairs reach the report.
-    let distilled = match pass::check(answer.clone(), conversation, &request) {
-        Ok(distilled) => distilled,
-        Err(err) => {
-            tracing::info!(session = %id, %err, "the session model's answer was refused; asking once more");
-            let refusal = err.to_string();
-            let retry_failure = |err: crate::models::ModelError| {
-                tracing::warn!(session = %id, %refusal, %err, "the session model failed on the retry");
-                PassError::new(err.code(), format!("{refusal}; retry: {err}"))
-            };
-            if let Some(compress) =
-                pass::compression_request(&answer, conversation, &request, header_voice)
-            {
-                let header = adapter.session_header(&compress).map_err(retry_failure)?;
-                answer.replace_header(header);
-            } else {
-                let retry = SessionRequest {
-                    correction: Some(refusal.clone()),
-                    ..request.clone()
-                };
-                answer = adapter.session(&retry).map_err(retry_failure)?;
-            }
-            pass::check(answer.clone(), conversation, &request)
-                .or_else(|_| pass::repair(answer, conversation, &request))
-                .map_err(|err| {
-                    tracing::warn!(session = %id, %refusal, %err, "the session model's answer was refused twice");
-                    PassError::new("session_answer_invalid", format!("{refusal}; retry: {err}"))
-                })?
-        }
-    };
-    Ok(distilled)
 }
 
 /// Repairs describe only fixed rule names and numbers; no model text or ids.

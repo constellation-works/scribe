@@ -23,6 +23,21 @@ pub struct SessionPassInput {
     pub max_sessions: Option<usize>,
     /// Stop starting windows at this Unix time.
     pub deadline_epoch_s: Option<i64>,
+    /// The `scribe-session-catalog` job's mode: one named session with a
+    /// catalog switch, no start cutoff, audited as `session catalog`.
+    pub catalog: Option<CatalogSelection>,
+}
+
+/// What the `scribe-session-catalog` job passes to each prepare, from its
+/// `begin` step.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogSelection {
+    /// The agent cataloging it, named on the audit lines.
+    pub author: crate::AuthorName,
+    /// The project of the first record (`--project`); else attributed.
+    #[serde(default)]
+    pub project: Option<crate::Project>,
 }
 
 /// Prepare one window or settle one session without a model.
@@ -171,6 +186,9 @@ pub struct Basis {
     window_end_uuid: String,
     last_window: bool,
     digest: String,
+    /// The catalog job's selection, so apply and fail catalog with it.
+    #[serde(default)]
+    catalog: Option<CatalogSelection>,
     #[serde(default)]
     cursor_seal: String,
     #[serde(default)]
@@ -178,6 +196,18 @@ pub struct Basis {
 }
 
 impl Basis {
+    /// The catalog job's selection this window was prepared under.
+    #[must_use]
+    pub fn catalog(&self) -> Option<&CatalogSelection> {
+        self.catalog.as_ref()
+    }
+
+    /// The session this window was prepared for.
+    #[must_use]
+    pub fn session(&self) -> &SessionId {
+        &self.session_id
+    }
+
     fn seal_of(&self) -> String {
         let updated = self.expected_updated.and_then(|at| {
             at.format(&time::format_description::well_known::Rfc3339)
@@ -193,6 +223,7 @@ impl Basis {
                 self.window_end_uuid,
                 self.last_window,
                 self.digest,
+                self.catalog,
                 self.cursor_seal,
             ]),
         )
@@ -269,7 +300,7 @@ pub enum ActivityAnswer<T> {
 }
 
 impl<T> ActivityAnswer<T> {
-    fn first(self) -> Option<T> {
+    pub(crate) fn first(self) -> Option<T> {
         match self {
             Self::One(answer) => Some(answer),
             Self::FanIn(results) => results.into_iter().next().flatten(),
@@ -360,7 +391,7 @@ pub struct FailInput {
 
 /// The stable model code for an activity failure: an allowlisted
 /// `error_code`, else the class Orbit's failure message names.
-fn model_code(error_code: Option<&str>, message: Option<&str>) -> &'static str {
+pub(crate) fn model_code(error_code: Option<&str>, message: Option<&str>) -> &'static str {
     match error_code {
         Some("model_timeout") => return "model_timeout",
         Some("model_unavailable") => return "model_unavailable",
@@ -499,6 +530,22 @@ fn select<E: PortError>(
         refuse_forgotten(ctx.store, id)?;
     }
     let state = ctx.store.read().sessions().control()?;
+    if let Some(catalog) = &input.catalog {
+        crate::check_agent_author(&catalog.author)?;
+        let [id] = named.as_slice() else {
+            return Err(PassRunError::Input(
+                "a catalog run names exactly one session",
+            ));
+        };
+        if state
+            .get(id)
+            .is_some_and(|switch| switch.cataloged_by.is_none())
+        {
+            return Err(PassRunError::Input(
+                "a catalog run needs the session's catalog switch",
+            ));
+        }
+    }
     let selected = if named.is_empty() {
         control::due(&state)
     } else {
@@ -528,13 +575,15 @@ pub(crate) fn prepare<E: PortError>(
         None => {
             let mut cursor = select(ctx, &input.selection)?;
             // The job's run starts here: later sessions and windows start
-            // only before the cutoff.
-            cursor.start_by = Some(
-                ctx.clock
-                    .now()
-                    .unix_timestamp()
-                    .saturating_add(PASS_START_BY_SECONDS),
-            );
+            // only before the cutoff. A catalog has no deadline.
+            if input.selection.catalog.is_none() {
+                cursor.start_by = Some(
+                    ctx.clock
+                        .now()
+                        .unix_timestamp()
+                        .saturating_add(PASS_START_BY_SECONDS),
+                );
+            }
             cursor
         }
     };
@@ -663,6 +712,10 @@ fn prepare_one<E: PortError>(
         &result.cursor.tally,
     );
     job.segments = previous.map(|p| p.log.len());
+    job.catalog_project = selection
+        .catalog
+        .as_ref()
+        .and_then(|catalog| catalog.project.clone());
     let data = match corrupt {
         Some((_, skipped)) => Err(PassError::new("store_corrupt", skipped.error.to_string())),
         None => job.read_transcript(),
@@ -699,6 +752,7 @@ fn prepare_one<E: PortError>(
             window_end_uuid: window.through.clone(),
             last_window: window.last,
             digest: digest(&data, &window),
+            catalog: selection.catalog.clone(),
             cursor_seal: result.cursor.seal_of(),
             seal: String::new(),
         }
@@ -831,6 +885,10 @@ pub(crate) fn apply<E: PortError>(
         &cursor.tally,
     );
     job.segments = previous.map(|p| p.log.len());
+    job.catalog_project = basis
+        .catalog
+        .as_ref()
+        .and_then(|catalog| catalog.project.clone());
 
     // The activity failed: its fallback recorded backoff (this records it
     // when nothing did), and the run moves on to the next session.
@@ -1043,11 +1101,11 @@ fn digest(data: &Conversation, window: &Window) -> String {
 }
 
 /// A SHA-256 seal over `value`, labeled by what it seals.
-fn seal(label: &str, value: &Value) -> String {
+pub(crate) fn seal(label: &str, value: &Value) -> String {
     crate::text::bytes_sha256(json!([label, value]).to_string().as_bytes())
 }
 
-fn masked_input(request: &SessionWindowInput, redactor: &Redactor) -> Value {
+pub(crate) fn masked_input(request: &SessionWindowInput, redactor: &Redactor) -> Value {
     let mut request = request.clone();
     request.voice.instructions = request
         .voice
@@ -1057,7 +1115,7 @@ fn masked_input(request: &SessionWindowInput, redactor: &Redactor) -> Value {
     mask_value(json!(request), redactor)
 }
 
-fn mask_value(value: Value, redactor: &Redactor) -> Value {
+pub(crate) fn mask_value(value: Value, redactor: &Redactor) -> Value {
     match value {
         Value::String(text) => Value::String(redactor.mask(&text)),
         Value::Object(map) => Value::Object(
@@ -1106,6 +1164,7 @@ fn new_job<'a, E>(
         warnings: Vec::new(),
         check_switch: true,
         catalog: None,
+        catalog_project: None,
         persisted_targets: Vec::new(),
     }
 }

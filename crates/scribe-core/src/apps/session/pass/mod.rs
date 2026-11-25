@@ -4,12 +4,12 @@
 mod run;
 
 pub use run::{
-    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
-    PASS_START_BY_SECONDS, PassPayload, PassReport, PassRunError, PrepareInput, Prepared,
-    SessionPassInput, attributed_project, short_reason,
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, CatalogSelection,
+    FailInput, PASS_COMMAND, PASS_START_BY_SECONDS, PassError, PassPayload, PassReport,
+    PassRunError, PrepareInput, Prepared, SessionPassInput, short_reason,
 };
 pub(crate) use run::{
-    CatalogJob, RunFailure, apply, distill, fail, prepare, run_catalog, settle_only,
+    apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only,
     window_warnings,
 };
 

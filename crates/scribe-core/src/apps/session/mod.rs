@@ -24,18 +24,22 @@ mod view;
 pub use activity::{
     ActivateInput, ActivityWritten, DeactivateInput, SessionRef, parse_session_ref,
 };
-pub use catalog::{Begun, CatalogError, CatalogInput};
+pub use catalog::{Begun, CatalogBeginInput, CatalogBegun, CatalogError, CatalogInput};
 pub use list::{ListInput, Listed};
 pub use pass::{
-    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
-    PASS_START_BY_SECONDS, PassPayload, PassReport, PassRunError, PrepareInput, Prepared,
-    SessionPassInput,
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, CatalogSelection,
+    FailInput, PASS_COMMAND, PASS_START_BY_SECONDS, PassPayload, PassReport, PassRunError,
+    PrepareInput, Prepared, SessionPassInput,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
 #[cfg(any(test, feature = "test-support"))]
 pub use rebuild::RebuildVerbs;
-pub use rebuild::{REBUILD_COMMAND, RebuildError, RebuildInput};
+pub use rebuild::{
+    REBUILD_COMMAND, RebuildApplied, RebuildApplyInput, RebuildBasis, RebuildCursor, RebuildError,
+    RebuildFinishInput, RebuildFinished, RebuildInput, RebuildPrepareInput, RebuildPrepared,
+    RebuildStatus,
+};
 pub use show::Shown;
 pub use transcript::{ListInput as TranscriptListInput, Listed as TranscriptsListed, Surveyed};
 pub use verbs::HandoffSelection;
@@ -47,23 +51,13 @@ pub(crate) use continuation::{ClearedPredecessor, cleared_predecessor, try_clear
 
 use crate::activity::{ActiveOutcome, SetActive};
 use crate::composition::Context;
-use crate::models::{
-    CloseEvidence, ModelError, ProfileAnswer, ProfileRequest, SessionAnswer, SessionHeader,
-    SessionHeaderRequest, SessionRequest,
-};
 use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
 use crate::runtime::{Ctx, PortError};
-use crate::{
-    Author, AuthorName, Config, Models, Provider, Redactor, SessionId, SessionLink, Store, control,
-};
+use crate::{Author, AuthorName, Provider, Redactor, SessionId, SessionLink, Store, control};
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
-
-/// The model adapter a `catalog` or `rebuild` builds for the session's
-/// config, once.
-pub type ModelsOnce<'i> = Box<dyn FnOnce(&Config) -> Box<dyn Models + 'i> + 'i>;
 
 /// A `session` or `transcript` command.
 pub enum Command<'i> {
@@ -84,10 +78,19 @@ pub enum Command<'i> {
     PassApply(Box<ApplyInput>, crate::Label),
     /// Record retry backoff for a failed Orbit step.
     PassFail(Box<FailInput>, crate::Label),
-    /// `session catalog`.
-    Catalog(CatalogInput<'i, ModelsOnce<'i>>),
-    /// `session rebuild`.
-    Rebuild(RebuildInput<'i, ModelsOnce<'i>>),
+    /// `session catalog`: the switch only.
+    Catalog(CatalogInput<'i>),
+    /// The catalog job's `begin`: the switch, for the provider given or
+    /// this default.
+    CatalogBegin(CatalogBeginInput, Provider),
+    /// `session rebuild`: its refusals, then the job's name.
+    Rebuild(RebuildInput<'i>),
+    /// Prepare the next rebuild window.
+    RebuildPrepare(RebuildPrepareInput),
+    /// Check and checkpoint one rebuild window.
+    RebuildApply(Box<RebuildApplyInput>),
+    /// Promote or rebase a complete rebuild checkpoint.
+    RebuildFinish(Box<RebuildFinishInput>),
     /// `session deactivate`.
     Deactivate(DeactivateInput<'i>),
     /// `session activate`.
@@ -126,10 +129,31 @@ impl Command<'_> {
             | Self::Show { .. }
             | Self::TranscriptList { .. }
             | Self::TranscriptShow { .. } => None,
-            Self::Rebuild(_) => Some(AuditMeta {
+            Self::Rebuild(_) | Self::RebuildPrepare(_) => Some(AuditMeta {
                 command: REBUILD_COMMAND,
                 stepwise: true,
             }),
+            Self::RebuildApply(_) | Self::RebuildFinish(_) => Some(AuditMeta {
+                command: REBUILD_COMMAND,
+                stepwise: false,
+            }),
+            // The catalog job's windows are audited as the catalog.
+            Self::PassPrepare(input, _) if input.selection.catalog.is_some() => Some(AuditMeta {
+                command: CATALOG_COMMAND,
+                stepwise: false,
+            }),
+            Self::PassApply(input, _) if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) => {
+                Some(AuditMeta {
+                    command: CATALOG_COMMAND,
+                    stepwise: false,
+                })
+            }
+            Self::PassFail(input, _) if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) => {
+                Some(AuditMeta {
+                    command: CATALOG_COMMAND,
+                    stepwise: false,
+                })
+            }
             Self::Pass(..) | Self::PassPrepare(..) | Self::PassApply(..) | Self::PassFail(..) => {
                 Some(AuditMeta {
                     command: PASS_COMMAND,
@@ -144,7 +168,7 @@ impl Command<'_> {
                 command: ACTIVATE_COMMAND,
                 stepwise: false,
             }),
-            Self::Catalog(_) => Some(AuditMeta {
+            Self::Catalog(_) | Self::CatalogBegin(..) => Some(AuditMeta {
                 command: CATALOG_COMMAND,
                 stepwise: true,
             }),
@@ -156,14 +180,40 @@ impl Command<'_> {
     #[must_use]
     pub fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
+            Self::PassPrepare(input, _) if input.selection.catalog.is_some() => {
+                catalog_subject(
+                    input.selection.sessions.first(),
+                    input.selection.catalog.as_ref(),
+                )
+            }
+            Self::PassApply(input, _) => input
+                .basis
+                .as_ref()
+                .map(|b| catalog_subject(Some(b.session()), b.catalog()))
+                .unwrap_or_default(),
+            Self::PassFail(input, _) => input
+                .basis
+                .as_ref()
+                .map(|b| catalog_subject(Some(b.session()), b.catalog()))
+                .unwrap_or_default(),
             Self::List(_)
             | Self::Show { .. }
             | Self::Pass(..)
             | Self::PassPrepare(..)
-            | Self::PassApply(..)
-            | Self::PassFail(..)
             | Self::TranscriptList { .. }
             | Self::TranscriptShow { .. } => AuditSubject::default(),
+            Self::CatalogBegin(input, provider) => AuditSubject {
+                target: resolve_transcript(ctx, input.provider.unwrap_or(*provider), &input.session)
+                    .ok()
+                    .map(|id| format!("session:{id}")),
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::RebuildPrepare(input) => AuditSubject {
+                target: resolved_id(ctx, &input.session).map(|id| format!("session:{id}")),
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::RebuildApply(input) => rebuild_subject(&input.basis),
+            Self::RebuildFinish(input) => rebuild_subject(&input.basis),
             // A prefix is resolved before the line is written; an id that
             // resolves to no record leaves the target null, never the typed id.
             Self::Rebuild(input) => AuditSubject {
@@ -179,6 +229,26 @@ impl Command<'_> {
             Self::Deactivate(input) => activity_subject(ctx, &input.target, &input.author),
             Self::Activate(input) => activity_subject(ctx, &input.target, &input.author),
         }
+    }
+}
+
+/// A catalog job step's subject: its session and author. An ordinary
+/// pass step names none.
+fn catalog_subject(session: Option<&SessionId>, catalog: Option<&CatalogSelection>) -> AuditSubject {
+    let Some(catalog) = catalog else {
+        return AuditSubject::default();
+    };
+    AuditSubject {
+        target: session.map(|id| format!("session:{id}")),
+        author: Some(catalog.author.as_str().to_owned()),
+    }
+}
+
+/// A rebuild step's subject, from its sealed basis.
+fn rebuild_subject(basis: &RebuildBasis) -> AuditSubject {
+    AuditSubject {
+        target: Some(format!("session:{}", basis.session())),
+        author: Some(basis.author().as_str().to_owned()),
     }
 }
 
@@ -209,6 +279,14 @@ pub enum Outcome {
     PassPrepared(Box<Prepared>),
     /// A pass apply or retry outcome.
     PassApplied(Box<ApplyOutput>),
+    /// The catalog job's switch.
+    CatalogBegun(Box<CatalogBegun>),
+    /// The next rebuild window, or a ready checkpoint.
+    RebuildPrepared(Box<RebuildPrepared>),
+    /// A rebuild window's check.
+    RebuildApplied(Box<RebuildApplied>),
+    /// A rebuild's finish.
+    RebuildFinished(Box<RebuildFinished>),
     /// Backoff for the active session, if its basis is still current.
     PassFailed(Option<Box<PassPayload>>),
     /// The record an `activate` or `deactivate` left.
@@ -307,39 +385,19 @@ pub(crate) fn run<E: PortError>(
         Command::PassFail(input, host) => {
             Outcome::PassFailed(pass::fail(ctx, &host, *input)?.map(Box::new))
         }
-        Command::Catalog(input) => {
-            let CatalogInput {
-                id,
-                author,
-                project,
-                provider,
-                host,
-                models,
-            } = input;
-            let input = CatalogInput {
-                id,
-                author,
-                project,
-                provider,
-                host,
-                models: |config: &Config| Adapter(models(config)),
-            };
-            Outcome::Passed(Box::new(catalog::run(ctx, input)?))
+        Command::Catalog(input) => Outcome::Passed(Box::new(catalog::run(ctx, input)?)),
+        Command::CatalogBegin(input, provider) => {
+            Outcome::CatalogBegun(Box::new(catalog::begin_job(ctx, input, provider)?))
         }
-        Command::Rebuild(input) => {
-            let RebuildInput {
-                id,
-                author,
-                confirm,
-                models,
-            } = input;
-            let input = RebuildInput {
-                id,
-                author,
-                confirm,
-                models: |config: &Config| Adapter(models(config)),
-            };
-            Outcome::Passed(Box::new(rebuild::run(ctx, input)?))
+        Command::Rebuild(input) => Outcome::Passed(Box::new(rebuild::check(ctx, &input)?)),
+        Command::RebuildPrepare(input) => {
+            Outcome::RebuildPrepared(Box::new(rebuild::prepare(ctx, input)?))
+        }
+        Command::RebuildApply(input) => {
+            Outcome::RebuildApplied(Box::new(rebuild::apply(ctx, *input)?))
+        }
+        Command::RebuildFinish(input) => {
+            Outcome::RebuildFinished(Box::new(rebuild::finish(ctx, *input)?))
         }
         Command::Deactivate(input) => {
             Outcome::Activity(Box::new(activity::deactivate(ctx, input)?))
@@ -352,28 +410,6 @@ pub(crate) fn run<E: PortError>(
             Outcome::Transcript(Box::new(transcript::show(ctx, provider, &id)?))
         }
     })
-}
-
-/// The boxed adapter a command carries, as the flows' `M: Models`. Every
-/// method forwards, so an adapter's own answers (a test's fake) are kept.
-pub(crate) struct Adapter<'i>(Box<dyn Models + 'i>);
-
-impl Models for Adapter<'_> {
-    fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
-        self.0.session(request)
-    }
-
-    fn session_header(&self, request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
-        self.0.session_header(request)
-    }
-
-    fn group_summary(&self, model: &str, evidence: &CloseEvidence) -> Result<String, ModelError> {
-        self.0.group_summary(model, evidence)
-    }
-
-    fn profile(&self, request: &ProfileRequest) -> Result<ProfileAnswer, ModelError> {
-        self.0.profile(request)
-    }
 }
 
 /// The session `id` (an id or unique prefix) resolves to, or `None` when it
@@ -527,6 +563,20 @@ impl Audited for Outcome {
                 .collect(),
             Self::PassFailed(failure) => {
                 failure.as_deref().and_then(pass_line).into_iter().collect()
+            }
+            // A switch written is one line; a resumed one writes nothing.
+            Self::CatalogBegun(begun) => {
+                if begun.wrote_switch {
+                    vec![Line::success(Some(format!("session:{}", begun.session)))]
+                } else {
+                    Vec::new()
+                }
+            }
+            // The checkpoint is private: only the finish that replaces the
+            // record is a line, as the whole rebuild was one.
+            Self::RebuildPrepared(_) | Self::RebuildApplied(_) => Vec::new(),
+            Self::RebuildFinished(finished) => {
+                finished.pass.as_ref().and_then(pass_line).into_iter().collect()
             }
             Self::Activity(written) => Line::written(
                 Some(format!("session:{}", written.view.record.id)),

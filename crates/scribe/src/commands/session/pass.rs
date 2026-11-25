@@ -6,7 +6,8 @@ use crate::output::Output;
 use clap::Args;
 use scribe_core::SessionId;
 use scribe_core::apps::session::{
-    ApplyInput, Command, FailInput, Outcome, PrepareInput, SessionPassInput, exec,
+    ApplyInput, CatalogBeginInput, Command, FailInput, Outcome, PrepareInput, RebuildApplyInput,
+    RebuildFinishInput, RebuildPrepareInput, SessionPassInput, exec,
 };
 use scribe_core::composition::Context;
 use serde_json::Value;
@@ -45,11 +46,16 @@ pub(super) fn run(args: PassArgs, ctx: &Context) -> Result<Output, CliError> {
     Ok(passed(exec(ctx, Command::Pass(input, ctx.host()))?, ctx))
 }
 
-/// Parsed by both the CLI and the plugin backend before accessing a store.
+/// Parsed by both the CLI and the plugin backend before accessing a store:
+/// the session-pass, session-catalog and session-rebuild job steps.
 pub(in crate::commands) enum Step {
     Prepare(PrepareInput),
     Apply(Box<ApplyInput>),
     Fail(Box<FailInput>),
+    CatalogBegin(CatalogBeginInput),
+    RebuildPrepare(RebuildPrepareInput),
+    RebuildApply(Box<RebuildApplyInput>),
+    RebuildFinish(Box<RebuildFinishInput>),
 }
 
 impl Step {
@@ -65,7 +71,19 @@ impl Step {
             "session-pass-fail" => Ok(Self::Fail(Box::new(
                 serde_json::from_value(input).map_err(invalid)?,
             ))),
-            _ => Err(CliError::Usage(format!("unknown pass step {name}"))),
+            "session-catalog-begin" => Ok(Self::CatalogBegin(
+                serde_json::from_value(input).map_err(invalid)?,
+            )),
+            "session-rebuild-prepare" => Ok(Self::RebuildPrepare(
+                serde_json::from_value(input).map_err(invalid)?,
+            )),
+            "session-rebuild-apply" => Ok(Self::RebuildApply(Box::new(
+                serde_json::from_value(input).map_err(invalid)?,
+            ))),
+            "session-rebuild-finish" => Ok(Self::RebuildFinish(Box::new(
+                serde_json::from_value(input).map_err(invalid)?,
+            ))),
+            _ => Err(CliError::Usage(format!("unknown session step {name}"))),
         }
     }
 
@@ -75,18 +93,26 @@ impl Step {
             Self::Prepare(input) => Command::PassPrepare(input, host),
             Self::Apply(input) => Command::PassApply(input, host),
             Self::Fail(input) => Command::PassFail(input, host),
+            Self::CatalogBegin(input) => Command::CatalogBegin(input, ctx.provider()),
+            Self::RebuildPrepare(input) => Command::RebuildPrepare(input),
+            Self::RebuildApply(input) => Command::RebuildApply(input),
+            Self::RebuildFinish(input) => Command::RebuildFinish(input),
         };
         let value = match exec(ctx, command)? {
             Outcome::PassPrepared(prepared) => serde_json::to_value(prepared),
             Outcome::PassApplied(applied) => serde_json::to_value(applied),
             Outcome::PassFailed(pass) => Ok(serde_json::json!({"pass": pass})),
+            Outcome::CatalogBegun(begun) => serde_json::to_value(begun),
+            Outcome::RebuildPrepared(prepared) => serde_json::to_value(prepared),
+            Outcome::RebuildApplied(applied) => serde_json::to_value(applied),
+            Outcome::RebuildFinished(finished) => serde_json::to_value(finished),
             Outcome::Listed(_)
             | Outcome::Shown(_)
             | Outcome::Passed(_)
             | Outcome::Activity(_)
             | Outcome::Transcripts(_)
             | Outcome::Transcript(_) => {
-                unreachable!("pass step returns its corresponding outcome")
+                unreachable!("a job step returns its corresponding outcome")
             }
         };
         value.map_err(|err| CliError::Output(err.into()))

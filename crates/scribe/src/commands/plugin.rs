@@ -137,9 +137,13 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
     match verb {
         "group-close-prepare" => group_close(&envelope.input, &envelope.context.config, false),
         "group-close-apply" => group_close(&envelope.input, &envelope.context.config, true),
-        "session-pass-prepare" | "session-pass-apply" | "session-pass-fail" => {
-            session_pass(verb, envelope.input, &envelope.context.config)
-        }
+        "session-pass-prepare"
+        | "session-pass-apply"
+        | "session-pass-fail"
+        | "session-catalog-begin"
+        | "session-rebuild-prepare"
+        | "session-rebuild-apply"
+        | "session-rebuild-finish" => session_pass(verb, envelope.input, &envelope.context.config),
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
         "memory-refresh-prepare" => {
             memory_refresh_prepare(&envelope.input, &envelope.context.config)
@@ -300,7 +304,7 @@ fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
             failure(code, message, false)
         }
         Ok(mut value) => {
-            if verb == "session-pass-prepare" {
+            if verb == "session-pass-prepare" || verb == "session-rebuild-prepare" {
                 for key in ["session_distill_crew", "session_header_crew"] {
                     let crew = config
                         .get(key)

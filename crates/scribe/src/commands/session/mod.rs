@@ -7,8 +7,11 @@
 //! table of contents, `--log` every segment's text, and `--segment <n>` (or
 //! the id written as the cite `session:<id>#<n>`) one segment. `list` and `show`
 //! read only and make one store call each (STD-02 R2); `pass`, run by the
-//! enabled routine or by hand, lives in `pass.rs`; `rebuild` replaces a
-//! record from its transcript with resumable private checkpoints in `rebuild.rs`;
+//! enabled routine or by hand, lives in `pass.rs`; `rebuild` checks a
+//! rebuild and names the `scribe-session-rebuild` job, which replaces a
+//! record from its transcript with resumable private checkpoints, in
+//! `rebuild.rs`; `catalog` writes a catalog switch and names the
+//! `scribe-session-catalog` job in `catalog.rs`;
 //! `deactivate` and `activate`, the `manual` route of the `active` flag, in
 //! `activity.rs`.
 
@@ -23,11 +26,10 @@ use crate::output::{
     Kin, Output, Record, Records, SessionHandoffsPayload, SessionPayload, TreeRow,
 };
 use clap::{Args, Subcommand};
-use scribe_core::apps::session::{self as app, Command, ModelsOnce, Outcome, Shown, exec};
+use scribe_core::apps::session::{self as app, Command, Outcome, Shown, exec};
 use scribe_core::composition::Context;
 use scribe_core::{
-    Config, Models, Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus,
-    Topic,
+    Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus, Topic,
 };
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -82,9 +84,9 @@ pub(crate) enum SessionCommand {
     ///
     /// Reads the prepared basis, cursor and answer as JSON on stdin. Writes the apply status, cursor and any retry instructions as JSON.
     PassApply,
-    /// Rebuild a session record from its full transcript
+    /// Check a session rebuild and name the job that runs it
     ///
-    /// Replaces a session record with a log rebuilt from its transcript, resuming interrupted windows.
+    /// Checks that a session record can be rebuilt from its transcript and prints the Orbit job command that rebuilds it, resuming interrupted windows.
     #[command(after_help = rebuild::EXAMPLES)]
     Rebuild(rebuild::RebuildArgs),
     /// Hide an outdated session with a reason
@@ -97,9 +99,9 @@ pub(crate) enum SessionCommand {
     /// Shows an inactive session again, or pins or unpins it against automatic deactivation.
     #[command(after_help = activity::ACTIVATE_EXAMPLES)]
     Activate(activity::ActivateArgs),
-    /// Switch a past session on and catalog its transcript
+    /// Switch a past session on for cataloging
     ///
-    /// Switches a past session on by name and catalogs every window of its transcript.
+    /// Switches a past session on by name and prints the Orbit job command that catalogs every window of its transcript.
     #[command(after_help = catalog::EXAMPLES)]
     Catalog(catalog::CatalogArgs),
 }
@@ -396,8 +398,14 @@ pub(in crate::commands) fn output(outcome: Outcome, view: View<'_>, ctx: &Contex
         Outcome::Activity(written) => activity::output(*written),
         Outcome::Transcripts(found) => crate::commands::transcript::listed(found, view.transcripts),
         Outcome::Transcript(surveyed) => crate::commands::transcript::shown(*surveyed),
-        Outcome::PassPrepared(_) | Outcome::PassApplied(_) | Outcome::PassFailed(_) => {
-            unreachable!("pass steps use their JSON handler")
+        Outcome::PassPrepared(_)
+        | Outcome::PassApplied(_)
+        | Outcome::PassFailed(_)
+        | Outcome::CatalogBegun(_)
+        | Outcome::RebuildPrepared(_)
+        | Outcome::RebuildApplied(_)
+        | Outcome::RebuildFinished(_) => {
+            unreachable!("job steps use their JSON handler")
         }
     }
 }
@@ -405,13 +413,6 @@ pub(in crate::commands) fn output(outcome: Outcome, view: View<'_>, ctx: &Contex
 /// A `pass`, `catalog` or `rebuild` outcome as its output.
 fn passed(outcome: Outcome, ctx: &Context) -> Output {
     output(outcome, View::default(), ctx)
-}
-
-/// `models` as the boxed one-shot factory a command carries.
-pub(in crate::commands) fn once<'i, M: Models + 'i>(
-    models: impl FnOnce(&Config) -> M + 'i,
-) -> ModelsOnce<'i> {
-    Box::new(move |config: &Config| Box::new(models(config)) as Box<dyn Models + 'i>)
 }
 
 #[cfg(test)]
