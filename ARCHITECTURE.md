@@ -25,7 +25,7 @@ scribe  ->  scribe-core  ->  scribe-store
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access. It declares no audit and decides nothing about a record. | `scribe-core` | `rusqlite` |
+| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite` |
 | `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. | — | `clap`, `tracing-subscriber`, any terminal crate |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
@@ -37,6 +37,11 @@ the tests of `scribe-core` and `scribe` stage database states with
 `[dev-dependencies]`. In the core, `rustix` and `tempfile` are normal
 dependencies for `providers/` only.
 
+The binary's normal dependencies are `scribe-core`, the argument, output and
+host crates (`clap`, `serde`, `serde_json`, `thiserror`, `time`, `tracing`,
+`tracing-subscriber`, `unicode-width`) and, on unix, `rustix`. It is the only
+crate that declares `clap` or `tracing-subscriber`.
+
 The binary names only `scribe-core`. The core re-exports the store's record
 shapes at its root (`scribe_core::Entry`, `scribe_core::SessionId`, …) and
 the moved modules at the paths they had in it (`scribe_core::handoff`,
@@ -46,12 +51,13 @@ second dependency.
 ## `scribe` (binary)
 
 ```
-main.rs              capture the environment, resolve the Context, parse, dispatch, map the result to an exit code
+main.rs              parse, resolve the output sink and the Context from the process environment, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
 output/              payloads, rendering, the sink
 error.rs             app errors -> one-line message and exit code
+tests/               the binary's own tests (cfg(test))
 ```
 
 A command handler turns parsed arguments into the app's `Command`, calls
@@ -95,7 +101,7 @@ runtime/
   resolve.rs         id and session resolution
   errors.rs          CommandError, read and write error mapping
   audit.rs           the audit guard around a mutating command
-composition.rs       Env, Context: roots, config, store, redactor
+composition.rs       Env, Context: the captured environment, and the resolved roots, store, provider and audit state
 config.rs            config.toml shapes and parsing
 config/voice.rs      the prompt half of voice
 providers/           interim: the Models port, its shapes (models.rs) and the CLI adapters (cli.rs, cli/)
@@ -110,15 +116,28 @@ An app is one subject a user names on the command line. Its public surface is
 pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError>
 ```
 
-- **The audit is declared beside the `Command`.** `Command::audit()` gives the
-  command path and whether it commits stepwise, or `None` for a read (STD-01
-  R31). `Command::subject(&Context)` gives the record and author, resolved
+- **The audit is declared beside the `Command`.** Each app's `mod.rs`
+  implements `Command::audit()`, which gives the command path and whether it
+  commits stepwise, or `None` for a read (STD-01 R31), and
+  `Command::subject(&Context)`, which gives the record and author, resolved
   before the command runs so a refusal is attributable too. Both are
-  exhaustive. `exec` builds the `Audit` from them and runs the command inside
-  `runtime::audit::guarded`. The hook app declares on its `Event`, and
-  `HookEvent` names the four events for Claude Code and Codex alike. The
-  plugin's routine `memory refresh` keeps its empty subject through
-  `Command::Refresh { routine: true }`.
+  exhaustive matches. `exec` calls `Audit::declared` on them and runs the
+  command inside `runtime::audit::guarded` (`runtime/audit.rs`). The guard
+  exists before the command runs and records when it is dropped, so a command
+  that returns early or panics is still logged, as a failure. `exec_unaudited`
+  (test-support only) runs the same command with no guard. The hook app
+  declares on its `Event`, and `HookEvent` names the four events for Claude
+  Code and Codex alike. The plugin's routine `memory refresh` keeps its empty
+  subject through `Command::Refresh { routine: true }`.
+- **The context is `composition::Context`.** The binary builds it once with
+  `Context::resolve(root, &Env::from_process())` and `with_provider`. It holds
+  the opened `Store`, the Claude and Codex transcript roots, the provider,
+  whether the process is interactive, and the audit state of the running
+  command: the instruction note it acts on, and whether a stepwise command
+  already committed its line. `exec` lends the ports to `run` as a
+  `Ctx<'_, CommandError>` (`ctx.core()`, `runtime/host/`): the store, the
+  clock, the transcripts and the redactor, all implemented on the `Context`.
+  Only `composition.rs` reads the environment.
 - **`run` is `exec` without the guard,** `pub(crate)`, on the `Ctx` that
   `exec` lends. Other apps call it.
 - **A flow loads, plans, commits:** it reads what it needs from one
@@ -151,9 +170,10 @@ There is no `apps/common`, `apps/shared` or `apps/util`.
 - `composition.rs` is the one place that resolves anything about the host.
   `Env::from_process()` captures the variables scribe reads (`SCRIBE_ROOT`,
   `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT`, the
-  redaction variables). `Context::resolve` picks the data directory, reads
-  `config.toml`, opens the `Store` and builds the redactor. `runtime/host/`
-  implements the ports on the `Context`.
+  redaction variables). `Context::resolve` picks the data directory, opens the
+  `Store` and resolves the transcript roots and the provider. `config.rs`
+  parses `config.toml`; `Context::redactor` and `Context::models` build from a
+  parsed `Config`. `runtime/host/` implements the ports on the `Context`.
 - `providers/` holds everything about calling a model until ORB-27911
   removes scribe's own model calls. Only five flows use it: session pass,
   catalog and rebuild, memory refresh and group close.
@@ -189,12 +209,15 @@ seed.rs, testing.rs  test support (test-support)
   runs at the same step and under the same lock. Four refusals stay in the
   store, each one a check every writer, including the store's own, must make
   at the point of the write:
-  - `forgotten_refusal` (`error.rs`): a forgotten session is a tombstone, and
-    every writer that touches a session refuses it under the write lock.
+  - `forgotten_refusal` (defined in `error.rs`): a forgotten session is a
+    tombstone, and every writer that touches a session refuses it under the
+    write lock. The store's session writers (`db/`) and the core's session
+    verbs (`apps/session/verbs.rs`) make that check and call the helper.
   - `refuse_file_store` (`db/documents.rs`): a file store whose records never
     moved into `scribe.db` is refused as a format.
-  - `check_log` (`db/log.rs`): the codec runs it on every session record it
-    reads, and the session writer before a write; a malformed log is
+  - `check_log` (`db/log.rs`): the codec runs it when it decodes and encodes a
+    session record (`encode_session` refuses a write that would not read
+    back), and the session row reader runs it on each row; a malformed log is
     `store_corrupt`.
   - `export_target_exists` (`repository/sessions.rs::prepare_target`):
     `export` refuses a target that is not an empty directory. The check is
