@@ -1621,6 +1621,36 @@ fn a_marker_after_a_stray_quote_or_ending_a_global_sentence_is_echoed_and_handed
 }
 
 #[test]
+fn a_long_marked_line_reaches_the_agent_whole_and_only_the_echo_is_cut() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    // Over 200 characters, with runs of spaces inside and a suffix that only
+    // the whole line carries. The agent records the user's words, so its
+    // copy keeps every character; the user's echo is a bounded preview.
+    let filler = "word   ".repeat(40);
+    let typed = format!("#scribe preferences: keep  this   {filler}ENDING  tail.");
+    assert!(typed.chars().count() > 200, "{typed}");
+    let submitted = hook_ok(&fx, "user-prompt-submit", &prompt_payload(&claude, &typed));
+    assert_eq!(
+        reply(&submitted)["systemMessage"],
+        "scribe: marked — cataloged after the reply"
+    );
+    marked_turns(&claude, &[("u-1", &typed)]);
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let reply_json = reply(&out);
+    let message = reply_json["systemMessage"].as_str().unwrap();
+    let context = reply_json["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(context.contains(&format!("\"{typed}\"")), "{context}");
+    assert!(message.ends_with("…\""), "{message}");
+    assert!(!message.contains("ENDING"), "{message}");
+    let marks = marks_json(&fx);
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0]["code"], "agent_handoff");
+}
+
+#[test]
 fn a_fourth_marker_is_refused_too_many_marks() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);

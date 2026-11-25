@@ -370,9 +370,11 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
                 "scribe: #scribe in your message is the agent's to record — \"{}\"",
                 quote(&said)
             ));
+            // The agent gets the line whole, as typed: its quote must match the
+            // user's words character for character. Only the user's echo above
+            // is flattened and cut.
             out.context.push(format!(
-                "scribe: the user marked a line with #scribe for you to record — \"{}\". If it marks something to keep, record it as theirs with their exact words: scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' {statement}. If it marks nothing, record nothing.",
-                quote(&said)
+                "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks something to keep, record it as theirs with their exact words: scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' {statement}. If it marks nothing, record nothing."
             ));
             out.outcomes.push(refusal(session, AGENT_HANDOFF));
         }
