@@ -11,7 +11,7 @@ summary: How the scribe plugin is bounded (one binary; Daniel writes through hoo
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656, ORB-28068]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656, ORB-27911, ORB-28068, ORB-28109]
 ---
 
 # scribe — Design
@@ -7278,9 +7278,9 @@ store with shipped decisions.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
 
-## 19. Replacing the five model callers with Orbit jobs and CLI primitives (proposed)
+## 19. Replacing the five model callers with Orbit jobs and CLI primitives (approved)
 
-Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Nothing is deleted or implemented here, and the open questions in [§19.7](#197-open-questions-for-daniel) remain for him to confirm.
+Drafted on [ORB-28068] after Daniel answered `open-item-19` with `"let's go with A"` on 2026-11-24 (`23:45Z`): draft the replacement design for his approval first, and delete the five callers only after he approves it. Daniel answered the four questions of [§19.7](#197-decisions-on-the-open-questions) and approved this section on 2026-11-25 in the chief's chat, to "Approve section 19 with your four answers, so the scribe captain can build it?": "Approve" (quoted on [ORB-28109]). The approval carried one condition: the section uses `agent_invoke` activities, as his words on [ORB-27911] say, or states why `agent_loop` is needed. [§19.2](#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs) states it. The five callers are deleted last, once their jobs are in place ([§19.5](#195-deletions-and-configuration-migration-after-approval)).
 
 ### 19.1 Scope and current boundary
 
@@ -7301,6 +7301,8 @@ All other paths (`UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `cons
 Daniel's direction ([ORB-27911]):
 
 > "scribe should just be a cli tool, exposing tools for agents to query/update. Any operations that require agent invocations (e.g. session pass; delete \"ask\" entirely, not needed) should be executed as orbit jobs with agent_invoke activities, passing the transcript data or whatever."
+
+**Why `agent_loop`.** Orbit has no `agent_invoke` activity. The name belonged to the `orbit run agent` command, the `orbit.agent.invoke` tool and the worker behind them, which were removed on Daniel's direction of 2026-11-07 ([ORB-20383], `codebases/orbit/docs/design/operations-as-data/4_decisions.md`, "Agent invocation and explorer removed"). An Orbit activity is `agent_loop` or `deterministic`, and a plugin activity is `agent_loop` or `plugin.tool_call` (`codebases/orbit/docs/design/plugins/1_scope.md`). Despite its name, `agent_loop` is one CLI agent invocation: since [ORB-10801] the provider owns its turn budget, `max_iterations` is inert, and only `wall_clock_timeout_seconds` bounds the call (`crates/orbit-types/src/workflow/activity_job/activity_v2.rs`). With `tools: []` and an output schema, each step below is a single invocation that returns one JSON answer, which is what Daniel's words ask for. The `loop:` in the jobs is the job's own iteration over windows, not the activity's.
 
 Under [specs/architecture.md](./specs/architecture.md), **scribe starts no model and spawns no child process**, and **scribe does not call Orbit**. Every operation that previously called `Models` splits into three pure/deterministic responsibilities owned by `scribe` and one model-execution step owned by Orbit:
 
@@ -7445,7 +7447,7 @@ Only after Daniel approves this design and the Orbit jobs are in place:
 1. Delete `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`) and remove `ModelsOnce`, `ModelsEach`, and `ModelsFor` from `apps/{session,memory,group}/mod.rs`.
 2. Update `scripts/check-dependency-direction.sh` and `ARCHITECTURE.md` to remove the `providers/` exceptions (`std::process`, `std::fs`, and the five-caller allowlist; remove `rustix`/`tempfile` from `scribe-core` dependencies if nothing else uses them).
 3. In `config.rs`, deprecate `[models]` and `[codex.models]` (accepting them with load warnings during transition) and move the default credential names (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) into `[redact] env` defaults so redaction continues to mask them without `[models]` ([specs/architecture.md](./specs/architecture.md#providers-interim)). Keep `[user] name` so `prepare` carries it to Orbit activities.
-4. Remove `claude` from `plugin/.orbit-plugin/plugin.yaml` `requires.programs`, set `permissions.network: none`, clear `permissions.env_pass`, and retire `plugin/orbit-codex/.orbit-plugin/` (pending confirmation in [§19.7](#197-open-questions-for-daniel)).
+4. Remove `claude` from `plugin/.orbit-plugin/plugin.yaml` `requires.programs`, set `permissions.network: none`, clear `permissions.env_pass`, and keep `plugin/orbit-codex/.orbit-plugin/` and `scripts/sync-orbit-packages.py` for now ([§19.7](#197-decisions-on-the-open-questions), decision 3).
 5. Update `skills/scribe/` (`session-groups.md`, `memory.md`, `capture-controls.md`, `store-maintenance.md`), `README.md`, CLI help, goldens, and `4_decisions.md`.
 
 ### 19.6 Concerns & Honest Limitations
@@ -7455,14 +7457,16 @@ Only after Daniel approves this design and the Orbit jobs are in place:
 - **Standalone hosts without Orbit.** Because `scribe` itself calls no model, `scribe session rebuild`, `scribe memory refresh`, and automated `scribe session pass` require either Orbit (`orbit job run` / routines) or an interactive agent driving the `prepare`/`apply` CLI verbs.
 - **Job schema validation against installed Orbit.** The exact `loop` + `when` + `plugin.tool_call` + `agent_loop` YAML shapes must be validated with `orbit plugin validate` and `orbit plugin test` against the host Orbit version during implementation.
 
-### 19.7 Open questions for Daniel
+### 19.7 Decisions on the open questions
 
-Before implementation begins, Daniel's confirmation is needed on four choices:
+Daniel answered the four questions on 2026-11-25 in the chief's chat, each as a reply to the chief's one-line summary of it (quoted on [ORB-28109] by `0-chief`). His words, then what each means for this design:
 
-1. **Crew / model routing for `agent_loop` activities.** Should `scribe_session_distill` and `scribe_session_header_compress` draw from `workflow.low_complexity_crews` (Haiku-tier) while `scribe_profile_refresh` and `scribe_group_summarize` draw from `workflow.medium_complexity_crews` (Sonnet-tier), or should Orbit define dedicated `workflow.purpose_crews.scribe_*` keys (or explicit `crew` overrides on the plugin definitions)?
-2. **Disposition of `[instructions]` in `config.toml`.** Should `[instructions]` (`session`, `session_header`, `profile`) be retired once prompts live in `plugin/.orbit-plugin/activities/*.yaml` (accepted with a deprecation warning), or emitted by `prepare` so user overrides in `~/.scribe/config.toml` still customize the `agent_loop` prompt?
-3. **Retiring `plugin/orbit-codex/.orbit-plugin/`.** Once `scribe` no longer spawns `codex`, `codex_runtime_tmp` and `codex_installation_id` write grants are unnecessary; `plugin/.orbit-plugin/` already accepts read-only `codex_home` for rollout parsing. Confirm retiring `plugin/orbit-codex/.orbit-plugin/` and `scripts/sync-orbit-packages.py` when `providers/` is deleted.
-4. **Omitted `--summary` on `scribe group close <id>`.** Confirm whether omitting `--summary` should fail closed (`exit 2`, pointing to `scribe group evidence <id>` + `--summary` and `orbit job run scribe-group-close`), with `--no-summary` available when closing without a summary is explicitly wanted.
+1. **Crew / model routing for `agent_loop` activities.** Asked: Haiku-tier for `scribe_session_distill` and `scribe_session_header_compress`, Sonnet-tier for `scribe_profile_refresh` and `scribe_group_summarize`, or dedicated scribe crews. Daniel: "configurable. let's go with haiku for both for now. if we see issue, we can revise later". The crew of each `agent_loop` activity is a setting, and all four default to a Haiku-tier crew.
+2. **Disposition of `[instructions]` in `config.toml`.** Asked: retire `[instructions]` (`session`, `session_header`, `profile`) once prompts live in `plugin/.orbit-plugin/activities/*.yaml`, or have `prepare` emit them so user overrides in `~/.scribe/config.toml` still customize the `agent_loop` prompt. Daniel: "keep". `[instructions]` stays, and `prepare` carries the overrides to the activity.
+3. **Retiring `plugin/orbit-codex/.orbit-plugin/`.** Asked: retire it and `scripts/sync-orbit-packages.py` when `providers/` is deleted, since `codex_runtime_tmp` and `codex_installation_id` write grants are then unnecessary. Daniel: "keep for now". Both stay; [§19.5](#195-deletions-and-configuration-migration-after-approval) item 4 no longer retires them.
+4. **Omitted `--summary` on `scribe group close <id>`.** Asked: fail closed (`exit 2`, pointing to `scribe group evidence <id>` + `--summary` and `orbit job run scribe-group-close`), with `--no-summary` for an explicit close without one. Daniel: "yes". As in [§19.3](#193-replacing-each-of-the-five-callers).
+
+Daniel approved §19 on 2026-11-25 with these four answers ("Approve"); its `agent_loop` condition is answered in [§19.2](#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs).
 
 ## Task References
 
@@ -7533,10 +7537,14 @@ Before implementation begins, Daniel's confirmation is needed on four choices:
   decisions and open items are quoted there.
 - [ORB-25162] — the standards plugin's decision intake, which reads a
   `decision` action tag.
-- [ORB-28068] — proposed §19: replace the five remaining model callers
+- [ORB-28068] — drafted §19 (approved 2026-11-25): replace the five remaining model callers
   (`session pass`, `session catalog`, `session rebuild`, `memory refresh`,
   `group close` summary) with deterministic `prepare`/`apply` primitives and
   Orbit `agent_loop` jobs; callers stay in `providers/` until Daniel approves.
+- [ORB-27911] — deleted `ask`, the tmux popup and the in-process model
+  steps that could go without a job; holds Daniel's words that §19 carries out.
+- [ORB-28109] — the scribe captain's assignment of 2026-11-25; Daniel's
+  answers to §19.7 are quoted there.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
