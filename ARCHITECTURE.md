@@ -51,7 +51,8 @@ never `[dev-dependencies]`.
 Each library has a `test-support` feature that only dev-dependencies turn on,
 so a shipped build never compiles it:
 
-- `scribe-domain`: `fixtures`, the record fixtures the tests share.
+- `scribe-store`: `fixtures`, the record fixtures the tests share (`entry`,
+  `session`, `segment`, `T0`).
 - `scribe-store`: `Store::seed_records` (`seed.rs`), so the CLI's integration
   tests can stage records, and `testing`. `testing` holds `StoreTestReads`,
   the shared test helpers, and the store internals that the store tests in
@@ -117,7 +118,6 @@ map; a new module fails the check until it is given a ring.
 | Ring | Modules |
 |------|---------|
 | 1. base | `record`, `provider` |
-| 2. records | `session` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -319,6 +319,26 @@ PR 5-17 moved `entry` and `handoff`:
 - The `entry` fixture went to the store's `fixtures.rs` (behind
   `test-support`), which re-exports the domain's session fixtures until
   those records move.
+
+PR 5-18 moved `session`:
+
+- The shapes went to the store's `contracts/session.rs`: `SessionRecord`,
+  `SessionId`, `ShortIds`, the statuses, `Segment` and its states, `Term`,
+  `LinkType`, `SessionLink`, `LinkError`, `SessionFilter` and
+  `SessionOrder`, `SessionControl` and `ControlState`, the activity shapes
+  (`ActiveRoute`, `ActiveChange`, `CatalogedBy`), `SessionField` and
+  `SessionForget`, with their own-shape methods.
+- The log check (`check_log`, `LogError`) went to the store's `db/log.rs`:
+  the codec refuses a malformed log on read and the session writer on
+  write, so it stays below the store. `scribe_store::session` re-exports it
+  beside the shapes.
+- The rules went to `apps/session/rules/sessions.rs`: `check_link`, the
+  children and tree derived from links (`Child`, `children`, `tree_parent`,
+  `tree_order`) and `Cadence::pass_due`. The `Cadence` struct, the
+  `[catalog]` table, went to `config.rs`. The core's `crate::session`
+  re-exports all three homes.
+- The session fixtures and `T0` joined `entry` in the store's
+  `fixtures.rs`, and the domain's `fixtures` is gone.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

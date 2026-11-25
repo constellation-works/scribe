@@ -23,9 +23,10 @@ use crate::fs::{self, File, Metadata};
 // Transcript bytes read into typed messages (the domain's `transcript`
 // until ORB-27921 PR 5-12), at this module's path.
 pub use parse::*;
-use scribe_domain::{Provider, SessionId};
+use scribe_domain::Provider;
 #[cfg(unix)]
 use scribe_store::ClaudeCapturePosition;
+use scribe_store::session::SessionId;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 

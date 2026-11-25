@@ -80,7 +80,6 @@ pub mod voice;
 
 use crate::entry::TagName;
 use crate::record::{Label, Project, is_kebab};
-use crate::session::Cadence;
 use crate::tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, Rule, RuleOrigin,
     TagDef, TagError, TagTable,
@@ -89,6 +88,24 @@ pub use scribe_tools::window::{WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
+
+/// How often an opted-in session gets a pass: `[catalog]` in `config.toml`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cadence {
+    /// Minutes since the last pass.
+    pub every_minutes: NonZeroU32,
+    /// User turns since the last pass.
+    pub every_turns: NonZeroU32,
+}
+
+impl Default for Cadence {
+    fn default() -> Self {
+        Self {
+            every_minutes: NonZeroU32::new(20).unwrap_or(NonZeroU32::MIN),
+            every_turns: NonZeroU32::new(10).unwrap_or(NonZeroU32::MIN),
+        }
+    }
+}
 
 /// Why `config.toml` was refused: the parser's message and, when known, the
 /// line it points at.

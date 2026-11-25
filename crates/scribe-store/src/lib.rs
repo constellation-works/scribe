@@ -64,6 +64,13 @@ mod contracts;
 // The entry and handoff shapes, as modules: callers name them by path
 // (`scribe_store::entry::Entry`, `scribe_store::handoff::MAX_CHARS`).
 pub use contracts::{entry, handoff};
+/// The session shapes (the store's contracts) and the log check the store
+/// applies to every record it reads or writes (`db/log.rs`), at one path:
+/// `scribe_store::session::SessionRecord`, `scribe_store::session::check_log`.
+pub mod session {
+    pub use crate::contracts::session::*;
+    pub use crate::db::log::{LogError, check_log};
+}
 // The group shapes at the path the store's code names them by.
 use contracts::group;
 // The message shapes at the path the store's code names them by.
@@ -127,11 +134,11 @@ use repository::audit;
 use crate as store;
 use crate::entry::{ContentFrom, EntryStatus, Instruction, Speaker};
 use crate::entry::{Entry, EntryFilter, EntryId};
-use crate::session::{ControlState, SessionId, SessionRecord};
-use scribe_domain::{
-    Author, AuthorKind, Label, LinkType, Project, Related, RelatedKind, SessionError, SessionStatus,
+use crate::session::{
+    ControlState, LinkType, SessionError, SessionId, SessionRecord, SessionStatus,
 };
-use scribe_domain::{record, session};
+use scribe_domain::record;
+use scribe_domain::{Author, AuthorKind, Label, Project, Provider, Related, RelatedKind};
 // The domain names the redaction tests (`tests/redact.rs`) and their
 // shared fixtures (`testing/redact.rs`) reach at the crate root, as they did
 // in the domain.
@@ -139,6 +146,10 @@ use scribe_domain::{record, session};
 use crate::entry::{AnswerIn, Decision, ItemAnswer, ItemClosure, OpenItem, Outcome, OutcomeState};
 #[cfg(test)]
 use crate::entry::{Window, WindowTurn};
+// The session tests (`contracts/tests/session.rs`) name it at the root, as
+// they did in the domain.
+#[cfg(test)]
+use crate::session::ShortIds;
 #[cfg(any(test, feature = "test-support"))]
 use scribe_domain::AuthorName;
 use std::path::{Path, PathBuf};

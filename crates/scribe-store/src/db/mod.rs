@@ -31,6 +31,7 @@ pub(crate) mod documents;
 pub mod fsio;
 pub(crate) mod import;
 pub(crate) mod locks;
+pub(crate) mod log;
 pub(crate) mod write;
 
 /// A `scribe.db` connection, as the store's writers hold it.

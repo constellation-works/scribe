@@ -4,7 +4,7 @@
 //! `transcript_path` to the transcript provenance check before it acts on a
 //! session.
 
-use scribe_domain::SessionId;
+use scribe_store::session::SessionId;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::path::PathBuf;
@@ -138,5 +138,5 @@ pub fn decode<T: DeserializeOwned>(input: &[u8]) -> Result<T, String> {
 /// The id error's message.
 pub fn session(id: &str) -> Result<SessionId, String> {
     id.parse()
-        .map_err(|e: scribe_domain::SessionError| e.to_string())
+        .map_err(|e: scribe_store::session::SessionError| e.to_string())
 }
