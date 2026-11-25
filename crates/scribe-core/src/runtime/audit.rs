@@ -8,8 +8,9 @@
 //! a command that returns early or panics is logged as one; an outcome is
 //! never assumed to be success (STD-02 R29).
 //!
-//! Which commands are audited is declared by the binary, per command path
-//! ([`Audit`]); read-only commands are not, because they must not write
+//! Which commands are audited is declared by each app, beside its
+//! `Command` (`Command::audit` and `Command::subject`, built into an
+//! [`Audit`] by its `exec`); read-only commands are not, because they must not write
 //! (STD-01 R31). The line holds the command path, the record acted on, the
 //! outcome, the stable error code, for a command that takes an `--author`,
 //! that name (STD-05 R2), and for a write run on the user's instruction its
@@ -61,9 +62,9 @@ use std::time::Instant;
 use time::OffsetDateTime;
 
 /// How a command appears in the audit log, and how it commits. Declared by
-/// the binary for the commands that write: the hooks, `session pass` and
-/// `consistency scan` (also when the plugin's routine tools run them), and
-/// the direct write verbs.
+/// each app's `Command::audit` for the commands that write: the hooks,
+/// `session pass` and `consistency scan` (also when the plugin's routine
+/// tools run them), and the direct write verbs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AuditMeta {
     /// The command path, such as `hook user-prompt-submit`.
@@ -100,13 +101,28 @@ impl AuditSubject {
 }
 
 /// How an app's `exec` audits a mutating command: its path and commit mode,
-/// and the subject the binary resolved before it ran.
+/// and the subject resolved before it ran.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Audit {
     /// The command path and how it commits.
     pub meta: AuditMeta,
     /// The record and agent it names.
     pub subject: AuditSubject,
+}
+
+impl Audit {
+    /// The audit a command declares: `meta` from its `audit`, with the
+    /// subject `subject` resolves, or `None` when it is not audited. Only
+    /// an audited command resolves its subject.
+    pub(crate) fn declared(
+        meta: Option<AuditMeta>,
+        subject: impl FnOnce() -> AuditSubject,
+    ) -> Option<Self> {
+        meta.map(|meta| Self {
+            meta,
+            subject: subject(),
+        })
+    }
 }
 
 /// One line the guard will write: how it ended, the record, the code.

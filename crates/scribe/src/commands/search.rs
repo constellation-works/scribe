@@ -9,7 +9,6 @@ use super::{DateArgs, ListNotice, list_output};
 use crate::error::CliError;
 use crate::output::{HitPayload, Output, Records};
 use clap::Args;
-use scribe_core::AuditMeta;
 use scribe_core::composition::Context;
 use scribe_core::search::{DEFAULT_LIMIT, RecordKind, SearchQuery};
 use scribe_core::{Project, TagName, Topic};
@@ -83,11 +82,6 @@ pub(crate) struct SearchArgs {
     /// Show at most this many hits, 1 or more; --json reports the total and whether the list was cut [default: 20]
     #[arg(long, value_name = "N")]
     pub(crate) limit: Option<NonZeroUsize>,
-}
-
-/// `search` reads only. See [`super::Command::audit`].
-pub(super) fn audit(_args: &SearchArgs) -> Option<AuditMeta> {
-    None
 }
 
 /// Run `search`.

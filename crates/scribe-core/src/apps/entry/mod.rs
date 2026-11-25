@@ -47,7 +47,7 @@ pub use written::{Actions, EntryWritten};
 pub(crate) use instruction::{check as check_instruction, note as note_instruction};
 
 use crate::composition::Context;
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
 use crate::runtime::{Ctx, PortError};
@@ -122,6 +122,70 @@ pub enum Command<'i> {
     },
 }
 
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        match self {
+            Self::List(_) | Self::Show(_) => None,
+            Self::Add(_) => Some(AuditMeta {
+                command: "entry add",
+                stepwise: false,
+            }),
+            Self::Update { .. } => Some(AuditMeta {
+                command: "entry update",
+                stepwise: false,
+            }),
+            Self::Retire { .. } => Some(AuditMeta {
+                command: "entry retire",
+                stepwise: false,
+            }),
+            Self::Forget { .. } => Some(AuditMeta {
+                command: "entry forget",
+                stepwise: false,
+            }),
+            Self::Pickup(_) => Some(AuditMeta {
+                command: "entry pickup",
+                stepwise: false,
+            }),
+            Self::Answer { .. } => Some(AuditMeta {
+                command: "entry answer",
+                stepwise: false,
+            }),
+            Self::Close { .. } => Some(AuditMeta {
+                command: "entry close",
+                stepwise: false,
+            }),
+        }
+    }
+
+    /// The record and agent this command names, resolved before it runs so
+    /// a refusal is attributable too. Exhaustive like [`Command::audit`].
+    #[must_use]
+    pub fn subject(&self, ctx: &Context) -> AuditSubject {
+        let of = |id: &str, author: &AuthorName| AuditSubject {
+            target: resolved_id(ctx, id),
+            author: Some(author.as_str().to_owned()),
+        };
+        match self {
+            Self::List(_) | Self::Show(_) => AuditSubject::default(),
+            Self::Add(input) => AuditSubject {
+                target: None,
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::Pickup(input) => of(input.id, &input.author),
+            Self::Update { id, author, .. }
+            | Self::Retire { id, author, .. }
+            | Self::Forget { id, author, .. }
+            | Self::Answer { id, author, .. }
+            | Self::Close { id, author, .. } => of(id, author),
+        }
+    }
+}
+
 /// What an `entry` command returns.
 pub enum Outcome {
     /// What `list` found.
@@ -159,17 +223,15 @@ impl<E> From<crate::Error> for Error<E> {
     }
 }
 
-/// Run `command` against `runtime`.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: a refusal, a usage error, a transcript read, the redactor,
 /// or a store error.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
@@ -219,8 +281,7 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The id of the entry `input` resolves to, or `None` when it does not:
-/// the audit subject's target, which the binary names before the command
-/// runs.
+/// the audit subject's target, which [`Command::subject`] names before the command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
     resolve_entry(ctx.store(), input)

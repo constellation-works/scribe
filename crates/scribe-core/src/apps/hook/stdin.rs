@@ -9,6 +9,7 @@ use super::{
 };
 use crate::SessionId;
 use crate::composition::Context;
+use crate::runtime::audit::{AuditMeta, AuditSubject};
 use crate::runtime::errors::CommandError;
 use scribe_tools::payload::{
     self, PromptPayload, SessionEndPayload, SessionStartPayload, StopPayload,
@@ -47,6 +48,42 @@ pub enum Event<'i> {
         /// Reads a named session's past transcript.
         read_past: ReadPast<'i, CommandError>,
     },
+}
+
+impl Event<'_> {
+    /// What the audit log records for this hook: every hook is audited,
+    /// under its command path, whichever provider runs it. Each reports its
+    /// writes and refusals; a silent read has no audit line. `Stop` may call
+    /// a model, so it commits stepwise.
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        let event = match self {
+            Self::SessionStart(_) => "SessionStart",
+            Self::UserPromptSubmit { .. } => "UserPromptSubmit",
+            Self::Stop(_) => "Stop",
+            Self::SessionEnd(_) => "SessionEnd",
+            Self::Codex { event, .. } => event,
+        };
+        let command = match event {
+            "SessionStart" => "hook session-start",
+            "UserPromptSubmit" => "hook user-prompt-submit",
+            "Stop" => "hook stop",
+            "SessionEnd" => "hook session-end",
+            // No hook verb names another event.
+            _ => return None,
+        };
+        Some(AuditMeta {
+            command,
+            stepwise: event == "Stop",
+        })
+    }
+
+    /// The record and agent a hook names before it runs: none, since a
+    /// hook names its session in each audit line.
+    #[must_use]
+    pub fn subject(&self, _ctx: &Context) -> AuditSubject {
+        AuditSubject::default()
+    }
 }
 
 /// The payload in `input`.

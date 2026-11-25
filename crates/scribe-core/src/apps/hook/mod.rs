@@ -75,19 +75,27 @@ pub enum Outcome {
 /// Why a `hook` command failed. A refusal is a reply, not an error.
 pub type Error<E> = HookError<E>;
 
-/// Run `event` against `ctx`, inside the audit guard when `audit` names one:
-/// its stdin decoded, then the event's command.
+/// Run `event` against `ctx`, inside the audit guard [`Event::audit`]
+/// declares: its stdin decoded, then the event's command.
 ///
 /// # Errors
 ///
 /// [`CommandError`]: stdin that could not be read or decoded, a store error,
 /// an unreadable transcript, or a port.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    event: Event<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, event: Event<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(event.audit(), || event.subject(ctx));
     guarded(ctx, audit, || stdin::run_event(ctx, event))
+}
+
+/// Run `event` against `ctx` with no audit line, as the binary's prompt
+/// hook tests drive it.
+///
+/// # Errors
+///
+/// As [`exec`].
+#[cfg(any(test, feature = "test-support"))]
+pub fn exec_unaudited(ctx: &Context, event: Event<'_>) -> Result<Outcome, CommandError> {
+    guarded(ctx, None, || stdin::run_event(ctx, event))
 }
 
 /// Run `command` against `ctx`: dispatch only.

@@ -22,7 +22,7 @@ pub use show::Shown;
 pub use verbs::TagVerbs;
 
 use crate::composition::Context;
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError};
@@ -47,6 +47,34 @@ pub enum Command {
     },
 }
 
+impl Command {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        match self {
+            Self::List | Self::Show(_) => None,
+            Self::Add(_) => Some(AuditMeta {
+                command: "tag add",
+                stepwise: false,
+            }),
+            Self::Update { .. } => Some(AuditMeta {
+                command: "tag update",
+                stepwise: false,
+            }),
+        }
+    }
+
+    /// The record and agent this command names: none, since the tag
+    /// commands name theirs in their audit lines.
+    #[must_use]
+    pub fn subject(&self, _ctx: &Context) -> AuditSubject {
+        AuditSubject::default()
+    }
+}
+
 /// What a `tag` command returns.
 pub enum Outcome {
     /// The tags.
@@ -62,16 +90,14 @@ pub enum Outcome {
 /// Why a `tag` command did not run.
 pub type Error<E> = WriteError<E>;
 
-/// Run `command` against `runtime`.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: a refusal, the redactor, or a store error.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 

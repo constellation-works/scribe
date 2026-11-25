@@ -11,7 +11,6 @@ use clap::{Args, Subcommand};
 use scribe_core::SessionId;
 use scribe_core::apps::mark::{Command, Outcome, exec};
 use scribe_core::composition::Context;
-use scribe_core::{AuditMeta, AuditSubject};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -44,22 +43,6 @@ pub(crate) struct ListArgs {
     /// Only this session's markers: a provider session id or a unique prefix [default: every session]
     #[arg(long, value_name = "SESSION")]
     session: Option<SessionId>,
-}
-
-impl MarkCommand {
-    /// `list` reads only.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::List(_) => None,
-        }
-    }
-
-    /// `list` names no record.
-    pub(super) fn subject(&self, _ctx: &Context) -> AuditSubject {
-        match self {
-            Self::List(_) => AuditSubject::default(),
-        }
-    }
 }
 
 pub(super) fn run(command: MarkCommand, ctx: &Context) -> Result<Output, CliError> {

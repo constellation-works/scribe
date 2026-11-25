@@ -1148,6 +1148,12 @@ pub(crate) fn encode_checkpoint(path: &Path, record: &SessionRecord) -> Result<S
 }
 
 /// Create `target` owner-only, or accept it empty.
+///
+/// A non-empty or non-directory target is refused here
+/// (`export_target_exists`), not in the admin app: it is the precondition
+/// of the store's own filesystem write, and only the store touches the
+/// filesystem. It is one of the store's documented exceptions to holding
+/// no rule (ARCHITECTURE.md).
 fn prepare_target(target: &Path) -> Result<()> {
     match std::fs::symlink_metadata(target) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

@@ -36,7 +36,6 @@ use crate::output::Output;
 use clap::{Args, Subcommand};
 use scribe_core::apps::hook::{Event, Outcome, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta};
 
 pub(super) const HOOK_EXAMPLES: &str = "\
 These run from provider packages or scribe init hooks, not by hand.
@@ -142,37 +141,9 @@ pub(crate) enum HookCommand {
 #[derive(Debug, Args)]
 pub(crate) struct HookArgs {}
 
-impl HookCommand {
-    /// Each hook reports its writes and refusals. A silent read has no audit line.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::SessionStart(_) => Some(AuditMeta {
-                command: "hook session-start",
-                stepwise: false,
-            }),
-            Self::UserPromptSubmit(_) => Some(AuditMeta {
-                command: "hook user-prompt-submit",
-                stepwise: false,
-            }),
-            Self::Stop(_) => Some(AuditMeta {
-                command: "hook stop",
-                stepwise: true,
-            }),
-            Self::SessionEnd(_) => Some(AuditMeta {
-                command: "hook session-end",
-                stepwise: false,
-            }),
-        }
-    }
-}
-
 /// Run one `hook` verb on the payload read from stdin: the hook app decodes
 /// it, inside the audit guard `audit` names.
-pub(super) fn run(
-    command: HookCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliError> {
     #[cfg(test)]
     let input = match tests::group_add::take_hook_input() {
         Some(input) => Ok(input),
@@ -205,7 +176,7 @@ pub(super) fn run(
             HookCommand::SessionEnd(HookArgs {}) => Event::SessionEnd(input),
         }
     };
-    Ok(replied(exec(ctx, audit, event)?))
+    Ok(replied(exec(ctx, event)?))
 }
 
 /// A hook outcome as its output: the reply.

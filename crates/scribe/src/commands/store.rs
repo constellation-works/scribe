@@ -9,7 +9,6 @@ use crate::output::Output;
 use clap::{Args, Subcommand};
 use scribe_core::apps::admin::{Command, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta};
 
 pub(super) const EXAMPLES: &str = "\
 Examples:
@@ -35,29 +34,12 @@ pub(crate) enum StoreCommand {
 #[derive(Debug, Args)]
 pub(crate) struct MigrateArgs {}
 
-impl StoreCommand {
-    /// `store migrate` writes the store and calls no model, so it runs as
-    /// one transaction with its audit line.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::Migrate(_) => Some(AuditMeta {
-                command: "store migrate",
-                stepwise: false,
-            }),
-        }
-    }
-}
-
 /// Run one `store` verb.
-pub(super) fn run(
-    command: StoreCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: StoreCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         StoreCommand::Migrate(MigrateArgs {}) => {
             let command = Command::Migrate;
-            Ok(super::admin::output(exec(ctx, audit, command)?))
+            Ok(super::admin::output(exec(ctx, command)?))
         }
     }
 }

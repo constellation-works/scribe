@@ -47,11 +47,13 @@ use crate::models::{
     CloseEvidence, ModelError, ProfileAnswer, ProfileRequest, SessionAnswer, SessionHeader,
     SessionHeaderRequest, SessionRequest,
 };
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
 use crate::runtime::{Ctx, PortError};
-use crate::{Author, Config, Models, Provider, Redactor, SessionId, SessionLink, Store, control};
+use crate::{
+    Author, AuthorName, Config, Models, Provider, Redactor, SessionId, SessionLink, Store, control,
+};
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
@@ -97,6 +99,90 @@ pub enum Command<'i> {
         /// The transcript: an id or unique prefix.
         id: SessionId,
     },
+}
+
+/// `session deactivate`'s command path in the audit log.
+pub const DEACTIVATE_COMMAND: &str = "session deactivate";
+
+/// `session activate`'s command path in the audit log.
+pub const ACTIVATE_COMMAND: &str = "session activate";
+
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        match self {
+            Self::List(_)
+            | Self::Show { .. }
+            | Self::TranscriptList { .. }
+            | Self::TranscriptShow { .. } => None,
+            Self::Rebuild(_) => Some(AuditMeta {
+                command: REBUILD_COMMAND,
+                stepwise: true,
+            }),
+            Self::Pass(_) => Some(AuditMeta {
+                command: PASS_COMMAND,
+                stepwise: true,
+            }),
+            Self::Deactivate(_) => Some(AuditMeta {
+                command: DEACTIVATE_COMMAND,
+                stepwise: false,
+            }),
+            Self::Activate(_) => Some(AuditMeta {
+                command: ACTIVATE_COMMAND,
+                stepwise: false,
+            }),
+            Self::Catalog(_) => Some(AuditMeta {
+                command: CATALOG_COMMAND,
+                stepwise: true,
+            }),
+        }
+    }
+
+    /// The record and agent this command names, resolved before it runs so
+    /// a refusal is attributable too. Exhaustive like [`Command::audit`].
+    #[must_use]
+    pub fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::List(_)
+            | Self::Show { .. }
+            | Self::Pass(_)
+            | Self::TranscriptList { .. }
+            | Self::TranscriptShow { .. } => AuditSubject::default(),
+            // A prefix is resolved before the line is written; an id that
+            // resolves to no record leaves the target null, never the typed id.
+            Self::Rebuild(input) => AuditSubject {
+                target: resolved_id(ctx, input.id).map(|id| format!("session:{id}")),
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::Catalog(input) => AuditSubject {
+                target: resolve_transcript(ctx, input.provider, input.id)
+                    .ok()
+                    .map(|id| format!("session:{id}")),
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::Deactivate(input) => activity_subject(ctx, &input.target, &input.author),
+            Self::Activate(input) => activity_subject(ctx, &input.target, &input.author),
+        }
+    }
+}
+
+/// An activity verb's subject: the session a whole-session reference
+/// resolves to, and the author. A segment reference names no target.
+fn activity_subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> AuditSubject {
+    let target = id
+        .segment
+        .is_none()
+        .then(|| id.id.clone())
+        .and_then(|id| resolved_id(ctx, &id))
+        .map(|id| format!("session:{id}"));
+    AuditSubject {
+        target,
+        author: Some(author.as_str().to_owned()),
+    }
 }
 
 /// What a `session` or `transcript` command returns.
@@ -161,17 +247,26 @@ impl<E> From<RebuildError<E>> for Error<E> {
     }
 }
 
-/// Run `command` against `runtime`.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: the flow's own error, as it was before the app moved.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
+}
+
+/// Run `command` against `ctx` with no audit line, as the binary's catalog
+/// and pass tests drive it.
+///
+/// # Errors
+///
+/// As [`exec`].
+#[cfg(any(test, feature = "test-support"))]
+pub fn exec_unaudited(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    guarded(ctx, None, || Ok(run(&ctx.core(), command)?))
 }
 
 /// Run `command` against `ctx`: dispatch only.
@@ -275,8 +370,7 @@ impl Models for Adapter<'_> {
 }
 
 /// The session `id` (an id or unique prefix) resolves to, or `None` when
-/// it does not: the audit subject's target, which the binary names before the command
-/// runs.
+/// it does not: the audit subject's target, which [`Command::subject`] names before the command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, id: &SessionId) -> Option<SessionId> {
     ctx.store().read().sessions().resolve(id).ok()
@@ -284,7 +378,7 @@ pub fn resolved_id(ctx: &Context, id: &SessionId) -> Option<SessionId> {
 
 /// The transcript `input` names, resolved against the `provider`
 /// transcripts on this host. Reads only: `session catalog`'s audit
-/// target, which the binary names before the command runs.
+/// target, which [`Command::subject`] names before the command runs.
 ///
 /// # Errors
 ///

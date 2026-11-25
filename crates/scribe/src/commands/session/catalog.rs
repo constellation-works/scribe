@@ -25,15 +25,15 @@ use crate::output::Output;
 use clap::Args;
 #[cfg(test)]
 use scribe_core::Author;
-use scribe_core::apps::session::{self as app, CatalogInput, Command, exec};
+#[cfg(test)]
+use scribe_core::apps::session as app;
+use scribe_core::apps::session::{CatalogInput, Command, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuthorName, Models, Project, SessionId};
+use scribe_core::{AuthorName, Models, Project, SessionId};
 
 /// A catalog begun: its switch, whether this run wrote it, and the bytes.
 #[cfg(test)]
 pub(in crate::commands) use scribe_core::apps::session::Begun;
-
-pub(in crate::commands) const COMMAND: &str = app::CATALOG_COMMAND;
 
 pub(super) const EXAMPLES: &str = "\
 Switches one past session on with cataloged_by and runs every window, with
@@ -69,12 +69,8 @@ pub(crate) struct CatalogArgs {
 }
 
 /// Catalog with the `claude` CLI as the session model.
-pub(super) fn run(
-    args: &CatalogArgs,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
-    run_audited(args, audit, ctx, |config| ctx.models(config))
+pub(super) fn run(args: &CatalogArgs, ctx: &Context) -> Result<Output, CliError> {
+    run_audited(args, ctx, exec, |config| ctx.models(config))
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config.
@@ -84,14 +80,15 @@ pub(in crate::commands) fn run_with<M: Models>(
     ctx: &Context,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
-    run_audited(args, None, ctx, models)
+    run_audited(args, ctx, app::exec_unaudited, models)
 }
 
-/// [`run_with`], audited as `audit` declares.
+/// [`run_with`], run by `exec`: the session app's audited `exec`, or the
+/// unaudited one the tests drive.
 fn run_audited<M: Models>(
     args: &CatalogArgs,
-    audit: Option<Audit>,
     ctx: &Context,
+    exec: super::Exec,
     models: impl FnOnce(&scribe_core::Config) -> M,
 ) -> Result<Output, CliError> {
     let input = CatalogInput {
@@ -102,7 +99,7 @@ fn run_audited<M: Models>(
         host: ctx.host(),
         models: once(models),
     };
-    Ok(passed(exec(ctx, audit, Command::Catalog(input))?, ctx))
+    Ok(passed(exec(ctx, Command::Catalog(input))?, ctx))
 }
 
 /// Begin a catalog of `input` by `by` (the session app's `begin_catalog`).
