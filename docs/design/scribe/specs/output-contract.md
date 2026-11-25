@@ -483,7 +483,11 @@ retire`, `entry pickup` (format 8; prints the entry it noted), `entry answer`,
 record they wrote in its `show` shape (`--json`: the record object). A
 write that changed nothing prints the record unchanged and `nothing
 changed` on stderr. `session rebuild` and `session catalog` print the
-session pass report. *(S10, as built)* `session deactivate` and `session
+session pass report. As built ([ORB-28143]) neither runs a window:
+`session catalog` reports its one session `waiting` with `remaining: 1`
+and `switch_written`, and `session rebuild` reports no passes with
+`remaining: 1`, each with a notice on stderr naming the `orbit job run`
+command that runs the windows. *(S10, as built)* `session deactivate` and `session
 activate` print the session in `session show`'s shape (`--json`: the
 object with every segment); a change writes one audit line (`session
 deactivate` or `session activate`, target `session:<id>`) and an
@@ -901,8 +905,8 @@ already linked: <type> <id> — nothing changed`, or `scribe: /scribe
 `link_conflict` (a second `spawned_from` parent) or `link_session_off`
 (`/scribe link` in a session neither switched on nor recorded). A catalog
 replies `scribe: cataloging <id> as yours — its windows run at the next
-session pass, …` (the rest names `scribe session catalog <id> --author
-<name>` for running them now), `scribe: <id> is already being cataloged — nothing changed; …`
+session pass, …` (the rest names `orbit job run scribe-session-catalog`
+for running them now), `scribe: <id> is already being cataloged — nothing changed; …`
 (a catalog switch still due), or `scribe: /scribe catalog <id> refused —
 <message>` with the code `session catalog` would give
 (`session_cataloged`, `transcript_not_found`, `id_ambiguous`, …). A switch,

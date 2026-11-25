@@ -76,12 +76,23 @@ pub fn plugin_step(
     input: Value,
     config: &Value,
 ) -> Result<Value, Output> {
+    plugin_tool(fixture, env, &format!("session-pass-{step}"), input, config)
+}
+
+/// Call the plugin tool `scribe.<tool>` through `scribe plugin call`.
+pub fn plugin_tool(
+    fixture: &Fixture,
+    env: &[(&str, &str)],
+    tool: &str,
+    input: Value,
+    config: &Value,
+) -> Result<Value, Output> {
     let mut command = fixture.cmd(&["plugin", "call"]);
     command.env_remove("SCRIBE_ROOT").envs(env.iter().copied());
     let reply = call(
         &mut command,
         &json!({
-            "schema_version": 1, "tool": format!("scribe.session-pass-{step}"),
+            "schema_version": 1, "tool": format!("scribe.{tool}"),
             "input": input, "context": {"config": config},
         }),
     );
@@ -224,4 +235,117 @@ pub fn fill_window(answer: &mut Value, request: &Value, force_new: bool) {
 
 pub fn header(answer: &Value) -> Value {
     json!({"title": answer["title"], "summary": answer["summary"], "goals": answer["goals"], "next": answer["next"]})
+}
+
+/// The plugin config of a fixture whose transcripts are Claude Code's.
+pub fn claude_config(fixture: &Fixture) -> Value {
+    json!({"root": fixture.root(), "transcripts": fixture.home().join(".claude/projects")})
+}
+
+/// Run the `scribe-session-rebuild` job's steps as the job does: prepare,
+/// apply, at most one targeted retry, finish, until finish is done.
+/// `response` answers each activity (`true` for the header compression).
+///
+/// The result is the run's report (`{passes, remaining}`) as the
+/// in-process rebuild printed it, with exit status 0; when a step fails the
+/// run, the report names the failure with the windows written so far and
+/// the step's error envelope is on stderr, with exit status 1.
+pub fn rebuild(
+    mut step: impl FnMut(&str, Value) -> Result<Value, Output>,
+    input: &Value,
+    mut response: impl FnMut(&Value, bool) -> Result<Value, ActivityFailure>,
+) -> Output {
+    let mut progress = json!([]);
+    let mut windows = 0;
+    let failed = |reply: Output, windows: u64| -> Output {
+        let error = serde_json::from_slice::<Value>(&reply.stdout)
+            .map(|reply| reply["error"].clone())
+            .unwrap_or(Value::Null);
+        let report = json!({"passes": [{
+            "session": input["session"], "result": "failed", "error_code": error["code"],
+            "error": error["message"], "windows": windows,
+        }], "remaining": 0});
+        Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(1 << 8),
+            stdout: serde_json::to_vec(&report).unwrap(),
+            stderr: serde_json::to_vec(&error).unwrap(),
+        }
+    };
+    for _ in 0..100 {
+        let mut prepare_input = input.clone();
+        prepare_input["progress"] = progress.clone();
+        let prepared = match step("rebuild-prepare", prepare_input) {
+            Ok(prepared) => prepared,
+            Err(reply) => return failed(reply, windows),
+        };
+        let basis = prepared["basis"].clone();
+        let cursor = prepared["cursor"].clone();
+        let mut first = json!({"basis": basis, "cursor": cursor});
+        if prepared["needs_model"] == true {
+            match response(&prepared["window_request"], false) {
+                Ok(answer) => first["answer"] = answer,
+                Err(failure) => {
+                    first["answer"] = json!([null, null]);
+                    first["errors"] = json!([failure.reason, null]);
+                }
+            }
+        }
+        let applied = match step("rebuild-apply", first.clone()) {
+            Ok(applied) => applied,
+            Err(reply) => return failed(reply, windows),
+        };
+        let mut last = first;
+        last["cursor"] = applied["cursor"].clone();
+        last["repair"] = json!(true);
+        last["previous_status"] = applied["status"].clone();
+        last["correction"] = applied["correction"].clone();
+        let header = applied["status"] == "retry_header";
+        if header || applied["status"] == "retry_window" {
+            let request = &applied[if header {
+                "header_request"
+            } else {
+                "window_request"
+            }];
+            let (answer, errors) = if header {
+                ("header", "header_errors")
+            } else {
+                ("retry_answer", "retry_errors")
+            };
+            match response(request, header) {
+                Ok(result) => last[answer] = result,
+                Err(failure) => {
+                    last[answer] = json!([null, null]);
+                    last[errors] = json!([failure.reason, null]);
+                }
+            }
+        }
+        let carried = match step("rebuild-apply", last) {
+            Ok(carried) => carried,
+            Err(reply) => return failed(reply, windows),
+        };
+        windows = carried["cursor"]["windows"].as_u64().unwrap();
+        progress = json!([{"cursor": carried["cursor"]}]);
+        let finished = match step(
+            "rebuild-finish",
+            json!({"basis": basis, "progress": progress}),
+        ) {
+            Ok(finished) => finished,
+            Err(reply) => return failed(reply, windows),
+        };
+        if finished["done"] == true {
+            let warnings: Vec<String> = finished["pass"]["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|w| w.as_str().unwrap().to_owned())
+                .collect();
+            return Output {
+                status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                stdout: serde_json::to_vec(&json!({"passes": [finished["pass"]], "remaining": 0}))
+                    .unwrap(),
+                stderr: warnings.join("\n").into_bytes(),
+            };
+        }
+    }
+    panic!("the rebuild did not finish in 100 iterations");
 }

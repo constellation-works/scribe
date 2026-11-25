@@ -305,7 +305,7 @@ fn both_hook_commands_are_audited_under_their_command_path() {
     use crate::apps::consistency;
     use crate::apps::hook::{Event, HookEvent};
     use crate::apps::session;
-    use crate::{AuthorName, Label, Provider, SessionId};
+    use crate::{AuthorName, Provider, SessionId};
     let mut read_past = |_: Provider, _: &SessionId, _: &std::path::Path| Ok(None);
     let (id, author): (SessionId, AuthorName) =
         ("abcd".parse().unwrap(), "daniel".parse().unwrap());
@@ -314,8 +314,6 @@ fn both_hook_commands_are_audited_under_their_command_path() {
         author: &author,
         project: None,
         provider: Provider::ClaudeCode,
-        host: Label::sanitized("host", "host"),
-        models: Box::new(|_| unreachable!("audit() never runs the command")),
     });
     let scan = consistency::Command::Scan(consistency::ScanInput {
         provider: Provider::ClaudeCode,

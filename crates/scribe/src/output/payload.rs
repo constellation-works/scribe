@@ -1765,13 +1765,13 @@ impl PassFailure for PassReport {
         (!failed.is_empty()).then(|| {
             if self.catalog {
                 return crate::error::CliError::PassFailed(format!(
-                    "{} session catalog(s) failed: {}; checkpoint kept; repeat 'scribe session catalog <id> --author <name>' to resume",
+                    "{} session catalog(s) failed: {}; the switch stays due; run 'orbit job run scribe-session-catalog' for the session again to resume",
                     failed.len(),
                     failed.join(", ")
                 ));
             }
             if self.passes.iter().any(|p| p.author.is_some()) {
-                return crate::error::CliError::PassFailed(format!("{} session rebuild(s) failed: {}; checkpoint kept; repeat 'scribe session rebuild <id> --author <name> --confirm' to resume", failed.len(), failed.join(", ")));
+                return crate::error::CliError::PassFailed(format!("{} session rebuild(s) failed: {}; checkpoint kept; run 'orbit job run scribe-session-rebuild' for the session again to resume", failed.len(), failed.join(", ")));
             }
             crate::error::CliError::PassFailed(format!(
                 "{} session pass(es) failed: {}; each stays due with retry backoff; use 'orbit job run scribe-session-pass' with explicit sessions to retry now",

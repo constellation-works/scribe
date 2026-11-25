@@ -1636,7 +1636,7 @@ prompt fix is redone.
   window is checkpointed to `sessions/<yyyy>/<mm>/.<id>.rebuild.md`, a
   dot-file every read skips, so an interrupted rebuild resumes there on
   the next run; the record itself is untouched until the last window.
-- The last step, under the lock, replaces the record with the rebuilt one
+- The last step, in one write, replaces the record with the rebuilt one
   only if the record's `updated` is what rebuild read when it started;
   if a pass wrote in the meantime, rebuild folds in the newer messages
   first and tries again. Ordinary passes mirror this: before each
@@ -1653,6 +1653,11 @@ prompt fix is redone.
 - A session that is on and due is refused `session_busy`; `scribe session
   pass --session <id>` first, or wait for the routine.
 - It is a mutating command: one audit line (`target` `session:<id>`).
+- As built ([ORB-28143], [§19.3.4](#1934-session-rebuild-scribe-session-rebuild-job)):
+  the windows run as the Orbit job `scribe-session-rebuild`, the checkpoint
+  is a private row in `scribe.db`, and `max_active_runs: 1` with
+  optimistic checks replaces the lock. The CLI makes the refusals above
+  and prints the job command; the job's finish writes the audit line.
 - Its tests replay recorded model answers through the built binary with no
   live model ([specs/replay-fixtures.md](specs/replay-fixtures.md)): a
   checked-in synthetic recording reproduces each budget, `starts_at` and
@@ -1741,7 +1746,8 @@ names of its own.
 
 **Cataloging: `scribe session catalog <id>`.** `scribe session catalog <id>
 --author <name> [--project <slug>]` switches the named session on as a
-cataloged-by-name session and runs its passes to the end. Who cataloged
+cataloged-by-name session; the Orbit job `scribe-session-catalog` runs its
+passes to the end (as built, [ORB-28143], [§19.3.3](#1933-session-catalog-scribe-session-catalog-job-and-cli-switch)). Who cataloged
 it is a channel. The CLI records `kind: agent` under the caller's name and
 refuses the reserved names (`daniel`, `scribe`, `consistency`)
 `reserved_author`, with or without a terminal. Daniel catalogs as himself
@@ -1751,8 +1757,8 @@ same switch with `cataloged_by: {at, by: {kind: daniel}}` and blocks the
 prompt with what it did, but runs no window, because a catalog can be dozens
 of model calls. The next `session pass` runs them (a pass of a switch with
 `cataloged_by` runs as a catalog: `origin: catalog`, the attribution
-kept, final and off when the transcript has ended), or `session catalog
-<id>` in a shell runs them now; either keeps Daniel's attribution
+kept, final and off when the transcript has ended), or `orbit job run
+scribe-session-catalog` runs them now; either keeps Daniel's attribution
 ([4_decisions.md](./4_decisions.md#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution)):
 
 - The transcript is found and checked as a pass finds it. A session that
@@ -1772,12 +1778,12 @@ kept, final and off when the transcript has ended), or `session catalog
   no hook ever passes it again. A transcript written to within 24 hours is
   left on and due, and the hooks carry on as for `/scribe on`.
 - A failure keeps the checkpoint and the switch due, as a pass failure
-  does, and running `catalog` again resumes it.
-- Audited like a pass, plus one line for the switch when the catalog
-  wrote it and no window failed. A failed catalog is one failure line
-  (`target` `session:<id>`, `error_code` such as `model_failed`), not a
-  success line for the switch and then a failure: the switch it left due
-  is that session's, named by the failure line.
+  does, and running the job again resumes it.
+- Audited like a pass, under `session catalog` with the author. As built
+  ([ORB-28143]) the switch and the windows are separate steps: writing the
+  switch is one success line (none when a run resumes it), and a failed
+  window is one failure line (`target` `session:<id>`, `error_code` such
+  as `model_failed`).
 
 The result is a model-written session record, labelled as a summary
 wherever it is evidence. Cataloging creates no entries. A session only
@@ -7417,6 +7423,8 @@ The `scribe-session-pass` routine (`*/5 * * * *`, seeded `enabled: false`, `poli
 - **Orbit job `scribe-session-catalog` (`input: {session, author, project?, provider?}`, `max_active_runs: 1`)**:
   - Starts with `begin` (`plugin.tool_call`: `scribe.session-catalog-begin`, idempotent when resuming a catalog switch), then runs the same `loop` (`prepare` -> `scribe_session_distill` -> `apply` with optional header/window retry) in catalog mode (`origin: catalog`, no 5-session cap, `ended` from the 24-hour rule -> `CatalogFinal` on the last window).
 
+As built ([ORB-28143]): `scribe session catalog` keeps its checks (author, transcript resolution, `session_forgotten`, `session_cataloged`, provenance, redactor) and writes the switch in one audited step, then prints the job command; it starts no model. The job's `begin` step runs the same `catalog::begin`, so it writes the switch or resumes one a failed or interrupted catalog left, and writes a `session catalog` success line only when it wrote the switch. The loop reuses `scribe.session-pass-prepare`, `-apply` and `-fail`: prepare's `catalog: {author, project?}` selects catalog mode, which takes exactly the one named session, requires its switch to carry `cataloged_by`, applies no 50-second start cutoff, and seals the selection into the basis. Apply and fail read the mode from the sealed basis, use `--project` for the first record as the in-process catalog did, and audit under `session catalog` with the author; their lines keep their own targets (the session, and each closure and entry a window persisted). A failed window records `control::fail` as the pass does; running the job again resumes from the switch.
+
 #### 19.3.4 `session rebuild` (`scribe-session-rebuild` job)
 
 `scribe-session-rebuild` (`input: {session, author, confirm}`, `max_active_runs: 1`) runs as an Orbit job using the same `scribe_session_distill` and `scribe_session_header_compress` activities:
@@ -7428,6 +7436,14 @@ The `scribe-session-pass` routine (`*/5 * * * *`, seeded `enabled: false`, `poli
 3. **`finish` (`plugin.tool_call`: `scribe.session-rebuild-finish`)**:
    - Under one `scribe.db` write transaction, checks `current.updated == expected_updated` and `!session_busy`, preserves `started`, `created`, `links`, `active`, `keep_active`, `active_change`, and `cataloged_by`, stamps `rebuilt_by`, promotes the checkpoint (`put_from_checkpoint`), and audits `session rebuild`.
    - If `current.updated` advanced while the job was running, `finish` returns `{finished: false, next_expected}` so the outer loop folds in the newer messages and tries `finish` again — preserving the current `rebuild.rs` race guarantee without holding an OS file lock across subprocesses.
+
+As built ([ORB-28143]):
+
+- `scribe session rebuild <id> --author <name> --confirm` runs prepare's refusals in their old order (author, resolution, `session_forgotten`, provider, `confirm_required` with the segment and pass counts, `session_busy`, `transcript_missing`, provenance, redactor), audited as `session rebuild`, then prints the `orbit job run scribe-session-rebuild` command; it starts no model and takes no lock. `rebuild-<id>.lock` is gone: `max_active_runs: 1` and the checks below replace it.
+- Every step admits the rebuild again with the same checks, so a session forgotten or switched on after prepare is refused at apply or finish, before any write.
+- The cursor (windows, sealed segments, dropped terms, warnings) and the basis (session, author, the checkpoint's mark `{through, updated}`, `expected_updated`, the window end, `final_window` and a digest of the request and the transcript through the window end) are sealed. Apply refuses a basis paired with another cursor, except the final attempt that carries a written window and finish, which require the cursor to name the basis's session and author.
+- Apply recomputes the window under the write: the stored checkpoint must still be the mark prepare read, and the window's digest and `final_window` must match; otherwise it returns `stale` and the loop prepares again. It recomputes the first answer's status before a targeted retry, as the pass apply does. A window whose answer fails its check after repair, or whose activity failed, fails the run with its code; the checkpoint keeps every window written, and the next run resumes it.
+- The checkpoint carries the visible revision it was cut from. Finish, in one write, refuses a forgotten or busy session, returns not done while the checkpoint is not the one prepare read or messages remain, and when the visible record has moved rebases the checkpoint onto it (`next_expected`) so the next iteration folds in newer messages. Otherwise it preserves `started`, `created`, `links`, `active`, `keep_active`, `active_change` and `cataloged_by`, stamps `rebuilt_by`, and writes the one `session rebuild` audit line; prepare and apply write none.
 
 #### 19.3.5 `memory refresh` (`scribe-memory-refresh` job and routine)
 

@@ -282,51 +282,6 @@ pub fn set_switch(root: &Path, session: &str, field: &str, value: &str) {
     );
 }
 
-/// A competing write made while a fake program waits: the program runs
-/// [`Hold::script`], which blocks it until `change` has run in the test
-/// process. Deterministic, with no sleeps: two FIFOs order the steps.
-pub struct Hold {
-    script: String,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Hold {
-    pub fn new(dir: &Path, change: impl FnOnce() + Send + 'static) -> Self {
-        let hold = dir.join("hold.fifo");
-        let go = dir.join("go.fifo");
-        for fifo in [&hold, &go] {
-            let made = std::process::Command::new("mkfifo")
-                .arg(fifo)
-                .status()
-                .expect("run mkfifo");
-            assert!(made.success(), "mkfifo {}", fifo.display());
-        }
-        let quote = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
-        let script = format!("echo held > {}\nread _ < {}\n", quote(&hold), quote(&go));
-        let thread = std::thread::spawn(move || {
-            std::fs::read(&hold).expect("wait for the program");
-            change();
-            std::fs::write(&go, "go\n").expect("release the program");
-        });
-        Self {
-            script,
-            thread: Some(thread),
-        }
-    }
-
-    /// The shell lines that wait for the change.
-    pub fn script(&self) -> &str {
-        &self.script
-    }
-
-    /// Waits for the change to have run.
-    pub fn join(mut self) {
-        if let Some(thread) = self.thread.take() {
-            thread.join().expect("the change ran");
-        }
-    }
-}
-
 /// Whether any session has a switch or a Codex cursor.
 pub fn has_control(root: &Path) -> bool {
     let state = scribe_core::Store::open(root)

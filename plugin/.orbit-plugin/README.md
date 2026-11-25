@@ -7,6 +7,8 @@ It uses `scribe plugin call` as its exec backend. Every tool has
 | Job | Deterministic tools | Seeded routine |
 |---|---|---|
 | `scribe-session-pass` | `scribe.session-pass-prepare`, `scribe.session-pass-apply`, `scribe.session-pass-fail` | Every five minutes, disabled |
+| `scribe-session-catalog` | `scribe.session-catalog-begin`, then the session-pass tools in catalog mode | None |
+| `scribe-session-rebuild` | `scribe.session-rebuild-prepare`, `scribe.session-rebuild-apply`, `scribe.session-rebuild-finish` | None |
 | `scribe-consistency` | `scribe.consistency-scan` | Mondays at 06:00, disabled |
 | `scribe-memory-refresh` | `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply` | Sundays at 05:00, disabled |
 | `scribe-group-close` | `scribe.group-close-prepare`, `scribe.group-close-apply` | None |
@@ -82,6 +84,20 @@ window preserves those checkpoints and keeps the session due. Automatic
 retries wait 5, 10, 20, 40, then at most 60 minutes. An explicitly named
 session bypasses backoff. `[instructions] session` and `session_header`
 override activity guidance before the fixed answer contract.
+
+```sh
+orbit job run scribe-session-catalog --input '{"session":"<id>","author":"<name>"}'
+orbit job run scribe-session-rebuild --input '{"session":"<id>","author":"<name>","confirm":true}'
+```
+
+The catalog job writes or resumes a past session's catalog switch, then runs
+its windows to the end with no five-session cap and no 50-second cutoff. The
+rebuild job writes each window to a private checkpoint and replaces the
+record only when every message is in it; a record that moved meanwhile is
+folded in on the next iteration. Each keeps one active run at a time, and a
+failed run keeps what it wrote: running the job again resumes it.
+`scribe session catalog` and `scribe session rebuild` make the same checks,
+write only the switch (catalog), and print these commands.
 
 `scribe session pass` settles eligible sessions locally and prints the Orbit
 job command when new windows need distillation. `scribe session pass-prepare`

@@ -1,19 +1,22 @@
-//! `scribe session catalog` (ORB-27707 step 3): switch one past session on
-//! with `cataloged_by` and run every window of its transcript.
+//! `scribe session catalog` (2_design.md §19.3.3): switch one past session
+//! on with `cataloged_by`. Its windows run as the `scribe-session-catalog`
+//! Orbit job, which begins with the same switch write.
 
-use super::pass::{CatalogJob, PassReport, RunFailure, run_catalog};
+use super::pass::{CatalogSelection, PassPayload, PassReport};
 use crate::apps::tag::ConfigReads;
 use crate::control::{self, CatalogGate};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::{
-    Author, AuthorName, Config, Label, Models, Project, Provider, SessionControl, SessionFilter,
-    SessionId, check_agent_author, transcript,
+    Author, AuthorName, Project, Provider, SessionControl, SessionFilter, SessionId,
+    check_agent_author,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::PathBuf;
 
 /// What `session catalog` runs.
-pub struct CatalogInput<'i, F> {
+pub struct CatalogInput<'i> {
     /// The session, or a prefix of its id.
     pub id: &'i SessionId,
     /// The agent cataloging it.
@@ -22,10 +25,35 @@ pub struct CatalogInput<'i, F> {
     pub project: Option<Project>,
     /// The provider whose transcript it is.
     pub provider: Provider,
-    /// This host, as records name it.
-    pub host: Label,
-    /// The `Models` adapter for the session's config.
-    pub models: F,
+}
+
+/// The `scribe-session-catalog` job's `begin` input.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogBeginInput {
+    /// The session, or a prefix of its id.
+    pub session: SessionId,
+    /// The agent cataloging it.
+    pub author: AuthorName,
+    /// The project of the first record; else attributed.
+    #[serde(default)]
+    pub project: Option<Project>,
+    /// The provider whose transcript it is; the host's default when absent.
+    #[serde(default)]
+    pub provider: Option<Provider>,
+}
+
+/// What `begin` hands the job's window loop.
+#[derive(Debug, Serialize)]
+pub struct CatalogBegun {
+    /// The session's full id.
+    pub session: SessionId,
+    /// The same id as the pass selection's one session.
+    pub sessions: Vec<SessionId>,
+    /// Whether this call switched it on.
+    pub wrote_switch: bool,
+    /// The pass selection's catalog mode.
+    pub catalog: CatalogSelection,
 }
 
 /// Why `session catalog` did not run.
@@ -68,15 +96,6 @@ impl<E> From<crate::Error> for CatalogError<E> {
     }
 }
 
-impl<E> From<RunFailure<E>> for CatalogError<E> {
-    fn from(failure: RunFailure<E>) -> Self {
-        match failure {
-            RunFailure::Core(err) => Self::Core(err),
-            RunFailure::Port(err) => Self::Port(err),
-        }
-    }
-}
-
 /// A catalog begun: its switch, whether this run wrote it, and the
 /// transcript's bytes.
 pub struct Begun {
@@ -90,49 +109,87 @@ pub struct Begun {
     pub bytes: Vec<u8>,
 }
 
-/// Run `session catalog`: begin the catalog, then run every window.
+/// Run `session catalog`: begin the catalog, and name the job that runs
+/// its windows.
 ///
 /// # Errors
 ///
-/// [`CatalogError`]. A failed window is a `failed` payload, not an error.
-pub fn run<E: PortError, M: Models>(
+/// [`CatalogError`].
+pub fn run<E: PortError>(
     ctx: &Ctx<'_, E>,
-    input: CatalogInput<'_, impl FnOnce(&Config) -> M>,
+    input: CatalogInput<'_>,
 ) -> Result<PassReport, CatalogError<E>> {
     let CatalogInput {
         id,
         author,
         project,
         provider,
-        host,
-        models,
     } = input;
     check_agent_author(author)?;
     let begun = begin(ctx, provider, id, Author::agent(author.clone()))?;
-    let config = ctx.store.read().tags().config()?.for_provider(provider);
-    let project = project.unwrap_or_else(|| {
-        super::pass::attributed_project(&begun.bytes, &config, |cwd| {
-            ctx.transcripts.project_of(cwd)
-        })
-    });
-    let ended = transcript::survey(&begun.bytes)
-        .ended
-        .is_some_and(|last| transcript::is_day_old(last, ctx.clock.now()));
-    let mut report = run_catalog(
+    let mut job_input = json!({"session": begun.id, "author": author});
+    if let Some(project) = &project {
+        job_input["project"] = json!(project);
+    }
+    Ok(PassReport {
+        passes: vec![PassPayload {
+            session: begun.id.to_string(),
+            result: "waiting",
+            error_code: None,
+            passes: None,
+            dropped_terms: 0,
+            windows: 0,
+            segments_sealed: 0,
+            segments: None,
+            author: None,
+            gave_up: false,
+            error: None,
+            warnings: Vec::new(),
+            memory_written: 0,
+            memory_promoted: 0,
+            memory_proposed: 0,
+            memory_pending: 0,
+            memory_refused: std::collections::BTreeMap::new(),
+        }],
+        remaining: 1,
+        notices: vec![format!(
+            "the catalog switch is on; run orbit job run scribe-session-catalog --input '{job_input}' to write its windows"
+        )],
+        catalog: true,
+        switch_written: begun.wrote_switch,
+        persisted_targets: Vec::new(),
+        memory_targets: Vec::new(),
+    })
+}
+
+/// The job's `begin`: the same switch write, idempotent when it resumes a
+/// catalog switch.
+///
+/// # Errors
+///
+/// [`CatalogError`].
+pub fn begin_job<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: CatalogBeginInput,
+    default_provider: Provider,
+) -> Result<CatalogBegun, CatalogError<E>> {
+    check_agent_author(&input.author)?;
+    let provider = input.provider.unwrap_or(default_provider);
+    let begun = begin(
         ctx,
-        models,
-        CatalogJob {
-            provider,
-            host: &host,
-            id: &begun.id,
-            switch: &begun.switch,
-            project,
-            ended,
-            author: author.as_str(),
-        },
+        provider,
+        &input.session,
+        Author::agent(input.author.clone()),
     )?;
-    report.switch_written = begun.wrote_switch;
-    Ok(report)
+    Ok(CatalogBegun {
+        session: begun.id.clone(),
+        sessions: vec![begun.id],
+        wrote_switch: begun.wrote_switch,
+        catalog: CatalogSelection {
+            author: input.author,
+            project: input.project,
+        },
+    })
 }
 
 /// Resolve `input` to a transcript on this host: an exact file name, else a

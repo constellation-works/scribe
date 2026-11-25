@@ -1,21 +1,26 @@
-//! Rebuild a record from the first transcript message. Each window is written
-//! to an isolated dot-file; only the complete rebuild replaces the record.
+//! `scribe session rebuild`: check that a record can be rebuilt and name
+//! the `scribe-session-rebuild` Orbit job, which rebuilds it window by
+//! window into a private checkpoint and replaces the record only when the
+//! whole transcript is in it (docs/design/scribe/2_design.md §19.3.4).
 
-use super::{once, passed};
+use super::passed;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
 use scribe_core::apps::session::{Command, RebuildInput, exec};
 use scribe_core::composition::Context;
-use scribe_core::{AuthorName, Config, Models, SessionId};
+use scribe_core::{AuthorName, SessionId};
 
 pub(super) const EXAMPLES: &str = "\
-Replaces the header and log only after every transcript window succeeds.
-Interrupted runs resume their private checkpoint; --confirm is required.
+Checks what the rebuild refuses (a forgotten session, a missing --confirm, a
+session a pass owns, a missing or unproven transcript) and prints the Orbit
+job command. The job replaces the header and log only after every transcript
+window succeeds; a failed or interrupted run keeps its private checkpoint,
+and running the job again resumes it.
 
 Examples:
   scribe session rebuild <id> --author <name> --confirm
-  scribe session rebuild <id> --author <name> --confirm --json";
+  orbit job run scribe-session-rebuild --input '{\"session\":\"<id>\",\"author\":\"<name>\",\"confirm\":true}'";
 
 #[derive(Debug, Args)]
 pub(crate) struct RebuildArgs {
@@ -31,20 +36,10 @@ pub(crate) struct RebuildArgs {
 }
 
 pub(super) fn run(args: &RebuildArgs, ctx: &Context) -> Result<Output, CliError> {
-    run_audited(args, ctx, |config| ctx.models(config))
-}
-
-/// [`run`] with the `Models` adapter `models` builds for the config.
-fn run_audited<M: Models>(
-    args: &RebuildArgs,
-    ctx: &Context,
-    models: impl FnOnce(&Config) -> M,
-) -> Result<Output, CliError> {
     let input = RebuildInput {
         id: &args.id,
         author: &args.author,
         confirm: args.confirm,
-        models: once(models),
     };
     Ok(passed(exec(ctx, Command::Rebuild(input))?, ctx))
 }

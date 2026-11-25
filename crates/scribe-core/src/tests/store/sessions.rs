@@ -542,10 +542,9 @@ fn forgotten_pair() -> ForgottenPair {
     store
         .settle(&Settle::ForgetSession(forgotten.id.clone()), &cite, T0)
         .unwrap();
-    let _guard = store.lock_rebuild(&live).unwrap();
     let mut rebuilt = live.clone();
     rebuilt.summary = LIVE_CHECKPOINT.to_owned();
-    store.checkpoint_rebuild(rebuilt, &redactor).unwrap();
+    store.checkpoint_rebuild(rebuilt, None, &redactor).unwrap();
     ForgottenPair {
         dir,
         store,

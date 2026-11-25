@@ -20,7 +20,14 @@ The human types these lines (in Codex, `$scribe` in place of `/scribe`):
 
 If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
-under your own author.
+under your own author. It writes the switch and runs no window: they run at
+the next session pass, or now with the `orbit job run scribe-session-catalog`
+command it prints.
+
+`scribe session rebuild <id> --author <name> --confirm` checks a rebuild's refusals (`confirm_required`, `session_busy`,
+`session_forgotten`, `transcript_missing`) and prints the
+`scribe-session-rebuild` job command; a failed run keeps its checkpoint, and
+running the job again resumes it.
 
 A catalog switch is an on switch: its passes write memory the same way
 `/scribe on` passes do. A session that is off gets no pass and no memory. Its
@@ -79,8 +86,7 @@ nothing. Before the host persists a prompt, recording may be pending until
 Stop verifies it. Relay the hook's actual status. These checks prevent
 accidents. They do not authenticate a process running as the same OS user.
 
-The standalone catalog and rebuild commands use the provider model settings
-in `[models]` or `[codex.models]`. Orbit chooses session-pass models by the
+Orbit chooses the session-pass, catalog and rebuild models by the
 `session_distill_crew` and `session_header_crew` settings.
 
 Stop and SessionEnd mark opted-in sessions due. `scribe session pass` settles

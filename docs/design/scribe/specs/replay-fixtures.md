@@ -2,10 +2,11 @@
 
 Three rebuild fixes in a row passed their own tests and then failed on a
 real long session: the tests never held the inputs that fail. A replay
-fixture is a recording of one `scribe session rebuild`, its transcript and
-every model call with the answer the `claude` CLI printed, that the tests
-play back through the built binary with no live model, so the outcome does
-not depend on what the model returns on the day
+fixture is a recording of one session rebuild, its transcript and every
+model call with the answer the `claude` CLI printed, that the tests play
+back to the `scribe-session-rebuild` job's plugin steps in the built binary
+with no live model, so the outcome does not depend on what the model
+returns on the day
 ([2_design.md §5.6](../2_design.md#56-rebuilding-a-record)).
 
 Code: `crates/scribe/tests/support/replay.rs` (harness and redaction),
@@ -23,8 +24,8 @@ One directory per recording:
 | `fixture.json` | `session` (the session id), `project` (the directory under `HOME/.claude/projects/` the transcript is placed in), `author` (`--author`), and `expect`: the rebuild report's `windows`, `segments` and `warnings` |
 | `transcript.jsonl` | The Claude Code transcript, as Claude Code wrote it |
 | `store/` | Optional seed store, copied owner-only to the data root: the record to rebuild, `config.toml` (window sizes), `control.json` |
-| `call-NNN.args` | Call `NNN`'s arguments to `claude`, one per line, from `001` |
-| `call-NNN.in` | The prompt scribe wrote on the call's stdin |
+| `call-NNN.args` | The activity call `NNN` goes to, from `001`: `activity:scribe_session_distill` or `activity:scribe_session_header_compress` |
+| `call-NNN.in` | The prompt the activity renders from scribe's request (`SessionWindowInput::prompt` or `SessionHeaderRequest::prompt`) |
 | `call-NNN.out` | The stdout the `claude` CLI printed for it: the JSON envelope with `structured_output`, or a `result` text holding the JSON |
 
 The recorded calls are `call-001` up to the first missing `.out`.
@@ -32,14 +33,19 @@ The recorded calls are `call-001` up to the first missing `.out`.
 ## The replay
 
 The test copies the seed store to a temp root, places the transcript under
-the temp `HOME/.claude/projects/<project>/<session>.jsonl`, puts a fake
-`claude` first on `PATH` and runs
-`scribe session rebuild <session> --author <author> --confirm --json`.
-The fake answers call `n` by printing `call-n.out`, only when its
-arguments and stdin equal `call-n.args` and `call-n.in` byte for byte. A
+the temp `HOME/.claude/projects/<project>/<session>.jsonl` and runs the
+`scribe-session-rebuild` job's steps (`scribe.session-rebuild-prepare`,
+`-apply`, the one targeted retry, `-finish`) through `scribe plugin call`,
+as the job does, for the recording's session and author with `confirm:
+true`. Each activity call `n` is answered with `call-n.out`'s
+`structured_output` (or its `result` text parsed as JSON), only when its
+activity and prompt equal `call-n.args` and `call-n.in` byte for byte. A
 request that differs, or a call past the last recording, is written to a
-failure file and the fake exits non-zero; the test reports that reason
-first. A replay passes only when nothing was refused, the rebuild exited 0,
+failure file and the activity fails, which fails the run; the test
+reports that reason first. The recordings were made against the
+in-process rebuild ([ORB-28143] moved it to the job): re-blessing for the
+job rewrote only the `.args`, and every `.in` prompt stayed byte for
+byte. A replay passes only when nothing was refused, the run finished,
 it made exactly the recorded number of calls, and the report and the
 written log match `expect`.
 

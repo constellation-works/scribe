@@ -1758,6 +1758,8 @@ struct Setup {
     path: OsString,
     responses: RefCell<Responses>,
     before_answer: RefCell<Option<Box<dyn FnOnce()>>>,
+    /// How many answers pass before `before_answer` runs.
+    before_answer_after: std::cell::Cell<usize>,
 }
 
 enum Responses {
@@ -1793,6 +1795,7 @@ impl Setup {
             path,
             responses: RefCell::new(Responses::Fixed(answer(), false)),
             before_answer: RefCell::new(None),
+            before_answer_after: std::cell::Cell::new(0),
         };
         setup.answer(&answer());
         setup.write(ON, &[line("user", "u-1", &format!("Crews. {DEFINED}."))]);
@@ -1880,6 +1883,38 @@ impl Setup {
             json!({"sessions": sessions, "resolve": true}),
             |request, header| self.fixed_response(request, header),
         );
+        Self::reported(result, args)
+    }
+
+    /// Run the `scribe-session-catalog` job's plugin steps with fixed
+    /// activity responses, for `session catalog <id> --author <a>`: begin
+    /// writes or resumes the switch, then the pass steps run in catalog mode.
+    fn run_catalog(&self, args: &[&str]) -> Output {
+        let author = args
+            .windows(2)
+            .find(|pair| pair[0] == "--author")
+            .map(|pair| pair[1])
+            .unwrap();
+        let config = pass::claude_config(&self.fx);
+        let step = |tool: &str, input| pass::plugin_tool(&self.fx, &[], tool, input, &config);
+        let begun = match step(
+            "session-catalog-begin",
+            json!({"session": args[2], "author": author}),
+        ) {
+            Ok(begun) => begun,
+            Err(output) => return Self::reported(Err(output), args),
+        };
+        let result = pass::run(
+            |name, input| step(&format!("session-pass-{name}"), input),
+            json!({"sessions": begun["sessions"], "resolve": false, "catalog": begun["catalog"]}),
+            |request, header| self.fixed_response(request, header),
+        );
+        Self::reported(result, args)
+    }
+
+    /// A run's result as the in-process command reported it: the joined
+    /// payloads, and exit status 1 with a diagnostic when a pass failed.
+    fn reported(result: Result<Value, Output>, args: &[&str]) -> Output {
         let result = match result {
             Ok(result) => result,
             Err(mut output) => {
@@ -1947,7 +1982,10 @@ impl Setup {
                 .prompt()
         };
         std::fs::write(self.fx.home().join(format!("claude-stdin-{index}")), prompt).unwrap();
-        if let Some(change) = self.before_answer.take() {
+        let after = self.before_answer_after.get();
+        if after > 0 {
+            self.before_answer_after.set(after - 1);
+        } else if let Some(change) = self.before_answer.take() {
             change();
         }
         let responses = self.responses.borrow();
@@ -1972,9 +2010,29 @@ impl Setup {
         }
     }
 
+    /// Run the `scribe-session-rebuild` job's plugin steps with fixed
+    /// activity responses, for `session rebuild <id> --author <a> --confirm`.
+    fn run_rebuild(&self, args: &[&str]) -> Output {
+        let author = args
+            .windows(2)
+            .find(|pair| pair[0] == "--author")
+            .map(|pair| pair[1])
+            .unwrap();
+        let config = pass::claude_config(&self.fx);
+        pass::rebuild(
+            |step, input| {
+                pass::plugin_tool(&self.fx, &[], &format!("session-{step}"), input, &config)
+            },
+            &json!({"session": args[2], "author": author, "confirm": args.contains(&"--confirm")}),
+            |request, header| self.fixed_response(request, header),
+        )
+    }
+
     fn run(&self, args: &[&str], input: &[u8]) -> Output {
         let out = if args.starts_with(&["session", "pass"]) {
             self.run_pass(args, &[])
+        } else if args.starts_with(&["session", "rebuild"]) {
+            self.run_rebuild(args)
         } else {
             self.run_any(args, input)
         };
@@ -2984,26 +3042,28 @@ fn audit_log(setup: &Setup) -> Vec<Value> {
 #[test]
 fn a_failed_session_catalog_writes_one_failure_audit_line() {
     let setup = Setup::new();
-    setup.fx.fake_program("claude", BROKEN);
-    let out = setup.run_any(&["session", "catalog", NEVER, "--author", "opus"], b"");
+    setup.answers(&[None]);
+    let out = setup.run_catalog(&["session", "catalog", NEVER, "--author", "opus"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    // The switch was written and stays due, yet the command is one outcome.
+    // The switch was written and stays due; its window fails once.
     assert!(support::has_control(&setup.fx.root()));
     let audit = audit_log(&setup);
-    assert_eq!(audit.len(), 1, "{audit:?}");
+    assert_eq!(audit.len(), 2, "{audit:?}");
     assert_eq!(audit[0]["command"], "session catalog");
-    assert_eq!(audit[0]["status"], "failure");
-    assert_eq!(audit[0]["error_code"], "model_failed");
-    assert_eq!(audit[0]["target"], format!("session:{NEVER}"));
-    assert_eq!(audit[0]["author"], "opus");
+    assert_eq!(audit[0]["status"], "success", "the switch");
+    assert_eq!(audit[1]["command"], "session catalog");
+    assert_eq!(audit[1]["status"], "failure");
+    assert_eq!(audit[1]["error_code"], "model_failed");
+    assert_eq!(audit[1]["target"], format!("session:{NEVER}"));
+    assert_eq!(audit[1]["author"], "opus");
 
-    // A catalog that succeeds still logs its switch, then its window.
+    // A catalog that succeeds resumes the switch, then logs its window.
     setup.answer(&answer());
-    let out = setup.run_any(&["session", "catalog", NEVER, "--author", "opus"], b"");
+    let out = setup.run_catalog(&["session", "catalog", NEVER, "--author", "opus"]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let audit = audit_log(&setup);
-    assert_eq!(audit.len(), 2, "a resume wrote no switch: {audit:?}");
-    assert_eq!(audit[1]["status"], "success");
+    assert_eq!(audit.len(), 3, "a resume wrote no switch: {audit:?}");
+    assert_eq!(audit[2]["status"], "success");
 }
 
 #[test]
@@ -3208,7 +3268,6 @@ fn a_pass_writes_one_record_of_daniels_terms_and_never_reads_a_session_never_swi
 }
 
 /// A `claude` that cannot answer: exits 3 without output (`model_failed`).
-const BROKEN: &str = "#!/bin/sh\ncat >/dev/null\nexit 3\n";
 
 #[test]
 fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
@@ -3736,64 +3795,39 @@ fn a_rebuild_of_a_forgotten_session_is_refused_before_any_model_call_or_checkpoi
     assert_eq!(s.checkpoint_count(), 0, "and keeps no rebuild checkpoint");
 }
 
-// Linux exposes the child's open lock descriptor, giving the test a handshake
-// after the pre-lock tombstone check and before the held lock can be acquired.
-#[cfg(target_os = "linux")]
+// The rebuild lock is gone (2_design.md §19.6): a session forgotten after
+// prepare admitted the rebuild is refused when apply admits it again, and no
+// checkpoint is written.
 #[test]
-fn rebuild_waiting_for_lock_refuses_a_session_forgotten_during_the_wait() {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::time::{Duration, Instant};
-
+fn rebuild_apply_refuses_a_session_forgotten_after_prepare() {
     let s = Setup::new();
     s.scribe("/scribe on");
     s.pass();
-    let calls = s.prompts().len();
-    let path = s.fx.root().join("locks").join(format!("rebuild-{ON}.lock"));
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    make_private(path.parent().unwrap());
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(&path)
+    let config = pass::claude_config(&s.fx);
+    let prepared = pass::plugin_tool(
+        &s.fx,
+        &[],
+        "session-rebuild-prepare",
+        json!({"session": ON, "author": "test-agent", "confirm": true}),
+        &config,
+    )
+    .unwrap();
+    assert_eq!(prepared["needs_model"], true, "{prepared}");
+    let answer = s
+        .fixed_response(&prepared["window_request"], false)
         .unwrap();
-    lock.lock().unwrap();
-    let mut cmd = s.fx.cmd(&rebuild_args(true));
-    let child = cmd
-        .env("PATH", &s.path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut guard = support::ChildGuard::new(child);
-    let fds = format!("/proc/{}/fd", guard.child().id());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let admitted = std::fs::read_dir(&fds)
-            .unwrap()
-            .flatten()
-            .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|target| target == path));
-        if admitted {
-            break;
-        }
-        assert!(
-            guard.child().try_wait().unwrap().is_none(),
-            "rebuild exited before lock admission"
-        );
-        assert!(Instant::now() < deadline, "rebuild never opened its lock");
-        std::thread::sleep(Duration::from_millis(5));
-    }
     let forgot = text(&type_settlement(&s, "#scribe forget s-1").stdout);
     assert!(forgot.contains("scribe: forgot s-1"), "{forgot}");
-    lock.unlock().unwrap();
-    let out = guard.finish();
-    assert_eq!(out.status.code(), Some(1));
-    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(error["code"], "session_forgotten", "{error}");
-    assert_eq!(s.prompts().len(), calls, "no rebuild model invocation");
+    let reply = pass::plugin_tool(
+        &s.fx,
+        &[],
+        "session-rebuild-apply",
+        json!({"basis": prepared["basis"], "cursor": prepared["cursor"], "answer": [answer, null]}),
+        &config,
+    )
+    .unwrap_err();
+    let reply: Value = serde_json::from_slice(&reply.stdout).unwrap();
+    assert_eq!(reply["error"]["code"], "session_forgotten", "{reply}");
     assert_eq!(s.checkpoint_count(), 0);
 }
 
@@ -3985,7 +4019,7 @@ fn rebuild_resumes_hidden_checkpoints_and_preserves_identity_links_and_activity(
         ],
     );
     setup.answers(&[None, Some(answer()), None, Some(answer()), Some(answer())]);
-    let out = setup.run_any(&rebuild_args(true), b"");
+    let out = setup.run_rebuild(&rebuild_args(true));
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 1);
@@ -4060,12 +4094,11 @@ fn rebuild_folds_newer_transcript_messages_after_a_visible_revision_changes() {
     setup.scribe("/scribe on");
     setup.pass();
     let extra = line("user", "u-later", "Work arriving during the rebuild.");
-    // The fake model waits while the test performs the competing writer's
-    // publication before its first rebuild answer is returned. No timing
-    // race, sleeps or concurrent test load is involved.
+    // The competing writer publishes before the first rebuild answer is
+    // returned. No timing race, sleeps or concurrent test load is involved.
     let root = setup.fx.root();
     let transcript = setup.transcript(ON);
-    let hold = support::Hold::new(&setup.fx.home(), move || {
+    setup.before_answer.replace(Some(Box::new(move || {
         support::sql(
             &root,
             &format!(
@@ -4078,22 +4111,9 @@ fn rebuild_folds_newer_transcript_messages_after_a_visible_revision_changes() {
             .open(&transcript)
             .unwrap();
         writeln!(file, "{extra}").unwrap();
-    });
-    let script = format!(
-        r#"#!/bin/sh
-n=$(ls "$HOME" | grep -c '^claude-stdin')
-cat > "$HOME/claude-stdin-$n"
-if [ "$n" = 1 ]; then
-{hold}fi
-{response}
-"#,
-        hold = hold.script(),
-        response = response(&answer())
-    );
-    setup.fx.fake_program("claude", &script);
+    })));
     let control_before = setup.control_bytes();
     let out = setup.run(&rebuild_args(true), b"");
-    hold.join();
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 2);
     let record = setup.record(ON).unwrap();
@@ -5286,22 +5306,20 @@ fn pass_and_catalog_audit_persisted_closures_when_marking_failure_aborts() {
         );
         seed_retired_candidate(&s, NEVER);
         let control_path = s.fx.root().join("control.json");
-        let mut script = String::from(
-            "#!/bin/sh\nn=$(ls \"$HOME\" | grep -c '^claude-stdin')\ncat > \"$HOME/claude-stdin-$n\"\ncase $n in\n",
-        );
-        script.push_str(&format!("0) {} ;;\n", response(&answer())));
-        script.push_str(&format!(
-            "1) ln -sf /dev/null '{}' ; echo 'model boom' >&2 ; exit 3 ;;\n",
-            control_path.display()
-        ));
-        script.push_str("*) exit 4 ;;\nesac\n");
-        s.fx.fake_program("claude", &script);
+        s.answers(&[Some(answer()), None]);
+        let staged = control_path.clone();
+        // The second window's activity fails after staging the symlink.
+        s.before_answer_after.set(1);
+        s.before_answer.replace(Some(Box::new(move || {
+            // As `ln -sf` did: replace the exported control file.
+            if staged.exists() {
+                std::fs::remove_file(&staged).unwrap();
+            }
+            std::os::unix::fs::symlink("/dev/null", staged).unwrap();
+        })));
 
         let audit_before = s.audit_lines();
-        let out = s.run_any(
-            &["session", "catalog", NEVER, "--author", "opus", "--json"],
-            b"",
-        );
+        let out = s.run_catalog(&["session", "catalog", NEVER, "--author", "opus", "--json"]);
         let stderr = text(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{stderr}");
         let err: Value = serde_json::from_str(stderr.lines().last().unwrap()).expect(&stderr);

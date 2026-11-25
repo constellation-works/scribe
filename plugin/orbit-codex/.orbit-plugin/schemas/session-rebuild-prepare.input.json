@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "confirm": {
+      "type": "boolean"
+    },
+    "progress": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 1
+    }
+  },
+  "required": [
+    "session",
+    "author",
+    "confirm"
+  ],
+  "additionalProperties": false
+}

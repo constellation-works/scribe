@@ -1,22 +1,23 @@
-//! `session catalog` with a fake `Models` (2_design.md §5.8): a never-switched
-//! session is switched on with `cataloged_by`, every window runs, an ended
-//! transcript is marked final and off, a live one stays due, and a failure
-//! resumes without moving `since`.
+//! `session catalog` and the `scribe-session-catalog` job's steps with fixed
+//! answers (2_design.md §5.8, §19.3.3): a never-switched session is switched
+//! on with `cataloged_by`, every window runs, an ended transcript is marked
+//! final and off, a live one stays due, and a failure resumes without
+//! moving `since`.
 
 use super::super::catalog::{self, CatalogArgs};
 use crate::output::Output;
 use crate::output::PassFailure;
-use scribe_core::apps::session::PassReport;
+use scribe_core::apps::session::{self as app, ApplyStatus, Command, Outcome, PassReport};
 use scribe_core::composition::Context;
 use scribe_core::composition::Env as AppEnv;
 use scribe_core::control::{self, Switch};
 use scribe_core::models::{
-    ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader,
-    SessionHeaderRequest, SessionRequest, TermAnswer,
+    ModelError, NewSegmentAnswer, SegmentAnswer, SessionAnswer, SessionHeader, SessionRequest,
+    TermAnswer,
 };
 use scribe_core::testing::StoreTestReads;
 use scribe_core::testing::ViewTestReads;
-use scribe_core::{AuthorKind, Models, Project, SessionId, SessionStatus};
+use scribe_core::{AuthorKind, Project, SessionId, SessionStatus};
 use serde_json::json;
 use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
@@ -25,12 +26,13 @@ use time::format_description::well_known::Rfc3339;
 const ID: &str = "0a1b2c3d-0000-4000-8000-0000000000c1";
 const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without review";
 
+/// The distill activity's fixed answer, and how many windows asked for it.
 struct FakeModels {
     answer: Result<SessionAnswer, ModelError>,
     asked: RefCell<usize>,
 }
 
-impl Models for &FakeModels {
+impl FakeModels {
     fn session(&self, request: &SessionRequest) -> Result<SessionAnswer, ModelError> {
         *self.asked.borrow_mut() += 1;
         self.answer.clone().map(|mut answer| {
@@ -60,7 +62,7 @@ impl Models for &FakeModels {
         })
     }
 
-    fn session_header(&self, _request: &SessionHeaderRequest) -> Result<SessionHeader, ModelError> {
+    fn session_header(&self) -> Result<SessionHeader, ModelError> {
         self.answer.clone().map(|answer| SessionHeader {
             title: answer.title,
             summary: answer.summary,
@@ -162,10 +164,6 @@ impl Setup {
         (self.ctx.now() - ago).format(&Rfc3339).unwrap()
     }
 
-    fn args(&self, project: Option<&str>) -> CatalogArgs {
-        self.args_by("opus", project)
-    }
-
     fn args_by(&self, author: &str, project: Option<&str>) -> CatalogArgs {
         CatalogArgs {
             id: ID.parse().unwrap(),
@@ -179,11 +177,7 @@ impl Setup {
         models: &FakeModels,
         project: Option<&str>,
     ) -> Result<PassReport, crate::error::CliError> {
-        let Output::Pass(report) = catalog::run_with(&self.args(project), &self.ctx, |_| models)?
-        else {
-            panic!("session catalog returns a pass report");
-        };
-        Ok(report)
+        self.job(models, "opus", project)
     }
 
     fn run_by(
@@ -191,11 +185,114 @@ impl Setup {
         models: &FakeModels,
         author: &str,
     ) -> Result<PassReport, crate::error::CliError> {
-        let Output::Pass(report) =
-            catalog::run_with(&self.args_by(author, None), &self.ctx, |_| models)?
+        self.job(models, author, None)
+    }
+
+    /// `session catalog` (the switch), then the `scribe-session-catalog`
+    /// job's window loop with `models`' fixed answer, as the job runs it:
+    /// prepare, apply, at most one targeted retry, and on an activity
+    /// failure the fail step then apply without an answer. One report for
+    /// the run, as the in-process catalog returned.
+    fn job(
+        &self,
+        models: &FakeModels,
+        author: &str,
+        project: Option<&str>,
+    ) -> Result<PassReport, crate::error::CliError> {
+        let Output::Pass(mut report) =
+            catalog::run_unaudited(&self.args_by(author, project), &self.ctx)?
         else {
             panic!("session catalog returns a pass report");
         };
+        let step = |command: Command<'_>| app::exec_unaudited(&self.ctx, command).unwrap();
+        let host = self.ctx.host();
+        let selection = json!({
+            "sessions": [report.passes[0].session],
+            "catalog": {"author": author, "project": project},
+        });
+        let mut progress = json!([]);
+        let mut pass = report.passes[0].clone();
+        let mut windows = 0;
+        let mut merge = |next: &scribe_core::apps::session::PassPayload| {
+            windows += next.windows;
+            pass = next.clone();
+            pass.windows = windows;
+        };
+        for _ in 0..25 {
+            let mut input = selection.clone();
+            input["progress"] = progress.clone();
+            let Outcome::PassPrepared(prepared) = step(Command::PassPrepare(
+                serde_json::from_value(input).unwrap(),
+                host.clone(),
+            )) else {
+                panic!("a prepared window");
+            };
+            prepared.settled.iter().for_each(&mut merge);
+            if prepared.done {
+                break;
+            }
+            let cursor = json!(prepared.cursor);
+            if !prepared.needs_model {
+                progress = json!([{"cursor": cursor}]);
+                continue;
+            }
+            let basis = json!(prepared.basis);
+            let request: SessionRequest =
+                serde_json::from_value(prepared.window_request.clone().unwrap()).unwrap();
+            let apply = |input: serde_json::Value| {
+                let Outcome::PassApplied(applied) = step(Command::PassApply(
+                    Box::new(serde_json::from_value(input).unwrap()),
+                    host.clone(),
+                )) else {
+                    panic!("an applied window");
+                };
+                applied
+            };
+            let applied = match models.session(&request) {
+                Ok(answer) => {
+                    let first = json!({"basis": basis, "cursor": cursor, "answer": answer});
+                    let applied = apply(first.clone());
+                    match applied.status {
+                        ApplyStatus::RetryHeader | ApplyStatus::RetryWindow => {
+                            let mut last = first;
+                            if applied.status == ApplyStatus::RetryHeader {
+                                last["header"] = json!(models.session_header().unwrap());
+                            } else {
+                                last["retry_answer"] = json!(models.session(&request).unwrap());
+                            }
+                            last["cursor"] = json!(applied.cursor);
+                            last["repair"] = json!(true);
+                            last["previous_status"] = json!(applied.status);
+                            last["correction"] = json!(applied.correction);
+                            apply(last)
+                        }
+                        ApplyStatus::Idle | ApplyStatus::Written | ApplyStatus::Failed => applied,
+                    }
+                }
+                Err(err) => {
+                    let Outcome::PassFailed(failed) = step(Command::PassFail(
+                        Box::new(
+                            serde_json::from_value(json!({
+                                "basis": basis, "error_code": err.code(), "reason": err.to_string(),
+                            }))
+                            .unwrap(),
+                        ),
+                        host.clone(),
+                    )) else {
+                        panic!("a failed window");
+                    };
+                    if let Some(failed) = failed {
+                        merge(&failed);
+                    }
+                    apply(json!({"basis": basis, "cursor": cursor}))
+                }
+            };
+            if let Some(next) = &applied.pass {
+                merge(next);
+            }
+            progress = json!([{"cursor": applied.cursor}]);
+        }
+        report.passes = vec![pass];
         Ok(report)
     }
 

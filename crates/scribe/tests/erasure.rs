@@ -426,7 +426,7 @@ fn session_route() {
     let mut checkpoint = store.session(&SOURCE.parse().unwrap()).unwrap().record;
     CHECKPOINT.clone_into(&mut checkpoint.summary);
     store
-        .checkpoint_rebuild(checkpoint, &Redactor::default())
+        .checkpoint_rebuild(checkpoint, None, &Redactor::default())
         .unwrap();
     for marker in [TURN, CHECKPOINT] {
         assert!(contains(&fx.root().join("scribe.db-wal"), marker));

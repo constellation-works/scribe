@@ -1,6 +1,6 @@
-Switch a past session on and catalog its transcript
+Switch a past session on for cataloging
 
-Switches a past session on by name and catalogs every window of its transcript.
+Switches a past session on by name and prints the Orbit job command that catalogs every window of its transcript.
 
 Usage: scribe session catalog [OPTIONS] --author <NAME> <ID>
 
@@ -36,18 +36,19 @@ Global options:
       --json
           Shorthand for --format json
 
-Switches one past session on with cataloged_by and runs every window, with
-no deadline. Refuses a session that already has a record or a /scribe on
-switch. A transcript whose last message is at least a day old is marked
-final and switched off; a newer one stays on and due. A failed catalog
-keeps its checkpoint; run the same command again to resume. Writes no entries.
+Switches one past session on with cataloged_by and prints the Orbit job
+command that runs every window, with no deadline. Refuses a session that
+already has a record or a /scribe on switch. A transcript whose last message
+is at least a day old is marked final and switched off; a newer one stays on
+and due. A failed catalog stays due; run the job again to resume, or let the
+next session pass finish it. Writes no entries.
 
 A new catalog is recorded as kind agent under --author; the reserved names
 user, scribe and consistency are refused. The user catalogs as themselves by
-typing /scribe catalog <id> in their prompt; running this command on that
-session afterwards runs its windows and keeps cataloged_by user.
+typing /scribe catalog <id> in their prompt; the job run on that session
+afterwards runs its windows and keeps cataloged_by user.
 
 Examples:
   scribe session catalog <id> --author opus
   scribe session catalog <id> --author opus --project scribe
-  scribe session catalog <id> --author opus --json | jq '.passes[0].result'
+  orbit job run scribe-session-catalog --input '{"session":"<id>","author":"opus"}'

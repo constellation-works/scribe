@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "basis": {
+      "type": "object"
+    },
+    "progress": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 1,
+      "maxItems": 1
+    }
+  },
+  "required": [
+    "basis",
+    "progress"
+  ],
+  "additionalProperties": false
+}

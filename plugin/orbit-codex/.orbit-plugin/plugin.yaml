@@ -10,7 +10,8 @@ metadata:
   version: 0.3.0
   description: >-
     The routine jobs that keep the user's scribe store current: session
-    passes, the consistency scan and the memory refresh.
+    passes, the consistency scan and the memory refresh; and the session
+    catalog, session rebuild and group close jobs.
   homepage: https://github.com/constellation-works/scribe
 spec:
   requires:
@@ -86,6 +87,48 @@ spec:
       input_schema: { $ref: schemas/session-pass-fail.input.json }
       output_schema: { $ref: schemas/session-pass-fail.output.json }
 
+    - name: session-catalog-begin
+      description: >-
+        Write a past session's catalog switch, or resume one a failed or
+        interrupted catalog left, for the scribe-session-catalog job.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/session-catalog-begin.input.json }
+      output_schema: { $ref: schemas/session-catalog-begin.output.json }
+
+    - name: session-rebuild-prepare
+      description: >-
+        Check a session rebuild (confirm, busy, forgotten, provenance) and
+        prepare its next window from the private checkpoint, or report the
+        checkpoint ready to finish.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/session-rebuild-prepare.input.json }
+      output_schema: { $ref: schemas/session-rebuild-prepare.output.json }
+
+    - name: session-rebuild-apply
+      description: >-
+        Verify a rebuild window's answer and write it to the private
+        checkpoint, or request one targeted retry.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/session-rebuild-apply.input.json }
+      output_schema: { $ref: schemas/session-rebuild-apply.output.json }
+
+    - name: session-rebuild-finish
+      description: >-
+        Replace the session record with a complete checkpoint when the record
+        is still the revision the rebuild expects, or rebase the checkpoint
+        onto the newer record.
+      execution_kind: mutating
+      agent_callable: false
+      mcp_scope: none
+      input_schema: { $ref: schemas/session-rebuild-finish.input.json }
+      output_schema: { $ref: schemas/session-rebuild-finish.output.json }
+
     - name: consistency-scan
       description: >-
         The scribe-consistency routine's job: re-apply interrupted approvals,
@@ -140,7 +183,13 @@ spec:
       output_schema: { $ref: schemas/group-close-apply.output.json }
 
   definitions:
-    jobs: [jobs/session_pass.yaml, jobs/consistency.yaml, jobs/memory_refresh.yaml, jobs/group_close.yaml]
+    jobs:
+      - jobs/session_pass.yaml
+      - jobs/session_catalog.yaml
+      - jobs/session_rebuild.yaml
+      - jobs/consistency.yaml
+      - jobs/memory_refresh.yaml
+      - jobs/group_close.yaml
     activities:
       - activities/group_summarize.yaml
       - activities/profile_refresh.yaml

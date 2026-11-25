@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "done": {
+      "type": "boolean"
+    },
+    "finished": {
+      "type": "boolean"
+    },
+    "next_expected": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pass": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "done",
+    "finished",
+    "next_expected",
+    "pass"
+  ],
+  "additionalProperties": false
+}

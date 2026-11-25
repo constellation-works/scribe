@@ -311,9 +311,10 @@ fi
 # exec, Command, Outcome and Error.
 ban_crate "$CORE" 'crate::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: a use case lives in its app under apps/"
 ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the app's exec through scribe_core::apps::<app>"
-# The model callers are five flows: session pass, catalog and rebuild,
-# memory refresh and group close. Only those flows, and the mod.rs of their
-# apps (which carries the adapter in its Command and the model failure in its
+# The model callers were five flows. Session pass, catalog and rebuild now
+# run as Orbit jobs (ORB-28143) and name no model port. Only the remaining
+# flows, memory refresh and group close, and the mod.rs of their apps
+# (which carries the adapter in its Command and the model failure in its
 # Error), name providers, the Models port or ModelError; so does
 # runtime/errors.rs, whose CommandError carries the model failure as the
 # binary's error did (ORB-27921 step 3, PR 4). The request and answer shapes
@@ -321,12 +322,11 @@ ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the
 models_port='crate::providers(::|[^[:alnum:]_]|$)|(^|[^[:alnum:]_])(Models|ModelError|ModelsOnce|ModelsEach)([^[:alnum:]_]|$)'
 while IFS= read -r file; do
   case "${file#"$CORE"/}" in
-    apps/session/mod.rs | apps/session/catalog.rs | apps/session/rebuild.rs | apps/session/pass/* | \
-      apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs | \
+    apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs | \
       runtime/errors.rs) continue ;;
   esac
   ban_crate "$file" "$models_port" \
-    "${file#crates/} names the Models port: only session pass, catalog, rebuild, memory refresh and group close call a model"
+    "${file#crates/} names the Models port: only memory refresh and group close call a model"
 done < <(find "$CORE/apps" "$CORE/runtime" -name '*.rs' -not -path '*/tests/*' | sort)
 # The providers know nothing of the apps or the runtime that call them.
 ban_crate "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
