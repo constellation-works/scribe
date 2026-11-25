@@ -51,16 +51,25 @@ STD-01 grammar:
 | `scribe <noun> <verb>` | Daniel at a terminal, scripts, and agents through a shell (from S11) | Read-only `entry list/show`, `session list/show`, `proposal list`, `tag list`, plus `session pass` (Daniel runs it by hand) and `consistency scan` (its routine's job). From S8–S14: `scribe search`, list filters, the agent write verbs ([§1.1](#11-the-cli-agent-surface)), `session rebuild`, `session activate/deactivate`, `session catalog`, `transcript list/show` and `tmux` (the tmux popup, [§1.2](#12-the-tmux-popup)). |
 
 **The Orbit plugin tree** is `plugin/.orbit-plugin/`: `plugin.yaml`
-(`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe`
-(a launcher that execs the installed binary as `scribe plugin call`), `schemas/`
-and `definitions/` (the two routines and their jobs). The backend is
-`type: exec`, `timeout_ms: 720000`: the routine tools may need 600 s (five
-sessions at 120 s) and 480 s (four consistency batches at 120 s). Tools:
+(`schemaVersion: 2`, `kind: Plugin`, `metadata.name: scribe`), `bin/scribe-plugin`
+(a launcher that execs the installed binary as `scribe plugin call`), `schemas/`,
+`routines/` and `jobs/`: three routines (`scribe-session-pass`,
+`scribe-consistency` and `scribe-memory-refresh`, each seeded `enabled: false`)
+and their three jobs, listed under `spec.definitions`. The backend is
+`type: exec` with `timeout_ms: 300000`, Orbit's cap: a session pass starts no
+session after 50 s, and one session is at most two 121 s asks; a memory refresh
+is one 120 s call; the consistency scan calls no model. Tools:
 
-| Tool | `execution_kind` | `agent_callable` | `mcp_scope` |
-|---|---|---|---|
-| `scribe.session-pass` | `mutating` | `false` | `none` |
-| `scribe.consistency-scan` | `mutating` | `false` | `none` |
+| Tool | `execution_kind` | `agent_callable` | `mcp_scope` | Envelope `output` |
+|---|---|---|---|---|
+| `scribe.session-pass` | `mutating` | `false` | `none` | the session pass report |
+| `scribe.consistency-scan` | `mutating` | `false` | `none` | the consistency scan report |
+| `scribe.memory-refresh` | `mutating` | `false` | `none` | the memory refresh JSON |
+
+The Codex-enabled package, `plugin/orbit-codex/.orbit-plugin/`, declares the same
+three tools, routines and jobs and the same `timeout_ms`; its schema describes
+`codex_home` as required. The envelope's configuration and retry rules are in
+[output-contract.md, Plugin envelope](specs/output-contract.md#plugin-envelope).
 
 Orbit defaults `mcp_scope` to `workspace`, so every tool sets `none`
 explicitly, and a conformance test in `plugin/.orbit-plugin/tests/` asserts
@@ -68,8 +77,9 @@ that no tool is advertised. `scribe.ask`, the one advertised tool until
 ORB-27911, is removed
 ([4_decisions.md](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 The mutating tools run only from the
-plugin's routines (Runner capability). Permissions: `fs.read` and `fs.write`
-on the store root, `network: any` for the model, `env_pass` for the model
+plugin's routines (Runner capability). Permissions: `fs.read` on the store root,
+the transcripts directory and the Codex state directory; `fs.write` on the store
+root and `{{plugin_state}}`; `network: any` for the model; `env_pass` for the model
 credential names ([§8](#8-models)). The `orbit_tools` grant `ask` used for
 task evidence went with it.
 
@@ -110,12 +120,13 @@ otherwise. Restoring a continue handoff (§16.7) and inheriting a group seat acr
 [§13.14](#1314-recurring-dates), are parked.)
 
 Entry writes never go through Orbit's tool surface: the hooks call the
-binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The two routine tools write session records and proposals, but they
+binary, and from S12 agents call the CLI ([§1.1](#11-the-cli-agent-surface)). The three routine tools write session records, proposals and memory, but they
 are `mutating` and not agent-callable, so no tool needs `agent_callable` or an
 operator override, and the MCP list is empty.
 
-As built (S5; `ask`, its schemas and `task_workspaces` removed by
-ORB-27911): the plugin tree is `plugin.yaml`, `bin/scribe-plugin` (a POSIX
+**Historical, as built in S5** (superseded by the live tree above; ORB-27911
+removed `ask`, its schemas and `task_workspaces`): the plugin tree was
+`plugin.yaml`, `bin/scribe-plugin` (a POSIX
 sh launcher that execs the `scribe` on `PATH` as `scribe plugin call`, and
 answers a `not_installed` envelope when there is none), `schemas/` (the
 config, `ask`'s input and output, and placeholders for the routine tools),
@@ -138,8 +149,9 @@ and exits 0: errors are `invalid_envelope`, `unknown_tool`, `invalid_input`,
 `not_configured`, `not_implemented`, a model code (`model_timeout` and
 `model_failed` retryable) or a store code. It is read-only and not audited.
 
-As built (S6): the two routine tools are wired to the CLI's code, and the
-tree gains `routines/session_pass.yaml` and `routines/consistency.yaml`
+As built (S6; the third tool, `scribe.memory-refresh`, came with §15.6 and is in
+the live table above): the two routine tools were wired to the CLI's code, and
+the tree gained `routines/session_pass.yaml` and `routines/consistency.yaml`
 (seeded by `orbit plugin enable` as `scribe-session-pass`, `*/5 * * * *`,
 and `scribe-consistency`, `0 6 * * 1`, both `enabled: false`) and
 `jobs/session_pass.yaml` and `jobs/consistency.yaml` (`scribe-session-pass`
