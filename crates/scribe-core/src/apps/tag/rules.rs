@@ -6,6 +6,8 @@
 //!   ([`check_agent_author`]; the tag app is its lowest user), and of a store
 //!   tag write (`scribe tag add`, `scribe tag update`).
 
+pub mod tags;
+
 use crate::entry::{Entry, EntryStatus, TagName};
 use crate::record::AuthorKind;
 use crate::store::Pickup;

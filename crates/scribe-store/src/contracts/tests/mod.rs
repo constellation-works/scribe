@@ -4,3 +4,4 @@
 mod mark;
 mod memory;
 mod proposal;
+mod tag;

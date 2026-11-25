@@ -117,7 +117,7 @@ map; a new module fails the check until it is given a ring.
 | Ring | Modules |
 |------|---------|
 | 1. base | `record`, `provider` |
-| 2. records | `session`, `entry`, `handoff`, `tag` |
+| 2. records | `session`, `entry`, `handoff` |
 
 `brief`, `search` and `consistency` left the domain in ORB-27921 step 5
 (PR 5-3) for the core's `apps/{brief,search}/rules.rs`. `consistency` was
@@ -286,6 +286,20 @@ PR 5-15 moved `proposal` and `voice`:
   `config/voice.rs`. The entry half (whose words an entry holds, and the
   lines and labels that name them) went to `apps/entry/rules/voice.rs`.
   The core's `crate::voice` re-exports both halves.
+
+PR 5-16 moved `tag`:
+
+- The shapes went to the store's `contracts/tag.rs`: `TagTable` with its
+  constructor, the shipped tables and its reads, `TagDef`, the capture
+  rules (`CaptureFrom`, `CaptureRoute`, `CaptureRules`, `Rule`,
+  `RuleOrigin`) and their bounds, `ActionTag`, `FINDING_TAG`, `TagError`,
+  and `StoreTag`, which `tags.json` holds.
+- The rules went to `apps/tag/rules/tags.rs`: the merge of store tags under
+  the configured table (`MergeStore::merge_store`, a trait so the call keeps
+  its text), the `tag list` summary (`summarize`, `TagSummary`) and the
+  `tag update` patch (`TagPatch`). `MAX_FINDINGS_PER_SESSION` went to
+  `apps/entry/rules.rs`, its only user's rules. The core's `crate::tag`
+  re-exports all of them.
 
 These are the rings the code has, and they differ from the approved lists in
 ORB-27707 where an import forces it:

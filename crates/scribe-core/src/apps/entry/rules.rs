@@ -47,6 +47,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 use time::{Duration, OffsetDateTime};
 
+/// The most findings one writing session may record (docs/design/scribe/
+/// 2_design.md, "Findings"). A write past it is refused and names it.
+pub const MAX_FINDINGS_PER_SESSION: usize = 3;
+
 /// Why a settling instruction changed nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettleRefusal {

@@ -2,6 +2,7 @@
 //! (`crate::config`), with the store tags merged in, config claiming names
 //! and aliases first.
 
+use super::rules::tags::MergeStore;
 use crate::config::Config;
 use crate::repository::{Access, Tags};
 use crate::store::refusal;

@@ -1,12 +1,13 @@
 //! scribe's domain: the records and the pure rules over them, with no I/O.
 //!
 //! Entries ([`Entry`], [`EntryId`], [`TagName`], [`Cite`]) are in `entry`;
-//! the tag table ([`TagTable`]) in `tag`; session records, the on/off state
+//! session records, the on/off state
 //! and the due rule ([`SessionRecord`], its log of [`Segment`]s,
 //! [`ControlState`], [`Cadence`]) in `session`; the shared metadata ([`Project`], [`Topic`], [`Related`],
 //! [`Author`]) in `record`; the rules
 //! that select and judge records in their modules. The typed `Error` is the store's (`scribe-store`'s
-//! `error`), and so are proposals (`scribe-store`'s `contracts::proposal`).
+//! `error`), and so are proposals and the tag table (`scribe-store`'s
+//! `contracts::proposal` and `contracts::tag`).
 //!
 //! The modules sit in three rings, each importing only its own and the ones
 //! before it: base, records, rules (ARCHITECTURE.md;
@@ -22,7 +23,6 @@ pub mod handoff;
 pub mod provider;
 pub mod record;
 pub mod session;
-pub mod tag;
 pub use provider::Provider;
 
 pub use entry::{
@@ -41,11 +41,6 @@ pub use session::{
     SEGMENT_HEADING_CHARS, SHORT_ID_MIN, Segment, SegmentOrigin, SegmentState, SessionControl,
     SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
     SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
-};
-pub use tag::{
-    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
-    MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,
-    TagTable,
 };
 
 #[cfg(any(test, feature = "test-support"))]
