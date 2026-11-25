@@ -221,9 +221,10 @@ impl Setup {
         for _ in 0..25 {
             let mut input = selection.clone();
             input["progress"] = progress.clone();
-            let Outcome::PassPrepared(prepared) =
-                step(Command::PassPrepare(serde_json::from_value(input).unwrap(), host.clone()))
-            else {
+            let Outcome::PassPrepared(prepared) = step(Command::PassPrepare(
+                serde_json::from_value(input).unwrap(),
+                host.clone(),
+            )) else {
                 panic!("a prepared window");
             };
             prepared.settled.iter().for_each(&mut merge);

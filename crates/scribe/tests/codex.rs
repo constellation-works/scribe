@@ -369,7 +369,7 @@ fn controls_links_settlements_and_invalid_instructions_do_not_block_later_off() 
 }
 
 #[test]
-fn codex_windows_seal_resume_and_rebuild_and_explicit_model_override() {
+fn codex_windows_seal_resume_and_rebuild() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
     c.typed("on", "t", "/scribe on");
@@ -391,44 +391,30 @@ fn codex_windows_seal_resume_and_rebuild_and_explicit_model_override() {
     let again = cli_pass(&f);
     assert_eq!(again["passes"][0]["result"], "unchanged");
     assert_eq!(model_calls(&f), 0);
-    let path = fake_model(&f);
-    let rebuilt = f
-        .cmd(&[
-            "session",
-            "rebuild",
-            ID,
-            "--author",
-            "sol",
-            "--confirm",
-            "--json",
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
+    // The rebuild runs as the scribe-session-rebuild job: its plugin steps
+    // read the Codex rollout, and fixed answers stand in for the activity.
+    let config =
+        json!({"root": f.root(), "codex_home": f.home().join(".codex"), "transcripts": ""});
+    let rebuilt = support::pass::rebuild(
+        |step, input| {
+            support::pass::plugin_tool(&f, &[], &format!("session-{step}"), input, &config)
+        },
+        &json!({"session": ID, "author": "sol", "confirm": true}),
+        widget_answer,
+    );
     assert!(
         rebuilt.status.success(),
         "{} {}",
         text(&rebuilt.stdout),
         text(&rebuilt.stderr)
     );
+    let report: Value = serde_json::from_slice(&rebuilt.stdout).unwrap();
+    assert_eq!(report["passes"][0]["windows"], 3, "{report}");
     let record: Value =
         serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
     assert_eq!(record["provider"], "codex");
     assert_eq!(record["rebuilt_by"]["name"], "sol");
-    let calls = std::fs::read_to_string(f.home().join("model-calls.jsonl")).unwrap();
-    let call: Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
-    let args = call["args"].as_array().unwrap();
-    assert!(
-        args.windows(2)
-            .any(|a| a == [json!("--model"), json!("explicit-luna-id")])
-    );
-    assert!(
-        args.windows(2)
-            .any(|a| a == [json!("--disable"), json!("hooks")])
-    );
-    assert!(args.contains(&json!("--ephemeral")));
-    assert!(call["env"].get("SCRIBE_ROOT").is_none());
-    assert!(!PathBuf::from(call["cwd"].as_str().unwrap()).exists());
+    assert_eq!(model_calls(&f), 0, "no flow spawns codex");
 }
 
 #[test]

@@ -1,9 +1,10 @@
-//! `scribe session rebuild` against recorded model answers
+//! The session rebuild against recorded activity answers
 //! (docs/design/scribe/specs/replay-fixtures.md): every recording under
-//! `tests/fixtures/replay/` is rebuilt through the built binary on a temp
-//! root, a fake `claude` replaying its calls in order, with no live model.
-//! The replay refuses a request that differs from the recorded one and a
-//! call past the last recorded one.
+//! `tests/fixtures/replay/` is rebuilt through the built binary's
+//! `scribe-session-rebuild` plugin steps on a temp root, each activity
+//! answered from its calls in order, with no live model. The replay refuses
+//! a request that differs from the recorded one and a call past the last
+//! recorded one.
 //!
 //! `SCRIBE_REPLAY_UPDATE=1` rewrites each recording's `.args` and `.in`
 //! from the requests the current build makes, after an intended prompt

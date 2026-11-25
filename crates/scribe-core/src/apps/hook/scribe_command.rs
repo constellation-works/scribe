@@ -242,7 +242,7 @@ fn run_catalog<E: HookPortError>(
             if begun.wrote_switch {
                 blocked(
                     format!(
-                        "scribe: cataloging {id} as yours — its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell; the record keeps cataloged_by user"
+                        "scribe: cataloging {id} as yours — its windows run at the next session pass, or now with `orbit job run scribe-session-catalog --input '{{\"session\":\"{id}\",\"author\":\"<name>\"}}'`; the record keeps cataloged_by user"
                     ),
                     vec![HookOutcome {
                         target: Some(format!("session:{id}")),
@@ -252,7 +252,7 @@ fn run_catalog<E: HookPortError>(
             } else {
                 blocked(
                     format!(
-                        "scribe: {id} is already being cataloged — nothing changed; its windows run at the next session pass, or now with `scribe session catalog {id} --author <name>` in a shell"
+                        "scribe: {id} is already being cataloged — nothing changed; its windows run at the next session pass, or now with `orbit job run scribe-session-catalog --input '{{\"session\":\"{id}\",\"author\":\"<name>\"}}'`"
                     ),
                     Vec::new(),
                 )

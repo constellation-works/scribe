@@ -108,6 +108,9 @@ scribe session pass --json
 scribe session pass --session <id> --json
 orbit job run scribe-session-pass --input 'sessions=["<id>"]'
 scribe session rebuild <id> --author <name> --confirm
+orbit job run scribe-session-rebuild --input '{"session":"<id>","author":"<name>","confirm":true}'
+scribe session catalog <id> --author <name>
+orbit job run scribe-session-catalog --input '{"session":"<id>","author":"<name>"}'
 scribe session deactivate <id> --author opus --reason 'the feature was removed'
 scribe session activate <id> --author opus --pin
 scribe brief
@@ -301,7 +304,8 @@ or relax the author rules.
 Session pass reads each opted-in transcript from its recorded provider,
 including archived Codex rollouts. Orbit selects the model through the
 `session_distill_crew` and `session_header_crew` plugin settings. Both
-default to `haiku`. `session rebuild` uses the record's provider.
+default to `haiku`. The `scribe-session-catalog` and `scribe-session-rebuild`
+jobs use the same crews and read the record's provider.
 
 ```sh
 scribe --provider codex transcript list --since 2026-11-01 --min-turns 1 --json

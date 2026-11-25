@@ -142,13 +142,17 @@ impl Command<'_> {
                 command: CATALOG_COMMAND,
                 stepwise: false,
             }),
-            Self::PassApply(input, _) if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) => {
+            Self::PassApply(input, _)
+                if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) =>
+            {
                 Some(AuditMeta {
                     command: CATALOG_COMMAND,
                     stepwise: false,
                 })
             }
-            Self::PassFail(input, _) if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) => {
+            Self::PassFail(input, _)
+                if input.basis.as_ref().is_some_and(|b| b.catalog().is_some()) =>
+            {
                 Some(AuditMeta {
                     command: CATALOG_COMMAND,
                     stepwise: false,
@@ -180,21 +184,22 @@ impl Command<'_> {
     #[must_use]
     pub fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
-            Self::PassPrepare(input, _) if input.selection.catalog.is_some() => {
-                catalog_subject(
-                    input.selection.sessions.first(),
-                    input.selection.catalog.as_ref(),
-                )
-            }
+            Self::PassPrepare(input, _) if input.selection.catalog.is_some() => catalog_subject(
+                input.selection.sessions.first(),
+                input.selection.catalog.as_ref(),
+            ),
+            // Apply and fail name the author only: a subject's target would
+            // replace every line's, and their lines name their own (the
+            // session, and each closure and entry the window persisted).
             Self::PassApply(input, _) => input
                 .basis
                 .as_ref()
-                .map(|b| catalog_subject(Some(b.session()), b.catalog()))
+                .map(|b| catalog_subject(None, b.catalog()))
                 .unwrap_or_default(),
             Self::PassFail(input, _) => input
                 .basis
                 .as_ref()
-                .map(|b| catalog_subject(Some(b.session()), b.catalog()))
+                .map(|b| catalog_subject(None, b.catalog()))
                 .unwrap_or_default(),
             Self::List(_)
             | Self::Show { .. }
@@ -203,9 +208,13 @@ impl Command<'_> {
             | Self::TranscriptList { .. }
             | Self::TranscriptShow { .. } => AuditSubject::default(),
             Self::CatalogBegin(input, provider) => AuditSubject {
-                target: resolve_transcript(ctx, input.provider.unwrap_or(*provider), &input.session)
-                    .ok()
-                    .map(|id| format!("session:{id}")),
+                target: resolve_transcript(
+                    ctx,
+                    input.provider.unwrap_or(*provider),
+                    &input.session,
+                )
+                .ok()
+                .map(|id| format!("session:{id}")),
                 author: Some(input.author.as_str().to_owned()),
             },
             Self::RebuildPrepare(input) => AuditSubject {
@@ -234,7 +243,10 @@ impl Command<'_> {
 
 /// A catalog job step's subject: its session and author. An ordinary
 /// pass step names none.
-fn catalog_subject(session: Option<&SessionId>, catalog: Option<&CatalogSelection>) -> AuditSubject {
+fn catalog_subject(
+    session: Option<&SessionId>,
+    catalog: Option<&CatalogSelection>,
+) -> AuditSubject {
     let Some(catalog) = catalog else {
         return AuditSubject::default();
     };
@@ -575,9 +587,12 @@ impl Audited for Outcome {
             // The checkpoint is private: only the finish that replaces the
             // record is a line, as the whole rebuild was one.
             Self::RebuildPrepared(_) | Self::RebuildApplied(_) => Vec::new(),
-            Self::RebuildFinished(finished) => {
-                finished.pass.as_ref().and_then(pass_line).into_iter().collect()
-            }
+            Self::RebuildFinished(finished) => finished
+                .pass
+                .as_ref()
+                .and_then(pass_line)
+                .into_iter()
+                .collect(),
             Self::Activity(written) => Line::written(
                 Some(format!("session:{}", written.view.record.id)),
                 written.changed,

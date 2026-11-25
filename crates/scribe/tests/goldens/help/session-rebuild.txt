@@ -1,6 +1,6 @@
-Rebuild a session record from its full transcript
+Check a session rebuild and name the job that runs it
 
-Replaces a session record with a log rebuilt from its transcript, resuming interrupted windows.
+Checks that a session record can be rebuilt from its transcript and prints the Orbit job command that rebuilds it, resuming interrupted windows.
 
 Usage: scribe session rebuild [OPTIONS] --author <NAME> <ID>
 
@@ -36,9 +36,12 @@ Global options:
       --json
           Shorthand for --format json
 
-Replaces the header and log only after every transcript window succeeds.
-Interrupted runs resume their private checkpoint; --confirm is required.
+Checks what the rebuild refuses (a forgotten session, a missing --confirm, a
+session a pass owns, a missing or unproven transcript) and prints the Orbit
+job command. The job replaces the header and log only after every transcript
+window succeeds; a failed or interrupted run keeps its private checkpoint,
+and running the job again resumes it.
 
 Examples:
   scribe session rebuild <id> --author <name> --confirm
-  scribe session rebuild <id> --author <name> --confirm --json
+  orbit job run scribe-session-rebuild --input '{"session":"<id>","author":"<name>","confirm":true}'

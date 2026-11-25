@@ -237,9 +237,10 @@ sees it.
 
 ### Providers (interim)
 
-Scribe's own model calls are being removed (ORB-27911). Session catalog and session rebuild retain their callers until Orbit jobs replace them.
-Session pass, group close and memory refresh use deterministic prepare/apply
-flows and Orbit jobs, as approved in §19 of the design.
+Scribe's own model calls are being removed (ORB-27911). Session pass,
+session catalog, session rebuild, group close and memory refresh use
+deterministic prepare/apply flows and Orbit jobs, as approved in §19 of the
+design; the provider adapters remain until their deletion (ORB-28144).
 
 Until then:
 
@@ -247,9 +248,9 @@ Until then:
   port (`providers/mod.rs`), the remaining adapter inputs
   (`providers/models.rs`), and the CLI adapters with their process
   supervision (`providers/cli.rs`, `providers/cli/`).
-- Only `providers/` spawns a process. The provider adapter is reached by
-  the interim catalog and rebuild commands. The guard script lists the
-  allowed imports by path.
+- Only `providers/` spawns a process. No session command reaches the
+  provider adapter any more. The guard script lists the allowed imports by
+  path.
 - When a caller's job exists, its import goes. When the last one goes, the
   folder is deleted with the `[models]` config section. The credential names
   in `[models] credentials` also select what redaction masks: they move to

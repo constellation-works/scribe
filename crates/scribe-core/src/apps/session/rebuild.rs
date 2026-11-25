@@ -284,7 +284,10 @@ struct CursorFields<'a> {
 }
 
 impl Serialize for RebuildCursor {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         struct Sealed<'a> {
             #[serde(flatten)]
@@ -398,6 +401,23 @@ impl RebuildBasis {
             || self.session_id != cursor.session
             || self.author != cursor.author
         {
+            return Err(RebuildError::Input(
+                "the rebuild cursor is not the one the basis was prepared with",
+            ));
+        }
+        Ok(self)
+    }
+
+    /// [`Self::checked`] for a cursor an apply has since advanced: the
+    /// final apply that carries a written window, and finish. The cursor's
+    /// own seal still holds; it must name this basis's session and author.
+    fn owns<E>(self, cursor: &RebuildCursor) -> std::result::Result<Self, RebuildError<E>> {
+        if self.seal != self.seal_of() {
+            return Err(RebuildError::Input(
+                "the prepared rebuild basis was changed since scribe returned it",
+            ));
+        }
+        if self.session_id != cursor.session || self.author != cursor.author {
             return Err(RebuildError::Input(
                 "the rebuild cursor is not the one the basis was prepared with",
             ));
@@ -602,7 +622,10 @@ fn admit<E: PortError>(
 impl Admitted {
     /// The transcript's messages, its provenance re-checked on the handle
     /// the bytes come from.
-    fn read<E: PortError>(&self, ctx: &Ctx<'_, E>) -> std::result::Result<Transcript, RebuildError<E>> {
+    fn read<E: PortError>(
+        &self,
+        ctx: &Ctx<'_, E>,
+    ) -> std::result::Result<Transcript, RebuildError<E>> {
         let bytes = match ctx
             .transcripts
             .read_checked(self.provider, &self.path, &self.id)
@@ -827,7 +850,9 @@ pub(crate) fn prepare<E: PortError>(
     };
     let data = admitted.read(ctx)?;
     let (mark, previous, offset) = admitted.checkpoint(ctx, &data)?;
-    let expected = mark.as_ref().map_or(admitted.original.updated, |m| m.updated);
+    let expected = mark
+        .as_ref()
+        .map_or(admitted.original.updated, |m| m.updated);
     let mut basis = RebuildBasis {
         session_id: admitted.id.clone(),
         author: input.author,
@@ -886,7 +911,17 @@ pub(crate) fn apply<E: PortError>(
         correction,
     } = input;
     let mut cursor = cursor.checked()?;
-    let basis = basis.checked(&cursor)?;
+    let carried = repair
+        && matches!(
+            previous_status,
+            Some(RebuildStatus::Idle | RebuildStatus::Written | RebuildStatus::Stale)
+        );
+    // A carried cursor is the first apply's, advanced by a written window.
+    let basis = if carried {
+        basis.owns(&cursor)?
+    } else {
+        basis.checked(&cursor)?
+    };
     if repair {
         match previous_status {
             Some(RebuildStatus::RetryWindow | RebuildStatus::RetryHeader) => {}
@@ -920,9 +955,10 @@ pub(crate) fn apply<E: PortError>(
     let data = admitted.read(ctx)?;
     let (mark, previous, offset) = admitted.checkpoint(ctx, &data)?;
     let stale = |cursor| Ok(RebuildApplied::new(RebuildStatus::Stale, cursor));
-    if mark != basis.checkpoint
-        || mark.as_ref().map_or(admitted.original.updated, |m| m.updated) != basis.expected_updated
-    {
+    // The checkpoint must be the one prepare read. A visible revision that
+    // moved meanwhile is not stale here: the checkpoint keeps the revision it
+    // was cut from, and finish rebases it onto the newer record.
+    if mark != basis.checkpoint {
         return stale(cursor);
     }
     let Some(window) = admitted.window(
@@ -943,7 +979,8 @@ pub(crate) fn apply<E: PortError>(
     let Some(mut answer) = answer else {
         let error = failed_with.into_iter().flatten().next();
         let code = model_code(None, error.as_deref());
-        let message = error.unwrap_or_else(|| "the session distillation activity returned no answer".into());
+        let message =
+            error.unwrap_or_else(|| "the session distillation activity returned no answer".into());
         return Err(RebuildError::Step(PassError::new(
             code,
             short_reason(&admitted.redactor, &message),
@@ -983,8 +1020,8 @@ pub(crate) fn apply<E: PortError>(
     let distilled = match pass::check(answer.clone(), conversation, &window.request) {
         Ok(distilled) => distilled,
         Err(_) if repair => pass::repair(answer, conversation, &window.request).map_err(|err| {
-            let reason =
-                correction.map_or_else(|| err.to_string(), |first| format!("{first}; retry: {err}"));
+            let reason = correction
+                .map_or_else(|| err.to_string(), |first| format!("{first}; retry: {err}"));
             RebuildError::Step(PassError::new(
                 "session_answer_invalid",
                 short_reason(&admitted.redactor, &reason),
@@ -1053,9 +1090,9 @@ pub(crate) fn apply<E: PortError>(
     let mut record = pass::record(previous.as_ref(), distilled, meta);
     record.created = original.created;
     record.updated = basis.expected_updated;
-    let Some(record) = ctx
-        .store
-        .checkpoint_rebuild(record, basis.checkpoint.as_ref(), &admitted.redactor)?
+    let Some(record) =
+        ctx.store
+            .checkpoint_rebuild(record, basis.checkpoint.as_ref(), &admitted.redactor)?
     else {
         return stale(cursor);
     };
@@ -1088,7 +1125,7 @@ pub(crate) fn finish<E: PortError>(
         return Err(RebuildError::Input("finish requires the rebuild cursor"));
     };
     let cursor = progress.cursor.checked()?;
-    let basis = input.basis.checked(&cursor)?;
+    let basis = input.basis.owns(&cursor)?;
     let not_yet = |next_expected| RebuildFinished {
         done: false,
         finished: false,

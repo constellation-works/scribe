@@ -9,8 +9,7 @@ pub use run::{
     PassRunError, PrepareInput, Prepared, SessionPassInput, short_reason,
 };
 pub(crate) use run::{
-    apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only,
-    window_warnings,
+    apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only, window_warnings,
 };
 
 use crate::apps::memory::check_sensitive_drafts;

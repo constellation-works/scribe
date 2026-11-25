@@ -6,18 +6,20 @@ use crate::models::PassMessage;
 mod workflow;
 
 pub use workflow::{
-    ActivityAnswer, ApplyInput, CatalogSelection, ApplyOutput, ApplyStatus, FailInput, PASS_START_BY_SECONDS,
-    PrepareInput, Prepared, SessionPassInput,
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CatalogSelection, FailInput,
+    PASS_START_BY_SECONDS, PrepareInput, Prepared, SessionPassInput,
 };
-pub(crate) use workflow::{apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only};
+pub(crate) use workflow::{
+    apply, fail, mask_value, masked_input, model_code, prepare, seal, settle_only,
+};
 
 use crate::control;
 use crate::models::SessionRequest;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::runtime::{Ctx, PortError, TranscriptState};
 use crate::{
-    Config, Label, Project, Provider, Redactor, SessionControl, SessionId,
-    SessionRecord, memory, pass, transcript,
+    Config, Label, Project, Provider, Redactor, SessionControl, SessionId, SessionRecord, memory,
+    pass, transcript,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
