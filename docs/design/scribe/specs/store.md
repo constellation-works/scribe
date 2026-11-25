@@ -162,7 +162,7 @@ metadata (see
 
 The SQLite database of [2_design.md §15.7](../2_design.md#157-storage),
 built with `rusqlite`'s `bundled` feature (SQLite compiled in, FTS5 on).
-Only `store/db.rs` and `store/db/` open it. It holds the session pass's
+Only `scribe-store`'s `db/` opens it. It holds the session pass's
 messages (phase 4) and memory's rows (phase 5): the pending `now`
 candidates, removed items' history, the profile revisions and cursor, the
 memory journal and each pass window's signal; the sessions (phase 6); and
@@ -595,7 +595,7 @@ Rebuild also checks after acquiring its per-session lock.
   Format 28 adds optional `handoff_mode`
   (`continue` or `new`) to entries; SQLite schema 7 adds its nullable column.
   Phase 8 removes `store/format.rs`, its upgrade registry (`UPGRADES`) and
-  the file decoders. `FORMAT` is in `store/codec.rs`, which keeps only the
+  the file decoders. `FORMAT` is in `store/codec.rs` (now `scribe-store`'s `db/codec.rs`), which keeps only the
   current-format codecs: the export encoders, the row checks, the session
   decoder for a rebuild checkpoint row, the stamp check and the memory
   files' codec. A persisted-shape change is a database migration.
@@ -1341,10 +1341,10 @@ exits 0.
   other refusal (a link, loose modes, a newer format, an I/O error) fails
   the whole command rather than skipping the file
   ([4_decisions.md](../4_decisions.md#one-malformed-record-makes-its-file-corrupt)).
-- **Format.** One `FORMAT` (<!-- current-format -->31, in `store/codec.rs`) versions every
+- **Format.** One `FORMAT` (<!-- current-format -->31, in `scribe-store`'s `db/codec.rs`) versions every
   exported document and the stamps. A change to an exported document's
   shape bumps it; a persisted-shape change appends a database migration in
-  `store/db.rs`. A newer stamp is refused (`store_too_new`) and left
+  `scribe-store`'s `db/mod.rs`. A newer stamp is refused (`store_too_new`) and left
   untouched. Through phase 7 a shape change also appended one step to
   `UPGRADES` in `store/format.rs`, given the document type it upgrades,
   and reads upgraded an older document in memory; phase 8 removed
