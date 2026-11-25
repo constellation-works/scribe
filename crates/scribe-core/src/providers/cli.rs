@@ -404,6 +404,19 @@ pub(crate) fn supervise(
     let child = cmd
         .spawn()
         .map_err(|e| ModelError::Unavailable(format!("{program}: {e}")))?;
+    supervise_child(child, &program, input, budget)
+}
+
+/// [`supervise`] for a child already spawned as the leader of its own group;
+/// `program` names it in errors. The budget starts here, after the spawn, so
+/// a caller that spawns the child itself knows its id before the budget can
+/// expire.
+pub(crate) fn supervise_child(
+    child: Child,
+    program: &str,
+    input: Vec<u8>,
+    budget: Duration,
+) -> Result<Ran, ModelError> {
     let mut guard = Group::new(child);
     let child = guard.child_mut();
     if let Some(mut stdin) = child.stdin.take() {

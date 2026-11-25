@@ -17,7 +17,7 @@ mod cli;
 pub mod models;
 
 #[cfg(test)]
-pub(crate) use cli::{BASELINE_ENV, argv};
+pub(crate) use cli::{BASELINE_ENV, Ended, argv, supervise_child};
 pub use cli::{ClaudeCliModels, allowed_env};
 
 use crate::models::{

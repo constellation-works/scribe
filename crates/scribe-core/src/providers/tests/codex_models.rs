@@ -1,6 +1,6 @@
 //! Codex transport boundary tests against controlled children, never a live account.
 #![cfg(unix)]
-use crate::providers::{ClaudeCliModels, allowed_env};
+use crate::providers::{ClaudeCliModels, Ended, allowed_env, supervise_child};
 use scribe_core::{
     Models, Provider,
     models::{Budgets, ModelError, SessionHeader, SessionHeaderRequest},
@@ -8,7 +8,8 @@ use scribe_core::{
 };
 use std::{
     ffi::OsString,
-    os::unix::fs::PermissionsExt,
+    os::unix::{fs::PermissionsExt, process::CommandExt},
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -119,7 +120,9 @@ fn malformed_tool_failure_and_oversized_results_are_refused_without_fallback() {
 
 #[test]
 fn codex_timeout_uses_the_shared_group_supervisor_and_missing_runtime_is_actionable() {
-    let fake = Fake::new("echo $$ > \"$HOME/leader\"; /bin/sleep 30");
+    // The budget runs from the spawn, so the fake may not have run anything
+    // when it expires. The fake reports nothing, so no check depends on it.
+    let fake = Fake::new("/bin/sleep 30");
     let mut req = request();
     req.budget = Duration::from_millis(60);
     let start = Instant::now();
@@ -128,12 +131,20 @@ fn codex_timeout_uses_the_shared_group_supervisor_and_missing_runtime_is_actiona
         Err(ModelError::Timeout { .. })
     ));
     assert!(start.elapsed() < Duration::from_secs(4));
-    let pid: i32 = std::fs::read_to_string(fake.dir.path().join("leader"))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    let pid = rustix::process::Pid::from_raw(pid).unwrap();
+
+    // The shared supervisor must reap the leader it timed out. The leader is
+    // spawned here, so its id is known before the budget starts, whatever the load.
+    let mut leader = Command::new("/bin/sleep");
+    leader
+        .arg("30")
+        .process_group(0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = leader.spawn().unwrap();
+    let pid = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+    let ran = supervise_child(child, "sleep", Vec::new(), Duration::from_millis(60)).unwrap();
+    assert!(matches!(ran.ended, Ended::TimedOut));
     assert!(
         rustix::process::kill_process(pid, rustix::process::Signal::CONT).is_err(),
         "leader must be reaped"
