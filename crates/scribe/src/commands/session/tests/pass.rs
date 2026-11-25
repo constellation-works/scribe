@@ -117,9 +117,11 @@ fn drive(
                     basis: prepared.basis.clone(),
                     error_code: Some(err.code().into()),
                     reason: Some(err.to_string()),
+                    errors: Vec::new(),
                 };
                 let Outcome::PassFailed(Some(payload)) =
-                    session::exec_unaudited(ctx, Command::PassFail(failure, ctx.host())).unwrap()
+                    session::exec_unaudited(ctx, Command::PassFail(Box::new(failure), ctx.host()))
+                        .unwrap()
                 else {
                     panic!("failure backoff");
                 };
@@ -970,4 +972,282 @@ fn windows_seal_at_the_configured_limit_and_the_last_final_window() {
         assert_eq!(models.asked.borrow().len(), 7);
         assert_eq!(models.asked.borrow()[6].final_pass, final_pass);
     }
+}
+
+fn prepare_step(ctx: &Context, input: serde_json::Value) -> serde_json::Value {
+    let input: PrepareInput = serde_json::from_value(input).unwrap();
+    let Outcome::PassPrepared(prepared) =
+        session::exec_unaudited(ctx, Command::PassPrepare(input, ctx.host())).unwrap()
+    else {
+        panic!("prepared window");
+    };
+    serde_json::to_value(&*prepared).unwrap()
+}
+
+/// One apply, or the refusal's debug text.
+fn apply_step(ctx: &Context, input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let input: ApplyInput = serde_json::from_value(input).unwrap();
+    match session::exec_unaudited(ctx, Command::PassApply(Box::new(input), ctx.host())) {
+        Ok(Outcome::PassApplied(applied)) => Ok(serde_json::to_value(&*applied).unwrap()),
+        Ok(_) => panic!("applied answer"),
+        Err(err) => Err(format!("{err:?}")),
+    }
+}
+
+fn switch_of(setup: &Setup) -> scribe_core::SessionControl {
+    let id: SessionId = ON.parse().unwrap();
+    setup
+        .ctx
+        .store()
+        .control()
+        .unwrap()
+        .get(&id)
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn a_forged_cursor_tally_basis_or_status_is_refused_before_any_write() {
+    let setup = Setup::new();
+    setup.switch_on();
+    let prepared = prepare_step(&setup.ctx, json!({}));
+    assert_eq!(prepared["needs_model"], true);
+    let cursor = prepared["cursor"].clone();
+    let basis = prepared["basis"].clone();
+    let switch = switch_of(&setup);
+    let mut fill = answer();
+    fill.new[0].starts_at = String::from("u-1");
+
+    // A raised slot count in the tally.
+    let mut forged = cursor.clone();
+    forged["tally"]["candidates"] = json!(99);
+    let err = apply_step(
+        &setup.ctx,
+        json!({"basis": basis, "cursor": forged, "answer": fill}),
+    )
+    .unwrap_err();
+    assert!(err.contains("cursor was changed"), "{err}");
+
+    // More sessions than the run admitted, or a lowered remaining count.
+    for (field, value) in [("sessions", json!([ON, NEVER])), ("remaining", json!(5))] {
+        let mut forged = cursor.clone();
+        forged[field] = value;
+        let input: PrepareInput =
+            serde_json::from_value(json!({"progress": [{"cursor": forged}]})).unwrap();
+        let err =
+            session::exec_unaudited(&setup.ctx, Command::PassPrepare(input, setup.ctx.host()))
+                .map(|_| ())
+                .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("cursor was changed"),
+            "{field}: {err:?}"
+        );
+    }
+
+    // A flipped final-window flag in the basis.
+    let mut forged = basis.clone();
+    forged["last_window"] = json!(!basis["last_window"].as_bool().unwrap());
+    let err = apply_step(
+        &setup.ctx,
+        json!({"basis": forged, "cursor": cursor, "answer": fill}),
+    )
+    .unwrap_err();
+    assert!(err.contains("basis was changed"), "{err}");
+
+    // A final retry whose first answer was valid: the forwarded status
+    // does not match the recomputed one, so the retry answer is not used.
+    let err = apply_step(
+        &setup.ctx,
+        json!({
+            "basis": basis, "cursor": cursor, "answer": fill, "retry_answer": fill,
+            "repair": true, "previous_status": "retry_window",
+        }),
+    )
+    .unwrap_err();
+    assert!(err.contains("previous_status"), "{err}");
+
+    assert_eq!(
+        switch_of(&setup),
+        switch,
+        "no refusal backs the session off"
+    );
+
+    // The unchanged request still commits: no refusal wrote a record.
+    let applied = apply_step(
+        &setup.ctx,
+        json!({"basis": basis, "cursor": cursor, "answer": fill}),
+    )
+    .unwrap();
+    assert_eq!(applied["status"], "written", "{applied}");
+}
+
+#[test]
+fn a_transcript_error_between_prepare_and_apply_fails_the_pass_and_backs_off() {
+    use std::os::unix::fs::PermissionsExt;
+    let setup = Setup::new();
+    setup.switch_on();
+    let prepared = prepare_step(&setup.ctx, json!({}));
+    let mut fill = answer();
+    fill.new[0].starts_at = String::from("u-1");
+    // A group-writable transcript fails its provenance check.
+    std::fs::set_permissions(setup.transcript(ON), std::fs::Permissions::from_mode(0o620)).unwrap();
+    let before = setup.ctx.now();
+    let applied = apply_step(
+        &setup.ctx,
+        json!({"basis": prepared["basis"], "cursor": prepared["cursor"], "answer": fill}),
+    )
+    .unwrap();
+    let after = setup.ctx.now();
+    assert_eq!(applied["status"], "failed", "{applied}");
+    assert_eq!(applied["error_code"], "provenance_failed", "{applied}");
+    assert_eq!(applied["pass"]["result"], "failed");
+    assert_eq!(applied["cursor"]["next"], 1, "the run moves on");
+    assert_eq!(applied["cursor"]["remaining"], 1);
+    let switch = switch_of(&setup);
+    assert!(switch.due);
+    assert_eq!(switch.consecutive_failures, 1);
+    let retry_after = switch.retry_after.unwrap();
+    let five = time::Duration::minutes(5);
+    assert!(before + five <= retry_after && retry_after <= after + five);
+    // The next run waits out the backoff instead of failing on it again.
+    let next = prepare_step(&setup.ctx, json!({}));
+    assert_eq!(next["done"], true, "{next}");
+    assert_eq!(next["cursor"]["remaining"], 1);
+}
+
+#[test]
+fn a_failed_activity_moves_the_run_on_with_the_failure_code() {
+    let setup = Setup::new();
+    setup.switch_on();
+    let prepared = prepare_step(&setup.ctx, json!({}));
+    let failure = FailInput {
+        basis: serde_json::from_value(prepared["basis"].clone()).unwrap(),
+        error_code: None,
+        reason: None,
+        errors: vec![
+            Some(String::from(
+                "cli subprocess exceeded 120s wall-clock timeout",
+            )),
+            None,
+        ],
+    };
+    let Outcome::PassFailed(Some(payload)) = session::exec_unaudited(
+        &setup.ctx,
+        Command::PassFail(Box::new(failure), setup.ctx.host()),
+    )
+    .unwrap() else {
+        panic!("failure backoff");
+    };
+    assert_eq!(payload.error_code, Some("model_timeout"));
+    assert_eq!(switch_of(&setup).consecutive_failures, 1);
+
+    // The job's apply after the fallback: no answer, no second backoff.
+    let applied = apply_step(
+        &setup.ctx,
+        json!({"basis": prepared["basis"], "cursor": prepared["cursor"], "answer": [null, null]}),
+    )
+    .unwrap();
+    assert_eq!(applied["status"], "failed", "{applied}");
+    assert_eq!(applied["pass"], json!(null));
+    assert_eq!(applied["cursor"]["next"], 1);
+    assert_eq!(applied["cursor"]["remaining"], 1);
+    assert_eq!(switch_of(&setup).consecutive_failures, 1);
+
+    // The fallback's carry step passes the moved cursor through.
+    let carried = apply_step(
+        &setup.ctx,
+        json!({
+            "basis": prepared["basis"], "cursor": applied["cursor"], "answer": [null, null],
+            "repair": true, "previous_status": "failed",
+        }),
+    )
+    .unwrap();
+    assert_eq!(carried["status"], "idle");
+    let done = prepare_step(
+        &setup.ctx,
+        json!({"progress": [{"cursor": carried["cursor"]}]}),
+    );
+    assert_eq!(done["done"], true, "{done}");
+
+    // Provider markers name an unavailable model.
+    setup
+        .ctx
+        .store()
+        .update_control(|s| {
+            s.sessions
+                .get_mut(&ON.parse().unwrap())
+                .unwrap()
+                .retry_after = None;
+        })
+        .unwrap();
+    let prepared = prepare_step(&setup.ctx, json!({}));
+    let failure = FailInput {
+        basis: serde_json::from_value(prepared["basis"].clone()).unwrap(),
+        error_code: None,
+        reason: None,
+        errors: vec![
+            None,
+            Some(String::from(
+                "[provider_unavailable] provider=claude not logged in",
+            )),
+        ],
+    };
+    let Outcome::PassFailed(Some(payload)) = session::exec_unaudited(
+        &setup.ctx,
+        Command::PassFail(Box::new(failure), setup.ctx.host()),
+    )
+    .unwrap() else {
+        panic!("failure backoff");
+    };
+    assert_eq!(payload.error_code, Some("model_unavailable"));
+}
+
+#[test]
+fn the_first_window_starts_after_the_deadline_and_no_later_session_does() {
+    let setup = Setup::new();
+    setup.write(NEVER, &[line("user", "n-1", "Second session turn.")]);
+    setup.switch_on();
+    let other: SessionId = NEVER.parse().unwrap();
+    setup
+        .ctx
+        .store()
+        .update_control(|s| control::switch(s, &other, &Switch::On, setup.ctx.now()))
+        .unwrap();
+    let past = setup.ctx.now().unix_timestamp() - 1;
+    let prepared = prepare_step(&setup.ctx, json!({"deadline_epoch_s": past}));
+    assert_eq!(
+        prepared["needs_model"], true,
+        "the run's first window starts"
+    );
+    let mut fill = answer();
+    fill.new[0].starts_at = prepared["window_request"]["messages"][0]["uuid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    fill.terms.clear();
+    let applied = apply_step(
+        &setup.ctx,
+        json!({"basis": prepared["basis"], "cursor": prepared["cursor"], "answer": fill}),
+    )
+    .unwrap();
+    assert_eq!(applied["status"], "written", "{applied}");
+    let next = prepare_step(
+        &setup.ctx,
+        json!({"deadline_epoch_s": past, "progress": [{"cursor": applied["cursor"]}]}),
+    );
+    assert_eq!(next["done"], true, "no later session starts: {next}");
+    assert_eq!(next["cursor"]["remaining"], 0);
+    assert_eq!(next["cursor"]["sessions"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        next["cursor"]["next"], 1,
+        "the second session is left for the next run"
+    );
+
+    // The job's own cutoff is 50 seconds after its first prepare.
+    let before = setup.ctx.now().unix_timestamp();
+    let fresh = prepare_step(&setup.ctx, json!({}));
+    let after = setup.ctx.now().unix_timestamp();
+    let start_by = fresh["cursor"]["start_by"].as_i64().unwrap();
+    let cutoff = scribe_core::apps::session::PASS_START_BY_SECONDS;
+    assert!(before + cutoff <= start_by && start_by <= after + cutoff);
 }

@@ -19,6 +19,15 @@
         "string",
         "null"
       ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
     }
   },
   "required": [

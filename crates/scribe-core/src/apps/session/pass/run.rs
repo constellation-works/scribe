@@ -6,8 +6,8 @@ use crate::models::PassMessage;
 mod workflow;
 
 pub use workflow::{
-    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, FailInput, PrepareInput, Prepared,
-    SessionPassInput,
+    ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, FailInput, PASS_START_BY_SECONDS,
+    PrepareInput, Prepared, SessionPassInput,
 };
 pub(crate) use workflow::{apply, fail, prepare, settle_only};
 
@@ -355,23 +355,19 @@ struct CatalogRun {
 #[derive(Debug)]
 pub struct PassError {
     pub(crate) code: &'static str,
-    write_error: bool,
     pub(crate) message: String,
 }
 
 impl PassError {
+    /// A store write's error, with the store's code.
     fn write(err: crate::Error) -> Self {
-        Self {
-            write_error: true,
-            ..Self::new(err.code(), err.to_string())
-        }
+        Self::new(err.code(), err.to_string())
     }
 
     fn new(code: &'static str, message: impl Into<String>) -> Self {
         let message = message.into();
         Self {
             code,
-            write_error: false,
             message: if message.trim().is_empty() {
                 code.to_owned()
             } else {

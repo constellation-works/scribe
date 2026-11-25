@@ -72,8 +72,10 @@ routine with `orbit routine enable scribe-session-pass` once the store,
 transcript roots and activity crews are configured.
 
 The job admits up to five due sessions by default and runs at most 25
-iterations. It stops starting windows after 90 seconds to leave time for
-the in-flight window and its retry. Passes use consecutive windows of up to 40 messages and 15,000
+iterations. It starts no session or window after 50 seconds (the first
+window always starts), and its loop stops after 90 seconds, to leave time
+for the in-flight window and its retry. A failed activity or store error
+backs that session off and the run moves on to the next one. Passes use consecutive windows of up to 40 messages and 15,000
 characters by default. Set `[catalog] window_messages` and `window_chars`
 to change those limits. Each valid window checkpoints the record. A failed
 window preserves those checkpoints and keeps the session due. Automatic

@@ -13,12 +13,14 @@ spec:
     deadline_epoch_s: null
   steps:
     # Fan-in seeds an empty cursor and replaces it with the committed
-    # continuation after each iteration.
+    # continuation after each iteration. A fan-out step takes its timeout on
+    # its worker.
     - id: seed_cursor
       fan_out:
         items: "[]"
         worker:
           id: unused_seed
+          timeout_seconds: 60
           spec:
             type: deterministic
             action: plugin.tool_call
@@ -51,12 +53,15 @@ spec:
                 progress: "{{ steps.pass_cursor.output }}"
           # The skipped second worker gives the join a successful branch so
           # the fallback can record backoff and report the activity failure.
+          # Prepare starts no session or window after its 50-second cutoff
+          # (the run's first window always starts).
           - id: distill
             fan_out:
               items: "[true, false]"
               max_workers: 1
               worker:
                 id: distill_window
+                timeout_seconds: 300
                 when: "{{ item }} == true && {{ steps.prepare.output.needs_model }} == true"
                 target: activity:scribe_session_distill
                 default_input:
@@ -64,13 +69,17 @@ spec:
                   crew: "{{ steps.prepare.output.session_distill_crew }}"
             fan_in:
               join: { mode: any }
+              errors: distill_errors
+          # Record the failure's code and backoff; apply then moves the run
+          # on to the next session.
           - id: fail_distill
             when: "{{ steps.prepare.output.needs_model }} == true && {{ steps.distill.output }} == [null,null]"
+            timeout_seconds: 60
             target: activity:scribe_session_pass_fail
             default_input:
               input:
-                abort: true
                 basis: "{{ steps.prepare.output.basis }}"
+                errors: "{{ steps.distill_errors.output }}"
           - id: apply
             timeout_seconds: 60
             spec:
@@ -89,6 +98,7 @@ spec:
               max_workers: 1
               worker:
                 id: compress_header
+                timeout_seconds: 300
                 when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_header"
                 target: activity:scribe_session_header_compress
                 default_input:
@@ -96,12 +106,14 @@ spec:
                   crew: "{{ steps.prepare.output.session_header_crew }}"
             fan_in:
               join: { mode: any }
+              errors: compress_errors
           - id: distill_retry
             fan_out:
               items: "[true, false]"
               max_workers: 1
               worker:
                 id: distill_corrected_window
+                timeout_seconds: 300
                 when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_window"
                 target: activity:scribe_session_distill
                 default_input:
@@ -109,13 +121,23 @@ spec:
                   crew: "{{ steps.prepare.output.session_distill_crew }}"
             fan_in:
               join: { mode: any }
-          - id: fail_retry
-            when: "{{ steps.apply.output.status }} == retry_header && {{ steps.compress.output }} == [null,null] || {{ steps.apply.output.status }} == retry_window && {{ steps.distill_retry.output }} == [null,null]"
+              errors: distill_retry_errors
+          - id: fail_compress
+            when: "{{ steps.apply.output.status }} == retry_header && {{ steps.compress.output }} == [null,null]"
+            timeout_seconds: 60
             target: activity:scribe_session_pass_fail
             default_input:
               input:
-                abort: true
                 basis: "{{ steps.prepare.output.basis }}"
+                errors: "{{ steps.compress_errors.output }}"
+          - id: fail_retry
+            when: "{{ steps.apply.output.status }} == retry_window && {{ steps.distill_retry.output }} == [null,null]"
+            timeout_seconds: 60
+            target: activity:scribe_session_pass_fail
+            default_input:
+              input:
+                basis: "{{ steps.prepare.output.basis }}"
+                errors: "{{ steps.distill_retry_errors.output }}"
           - id: carry
             fan_out:
               items: "[true]"

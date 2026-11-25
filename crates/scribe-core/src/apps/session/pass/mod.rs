@@ -5,8 +5,8 @@ mod run;
 
 pub use run::{
     ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
-    PassPayload, PassReport, PassRunError, PrepareInput, Prepared, SessionPassInput,
-    attributed_project, short_reason,
+    PASS_START_BY_SECONDS, PassPayload, PassReport, PassRunError, PrepareInput, Prepared,
+    SessionPassInput, attributed_project, short_reason,
 };
 pub(crate) use run::{
     CatalogJob, RunFailure, apply, distill, fail, prepare, run_catalog, settle_only,

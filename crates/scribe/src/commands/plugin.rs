@@ -291,7 +291,13 @@ fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
                 || "the session distillation activity failed".to_owned(),
                 |id| format!("the distillation activity failed for session {id}"),
             );
-            failure("model_failed", message, false)
+            let code = match value["pass"]["error_code"].as_str() {
+                Some("model_timeout") => "model_timeout",
+                Some("model_unavailable") => "model_unavailable",
+                Some("model_malformed") => "model_malformed",
+                _ => "model_failed",
+            };
+            failure(code, message, false)
         }
         Ok(mut value) => {
             if verb == "session-pass-prepare" {

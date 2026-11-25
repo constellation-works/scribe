@@ -49,7 +49,7 @@ pub(super) fn run(args: PassArgs, ctx: &Context) -> Result<Output, CliError> {
 pub(in crate::commands) enum Step {
     Prepare(PrepareInput),
     Apply(Box<ApplyInput>),
-    Fail(FailInput),
+    Fail(Box<FailInput>),
 }
 
 impl Step {
@@ -62,7 +62,9 @@ impl Step {
             "session-pass-apply" => Ok(Self::Apply(Box::new(
                 serde_json::from_value(input).map_err(invalid)?,
             ))),
-            "session-pass-fail" => Ok(Self::Fail(serde_json::from_value(input).map_err(invalid)?)),
+            "session-pass-fail" => Ok(Self::Fail(Box::new(
+                serde_json::from_value(input).map_err(invalid)?,
+            ))),
             _ => Err(CliError::Usage(format!("unknown pass step {name}"))),
         }
     }
