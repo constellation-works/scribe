@@ -1156,22 +1156,50 @@ Removed with `scribe question ask` and the Orbit tool `scribe.ask`
 
 `scribe plugin call` reads Orbit's exec envelope (`{"schema_version": 1,
 "tool": "scribe.<verb>", "input", "context": {"config": {"root",
-"transcripts"}, …}}`) on stdin and prints exactly one
-compact line, in every mode, then exits 0: `{"ok": true, "output":
-<output>}`, where `<output>` is the
-session pass report for `scribe.session-pass` and the consistency scan
-report for `scribe.consistency-scan`; or `{"ok": false, "error": {"code",
-"message", "retryable"}}` with `code` `invalid_envelope`, `unknown_tool`,
-`invalid_input` (unknown keys included; the routine tools take `{}`),
-`not_configured` (`root` missing, empty, relative or the manifest's
-`/var/tmp` default; for `scribe.session-pass`, `transcripts` likewise), a
-model code (`retryable` for `model_timeout` and `model_failed`) or a store
-code (`retryable` for `store_locked` from a routine tool). For
-`scribe.session-pass`, `session_pass_failed` when any pass in the report
-failed (not `retryable`: each failed session stays due for the next run);
-its message is the CLI's, naming each failed session with its code and short
-reason, and the report is not returned. The routine tools write the lines their CLI commands
-do, in the store `root` names.
+"transcripts", "codex_home"}, …}}`) on stdin and prints exactly one
+compact line, in every mode, then exits 0. The three routine tools are
+`scribe.session-pass`, `scribe.consistency-scan` and `scribe.memory-refresh`,
+the tools of `plugin/.orbit-plugin/plugin.yaml` ([2_design.md §1](../2_design.md#1-boundary-and-surfaces)).
+A success is `{"ok": true, "output": <output>}`, where `<output>` is the
+session pass report for `scribe.session-pass`, the consistency scan report
+for `scribe.consistency-scan`, and the memory refresh JSON (under Memory
+above: `result`, `revision`, `sessions`, `backlog`, `milestones`, `removed`)
+for `scribe.memory-refresh`. A failure is `{"ok": false, "error": {"code",
+"message", "retryable"}}`.
+
+**Configuration.** For every tool, `root` must be an absolute store path. A
+`root` that is missing, empty, relative or the manifest's `/var/tmp` default
+is `not_configured`. A non-empty `codex_home` must be absolute, or the call is
+`not_configured`, and every tool checks it the same way. `transcripts`, Claude
+Code's projects directory, must be absolute for `scribe.session-pass` unless
+`codex_home` is set and `transcripts` is empty or absent. That Codex-only
+configuration runs the pass with no Claude transcripts directory, reading the
+Codex rollouts under `codex_home` (its `sessions` and `archived_sessions`). A
+relative `transcripts` is `not_configured` even with `codex_home`.
+`scribe.consistency-scan` and `scribe.memory-refresh` read no transcripts and
+do not check it. The Codex-enabled package (`plugin/orbit-codex/.orbit-plugin/`)
+also describes `codex_home` as required in its own schema; these rules hold for
+both packages.
+
+**Errors.** The `code` is `invalid_envelope`, `unknown_tool`, `invalid_input`
+(unknown keys included; the routine tools take `{}`), `not_configured` (above),
+`internal_error` (a routine that returned no report), a model code, a store
+code, or `session_pass_failed`.
+
+**Retry.** `retryable` is `true` for one propagated error only: `store_locked`
+from a routine tool. Model codes (`model_timeout`, `model_unavailable`,
+`model_failed`, `model_malformed`) are `retryable: false`, so the envelope
+never asks the host to retry a model failure. `scribe.consistency-scan` calls
+no model. `scribe.session-pass` returns `session_pass_failed` (`retryable:
+false`) when any pass in its report failed. Its message is the CLI's, naming
+each failed session with its code and short reason, and the report is not
+returned. A session's model failure therefore reaches the envelope inside that
+message, not as a model code. Each failed session stays due, and the next run
+retries it on the backoff of the session pass report (5, 10, 20, 40, then at
+most 60 minutes; `--session <id>` ignores backoff). A `scribe.memory-refresh`
+model failure is likewise `retryable: false`, and the next scheduled run is the
+next attempt. The routine tools write the lines their CLI commands do, in the
+store `root` names.
 
 ## Session groups
 
