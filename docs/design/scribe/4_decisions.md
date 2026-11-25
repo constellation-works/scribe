@@ -5093,7 +5093,7 @@ behave as before. Step 2 removes the remaining in-process model calls.
 ## The consistency scan and Stop call no model
 
 **Recorded:** 2026-11-24 · [ORB-27911] · **Daniel's direction**
-**Code anchors:** `crates/scribe-core/src/cases/annotation.rs` (`run`, `hints`); `crates/scribe-core/src/cases/consistency_scan.rs`; `crates/scribe-core/src/apps/consistency/rules.rs` (`stale_candidates`)
+**Code anchors:** `crates/scribe-core/src/apps/hook/annotation.rs` (`run`, `hints`); `crates/scribe-core/src/apps/consistency/scan.rs` (`run`); `crates/scribe-core/src/apps/consistency/rules.rs` (`stale_candidates`)
 
 Supersedes [Removal of the feature is the main deactivation route; age is a generous backstop](#removal-of-the-feature-is-the-main-deactivation-route-age-is-a-generous-backstop)
 and [Removal evidence is Daniel-authored entries only](#removal-evidence-is-daniel-authored-entries-only),
