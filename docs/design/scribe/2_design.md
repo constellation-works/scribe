@@ -2,7 +2,7 @@
 title: scribe — Design
 owner: claude
 last_updated: 2026-11-24
-last_validated: 2026-11-02
+last_validated: 2026-11-24
 status: Draft
 feature: scribe
 doc_role: design
@@ -187,7 +187,7 @@ No tool is advertised over MCP. Agents with a shell use the CLI, and one skill t
 
 | Want | Command | Model |
 |---|---|---|
-| Words to look for | `scribe search "<terms>" [--kind entry\|session\|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
+| Words to look for | `scribe search "<terms>" [--kind entry\|session\|message] [--group <id>] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
 | Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
 | One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
 | Record a note | `scribe entry add --tag <tag> --author <name> [--topic <t>]… [--related <r>]… [--project <p>] <content>` | none |
@@ -1808,11 +1808,14 @@ Removed with `ask`.
    tokens under three characters, light suffix stripping: `-ing`, `-ed`,
    `-es`, `-s` (not after `s`) and then a final `-e`, so `merge` and
    `merging` meet. Tag names and aliases in the terms boost their tag.
-3. Rank with BM25 over `content` + `said` + tag for entries and the four
-   text fields for sessions (from format 4, the header and each segment as
-   separate units, [§6.7](#67-segments-authors-and-inactive-sessions));
-   Daniel's entries get a 1.5× weight because they are his explicit words
-   (agent entries do not). Ties go to entries first, then the newest.
+3. Rank with BM25 over these units, each tokenized from the fields shown:
+   an entry from `content`, its stated quote, `said` and its tag; a session
+   header from title, summary, goals and next; a segment from its heading and
+   text ([§6.7](#67-segments-authors-and-inactive-sessions)); a stored
+   message by SQLite FTS5's `bm25()` over its turn text
+   ([§15.7](#157-storage-one-sqlite-database)), never mixed with the other
+   scores. Daniel's entries get a 1.5× weight because they are his explicit
+   words (agent entries do not). Ties go to entries first, then the newest.
 
 ### 6.3 Answering
 
@@ -1856,24 +1859,29 @@ are built in S12.
 
 ### 6.8 `scribe search`
 
-Designed for S11. `scribe search "<terms>" [--kind
-entry|session|discussion] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>]
-[--until <date>] [--include-hidden] [--limit <n>]` runs §6.2's filtering,
-tokenizing and BM25 ranking with the §6.7 units and weights: no model and
-no Orbit call. Hidden entries and inactive sessions are left out
-unless `--include-hidden`; forgotten entries never match. The default limit
-is 20. Each hit is `{kind, cite, id, segment, score, title, snippet,
-project, topics, author, active, updated}`: `cite` is the unit's cite,
-`segment` the segment number or `null`, `snippet` up to 240
-characters around the best-matching terms, `author` an entry's author else
-`null`. The `--json` envelope is the list envelope with the key `hits`,
-best first. It reads only and writes no audit line. Discussions are
-searched once S7 builds them, together with the read-only sources.
+`scribe search "<terms>" [--kind entry|session|message] [--tag <tag>]
+[--project <p>] [--group <id>] [--topic <t>]… [--since <date>] [--until <date>]
+[--include-hidden] [--limit <n>]` runs §6.2's filtering, tokenizing and ranking
+with the §6.7 units and weights: no model and no Orbit call. Hidden entries and
+inactive sessions are left out unless `--include-hidden`; forgotten entries never
+match. The default limit is 20. Each hit is `{kind, cite, id, segment, message,
+score, title, snippet, project, topics, author, active, status, updated,
+evidence, as_of}`: `cite` is the unit's cite, `segment` the segment number or
+`null`, `message` a stored message's provider id or `null`, `snippet` the text
+around the best-matching terms (below), `author` an entry's author else `null`.
+The `--json` envelope is the list envelope with the key `hits`, best first. It
+reads only and writes no audit line.
 
 As built (S11): `scribe_core::search` (`apps/search/rules.rs`) builds the units with
 `store_docs` and ranks them with `rank` (the named-tag boost and the §6.2
-step 0 narrowing included); until ORB-27911 `ask` shared both. `--kind` takes `entry` and `session`
-until S7 builds discussions. Terms with no word ranking can use (all
+step 0 narrowing included); until ORB-27911 `ask` shared both. `--kind` takes
+`entry`, `session` and `message`; there is no `discussion` kind, since
+discussions were never built. `--kind message` ranks the stored turns in
+`scribe.db` with FTS5 and cannot be combined with `--tag`. `--group <id>` (an id,
+a unique prefix or a project group's slug) keeps only the entries and sessions
+associated through the group's member sessions, and with `--kind message` the
+stored turns of its members, group-only turns included ([§17](#17-session-groups-and-seats)).
+Terms with no word ranking can use (all
 stopwords or shorter than three letters) are a usage error. `--topic`
 repeats and every one must match, as in the lists; a segment carries its
 session's topics and its own. `--since`/`--until` keep an entry created on
@@ -1888,6 +1896,21 @@ the count and the `--kind message` command that lists them, and `--json`
 carries the count as `message_matches`
 ([output contract](./specs/output-contract.md)). The default kinds stay,
 since message scores are not comparable with entry and session scores.
+
+**Snippet length.** `SNIPPET_CHARS` (240, ellipses included) caps one
+*fragment*: the window of a single text (an entry's content, its stated quote,
+a session header's summary, goals and next, a segment's text, a message's turn)
+flattened to one line and starting a little before the first matching word. The
+`snippet` field is that fragment alone for a session header, a segment, a
+message and a plain entry. For an entry that carries attribution or metadata it
+is assembled from several parts, so it can exceed 240 characters: a stated entry
+is `<statement label>: <fragment of the statement> | <speaker>'s words:
+"<fragment of the quote>"` (two fragments plus the labels), a pass-captured
+entry adds ` | outcome: <outcome>`, a finding adds ` [agent claim (<name>) as
+of <date>; evidence: <pointer>]`, and an entry with a handoff mode or an
+approval adds ` | handoff mode: <mode>` and ` | approved by <agent> on your
+instruction "<quote>" (<session>, <date>)`. The suffixes and labels are not
+cut. A consumer that needs a bound on the length must apply its own.
 
 `--tag <tag>` (ORB-27683) keeps only the entries filed under that tag, by
 its exact name as `entry list --tag` matches it: an alias does not match
