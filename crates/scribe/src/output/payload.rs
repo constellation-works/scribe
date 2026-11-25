@@ -1821,13 +1821,32 @@ pub(crate) struct ScanReport {
     /// Approved candidates this scan closed because an active entry already
     /// covers the statement. Not stored on the proposal.
     pub(crate) covered: Vec<CoveredPayload>,
+    /// Always 0 since ORB-27911 step 2a: no pair is judged. Kept because
+    /// `--json` field names are a contract (STD-01@2 §R10).
+    pub(crate) judged_pairs: usize,
+    /// Always 0, as `judged_pairs`.
+    pub(crate) pairs_left: usize,
+    /// Always 0, as `judged_pairs`.
+    pub(crate) unrelated_pairs: usize,
+    /// Always 0, as `judged_pairs`.
+    pub(crate) dropped_labels: usize,
     /// Stale entries found (each opens a proposal unless one exists).
     pub(crate) stale_entries: usize,
+    /// Always empty, as `judged_pairs`.
+    pub(crate) failed_batches: Vec<BatchFailure>,
     /// Sessions this scan deactivated (S10), by route.
     pub(crate) deactivated: Vec<DeactivatedPayload>,
     /// Sessions the scan could not deactivate; other sessions are still
     /// processed.
     pub(crate) failed_deactivations: Vec<DeactivationFailure>,
+    /// Always 0, as `judged_pairs`: no removed-feature pair is judged.
+    pub(crate) removal_pairs_judged: usize,
+    /// Always 0, as `judged_pairs`.
+    pub(crate) removal_pairs_left: usize,
+    /// Always 0, as `judged_pairs`.
+    pub(crate) dropped_removal_labels: usize,
+    /// Always empty, as `judged_pairs`.
+    pub(crate) failed_removal_batches: Vec<BatchFailure>,
     /// Always empty since the fixed memory shape (2_design.md §15.5): the
     /// scan no longer consolidates memory. Kept because `--json` field names
     /// are a contract.

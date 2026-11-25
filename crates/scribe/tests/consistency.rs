@@ -299,6 +299,71 @@ fn ids(list: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The nine counters the scan report kept from before ORB-27911 step 2a.
+/// No pair is judged any more, so each is neutral; removing one would break
+/// `--json` (STD-01@2 §R10).
+const RETIRED_COUNTERS: [&str; 9] = [
+    "judged_pairs",
+    "pairs_left",
+    "unrelated_pairs",
+    "dropped_labels",
+    "failed_batches",
+    "removal_pairs_judged",
+    "removal_pairs_left",
+    "dropped_removal_labels",
+    "failed_removal_batches",
+];
+
+#[test]
+fn scan_report_keeps_the_retired_counters_as_neutral_values() {
+    let report = Setup::new().scan();
+    for key in RETIRED_COUNTERS {
+        assert!(report.get(key).is_some(), "{key} missing: {report}");
+    }
+    for key in RETIRED_COUNTERS
+        .into_iter()
+        .filter(|k| k.ends_with("batches"))
+    {
+        assert_eq!(report[key], json!([]), "{key}: {report}");
+    }
+    for key in RETIRED_COUNTERS
+        .into_iter()
+        .filter(|k| !k.ends_with("batches"))
+    {
+        assert_eq!(report[key], 0, "{key}: {report}");
+    }
+}
+
+#[test]
+fn the_routine_schema_names_every_retired_counter_the_report_keeps() {
+    let schema: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../plugin/.orbit-plugin/schemas/routine.output.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let branch = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["title"] == "consistency scan")
+        .expect("a consistency scan branch");
+    let report = Setup::new().scan();
+    for key in RETIRED_COUNTERS {
+        assert!(
+            branch["required"].as_array().unwrap().contains(&json!(key)),
+            "{key} is not required by the routine schema"
+        );
+        assert!(
+            branch["properties"].get(key).is_some(),
+            "{key} has no property in the routine schema"
+        );
+        assert!(report.get(key).is_some(), "{key} missing: {report}");
+    }
+}
+
 #[test]
 fn a_scan_proposes_a_stale_entry_once() {
     let s = Setup::new();

@@ -74,7 +74,16 @@
       "required": [
         "reapplied",
         "opened",
-        "stale_entries"
+        "judged_pairs",
+        "pairs_left",
+        "unrelated_pairs",
+        "dropped_labels",
+        "stale_entries",
+        "failed_batches",
+        "removal_pairs_judged",
+        "removal_pairs_left",
+        "dropped_removal_labels",
+        "failed_removal_batches"
       ],
       "properties": {
         "reapplied": {
@@ -165,9 +174,78 @@
             }
           }
         },
+        "judged_pairs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Always 0 since ORB-27911 step 2a: no pair is judged."
+        },
+        "pairs_left": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unrelated_pairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped_labels": {
+          "type": "integer",
+          "minimum": 0
+        },
         "stale_entries": {
           "type": "integer",
           "minimum": 0
+        },
+        "failed_batches": {
+          "type": "array",
+          "description": "Always empty since ORB-27911 step 2a: no batch is sent to a model.",
+          "items": {
+            "type": "object",
+            "required": [
+              "batch",
+              "error_code"
+            ],
+            "properties": {
+              "batch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "error_code": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "removal_pairs_judged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removal_pairs_left": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped_removal_labels": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_removal_batches": {
+          "type": "array",
+          "description": "Always empty since ORB-27911 step 2a: no batch is sent to a model.",
+          "items": {
+            "type": "object",
+            "required": [
+              "batch",
+              "error_code"
+            ],
+            "properties": {
+              "batch": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "error_code": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },
