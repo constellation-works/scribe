@@ -34,6 +34,20 @@ pub(in crate::apps::group) fn evidence(
     })
 }
 
+/// Whether `closer` may close group `id` and it is still open: the check a
+/// no-quote close takes before its transcript accident guard, so an already
+/// closed group still returns unchanged and an unauthorized caller is still
+/// refused as one.
+pub(in crate::apps::group) fn authorized_open(
+    store: &Store,
+    id: &str,
+    closer: GroupCloser<'_>,
+) -> Result<bool> {
+    let groups = store.read().groups();
+    let n = groups.number(id)?;
+    groups.read_rows(|rows| Ok(open_for(rows, n, closer)?))
+}
+
 pub(in crate::apps::group) fn apply(
     store: &Store,
     id: &str,
@@ -145,6 +159,14 @@ fn check_closer(rows: &GroupRows<'_>, n: i64, opener: &str, closer: GroupCloser<
             ),
         ))
     }
+}
+
+fn open_for(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<bool> {
+    let header = rows
+        .header(n)?
+        .ok_or_else(|| refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}")))?;
+    check_closer(rows, n, &header.opener, closer)?;
+    Ok(header.open)
 }
 
 fn snapshot(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<Option<Snapshot>> {

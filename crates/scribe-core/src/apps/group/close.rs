@@ -79,6 +79,9 @@ pub fn run<E: PortError>(
     let closer = consent
         .as_ref()
         .map_or(GroupCloser::Session(&session), GroupCloser::Quoted);
+    if consent.is_none() && flow::authorized_open(store, &group.id, closer)? {
+        transcript_guard(ctx, provider, &session)?;
+    }
     let redactor = ctx.redaction.redactor(&config).map_err(GroupError::Port)?;
     let outcome = flow::apply(
         store,
@@ -112,6 +115,25 @@ pub fn run<E: PortError>(
         changed,
         notices,
     })
+}
+
+/// The accident guard against closing from the wrong session: without a
+/// quote, the closer's own provider transcript must verify on this host, so
+/// a session variable that names the opener from elsewhere cannot close the
+/// group. A quote is checked against the transcript by [`consent`] instead.
+fn transcript_guard<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    provider: Provider,
+    session: &SessionId,
+) -> Result<(), GroupError<E>> {
+    if checked_transcript(ctx, provider, session)?.is_none() {
+        return Err(crate::Error::AgentWrite {
+            kind: WriteRefusal::GroupMembership,
+            message: format!("cannot verify the transcript of session {session} on this host"),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn consent<E: PortError>(
@@ -162,14 +184,17 @@ pub(super) fn evidence<E: PortError>(
     let closer = consent
         .as_ref()
         .map_or(GroupCloser::Session(&session), GroupCloser::Quoted);
-    let snapshot =
-        flow::evidence(ctx.store, &group.id, closer)?.ok_or_else(|| crate::Error::AgentWrite {
-            kind: WriteRefusal::GroupMembership,
-            message: "group is already closed".into(),
-        })?;
+    // An already closed group has nothing to summarize: like `group close`,
+    // it ends without error, so a rerun of the close job ends clean.
+    let Some(snapshot) = flow::evidence(ctx.store, &group.id, closer)? else {
+        return Ok(serde_json::json!({"id": group.id, "closed": true}));
+    };
+    if consent.is_none() {
+        transcript_guard(ctx, provider, &session)?;
+    }
     let config = ctx.store.read().tags().config()?;
     let instructions = config.instructions.group_summary();
     Ok(
-        serde_json::json!({"id": group.id, "evidence": snapshot.evidence, "related": snapshot.related, "evidence_sha256": snapshot.digest(), "instructions": instructions}),
+        serde_json::json!({"id": group.id, "closed": false, "evidence": snapshot.evidence, "related": snapshot.related, "evidence_sha256": snapshot.digest(), "instructions": instructions}),
     )
 }

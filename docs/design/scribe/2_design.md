@@ -6864,7 +6864,12 @@ clears the derived summary. A closed group stays closed.
 
 **Closing.** `group close <id>` checks the caller against the recorded opening
 session, or the newest transcript of the seat whose chain contains the opener
-(the seat's current holder after a clear or `--replace`).
+(the seat's current holder after a clear or `--replace`), and its local
+provider transcript, an accident guard against closing from the wrong session:
+without a quote, a caller whose own transcript cannot be verified on this host
+is refused with `group_membership` naming that session, even when its session
+variable names the opener. `group evidence` and the `scribe-group-close` job's
+prepare and apply tools apply the same check.
 An opener that holds no seat can be closed only by the opening session itself,
 and a caller that is not authorized is refused even on a closed group.
 `--quote '<span>'` is the one exception: `group close <id> --quote` closes the
@@ -6885,7 +6890,10 @@ timestamp, summary and success audit commit together. If store cleanup fails
 after that commit, the CLI reports the cleanup error and the committed success
 audit remains the sole audit for the attempt. A refusal or transaction failure
 leaves the group unchanged and records a failure audit. An already closed
-group returns its current record unchanged.
+group returns its current record unchanged to an authorized closer, without the
+transcript guard; `group evidence` and `scribe.group-close-prepare` return
+`{"id", "closed": true}` for it, so a rerun of the job skips its summarize and
+apply steps and ends clean.
 
 **Reading.** `group show <id>` and `group list --json` include related
 references, seat names and roles, transcript ids in join order, the newest
@@ -7435,7 +7443,7 @@ The `scribe-memory-refresh` routine (`0 5 * * 0`, seeded `enabled: false`, `poli
 Resolves the open question in [specs/architecture.md](./specs/architecture.md#not-decided-here): **yes, `scribe group close <id>` takes `--summary`**, paired with a read-only evidence command and an optional Orbit job:
 
 1. **New read-only verb `scribe group evidence <id> [--quote '<span>'] [--json]`**:
-   - Checks closer authorization (calling session matches opener or current holder of opener's seat, or `--quote '<span>'` verifies typed consent naming `g-<n>`), reads bounded `CloseEvidence` (`title`, up to 16 active `handoffs`, up to 32 stored user `turns`, `related`), computes `evidence_sha256`, and prints the snapshot with no lock and no audit line.
+   - Checks closer authorization (calling session matches opener or current holder of opener's seat, or `--quote '<span>'` verifies typed consent naming `g-<n>`), reads bounded `CloseEvidence` (`title`, up to 16 active `handoffs`, up to 32 stored user `turns`, `related`), computes `evidence_sha256`, and prints the snapshot (with `closed: false`) with no lock and no audit line. Without `--quote` it also applies the closer's local transcript guard (**Closing** in [§17](#17-session-groups-and-seats)). An already-closed group prints `{"id", "closed": true}` and ends without error.
 2. **Updated `scribe group close <id> [--quote '<span>'] (--summary <text> | --summary - | --no-summary) [--if-evidence <sha256>]`**:
    - Re-checks closer authorization (and `--quote` when provided).
    - With `--summary <text>` (or `-` from stdin): redacts the summary, requires 1–4,000 characters before and after redaction (`invalid_text`), and appends `\n\nFor work missing from the handoffs, see <related>.` when `related` is non-empty.
@@ -7445,7 +7453,7 @@ Resolves the open question in [specs/architecture.md](./specs/architecture.md#no
    - Already-closed groups still return the current record unchanged (`changed: false`).
 3. **Interactive vs. automated callers**:
    - Interactive agents (the normal callers of `group close`) already run inside a model session: they call `scribe group evidence <id> --json`, draft the summary directly, and run `scribe group close <id> --summary ... --if-evidence <sha256>` with no Orbit job dispatch needed.
-   - For headless automation or when Daniel runs a close outside a live agent session, the Orbit job `scribe-group-close` (`input: {group, session, provider, quote?}`) runs `scribe.group-close-prepare` (same authorization + `CloseEvidence` + `evidence_sha256`) -> `scribe_group_summarize` (`agent_loop`, returning `{summary}` 1–4,000 chars) -> `scribe.group-close-apply` (same redaction + `--if-evidence` check + atomic close).
+   - For headless automation or when Daniel runs a close outside a live agent session, the Orbit job `scribe-group-close` (`input: {group, session, provider, quote?}`) runs `scribe.group-close-prepare` (same authorization + `CloseEvidence` + `evidence_sha256`) -> `scribe_group_summarize` (`agent_loop`, returning `{summary}` 1–4,000 chars) -> `scribe.group-close-apply` (same redaction + `--if-evidence` check + atomic close). Each step has a 300-second `timeout_seconds`, as the sibling jobs; when prepare reports `closed: true`, the summarize and apply steps are skipped.
 
 ### 19.4 Surface summary (CLI and Orbit plugin)
 

@@ -10,6 +10,7 @@ spec:
     quote: null
   steps:
     - id: prepare
+      timeout_seconds: 300
       spec:
         type: deterministic
         action: plugin.tool_call
@@ -20,12 +21,18 @@ spec:
             session: "{{ input.session }}"
             provider: "{{ input.provider }}"
             quote: "{{ input.quote }}"
+    # An already closed group ends clean after prepare, as `group close`
+    # returns it unchanged.
     - id: summarize
+      when: "{{ steps.prepare.output.closed }} == false"
+      timeout_seconds: 300
       target: activity:scribe_group_summarize
       default_input:
         evidence: "{{ steps.prepare.output }}"
         crew: "{{ steps.prepare.output.crew }}"
     - id: apply
+      when: "{{ steps.prepare.output.closed }} == false"
+      timeout_seconds: 300
       spec:
         type: deterministic
         action: plugin.tool_call
