@@ -3897,8 +3897,16 @@ fn a_pass_window_that_fails_rolls_its_closures_back_and_audits_none() {
     );
     let out = setup.run_pass(&["session", "pass", "--session", ON, "--json"], &[]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(error["code"], "store_database", "{error}");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["passes"][0]["result"], "failed");
+    assert_eq!(
+        report["passes"][0]["error_code"], "store_database",
+        "{report}"
+    );
+    // The failed pass backs the session off, so the next run moves on.
+    assert_eq!(setup.control()["due"], true);
+    assert_eq!(setup.control()["consecutive_failures"], 1);
+    assert!(setup.control()["retry_after"].is_string());
 
     let stored = support::proposals_doc(&setup.fx.root());
     assert_eq!(stored["proposals"][0]["state"], "open");

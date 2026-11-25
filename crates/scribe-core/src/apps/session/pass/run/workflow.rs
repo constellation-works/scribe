@@ -42,13 +42,51 @@ pub struct Progress {
     cursor: Cursor,
 }
 
-/// Job-local continuation and remaining session budget.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// How long after a job's first prepare a later session or window may start:
+/// a window may take two 120-second activity attempts and the job must end
+/// inside the routine's timeout. The first window of a run always starts.
+pub const PASS_START_BY_SECONDS: i64 = 50;
+
+/// Job-local continuation and remaining session budget. Prepare and apply
+/// return it sealed and refuse one whose fields no longer match the seal.
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Cursor {
     sessions: Vec<SessionId>,
     next: usize,
     tally: Tally,
     remaining: usize,
+    /// No session or window but the run's first starts at or after this
+    /// Unix time.
+    #[serde(default)]
+    start_by: Option<i64>,
+    #[serde(default)]
+    seal: String,
+}
+
+/// The sealed fields of a [`Cursor`].
+#[derive(Serialize)]
+struct CursorFields<'a> {
+    sessions: &'a [SessionId],
+    next: usize,
+    tally: &'a Tally,
+    remaining: usize,
+    start_by: Option<i64>,
+}
+
+impl Serialize for Cursor {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Sealed<'a> {
+            #[serde(flatten)]
+            fields: CursorFields<'a>,
+            seal: String,
+        }
+        Sealed {
+            fields: self.fields(),
+            seal: self.seal_of(),
+        }
+        .serialize(serializer)
+    }
 }
 
 impl Cursor {
@@ -61,10 +99,35 @@ impl Cursor {
         self.remaining
             .saturating_add(self.sessions.len().saturating_sub(self.next))
     }
+
+    fn fields(&self) -> CursorFields<'_> {
+        CursorFields {
+            sessions: &self.sessions,
+            next: self.next,
+            tally: &self.tally,
+            remaining: self.remaining,
+            start_by: self.start_by,
+        }
+    }
+
+    fn seal_of(&self) -> String {
+        seal("cursor", &json!(self.fields()))
+    }
+
+    /// Refuse a cursor that is not exactly one prepare or apply returned.
+    fn checked<E>(self) -> Result<Self, PassRunError<E>> {
+        if self.seal == self.seal_of() {
+            Ok(self)
+        } else {
+            Err(PassRunError::Input(
+                "the pass cursor was changed since scribe returned it",
+            ))
+        }
+    }
 }
 
 /// Caps across windows of the same session.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Tally {
     candidates: usize,
     writes: usize,
@@ -94,7 +157,10 @@ impl Tally {
     }
 }
 
-/// Optimistic basis from prepare. Carries no transcript text.
+/// Optimistic basis from prepare. Carries no transcript text. `digest`
+/// binds the transcript window; `seal` binds every other field and the
+/// cursor the window was prepared with, so apply and fail refuse a changed
+/// value.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Basis {
     session_id: SessionId,
@@ -105,6 +171,48 @@ pub struct Basis {
     window_end_uuid: String,
     last_window: bool,
     digest: String,
+    #[serde(default)]
+    cursor_seal: String,
+    #[serde(default)]
+    seal: String,
+}
+
+impl Basis {
+    fn seal_of(&self) -> String {
+        let updated = self.expected_updated.and_then(|at| {
+            at.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        });
+        seal(
+            "basis",
+            &json!([
+                self.session_id,
+                updated,
+                self.expected_through,
+                self.switch,
+                self.window_end_uuid,
+                self.last_window,
+                self.digest,
+                self.cursor_seal,
+            ]),
+        )
+    }
+
+    fn sealed(mut self) -> Self {
+        self.seal = self.seal_of();
+        self
+    }
+
+    /// Refuse a basis that is not exactly one prepare returned.
+    fn checked<E>(self) -> Result<Self, PassRunError<E>> {
+        if self.seal == self.seal_of() {
+            Ok(self)
+        } else {
+            Err(PassRunError::Input(
+                "the prepared basis was changed since scribe returned it",
+            ))
+        }
+    }
 }
 
 /// A selected window, model-free settlement, or end of the run.
@@ -239,10 +347,47 @@ impl ApplyOutput {
 pub struct FailInput {
     /// Current prepared basis, or null when no activity was pending.
     pub basis: Option<Basis>,
-    /// Stable, allowlisted model failure code.
+    /// Stable, allowlisted model failure code. Without one, the code is
+    /// read from `errors`.
     pub error_code: Option<String>,
     /// Optional diagnostic, redacted and bounded before use.
     pub reason: Option<String>,
+    /// The failed fan-in's position-aligned worker errors (Orbit's
+    /// `fan_in.errors`): null for a worker that succeeded or was skipped.
+    #[serde(default)]
+    pub errors: Vec<Option<String>>,
+}
+
+/// The stable model code for an activity failure: an allowlisted
+/// `error_code`, else the class Orbit's failure message names.
+fn model_code(error_code: Option<&str>, message: Option<&str>) -> &'static str {
+    match error_code {
+        Some("model_timeout") => return "model_timeout",
+        Some("model_unavailable") => return "model_unavailable",
+        Some("model_malformed") => return "model_malformed",
+        Some("model_failed") => return "model_failed",
+        _ => {}
+    }
+    let Some(message) = message.map(str::to_ascii_lowercase) else {
+        return "model_failed";
+    };
+    if [
+        "[provider_unavailable]",
+        "[provider_capacity",
+        "[provider_limit]",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+    {
+        "model_unavailable"
+    } else if ["timeout", "timed out", "wall clock", "wall-clock"]
+        .iter()
+        .any(|marker| message.contains(marker))
+    {
+        "model_timeout"
+    } else {
+        "model_failed"
+    }
 }
 
 pub(crate) fn fail<E: PortError>(
@@ -253,20 +398,23 @@ pub(crate) fn fail<E: PortError>(
     let Some(basis) = input.basis else {
         return Ok(None);
     };
+    let basis = basis.checked()?;
     let config = ctx.store.read().tags().config()?;
     let redactor = ctx
         .redaction
         .redactor(&config)
         .map_err(PassRunError::Port)?;
-    let code = match input.error_code.as_deref() {
-        Some("model_timeout") => "model_timeout",
-        Some("model_unavailable") => "model_unavailable",
-        Some("model_malformed") => "model_malformed",
-        _ => "model_failed",
-    };
+    let worker_error = input.errors.into_iter().flatten().next();
+    let code = model_code(
+        input.error_code.as_deref(),
+        worker_error.as_deref().or(input.reason.as_deref()),
+    );
     let failure = PassError::new(
         code,
-        input.reason.unwrap_or_else(|| "the model failed".into()),
+        input
+            .reason
+            .or(worker_error)
+            .unwrap_or_else(|| "the model failed".into()),
     );
     if !record_failure(
         ctx,
@@ -289,36 +437,74 @@ pub(crate) fn fail<E: PortError>(
     Ok(Some(job.failure_payload(failure)))
 }
 
-fn select<E: PortError>(
+/// The named sessions, resolved when asked.
+fn named<E: PortError>(
     ctx: &Ctx<'_, E>,
     input: &SessionPassInput,
-) -> Result<Cursor, PassRunError<E>> {
+) -> Result<Vec<SessionId>, PassRunError<E>> {
     let mut named = input.sessions.clone();
-    for id in &mut named {
-        if input.resolve {
+    if input.resolve {
+        for id in &mut named {
             match ctx.store.read().sessions().resolve(id) {
                 Ok(resolved) => *id = resolved,
                 Err(crate::Error::SessionNotFound { .. }) => {}
                 Err(err) => return Err(err.into()),
             }
         }
+    }
+    Ok(named)
+}
+
+/// How many sessions one run may admit.
+fn admit_max(input: &SessionPassInput, named: &[SessionId]) -> usize {
+    if named.is_empty() {
+        input
+            .max_sessions
+            .unwrap_or(pass::MAX_PER_RUN)
+            .min(pass::MAX_PER_RUN)
+    } else {
+        input.max_sessions.unwrap_or(named.len())
+    }
+}
+
+/// Refuse a continuation the selection could not have produced: more
+/// sessions than the run admits, a repeated or unnamed session, or a
+/// position past its end. The seal covers the rest.
+fn check_progress<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: &SessionPassInput,
+    cursor: Cursor,
+) -> Result<Cursor, PassRunError<E>> {
+    let cursor = cursor.checked()?;
+    let named = named(ctx, input)?;
+    let unique: std::collections::BTreeSet<&SessionId> = cursor.sessions.iter().collect();
+    if cursor.next > cursor.sessions.len()
+        || unique.len() != cursor.sessions.len()
+        || cursor.sessions.len() > admit_max(input, &named)
+        || (!named.is_empty() && cursor.sessions.iter().any(|id| !named.contains(id)))
+    {
+        return Err(PassRunError::Input(
+            "the pass cursor does not match the session selection",
+        ));
+    }
+    Ok(cursor)
+}
+
+fn select<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: &SessionPassInput,
+) -> Result<Cursor, PassRunError<E>> {
+    let named = named(ctx, input)?;
+    for id in &named {
         refuse_forgotten(ctx.store, id)?;
     }
     let state = ctx.store.read().sessions().control()?;
-    let (selected, max) = if named.is_empty() {
-        (
-            control::due(&state),
-            input
-                .max_sessions
-                .unwrap_or(pass::MAX_PER_RUN)
-                .min(pass::MAX_PER_RUN),
-        )
+    let selected = if named.is_empty() {
+        control::due(&state)
     } else {
-        (
-            control::chosen(&state, &named).map_err(PassRunError::SessionNotOn)?,
-            input.max_sessions.unwrap_or(named.len()),
-        )
+        control::chosen(&state, &named).map_err(PassRunError::SessionNotOn)?
     };
+    let max = admit_max(input, &named);
     let now = ctx.clock.now();
     let mut cursor = Cursor::default();
     for (id, switch) in selected {
@@ -338,8 +524,19 @@ pub(crate) fn prepare<E: PortError>(
     input: PrepareInput,
 ) -> Result<Prepared, PassRunError<E>> {
     let cursor = match input.progress.into_iter().next() {
-        Some(progress) => progress.cursor,
-        None => select(ctx, &input.selection)?,
+        Some(progress) => check_progress(ctx, &input.selection, progress.cursor)?,
+        None => {
+            let mut cursor = select(ctx, &input.selection)?;
+            // The job's run starts here: later sessions and windows start
+            // only before the cutoff.
+            cursor.start_by = Some(
+                ctx.clock
+                    .now()
+                    .unix_timestamp()
+                    .saturating_add(PASS_START_BY_SECONDS),
+            );
+            cursor
+        }
     };
     prepare_one(ctx, host, &input.selection, cursor, false)
 }
@@ -412,16 +609,21 @@ fn prepare_one<E: PortError>(
         basis: None,
         window_request: None,
     };
+    // The earlier of the run's cutoff and the caller's deadline. The run's
+    // first window always starts; once a session or window has been
+    // handled, nothing new starts after the cutoff.
+    let cutoff = match (result.cursor.start_by, selection.deadline_epoch_s) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let started = result.cursor.next > 0 || result.cursor.tally.windows > 0;
+    let expired = started && cutoff.is_some_and(|at| ctx.clock.now().unix_timestamp() >= at);
     let id = result
         .cursor
         .sessions
         .get(result.cursor.next)
         .cloned()
-        .filter(|_| {
-            selection
-                .deadline_epoch_s
-                .is_none_or(|deadline| ctx.clock.now().unix_timestamp() < deadline)
-        });
+        .filter(|_| !expired);
     let Some(id) = id else {
         result.done = true;
         return Ok(result);
@@ -497,7 +699,10 @@ fn prepare_one<E: PortError>(
             window_end_uuid: window.through.clone(),
             last_window: window.last,
             digest: digest(&data, &window),
-        };
+            cursor_seal: result.cursor.seal_of(),
+            seal: String::new(),
+        }
+        .sealed();
         Ok(Preparation::Window(Box::new((
             basis,
             masked_input(&window.request, &redactor),
@@ -517,10 +722,9 @@ fn prepare_one<E: PortError>(
             result.cursor.advance();
         }
         Err(err) => {
+            // A store or transcript error backs the session off like any
+            // failed pass, so the next run moves on to the sessions after it.
             if err.code != "record_changed" {
-                if err.write_error {
-                    return Err(PassRunError::Step(err));
-                }
                 record_failure(
                     ctx,
                     &id,
@@ -552,7 +756,7 @@ pub(crate) fn apply<E: PortError>(
 ) -> Result<ApplyOutput, PassRunError<E>> {
     let ApplyInput {
         basis,
-        mut cursor,
+        cursor,
         answer,
         header,
         retry_answer,
@@ -560,6 +764,7 @@ pub(crate) fn apply<E: PortError>(
         previous_status,
         correction,
     } = input;
+    let mut cursor = cursor.checked()?;
     if repair {
         match previous_status {
             Some(ApplyStatus::RetryWindow | ApplyStatus::RetryHeader) => {}
@@ -580,30 +785,28 @@ pub(crate) fn apply<E: PortError>(
     let Some(basis) = basis else {
         return Ok(ApplyOutput::new(ApplyStatus::Idle, cursor));
     };
+    let basis = basis.checked()?;
     let id = &basis.session_id;
+    if basis.cursor_seal != cursor.seal_of() {
+        return Err(PassRunError::Input(
+            "the pass cursor is not the one the basis was prepared with",
+        ));
+    }
     if cursor.sessions.get(cursor.next) != Some(id) {
         return Err(PassRunError::Input(
             "the pass cursor does not name the prepared session",
         ));
     }
+    let first = answer.and_then(ActivityAnswer::first);
+    let header = header.and_then(ActivityAnswer::first);
     let answer = if previous_status == Some(ApplyStatus::RetryWindow) {
-        retry_answer
+        retry_answer.and_then(ActivityAnswer::first)
     } else {
-        answer
+        first.clone()
     };
-    let Some(mut answer) = answer.and_then(ActivityAnswer::first) else {
-        return Err(PassRunError::Input(
-            "one session answer is required for the prepared window",
-        ));
-    };
-    if previous_status == Some(ApplyStatus::RetryHeader) {
-        let Some(header) = header.and_then(ActivityAnswer::first) else {
-            return Err(PassRunError::Input(
-                "a compressed session header is required",
-            ));
-        };
-        answer.replace_header(header);
-    }
+    // A header retry needs both the first answer and the compressed header.
+    let answer =
+        answer.filter(|_| previous_status != Some(ApplyStatus::RetryHeader) || header.is_some());
 
     let found = ctx.store.read().sessions().loaded()?;
     let previous = found.records.iter().find(|r| &r.id == id);
@@ -628,6 +831,24 @@ pub(crate) fn apply<E: PortError>(
         &cursor.tally,
     );
     job.segments = previous.map(|p| p.log.len());
+
+    // The activity failed: its fallback recorded backoff (this records it
+    // when nothing did), and the run moves on to the next session.
+    let Some(mut answer) = answer else {
+        let recorded = record_failure(ctx, id, &basis.switch, basis.expected_updated, true)?;
+        cursor.remaining += 1;
+        cursor.advance();
+        let reply = ApplyOutput::new(ApplyStatus::Failed, cursor);
+        return Ok(if recorded {
+            let payload = job.failure_payload(PassError::new(
+                "model_failed",
+                "the session distillation activity returned no answer",
+            ));
+            reply.reported(payload, &mut job)
+        } else {
+            reply
+        });
+    };
 
     let stale =
         |mut cursor: Cursor, job: &mut Job<'_, E>| -> Result<ApplyOutput, PassRunError<E>> {
@@ -654,6 +875,20 @@ pub(crate) fn apply<E: PortError>(
             ));
             Ok(ApplyOutput::new(ApplyStatus::Failed, cursor).reported(payload, job))
         };
+    // A store or transcript error fails the pass with its code and backs the
+    // session off, so the next run moves on to the sessions after it.
+    let failed = |mut cursor: Cursor,
+                  job: &mut Job<'_, E>,
+                  err: PassError|
+     -> Result<ApplyOutput, PassRunError<E>> {
+        if !record_failure(ctx, id, &basis.switch, basis.expected_updated, true)? {
+            return stale(cursor, job);
+        }
+        cursor.remaining += 1;
+        cursor.advance();
+        let payload = job.failure_payload(err);
+        Ok(ApplyOutput::new(ApplyStatus::Failed, cursor).reported(payload, job))
+    };
     if found.control.get(id) != Some(&basis.switch)
         || !basis.switch.on
         || found.forgotten.contains_key(id)
@@ -661,9 +896,10 @@ pub(crate) fn apply<E: PortError>(
     {
         return stale(cursor, &mut job);
     }
-    let data = job.read_transcript().map_err(PassRunError::Step)?;
-    let Some(data) = data else {
-        return stale(cursor, &mut job);
+    let data = match job.read_transcript() {
+        Ok(Some(data)) => data,
+        Ok(None) => return stale(cursor, &mut job),
+        Err(err) => return failed(cursor, &mut job, err),
     };
     let window = match job.next_window(
         previous,
@@ -677,18 +913,47 @@ pub(crate) fn apply<E: PortError>(
             code: "record_changed",
             ..
         }) => return stale(cursor, &mut job),
-        Err(err) => return Err(PassRunError::Step(err)),
+        Err(err) => return failed(cursor, &mut job, err),
     };
 
     let conversation = &data.conversation[..window.end];
+    let voice = || config.voice(crate::voice::ModelUse::SessionHeader);
+    // The final attempt recomputes the first apply's status from the first
+    // answer, so a forwarded status cannot skip the check or the retry.
+    if let Some(status) = previous_status {
+        let Some(first) = first else {
+            return Err(PassRunError::Input(
+                "a final retry requires the first session answer",
+            ));
+        };
+        let recomputed = match pass::check(first.clone(), conversation, &window.request) {
+            Ok(_) => ApplyStatus::Written,
+            Err(_)
+                if pass::compression_request(&first, conversation, &window.request, voice())
+                    .is_some() =>
+            {
+                ApplyStatus::RetryHeader
+            }
+            Err(_) => ApplyStatus::RetryWindow,
+        };
+        if recomputed != status {
+            return Err(PassRunError::Input(
+                "previous_status is not the status of the first answer",
+            ));
+        }
+        if status == ApplyStatus::RetryHeader
+            && let Some(header) = header
+        {
+            answer.replace_header(header);
+        }
+    }
     let distilled = match pass::check(answer.clone(), conversation, &window.request) {
         Ok(distilled) => Ok(distilled),
         Err(_) if repair => pass::repair(answer, conversation, &window.request),
         Err(err) => {
             let refusal = super::short_reason(&redactor, &err.to_string());
-            let voice = config.voice(crate::voice::ModelUse::SessionHeader);
             if let Some(request) =
-                pass::compression_request(&answer, conversation, &window.request, voice)
+                pass::compression_request(&answer, conversation, &window.request, voice())
             {
                 let mut reply = ApplyOutput::new(ApplyStatus::RetryHeader, cursor);
                 reply.correction = Some(refusal);
@@ -716,7 +981,7 @@ pub(crate) fn apply<E: PortError>(
             let record = match job.commit(previous, &data, &window, distilled) {
                 Ok(record) => record,
                 Err(err) if err.code == "record_changed" => return stale(cursor, &mut job),
-                Err(err) => return Err(PassRunError::Step(err)),
+                Err(err) => return failed(cursor, &mut job, err),
             };
             let payload = job.payload("written", record.as_ref());
             if window.last {
@@ -775,6 +1040,11 @@ fn digest(data: &Conversation, window: &Window) -> String {
             .to_string()
             .as_bytes(),
     )
+}
+
+/// A SHA-256 seal over `value`, labeled by what it seals.
+fn seal(label: &str, value: &Value) -> String {
+    crate::text::bytes_sha256(json!([label, value]).to_string().as_bytes())
 }
 
 fn masked_input(request: &SessionWindowInput, redactor: &Redactor) -> Value {

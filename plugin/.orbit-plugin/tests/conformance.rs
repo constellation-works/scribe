@@ -122,6 +122,30 @@ fn the_routines_ship_disabled_and_target_their_jobs() {
             assert_eq!(job["spec"]["max_active_runs"].as_u64(), Some(1));
             let iteration = &steps[1]["loop"];
             assert_eq!(iteration["max_iterations"].as_u64(), Some(25));
+            // Every step that runs work has a timeout (a fan-out step's is on
+            // its worker), and no failure fallback ends the run for the
+            // sessions after it.
+            let mut timed = Vec::new();
+            let mut pending: Vec<&Value> = steps.iter().collect();
+            while let Some(step) = pending.pop() {
+                if let Some(body) = step["loop"]["steps"].as_sequence() {
+                    pending.extend(body);
+                } else if !step["fan_out"].is_null() {
+                    pending.push(&step["fan_out"]["worker"]);
+                } else {
+                    let id = step["id"].as_str().unwrap();
+                    assert!(
+                        step["timeout_seconds"].as_u64().is_some_and(|t| t > 0),
+                        "{id} has no timeout_seconds"
+                    );
+                    assert!(
+                        step["default_input"]["input"]["abort"].is_null(),
+                        "{id} aborts the run"
+                    );
+                    timed.push(id);
+                }
+            }
+            assert!(timed.contains(&"fail_distill") && timed.contains(&"distill_window"));
             let distill = yaml("activities/session_distill.yaml");
             let header = yaml("activities/session_header_compress.yaml");
             for (activity, schema) in [

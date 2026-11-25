@@ -168,16 +168,16 @@ pub fn run(
                     }),
                 )?;
                 add_pass(&mut passes, failed["pass"].clone());
-                let mut next = cursor.clone();
-                next["next"] = json!(next["next"].as_u64().unwrap() + 1);
-                next["remaining"] = json!(next["remaining"].as_u64().unwrap() + 1);
-                // The next session starts with the full run budget.
-                next["tally"] = json!({
-                    "candidates": scribe_core::pass::MAX_CANDIDATES,
-                    "writes": scribe_core::pass::MAX_COLLECTED,
-                    "memory": scribe_core::memory::MAX_PER_PASS,
-                    "windows": 0
-                });
+                // As the job does: apply without an answer moves the run on
+                // to the next session.
+                let moved = step(
+                    "apply",
+                    json!({"basis": prepared["basis"], "cursor": cursor}),
+                )?;
+                assert_eq!(moved["status"], "failed", "{moved}");
+                assert_eq!(moved["pass"], Value::Null, "{moved}");
+                let next = moved["cursor"].clone();
+                finished = Some(remaining(&next));
                 selection["progress"] = json!([{"cursor": next}]);
             }
         }

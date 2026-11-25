@@ -28,7 +28,8 @@ pub use catalog::{Begun, CatalogError, CatalogInput};
 pub use list::{ListInput, Listed};
 pub use pass::{
     ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, FailInput, PASS_COMMAND,
-    PassPayload, PassReport, PassRunError, PrepareInput, Prepared, SessionPassInput,
+    PASS_START_BY_SECONDS, PassPayload, PassReport, PassRunError, PrepareInput, Prepared,
+    SessionPassInput,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
@@ -82,7 +83,7 @@ pub enum Command<'i> {
     /// Verify a supplied answer and apply it to a prepared pass window.
     PassApply(Box<ApplyInput>, crate::Label),
     /// Record retry backoff for a failed Orbit step.
-    PassFail(FailInput, crate::Label),
+    PassFail(Box<FailInput>, crate::Label),
     /// `session catalog`.
     Catalog(CatalogInput<'i, ModelsOnce<'i>>),
     /// `session rebuild`.
@@ -304,7 +305,7 @@ pub(crate) fn run<E: PortError>(
             Outcome::PassApplied(Box::new(pass::apply(ctx, &host, *input)?))
         }
         Command::PassFail(input, host) => {
-            Outcome::PassFailed(pass::fail(ctx, &host, input)?.map(Box::new))
+            Outcome::PassFailed(pass::fail(ctx, &host, *input)?.map(Box::new))
         }
         Command::Catalog(input) => {
             let CatalogInput {

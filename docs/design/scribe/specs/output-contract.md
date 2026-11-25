@@ -1254,10 +1254,19 @@ first status as `previous_status`, the correction, and `repair: true`.
 For `retry_header`, supply the original `answer` and the compressed
 `header`. For `retry_window`, supply `retry_answer`. Unused request and
 report fields are null. Forward `[{"cursor": <cursor>}]` as `progress` to
-prepare the next window. The CLI's `session pass-prepare` and
-`session pass-apply` exchange those JSON payloads directly. The failure
-tool receives the prepared `basis` and returns `{"pass": <pass or null>}`.
-Orbit's fallback requests an error envelope after backoff is recorded.
+prepare the next window. The cursor and basis are sealed: forward them
+unchanged, or prepare and apply refuse them as `invalid_input`, as they do a
+`previous_status` the first answer does not recompute to. Prepare starts no
+session or window 50 s after the run's first prepare (or after an earlier
+`deadline_epoch_s`); the run's first window always starts. The CLI's
+`session pass-prepare` and `session pass-apply` exchange those JSON payloads
+directly. The failure tool receives the prepared `basis`, optional
+`error_code`, `reason` and the fan-in's `errors`, records backoff, and
+returns `{"pass": <pass or null>}` with `model_timeout`,
+`model_unavailable` or `model_failed`. Apply without an answer then returns
+`status: "failed"` with the cursor moved to the next session. A store or
+transcript error in prepare or apply fails that pass with its code and
+backs the session off.
 
 **Retry.** A propagated `store_locked` can be retryable. A refused final
 session answer returns `status: "failed"` after recording backoff. Provider
