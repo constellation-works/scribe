@@ -266,7 +266,7 @@ impl Setup {
                             last["correction"] = json!(applied.correction);
                             apply(last)
                         }
-                        _ => applied,
+                        ApplyStatus::Idle | ApplyStatus::Written | ApplyStatus::Failed => applied,
                     }
                 }
                 Err(err) => {

@@ -20,17 +20,14 @@ The human types these lines (in Codex, `$scribe` in place of `/scribe`):
 
 If they ask you to catalog a past session, run
 `scribe --provider <provider> session catalog <id> --author <name>`
-under your own author. It writes the switch and runs no window: the windows
-run at the next session pass, or now with
-`orbit job run scribe-session-catalog --input '{"session":"<id>","author":"<name>"}'`
-from an authorized workspace.
+under your own author. It writes the switch and runs no window: they run at
+the next session pass, or now with the `orbit job run scribe-session-catalog`
+command it prints.
 
-To rebuild a record from its transcript, run
-`scribe session rebuild <id> --author <name> --confirm`. It checks the
-refusals (`confirm_required`, `session_busy`, `session_forgotten`,
-`transcript_missing`) and prints the
-`orbit job run scribe-session-rebuild` command that runs the windows; a
-failed run keeps its checkpoint, and running the job again resumes it.
+`scribe session rebuild <id> --author <name> --confirm` checks a rebuild's refusals (`confirm_required`, `session_busy`,
+`session_forgotten`, `transcript_missing`) and prints the
+`scribe-session-rebuild` job command; a failed run keeps its checkpoint, and
+running the job again resumes it.
 
 A catalog switch is an on switch: its passes write memory the same way
 `/scribe on` passes do. A session that is off gets no pass and no memory. Its
