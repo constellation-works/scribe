@@ -6,7 +6,9 @@ use super::Error;
 use super::verbs::MemoryVerbs;
 use crate::apps::tag::ConfigReads;
 use crate::memory::{Milestone, NowItem, Stem};
-use crate::models::{MemoryContext, ProfileRequest, ProfileSession};
+use crate::models::{
+    MemoryContext, PROFILE_CHARS, PROMPT_MESSAGE_CHARS, ProfileRequest, ProfileSession, bounded,
+};
 use crate::runtime::{Ctx, PortError};
 use crate::{Provider, SessionId, WriteRefusal};
 use std::collections::BTreeSet;
@@ -60,9 +62,14 @@ pub fn prepare<E: PortError>(ctx: &Ctx<'_, E>) -> Result<PreparedRefresh, Error<
         session: session.to_string(),
     });
     let prepared_inputs = PreparedProfileInputs {
-        profile: inputs.profile,
+        // The same bounds the in-process prompt applied (STD-08 R1).
+        profile: bounded(&inputs.profile, PROFILE_CHARS),
         corrections: inputs.corrections,
-        hints: inputs.hints,
+        hints: inputs
+            .hints
+            .iter()
+            .map(|hint| bounded(hint, PROMPT_MESSAGE_CHARS))
+            .collect(),
         sessions: inputs.sessions,
         now: inputs
             .now

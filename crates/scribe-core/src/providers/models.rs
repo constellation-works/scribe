@@ -36,7 +36,7 @@ pub use scribe_tools::session_distill::*;
 pub const ASK_BUDGET: Duration = Duration::from_secs(90);
 
 /// `text` cut to `max` characters, with [`CUT_MARK`] when it was cut.
-fn bounded(text: &str, max: usize) -> String {
+pub(crate) fn bounded(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }

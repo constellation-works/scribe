@@ -72,7 +72,8 @@ pub trait MemoryVerbs {
     /// Check a prepared refresh apply request against the live store and commit
     /// it (§15.6, §19.3.5): re-checks `Basis`, forgotten sessions,
     /// `profile::check`, milestone bounds and sensitive gates under the write
-    /// lock.
+    /// lock, and recomputes the passed `now` items and the sessions the
+    /// cursor covers instead of trusting the request's derived fields.
     ///
     /// # Errors
     ///
@@ -240,13 +241,10 @@ impl MemoryVerbs for Store {
                 } else {
                     Vec::new()
                 };
-                let after = |r: &crate::SessionRecord| {
-                    cursor
-                        .as_ref()
-                        .is_none_or(|(at, id)| (r.updated, r.id.as_str()) > (*at, id.as_str()))
-                };
-                let mut due: Vec<&crate::SessionRecord> =
-                    records.iter().filter(|r| r.active && after(r)).collect();
+                let mut due: Vec<&crate::SessionRecord> = records
+                    .iter()
+                    .filter(|r| r.active && after_cursor(r, cursor.as_ref()))
+                    .collect();
                 due.sort_by(|a, b| (a.updated, a.id.as_str()).cmp(&(b.updated, b.id.as_str())));
                 let backlog = due.len().saturating_sub(REFRESH_SESSIONS);
                 due.truncate(REFRESH_SESSIONS);
@@ -369,6 +367,11 @@ impl MemoryVerbs for Store {
                 .map(|t| t.name.to_string())
                 .collect();
             let known: BTreeSet<String> = entries.iter().map(|e| e.id.to_string()).collect();
+            let mut loaded = tx.sessions().loaded()?;
+            if let Some((_, bad)) = loaded.skipped.pop() {
+                return Err(bad.error);
+            }
+            let records = loaded.records;
             let masks = |text: &str| redactor.mask(text) != text;
             let (written, journal) = tx.memory().commit(now, |rows, files| {
                 let (latest, closed) = rows.revisions()?;
@@ -393,18 +396,9 @@ impl MemoryVerbs for Store {
                     .or_else(|| closed.as_ref().and_then(|c| profile::pinned(&c.content)))
                     .unwrap_or_default()
                     .to_owned();
-                let mut passed = Vec::with_capacity(request.passed_stems.len());
-                for stem in &request.passed_stems {
-                    let Some(item) = files.now.iter().find(|n| &n.stem == stem) else {
-                        return Err(refusal(
-                            WriteRefusal::MemoryChanged,
-                            "memory changed while the profile was rebuilt; nothing was written, run 'orbit job run scribe-memory-refresh' again",
-                        ));
-                    };
-                    if !passed.iter().any(|existing: &NowItem| existing.stem == item.stem) {
-                        passed.push(item.clone());
-                    }
-                }
+                let passed = checked_passed(&request.passed_stems, &files.now, now)?;
+                let backlog =
+                    check_refresh_sessions(request, cursor_to.as_ref(), basis.cursor.as_ref(), &records, now)?;
                 plan_refresh_commit(
                     rows,
                     files,
@@ -415,7 +409,7 @@ impl MemoryVerbs for Store {
                     &known,
                     &passed,
                     &request.session_ids,
-                    request.backlog,
+                    backlog,
                     cursor_to.as_ref(),
                     &request.answer,
                     &masks,
@@ -427,6 +421,101 @@ impl MemoryVerbs for Store {
             Ok(written)
         })
     }
+}
+
+/// The refusal for an apply request whose derived fields fall outside what
+/// `prepare` would cover on the live store.
+fn not_prepared(what: &str) -> crate::Error {
+    refusal(
+        WriteRefusal::MemoryChanged,
+        format!(
+            "{what} does not match what 'memory prepare' covers; nothing was written, run 'orbit job run scribe-memory-refresh' again"
+        ),
+    )
+}
+
+/// Whether session `r` sorts after `cursor`, the order a refresh reads in.
+fn after_cursor(r: &crate::SessionRecord, cursor: Option<&(OffsetDateTime, String)>) -> bool {
+    cursor.is_none_or(|(at, id)| (r.updated, r.id.as_str()) > (*at, id.as_str()))
+}
+
+/// The request's `passed_stems`, recomputed under the write lock: each must
+/// name a `now` item that is past its 14 days today (§15.6). A stem that no
+/// longer names an item, or names one still current, refuses the request.
+fn checked_passed(
+    stems: &[Stem],
+    now_items: &[NowItem],
+    now: OffsetDateTime,
+) -> Result<Vec<NowItem>> {
+    let today = now.date();
+    let mut passed: Vec<NowItem> = Vec::with_capacity(stems.len());
+    for stem in stems {
+        let Some(item) = now_items.iter().find(|n| &n.stem == stem) else {
+            return Err(refusal(
+                WriteRefusal::MemoryChanged,
+                "memory changed while the profile was rebuilt; nothing was written, run 'orbit job run scribe-memory-refresh' again",
+            ));
+        };
+        if !memory::expired(item.date, today) {
+            return Err(not_prepared(
+                "passed_stems names a now item within its 14 days, which",
+            ));
+        }
+        if !passed.iter().any(|existing| existing.stem == item.stem) {
+            passed.push(item.clone());
+        }
+    }
+    Ok(passed)
+}
+
+/// Check the request's `session_ids` and `cursor_to` against the sessions
+/// `prepare` reads after the live cursor (§15.6), and return the backlog
+/// left after `cursor_to`, recomputed. Every id must be an active session
+/// after the cursor, at most [`REFRESH_SESSIONS`] of them; `cursor_to` must
+/// be one of them, not in the future, and skip no active session between
+/// the cursor and itself.
+fn check_refresh_sessions(
+    request: &ApplyRefreshRequest,
+    cursor_to: Option<&(OffsetDateTime, SessionId)>,
+    cursor: Option<&(OffsetDateTime, String)>,
+    records: &[crate::SessionRecord],
+    now: OffsetDateTime,
+) -> Result<usize> {
+    let due: Vec<&crate::SessionRecord> = records
+        .iter()
+        .filter(|r| r.active && after_cursor(r, cursor))
+        .collect();
+    let ids: BTreeSet<&str> = request.session_ids.iter().map(String::as_str).collect();
+    if ids.len() != request.session_ids.len() || ids.len() > REFRESH_SESSIONS {
+        return Err(not_prepared("session_ids"));
+    }
+    if !ids
+        .iter()
+        .all(|id| due.iter().any(|r| r.id.as_str() == *id))
+    {
+        return Err(not_prepared("session_ids"));
+    }
+    let Some((at, session)) = cursor_to else {
+        if !ids.is_empty() {
+            return Err(not_prepared("cursor_to"));
+        }
+        return Ok(due.len());
+    };
+    let to = (*at, session.as_str());
+    let behind = cursor.is_some_and(|(c_at, c_id)| to <= (*c_at, c_id.as_str()));
+    if *at > now || behind || !ids.contains(session.as_str()) {
+        return Err(not_prepared("cursor_to"));
+    }
+    if due
+        .iter()
+        .any(|r| (r.updated, r.id.as_str()) <= to && !ids.contains(r.id.as_str()))
+    {
+        return Err(not_prepared("cursor_to"));
+    }
+    Ok(due
+        .iter()
+        .filter(|r| (r.updated, r.id.as_str()) > to)
+        .count())
 }
 
 #[allow(clippy::too_many_arguments)]

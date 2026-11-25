@@ -199,7 +199,7 @@ pub struct ApplyRefreshRequest {
     /// Session ids read by `prepare`.
     #[serde(default)]
     pub session_ids: Vec<String>,
-    /// Sessions after the cursor left for later runs.
+    /// Sessions after the cursor left for later runs; `apply` recounts it.
     #[serde(default)]
     pub backlog: usize,
     /// Stems of passed `now` items captured by `prepare`.

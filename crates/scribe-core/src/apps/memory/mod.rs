@@ -107,9 +107,12 @@ impl Command {
             Self::Restore { .. } => "memory restore",
             Self::Refresh | Self::Prepare | Self::Apply { .. } => "memory refresh",
         };
+        // `refresh` is stepwise: its prepare commits the journal replay and
+        // format-24 archive in their own write, so the `NeedsOrbit` hand-off
+        // that follows does not roll them back.
         Some(AuditMeta {
             command,
-            stepwise: false,
+            stepwise: matches!(self, Self::Refresh),
         })
     }
 

@@ -20,6 +20,7 @@ spec:
           input: {}
     - id: refresh
       when: "{{ steps.prepare.output.nothing_new }} == false"
+      timeout_seconds: 300
       target: activity:scribe_profile_refresh
       default_input:
         inputs: "{{ steps.prepare.output.inputs }}"
@@ -43,6 +44,7 @@ spec:
             allow_retry: true
     - id: refresh_retry
       when: "{{ steps.apply.output.status }} == retry"
+      timeout_seconds: 300
       target: activity:scribe_profile_refresh
       default_input:
         inputs: "{{ steps.prepare.output.inputs }}"
