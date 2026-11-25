@@ -13,7 +13,9 @@
 #      without a policy fails the check, so a new member forces a decision.
 #   2. Module edges inside a crate: grep bans over non-test sources for
 #      what a crate edge cannot express (std I/O, the environment, one
-#      module's mechanism inside a crate, the app order).
+#      module's mechanism inside a crate, the app order, the core's root
+#      places). A `super::` path counts as the `crate::` path it names, so a
+#      relative import meets the same rules (resolve, ban_crate).
 #
 # The crates, the app order and these guards are written down in
 # ARCHITECTURE.md, from the architecture spec's Guards section
@@ -113,6 +115,46 @@ ban() {
   fi
 }
 
+# resolve <file>: the file's text with each super:: path rewritten to the
+# crate:: path it names from the file's module (apps/entry/mod.rs is
+# crate::apps::entry, so its super:: is crate::apps). Line numbers are kept,
+# so a relative import meets the same rules as the absolute one.
+RESOLVE_SUPER='
+  my @m = split m{/}, $ENV{RESOLVE_REL} =~ s/\.rs$//r;
+  pop @m if @m && $m[-1] eq "mod";
+  @m = () if @m == 1 && $m[0] eq "lib";
+  s{(?<![\w:])((?:super::)+)}{
+    my $n = () = $1 =~ /super::/g;
+    my $keep = @m - $n; $keep = 0 if $keep < 0;
+    my $base = join "::", @m[0 .. $keep - 1];
+    $base eq "" ? "crate::" : "crate::" . $base . "::";
+  }ge;
+'
+resolve() {
+  [[ -f "$1" ]] || return 0
+  if grep -q 'super::' "$1"; then
+    RESOLVE_REL="${1#"$CORE"/}" perl -0777 -pe "$RESOLVE_SUPER" "$1"
+  else
+    cat "$1"
+  fi
+}
+
+# ban_crate <path> <regex> <message>: ban, over the resolved text, the
+# non-test Rust sources under <path> (a file or a directory).
+ban_crate() {
+  local hits="" file found
+  while IFS= read -r -d '' file; do
+    found=$(resolve "$file" | grep -nE "$2" | grep -vE '^[0-9]+:[[:space:]]*//' | sed "s|^|$file:|") || true
+    if [[ -n "$found" ]]; then
+      hits+="$found"$'\n'
+    fi
+  done < <(find "$1" -name '*.rs' -not -path '*/tests/*' -print0 2>/dev/null)
+  if [[ -n "$hits" ]]; then
+    printf '%s' "$hits" >&2
+    err "$3"
+  fi
+}
+
 # ban_std <path> <modules> <message>: fail if a non-test Rust source under
 # <path> names std::<module> for one of the |-separated <modules>, either as a
 # path (`std::fs::write`, `use std::fs;`) or inside a grouped import that may
@@ -168,53 +210,78 @@ APP_ORDER='tag mark memory entry proposal session group search brief consistency
 for shared in common shared util; do
   [[ -e "$CORE/apps/$shared" ]] && err "apps/$shared: code two apps need goes to the lower one, to runtime or to the tools"
 done
-app_hits=$(APP_ORDER="$APP_ORDER" perl -e '
+# The app order reads each app file as resolve gives it, so a relative import
+# (`use super::session::X;` in apps/entry/mod.rs) is held to the order an
+# absolute one is.
+APP_CHECK='
   use strict; use warnings;
-  my $root = shift;
   my $n = 0; my %rank = map { $_ => $n++ } split " ", $ENV{APP_ORDER};
-  exit 0 unless -d $root;
-  opendir my $dh, $root or die "$root: $!";
-  for my $d (sort grep { !/^\./ && -d "$root/$_" } readdir $dh) {
-    print "$root/$d: app $d has no place in the app order\n" unless exists $rank{$d};
-  }
+  my ($file, $src) = @ENV{qw(APP_FILE APP_SRC)};
   local $/;
-  my @files = split /\0/, `find "$root" -name "*.rs" -not -path "*/tests/*" -print0`;
-  for my $file (@files) {
-    my ($src) = $file =~ m{^\Q$root\E/(\w+)/};
-    next unless defined $src && exists $rank{$src};
-    open my $fh, "<", $file or die "$file: $!";
-    my $s = <$fh>;
-    $s =~ s{^\s*//.*$}{}mg;
-    my @refs;
-    push @refs, [$1, $2, $-[0]] while $s =~ /crate::apps::(\w+)((?:::\w+)*(?:::\{)?)/g;
-    while ($s =~ /crate::apps::\{/g) {
-      my ($at, $i, $d) = ($-[0], pos($s), 1);
-      my $j = $i;
-      while ($d && $j < length $s) { my $c = substr($s, $j++, 1); $d++ if $c eq "{"; $d-- if $c eq "}"; }
-      my $g = substr($s, $i, $j - $i - 1);
-      1 while $g =~ s/\{[^{}]*\}/X/g;
-      for (split /,/, $g) { push @refs, [$1, $2, $at] if /^\s*(\w+)((?:::\w+)*)/ }
-      pos($s) = $j;
-    }
-    for my $r (@refs) {
-      my ($t, $rest, $at) = @$r;
-      next if $t eq $src;
-      my $line = 1 + (substr($s, 0, $at) =~ tr/\n//);
-      if (!exists $rank{$t}) { print "$file:$line: $src imports unknown app $t\n"; next }
-      print "$file:$line: $src imports $t, which is not lower in the app order\n" if $rank{$t} >= $rank{$src};
-      print "$file:$line: $src reaches into $t$rest: import what its mod.rs exports\n" if $rest =~ /^::[a-z_]\w*::/;
-    }
+  my $s = <STDIN>;
+  $s =~ s{^[ \t]*//.*$}{}mg;
+  my @refs;
+  push @refs, [$1, $2, $-[0]] while $s =~ /crate::apps::(\w+)((?:::\w+)*(?:::\{)?)/g;
+  while ($s =~ /crate::apps::\{/g) {
+    my ($at, $i, $d) = ($-[0], pos($s), 1);
+    my $j = $i;
+    while ($d && $j < length $s) { my $c = substr($s, $j++, 1); $d++ if $c eq "{"; $d-- if $c eq "}"; }
+    my $g = substr($s, $i, $j - $i - 1);
+    1 while $g =~ s/\{[^{}]*\}/X/g;
+    for (split /,/, $g) { push @refs, [$1, $2, $at] if /^\s*(\w+)((?:::\w+)*)/ }
+    pos($s) = $j;
   }
-' "$CORE/apps" 2>&1 || true)
+  for my $r (@refs) {
+    my ($t, $rest, $at) = @$r;
+    next if $t eq $src;
+    my $line = 1 + (substr($s, 0, $at) =~ tr/\n//);
+    if (!exists $rank{$t}) { print "$file:$line: $src imports unknown app $t\n"; next }
+    print "$file:$line: $src imports $t, which is not lower in the app order\n" if $rank{$t} >= $rank{$src};
+    print "$file:$line: $src reaches into $t$rest: import what its mod.rs exports\n" if $rest =~ /^::[a-z_]\w*::/;
+  }
+'
+app_hits=""
+for dir in "$CORE"/apps/*/; do
+  [[ -d "$dir" ]] || continue
+  name=$(basename "$dir")
+  if [[ " $APP_ORDER " != *" $name "* ]]; then
+    app_hits+="$CORE/apps/$name: app $name has no place in the app order"$'\n'
+  fi
+done
+while IFS= read -r -d '' file; do
+  rel="${file#"$CORE/apps/"}"
+  src="${rel%%/*}"
+  [[ "$rel" == */* && " $APP_ORDER " == *" $src "* ]] || continue
+  found=$(resolve "$file" | APP_FILE="$file" APP_SRC="$src" APP_ORDER="$APP_ORDER" perl -e "$APP_CHECK" 2>&1) || true
+  if [[ -n "$found" ]]; then
+    app_hits+="$found"$'\n'
+  fi
+done < <(find "$CORE/apps" -name '*.rs' -not -path '*/tests/*' -print0 2>/dev/null)
 if [[ -n "$app_hits" ]]; then
-  echo "$app_hits" >&2
+  printf '%s' "$app_hits" >&2
   err "scribe-core's app order: an app imports only lower apps, through their mod.rs (ARCHITECTURE.md)"
+fi
+# The core's root modules are its places (ARCHITECTURE.md). lib.rs declares a
+# file module (`mod x;`, any visibility, not test-only) only for one of them,
+# so a new root module fails until it is given a place here and in the docs.
+# The inline re-export modules lib.rs declares name no file and are not read.
+ROOT_PLACES="apps composition config providers runtime"
+undeclared=$(ROOT_PLACES="$ROOT_PLACES" perl -0777 -ne '
+  my %place = map { $_ => 1 } split " ", $ENV{ROOT_PLACES};
+  while (/^[ \t]*((?:#\[cfg\(test\)\][ \t]*\n[ \t]*)?)(?:pub(?:\([a-z]+\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/mg) {
+    next if $1 ne "" || $place{$2};
+    my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
+    print "$ARGV:$line: lib.rs declares the root module $2, which is not one of the places\n";
+  }' "$CORE/lib.rs" 2>/dev/null || true)
+if [[ -n "$undeclared" ]]; then
+  printf '%s\n' "$undeclared" >&2
+  err "scribe-core's root modules: a new root module needs a place (ROOT_PLACES here, ARCHITECTURE.md)"
 fi
 # ORB-27921 step 2 moved every use case into apps/ and deleted cases/
 # (listed with the retired paths below). Nothing names it again: not the
 # core, and not the binary, which reaches the core through each app's
 # exec, Command, Outcome and Error.
-ban "$CORE" 'crate::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: a use case lives in its app under apps/"
+ban_crate "$CORE" 'crate::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: a use case lives in its app under apps/"
 ban "$CLI" 'scribe_core::cases(::|[^[:alnum:]_]|$)' "cases/ is retired: call the app's exec through scribe_core::apps::<app>"
 # The model callers are five flows: session pass, catalog and rebuild,
 # memory refresh and group close. Only those flows, and the mod.rs of their
@@ -230,11 +297,11 @@ while IFS= read -r file; do
       apps/memory/mod.rs | apps/memory/refresh.rs | apps/group/mod.rs | apps/group/close.rs | \
       runtime/errors.rs) continue ;;
   esac
-  ban "$file" "$models_port" \
+  ban_crate "$file" "$models_port" \
     "${file#crates/} names the Models port: only session pass, catalog, rebuild, memory refresh and group close call a model"
 done < <(find "$CORE/apps" "$CORE/runtime" -name '*.rs' -not -path '*/tests/*' | sort)
 # The providers know nothing of the apps or the runtime that call them.
-ban "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
+ban_crate "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
 
 # scribe-tools: only fs.rs names std::fs; nothing reads the environment,
 # discovers a path, spawns a process, names the core or writes the store.
@@ -253,17 +320,17 @@ ban "$TOOLS" "$clock" "scribe-tools must not read the clock: take the time as an
 ban "$TOOLS" '(^|[^[:alnum:]_])(rand|fastrand|getrandom|uuid)::' "scribe-tools must not draw randomness"
 
 # The model shapes must not import their callers.
-ban "$CORE/providers/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
+ban_crate "$CORE/providers/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
 # A grouped crate import can name a caller without spelling crate::caller.
-port_grouped=$(perl -0777 -ne '
+port_grouped=$(resolve "$CORE/providers/models.rs" | FILE="$CORE/providers/models.rs" perl -0777 -ne '
   while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+(?:::)?crate::\{([^;]*)\};/mg) {
     my ($stmt, $group, $at) = ($&, $1, $-[0]);
     1 while $group =~ s/\{[^{}]*\}//g;
     next unless $group =~ /(?<![A-Za-z0-9_:])(?:memory|group)(?![A-Za-z0-9_])/;
     my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
     $stmt =~ s/\s+/ /g;
-    print "$ARGV:$line:$stmt\n";
-  }' "$CORE/providers/models.rs" 2>/dev/null || true)
+    print "$ENV{FILE}:$line:$stmt\n";
+  }' 2>/dev/null || true)
 if [[ -n "$port_grouped" ]]; then
   echo "$port_grouped" >&2
   err "the model shapes must not import their callers"
@@ -292,7 +359,7 @@ for path in "$CORE"/*; do
   ban "$path" '(^|[^[:alnum:]_])(rustix|tempfile)::' "${path#crates/}: only providers/ uses rustix and tempfile"
 done
 # Composition builds the context the apps run against; it imports no app.
-ban "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
+ban_crate "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
 # ORB-27921 step 4: db/ holds the storage mechanism. SQLite is its
 # mechanism (2_design.md §15.7): only db/ names rusqlite (testing.rs, the

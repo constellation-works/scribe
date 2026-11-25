@@ -455,7 +455,10 @@ holds:
 - the banned crates per crate, from the table above (normal dependencies
   only, as today);
 - the app order: an app imports only apps below it, and only through
-  `apps::<app>::` paths that `mod.rs` exports;
+  `apps::<app>::` paths that `mod.rs` exports; a relative `super::` path
+  counts as the `crate::` path it names;
+- the core's root modules are `apps`, `composition`, `config`, `providers`
+  and `runtime`: `lib.rs` declares a file module only for one of them;
 - no `apps/common`, `apps/shared` or `apps/util`;
 - in the core, only `composition.rs` names `std::env`, only `composition.rs`
   and `providers/` name `std::fs`, and only `providers/` names

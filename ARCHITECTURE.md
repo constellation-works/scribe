@@ -107,6 +107,11 @@ config/voice.rs      the prompt half of voice
 providers/           interim: the Models port, its shapes (models.rs) and the CLI adapters (cli.rs, cli/)
 ```
 
+The core's root modules are its places: `apps`, `composition`, `config`,
+`providers` and `runtime`. `lib.rs` declares a file module only for one of
+them, and the guard fails a new one until it is given a place here and in
+[the script](scripts/check-dependency-direction.sh).
+
 ### Apps
 
 An app is one subject a user names on the command line. Its public surface is
@@ -160,7 +165,9 @@ calls `session`; `brief` calls `memory`; `consistency` calls `proposal` and
 `session`; `hook` calls all of them. Code two apps need goes to the lower
 one, to `runtime` if it is about the context (ids, errors, audit), or to
 `scribe-tools` if it is about transcripts, windows, markers or payloads.
-There is no `apps/common`, `apps/shared` or `apps/util`.
+There is no `apps/common`, `apps/shared` or `apps/util`. A relative `super::`
+import is read as the `crate::` path it names, so the guard holds it to the
+same order.
 
 ### Runtime, composition and providers
 
