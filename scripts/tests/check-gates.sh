@@ -34,7 +34,7 @@ tree() {
   printf '[package]\nname = "scribe-core"\n' >"$root/crates/scribe-core/Cargo.toml"
   printf '[package]\nname = "scribe"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
     >"$root/crates/scribe/Cargo.toml"
-  printf '//! core\npub mod entry;\n' >"$root/crates/scribe-core/src/lib.rs"
+  printf '//! core\npub mod apps;\n' >"$root/crates/scribe-core/src/lib.rs"
   printf '//! config\nuse std::fmt;\n' >"$root/crates/scribe-core/src/config.rs"
   printf 'fn main() {}\n' >"$root/crates/scribe/src/main.rs"
   echo "$root"
@@ -76,6 +76,38 @@ done
 near=$(tree deps-near)
 printf '//! config\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-core/src/config.rs"
 expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
+
+# A relative import (`super::`) is the crate path it names: it meets the app
+# order and the port's rules as the `crate::` spelling does, and lib.rs may
+# declare a file module only for a root place (ORB-28114). The clean twins
+# are legal relative imports within an app and the root places.
+rel=$(tree deps-rel-clean)
+mkdir -p "$rel/crates/scribe-core/src/apps/entry/rules" "$rel/crates/scribe-core/src/apps/session"
+printf 'use super::entry::Entry;\n' >"$rel/crates/scribe-core/src/apps/session/mod.rs"
+printf 'use super::rules::Rule;\n' >"$rel/crates/scribe-core/src/apps/entry/flow.rs"
+printf 'use super::super::Command;\n' >"$rel/crates/scribe-core/src/apps/entry/rules/check.rs"
+printf '//! core\npub mod apps;\npub mod composition;\npub mod providers;\npub(crate) mod config;\npub(crate) mod runtime;\n#[cfg(test)]\nmod extra;\n' \
+  >"$rel/crates/scribe-core/src/lib.rs"
+expect pass check-dependency-direction.sh "$rel" "legal relative imports within an app, and the root places"
+
+for spec in \
+  'apps/entry/mod.rs|use super::session::Entry;' \
+  'apps/entry/flow.rs|use super::super::session::Entry;' \
+  'apps/entry/mod.rs|use super::{session::Entry};' \
+  $'apps/entry/mod.rs|use super::{\n    session::Entry,\n};' \
+  'providers/models.rs|use super::super::apps::session::Entry;'; do
+  bad=$(tree "rel-up-$n")
+  mkdir -p "$bad/crates/scribe-core/src/apps/entry" "$bad/crates/scribe-core/src/providers"
+  printf '%s\n' "${spec#*|}" >"$bad/crates/scribe-core/src/${spec%%|*}"
+  expect fail check-dependency-direction.sh "$bad" "a relative import of ${spec%%|*}: $(echo "${spec#*|}" | tr -s '\n ' ' ')"
+done
+
+for decl in 'mod extra;' 'pub mod extra;'; do
+  bad=$(tree "root-$n")
+  printf '//! core\npub mod apps;\n%s\n' "$decl" >"$bad/crates/scribe-core/src/lib.rs"
+  printf 'fn extra() {}\n' >"$bad/crates/scribe-core/src/extra.rs"
+  expect fail check-dependency-direction.sh "$bad" "a root module declared \`$decl\` with no place"
+done
 
 # The Models port may not depend on its callers.
 port=$(tree port-clean)
