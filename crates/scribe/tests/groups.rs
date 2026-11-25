@@ -885,9 +885,9 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         absent["error"],
         "the quote must contain g-1, the group it closes"
     );
-    // The quote holds g-1, but the typed turn has it only inside a longer id
+    // The quote holds g-1, but its span has it only inside a longer id
     // (g-12, or a word such as xg-1 or g-1é), so the refusal says what names it.
-    let clipped_message = "the quote must name g-1 as a whole id, the group it closes; the typed turn has g-1 only inside a longer id, so quote a span where g-1 stands alone";
+    let clipped_message = "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where it only appears inside a longer id, so quote a span where g-1 stands alone";
     for quote in [
         "finish g-12 after the audit",
         "finish g-1",
@@ -900,6 +900,40 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
     }
     assert_eq!(model_calls(&f), 0);
     assert!(invoke(&f, A, &["group", "show", "g-1"], 0)["closed"].is_null());
+}
+
+#[test]
+fn a_quoted_close_whose_span_clips_the_id_is_refused_even_when_its_turn_names_it_whole() {
+    let f = Fixture::new();
+    for id in [A, B] {
+        transcript(&f, id, &[row(id, "u", "user", QUOTE)]);
+    }
+    // One typed turn: the first span clips g-1 out of g-12, and a later span
+    // of the same turn closes g-1 standalone.
+    transcript(
+        &f,
+        D,
+        &[row(
+            D,
+            "u-both",
+            "user",
+            "finish g-12 after the audit, then close g-1",
+        )],
+    );
+    open(&f);
+    join_as(&f, B, "g-1", "chief", &[], 0);
+    let path = summary_model(&f);
+    // The submitted span clips the id, so the refusal names that span, not the turn.
+    let clipped =
+        assert_close_refused_with(&f, &path, D, &["--quote", "finish g-1"], "group_membership");
+    assert_eq!(
+        clipped["error"],
+        "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where it only appears inside a longer id, so quote a span where g-1 stands alone"
+    );
+    // The standalone span of the same turn is what the close is authorized by.
+    let out = close_with(&f, &path, D, &["--quote", "close g-1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(model_calls(&f), 1);
 }
 
 #[test]

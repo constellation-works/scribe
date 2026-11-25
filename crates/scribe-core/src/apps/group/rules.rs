@@ -195,8 +195,10 @@ impl GroupConsent {
                     if names_group(own, quote, group) {
                         return true;
                     }
-                    // The quote holds the id, but in this turn the id only
-                    // continues into a longer word, such as g-12 for g-1.
+                    // The quote holds the id, but the span it matches here
+                    // only continues it into a longer word, such as g-12 for
+                    // g-1. Another span of this turn may name the id whole;
+                    // that span was not quoted, so it does not authorize this.
                     clipped |= crate::verbatim::normalize(quote).contains(group);
                     false
                 })
@@ -205,7 +207,7 @@ impl GroupConsent {
                 if let (true, Some(group)) = (quote_found, group) {
                     let message = if clipped {
                         format!(
-                            "the quote must name {group} as a whole id, the group it closes; the typed turn has {group} only inside a longer id, so quote a span where {group} stands alone"
+                            "the quote must name {group} as a whole id, the group it closes; {group} is not standalone in the matched span, where it only appears inside a longer id, so quote a span where {group} stands alone"
                         )
                     } else {
                         format!("the quote must contain {group}, the group it closes")
