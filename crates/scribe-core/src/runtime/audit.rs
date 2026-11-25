@@ -381,11 +381,6 @@ impl<'a> PersistedAudit<'a> {
         self
     }
 
-    /// One more target already persisted.
-    pub fn record(&mut self, target: impl Into<String>) {
-        self.targets.push(target.into());
-    }
-
     /// More targets already persisted.
     pub fn extend(&mut self, targets: impl IntoIterator<Item = String>) {
         self.targets.extend(targets);
