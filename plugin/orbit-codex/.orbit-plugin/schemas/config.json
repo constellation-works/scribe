@@ -17,6 +17,11 @@
       "minLength": 1,
       "pattern": "^/"
     },
+    "group_summary_crew": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Orbit crew used to summarize a group."
+    },
     "codex_runtime_tmp": {
       "type": "string",
       "description": "Absolute existing tmp directory inside codex_home; Codex needs this narrow directory write at startup.",

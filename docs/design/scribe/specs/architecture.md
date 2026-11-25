@@ -236,10 +236,10 @@ sees it.
 
 ### Providers (interim)
 
-Scribe's own model calls are being removed (ORB-27911). Five callers cannot
-lose their model step until an Orbit job replaces it: session pass, session
-catalog, session rebuild, memory refresh and group close. What replaces them
-is not decided (open-item-19) and this spec does not decide it.
+Scribe's own model calls are being removed (ORB-27911). Session pass, session
+catalog, session rebuild and memory refresh retain their callers until Orbit
+jobs replace them. Group close accepts a supplied summary and offers an Orbit
+job, as approved in §19 of the design.
 
 Until then:
 
@@ -552,9 +552,8 @@ invariants.
 
 ## Not decided here
 
-- What replaces the five model callers, the Orbit jobs' shape and the tools
-  an agent reads and writes through (open-item-19).
-- Whether group close takes a `--summary` flag, and what the consistency scan
+- The remaining model callers and their Orbit jobs and tools (open-item-19).
+- What the consistency scan
   keeps (open-item-19).
 
 A departure from the crates, from "one repository per record", from

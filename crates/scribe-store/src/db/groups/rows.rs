@@ -115,7 +115,7 @@ impl GroupRows<'_> {
     }
 
     /// Close group `n` at `now` with `summary`.
-    pub fn set_closed(&self, n: i64, now: OffsetDateTime, summary: &str) -> Rows<()> {
+    pub fn set_closed(&self, n: i64, now: OffsetDateTime, summary: Option<&str>) -> Rows<()> {
         self.conn
             .execute(
                 "UPDATE groups SET closed = ?2, summary = ?3 WHERE id = ?1",

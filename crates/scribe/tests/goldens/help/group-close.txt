@@ -6,9 +6,12 @@ Arguments:
   <ID>  Group id, unique prefix, or project group slug
 
 Options:
-      --quote <QUOTE>  Words the user typed in this session that contain the whole group id (g-1 does not match g-12); closes the group for a session that holds no seat in it
-  -h, --help           Print help
-  -V, --version        Print version
+      --quote <QUOTE>              Words the user typed in this session that contain the whole group id (g-1 does not match g-12); closes the group for a session that holds no seat in it
+      --summary <SUMMARY>          Summary text, or - to read stdin
+      --no-summary                 Close without a summary
+      --if-evidence <IF_EVIDENCE>  Refuse if the evidence has changed
+  -h, --help                       Print help
+  -V, --version                    Print version
 
 Global options:
       --provider <PROVIDER>  Transcript provider for hooks, discovery and catalog; picks [models] or [codex.models] for model calls [default: claude-code; allowed: claude-code, codex]
@@ -16,4 +19,5 @@ Global options:
       --format <FORMAT>      Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto] [possible values: auto, table, json]
       --json                 Shorthand for --format json
 
-Example: scribe group close <id>
+Draft with `scribe group evidence <id> --json`, then use --summary and --if-evidence, or run `orbit job run scribe-group-close`.
+Example: scribe group close <id> --summary 'Review complete'

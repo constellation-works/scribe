@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "group": {
+      "type": "string"
+    },
+    "session": {
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "claude-code",
+        "codex"
+      ]
+    },
+    "quote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "group",
+    "session",
+    "provider"
+  ],
+  "additionalProperties": false
+}

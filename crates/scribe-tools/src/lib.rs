@@ -23,6 +23,7 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod fs;
+pub mod group_close;
 pub mod host;
 pub mod markers;
 pub mod origin;

@@ -61,6 +61,7 @@
 //! name = "Sam"
 //!
 //! [instructions]
+//! # group_summary = "Emphasize outcomes" # optional Orbit close guidance
 //! session = "You write the record of a coding session {user} ran."
 //!
 //! [projects.scribe]
@@ -468,6 +469,8 @@ struct RawInstructions {
     /// Deprecated: read only to warn that it is unused.
     memory_pairs: Option<String>,
     profile: Option<String>,
+    /// Guidance for Orbit group close summaries.
+    group_summary: Option<String>,
     /// Accepted, checked and ignored, as `consistency`.
     removal: Option<String>,
 }
@@ -490,6 +493,9 @@ impl RawInstructions {
         ignored("ask", &self.ask)?;
         ignored("consistency", &self.consistency)?;
         set(ModelUse::Profile, self.profile)?;
+        if let Some(text) = self.group_summary {
+            out.set_group_summary(&text)?;
+        }
         ignored("removal", &self.removal)?;
         Ok(out)
     }

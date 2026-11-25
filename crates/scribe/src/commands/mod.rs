@@ -38,6 +38,7 @@ use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
+pub(crate) use group::GroupCommand;
 pub(crate) use hook::HookCommand;
 pub(crate) use memory::MemoryCommand;
 pub(crate) use plugin::PluginCommand;
@@ -146,7 +147,7 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
                     | Record::Transcript(_)
             )
         }
-        Output::Init(_) | Output::Hook(_) | Output::Plugin(_) => false,
+        Output::Init(_) | Output::Hook(_) | Output::Plugin(_) | Output::GroupEvidence(_) => false,
     };
     if !prints_sessions {
         return scribe_core::ShortIds::default();

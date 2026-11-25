@@ -1,0 +1,40 @@
+schemaVersion: 2
+kind: Job
+metadata:
+  name: scribe-group-close
+spec:
+  state: enabled
+  kind: workflow
+  max_active_runs: 1
+  default_input:
+    quote: null
+  steps:
+    - id: prepare
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.group-close-prepare
+          input:
+            group: "{{ input.group }}"
+            session: "{{ input.session }}"
+            provider: "{{ input.provider }}"
+            quote: "{{ input.quote }}"
+    - id: summarize
+      target: activity:scribe_group_summarize
+      default_input:
+        evidence: "{{ steps.prepare.output }}"
+        crew: "{{ steps.prepare.output.crew }}"
+    - id: apply
+      spec:
+        type: deterministic
+        action: plugin.tool_call
+        config:
+          tool: scribe.group-close-apply
+          input:
+            group: "{{ input.group }}"
+            session: "{{ input.session }}"
+            provider: "{{ input.provider }}"
+            quote: "{{ input.quote }}"
+            summary: "{{ steps.summarize.output.summary }}"
+            evidence_sha256: "{{ steps.prepare.output.evidence_sha256 }}"

@@ -183,7 +183,7 @@ same order.
   parsed `Config`. `runtime/host/` implements the ports on the `Context`.
 - `providers/` holds everything about calling a model until ORB-27911
   removes scribe's own model calls. Only five flows use it: session pass,
-  catalog and rebuild, memory refresh and group close.
+  catalog and rebuild, and memory refresh. Group close accepts a supplied summary; its Orbit job performs the model step.
 
 ## `scribe-store`
 

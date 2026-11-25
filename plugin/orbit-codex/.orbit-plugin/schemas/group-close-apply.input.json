@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "group": {
+      "type": "string"
+    },
+    "session": {
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "claude-code",
+        "codex"
+      ]
+    },
+    "quote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "evidence_sha256": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "group",
+    "session",
+    "provider",
+    "summary",
+    "evidence_sha256"
+  ],
+  "additionalProperties": false
+}

@@ -1697,28 +1697,27 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
         duration_ms: 1,
     };
 
-    let mut model_calls = 0;
+    let digest = store
+        .close_evidence_digest(&id, GroupCloser::Session(&opener))
+        .unwrap()
+        .unwrap();
+    // Preparing is read-only and holds no SQLite write transaction.
+    let probe = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
+    probe.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").unwrap();
     let (closed_id, changed) = store
         .close_group_with_outcome(
             &id,
             GroupCloser::Session(&opener),
             T0,
             &Redactor::default(),
-            |_| {
-                model_calls += 1;
-                // No SQLite write transaction may be held during the model call.
-                let probe = rusqlite::Connection::open(dir.path().join(DB_FILE)).unwrap();
-                probe.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").unwrap();
-                Ok::<_, Error>("Summary of secret phrase work.".to_owned())
-            },
-            |group_id| audit_for(group_id, &opener),
+            Some("Summary of secret phrase work."),
+            (Some(&digest), |group_id| audit_for(group_id, &opener)),
         )
         .unwrap()
         .into_result()
         .unwrap();
     assert_eq!(closed_id, id);
     assert!(changed);
-    assert_eq!(model_calls, 1);
 
     let group = store.group(&id).unwrap();
     assert!(group.closed.is_some());
@@ -1750,8 +1749,8 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
             GroupCloser::Session(&opener),
             T0,
             &Redactor::default(),
-            |_| -> Result<String, Error> { panic!("model must not run on retry") },
-            |_| panic!("audit builder must not run on retry"),
+            Some("retry"),
+            (None, |_| panic!("audit builder must not run on retry")),
         )
         .unwrap()
         .into_result()
@@ -1787,8 +1786,8 @@ fn close_group_commits_audit_with_closing_record_without_holding_write_lock_acro
             GroupCloser::Session(&second_opener),
             T0,
             &Redactor::default(),
-            |_| Ok::<_, Error>("Rolled back summary.".to_owned()),
-            |group_id| audit_for(group_id, &second_opener),
+            Some("Rolled back summary."),
+            (None, |group_id| audit_for(group_id, &second_opener)),
         )
         .unwrap_err();
     let source = std::error::Error::source(&err).unwrap().to_string();
@@ -2013,8 +2012,8 @@ fn quoted_close_consent_authorizes_only_its_own_group_and_operation() {
             GroupCloser::Quoted(consent),
             T0,
             &redactor,
-            |_| -> Result<String, Error> { panic!("a refused close must not call the model") },
-            audit,
+            Some("Fixed answer"),
+            (None, audit),
         )
     };
 
@@ -2105,8 +2104,8 @@ fn quoted_close_consent_for_a_closed_group_does_not_reach_its_reused_alias() {
             GroupCloser::Session(&opener),
             T0,
             &redactor,
-            |_| Ok::<_, Error>("Done.".to_owned()),
-            |id| AuditEvent {
+            Some("Done."),
+            (None, |id| AuditEvent {
                 at: T0,
                 command: "group close".to_owned(),
                 status: AuditStatus::Success,
@@ -2117,7 +2116,7 @@ fn quoted_close_consent_for_a_closed_group_does_not_reach_its_reused_alias() {
                 instruction_message: None,
                 issue: None,
                 duration_ms: 1,
-            },
+            }),
         )
         .unwrap();
     let replacement = store
@@ -2133,8 +2132,8 @@ fn quoted_close_consent_for_a_closed_group_does_not_reach_its_reused_alias() {
             GroupCloser::Quoted(&consent),
             T0,
             &redactor,
-            |_| -> Result<String, Error> { panic!("the replacement must not be summarized") },
-            |_| panic!("the replacement must not be audited"),
+            Some("Fixed answer"),
+            (None, |_| panic!("the replacement must not be audited")),
         )
         .unwrap_err();
     assert_eq!(err.code(), "group_membership");

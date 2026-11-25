@@ -14,6 +14,11 @@
     "codex_home": {
       "type": "string",
       "description": "Optional absolute Codex state directory (~/.codex or CODEX_HOME) for active/archive transcript discovery and existing auth. Empty disables Codex discovery; Claude configuration remains valid. Model-backed Orbit execution also needs the Codex-enabled package and its narrow runtime write settings; read access alone is insufficient. Scribe never copies credentials."
+    },
+    "group_summary_crew": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Orbit crew used to summarize a group."
     }
   },
   "additionalProperties": false

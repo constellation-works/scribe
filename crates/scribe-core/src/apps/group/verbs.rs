@@ -4,14 +4,16 @@
 //! verbs read and write the rows through [`Groups::rows`](crate::repository::Groups::rows).
 
 mod capture;
-mod close;
+pub(super) mod close;
 
 pub use close::CloseGroupOutcome;
 
 use super::rules::{check_additions, check_join, check_new_group, check_project_slug};
+#[cfg(any(test, feature = "test-support"))]
+use crate::AuditEvent;
 use crate::group::{
-    Added, CloseEvidence, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup,
-    NewGroup, OpenedGroup, SeatHold, SeatStart, automatic_seat,
+    Added, GroupAdded, GroupAddition, GroupCloser, GroupConsent, JoinGroup, NewGroup, OpenedGroup,
+    SeatHold, SeatStart, automatic_seat,
 };
 use crate::instruction::ClaudeGroupTurns;
 use crate::message::NewMessage;
@@ -19,8 +21,8 @@ use crate::repository::{GroupRows, RowError};
 use crate::runtime::resolve::refuse_forgotten;
 use crate::store::refusal;
 use crate::{
-    AuditEvent, ClaudeCapturePosition, ClaudeGroupCapture, Error, Project, Redactor, Result,
-    SessionId, Store, WriteRefusal,
+    ClaudeCapturePosition, ClaudeGroupCapture, Project, Redactor, Result, SessionId, Store,
+    WriteRefusal,
 };
 use time::OffsetDateTime;
 
@@ -143,18 +145,21 @@ pub trait GroupVerbs {
     /// A retry after a successful close returns `AlreadyClosed` without
     /// calling the model again.
     ///
-    /// The model closure runs outside any SQLite write transaction. The final
-    /// write commits `closed`, `summary`, and the caller-built success audit
-    /// row in one `scribe.db` transaction.
-    fn close_group_with_outcome<E: From<Error>>(
+    /// Apply a fixed summary and optional digest with its success audit.
+    #[cfg(any(test, feature = "test-support"))]
+    fn close_group_with_outcome(
         &self,
         id: &str,
         closer: GroupCloser<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
-        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
-        audit: impl FnOnce(&str) -> AuditEvent,
-    ) -> Result<CloseGroupOutcome, E>;
+        answer: Option<&str>,
+        expected_and_audit: (Option<&str>, impl FnOnce(&str) -> AuditEvent),
+    ) -> Result<CloseGroupOutcome>;
+
+    /// Prepare the digest for a close.
+    #[cfg(any(test, feature = "test-support"))]
+    fn close_evidence_digest(&self, id: &str, closer: GroupCloser<'_>) -> Result<Option<String>>;
 }
 
 impl GroupVerbs for Store {
@@ -536,16 +541,22 @@ impl GroupVerbs for Store {
         capture::capture_claude_group_turns(self, before, resumed, position, batch, redactor)
     }
 
-    fn close_group_with_outcome<E: From<Error>>(
+    #[cfg(any(test, feature = "test-support"))]
+    fn close_group_with_outcome(
         &self,
         id: &str,
         closer: GroupCloser<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
-        summarize: impl FnOnce(&CloseEvidence) -> Result<String, E>,
-        audit: impl FnOnce(&str) -> AuditEvent,
-    ) -> Result<CloseGroupOutcome, E> {
-        close::close_group_with_outcome(self, id, closer, now, redactor, summarize, audit)
+        answer: Option<&str>,
+        expected_and_audit: (Option<&str>, impl FnOnce(&str) -> AuditEvent),
+    ) -> Result<CloseGroupOutcome> {
+        close::apply(self, id, closer, now, redactor, answer, expected_and_audit)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn close_evidence_digest(&self, id: &str, closer: GroupCloser<'_>) -> Result<Option<String>> {
+        Ok(close::evidence(self, id, closer)?.map(|snapshot| snapshot.digest()))
     }
 }
 

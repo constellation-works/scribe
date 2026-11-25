@@ -152,6 +152,8 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         .and_then(|rest| rest.strip_prefix('.'))
         .unwrap_or_default();
     match verb {
+        "group-close-prepare" => group_close(&envelope.input, &envelope.context.config, false),
+        "group-close-apply" => group_close(&envelope.input, &envelope.context.config, true),
         "session-pass" => session_pass(&envelope.input, &envelope.context.config, ctx),
         "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
         "memory-refresh" => memory_refresh(&envelope.input, &envelope.context.config, ctx),
@@ -290,7 +292,10 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
 fn pass_reply(reply: PluginReply) -> PluginReply {
     let failed = match &reply {
         PluginReply::Pass(report) => failed_passes(report),
-        PluginReply::Scan(_) | PluginReply::Refresh(_) | PluginReply::Error(_) => None,
+        PluginReply::Scan(_)
+        | PluginReply::Refresh(_)
+        | PluginReply::Data(_)
+        | PluginReply::Error(_) => None,
     };
     failed.unwrap_or(reply)
 }
@@ -365,4 +370,82 @@ fn message_of(err: &CliError) -> String {
         source = cause.source();
     }
     message
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupCloseRequest {
+    group: String,
+    session: scribe_core::SessionId,
+    provider: scribe_core::Provider,
+    #[serde(default)]
+    quote: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    evidence_sha256: Option<String>,
+}
+
+fn group_close(input: &Value, config: &Value, apply: bool) -> PluginReply {
+    use scribe_core::apps::group::{self, Command, GroupCloseInput, Outcome};
+    let input: GroupCloseRequest = match serde_json::from_value(input.clone()) {
+        Ok(value) => value,
+        Err(err) => return failure("invalid_input", format!("group close input: {err}"), false),
+    };
+    if apply && (input.summary.is_none() || input.evidence_sha256.is_none()) {
+        return failure(
+            "invalid_input",
+            "summary and evidence_sha256 are required for apply",
+            false,
+        );
+    }
+    let root = match store_root(config) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let transcripts = transcripts_dir(config).ok();
+    let codex = match codex_home(config) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let routine = Context::at(root, transcripts)
+        .with_codex_home(codex)
+        .with_provider(input.provider);
+    let command = if apply {
+        Command::Close(GroupCloseInput {
+            session: Some(input.session),
+            id: input.group,
+            quote: input.quote,
+            provider: input.provider,
+            summary: input.summary,
+            if_evidence: input.evidence_sha256,
+            notes: &routine,
+        })
+    } else {
+        Command::Evidence {
+            session: Some(input.session),
+            id: input.group,
+            quote: input.quote,
+            provider: input.provider,
+        }
+    };
+    match group::exec(&routine, command) {
+        Ok(Outcome::Evidence(mut value)) => {
+            value["crew"] = serde_json::json!(
+                config
+                    .get("group_summary_crew")
+                    .and_then(Value::as_str)
+                    .unwrap_or("haiku")
+            );
+            PluginReply::Data(value)
+        }
+        Ok(Outcome::Written(value)) => {
+            PluginReply::Data(serde_json::json!({"group": value.group, "changed": value.changed}))
+        }
+        Ok(_) => failure("internal_error", "unexpected group close result", false),
+        Err(err) => {
+            let err = CliError::from(err);
+            failure(err.code(), message_of(&err), false)
+        }
+    }
 }

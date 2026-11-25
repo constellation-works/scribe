@@ -44,7 +44,12 @@ fn the_routine_tools_are_not_agent_callable() {
     assert_eq!(manifest["metadata"]["name"].as_str(), Some("scribe"));
     for tool in tools(&manifest) {
         let name = field(tool, "name").expect("a tool has a name");
-        assert_eq!(field(tool, "execution_kind"), Some("mutating"), "{name}");
+        let kind = if name == "group-close-prepare" {
+            "read_only"
+        } else {
+            "mutating"
+        };
+        assert_eq!(field(tool, "execution_kind"), Some(kind), "{name}");
         assert_eq!(
             tool.get("agent_callable").and_then(Value::as_bool),
             Some(false),
@@ -116,7 +121,13 @@ fn no_tool_settles_a_proposal_or_changes_an_entry_by_id() {
         .collect();
     assert_eq!(
         names,
-        ["session-pass", "consistency-scan", "memory-refresh"]
+        [
+            "session-pass",
+            "consistency-scan",
+            "memory-refresh",
+            "group-close-prepare",
+            "group-close-apply"
+        ]
     );
     let empty = yaml("schemas/empty.input.json");
     assert_eq!(empty["additionalProperties"].as_bool(), Some(false));

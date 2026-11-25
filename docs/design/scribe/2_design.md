@@ -2022,10 +2022,10 @@ proposals'.
 |---|---|---|---|---|
 | Referent of "this"/"it" | `models.referent` | `claude-haiku-5-5` | `UserPromptSubmit` hook | 20 s |
 | Session pass (also `session rebuild` and `session catalog`, from S9/S14) | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job, the CLI | 120 s |
-| Group close summary (named `ask` for the removed `ask`, ORB-27911) | `models.ask` | `claude-sonnet-5-5` | `scribe group close` | 90 s |
+| Group close summary | Orbit `group_summary_crew` | `haiku` | `scribe-group-close` job | 120 s |
 | Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
 
-All four go through one `Models` port with one adapter, `ClaudeCliModels`:
+The remaining in-process calls go through the `Models` port and `ClaudeCliModels`:
 it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
@@ -6095,7 +6095,7 @@ so no kind is ever unreadable outside the binary.
 | `[user] name` | how prompts name the user | none: "the user" |
 | `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
 | `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
-| `[instructions] session`, `session_header`, `profile` (`annotation`, `ask`, `consistency`, `removal` are accepted, checked and ignored since ORB-27911) | the user's own guidance, nonempty after trimming and at most 4,000 characters each, with no control characters other than newlines and tabs, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract; an ignored key is checked the same way but reaches no model | empty |
+| `[instructions] session`, `session_header`, `profile`, `group_summary` (`annotation`, `ask`, `consistency`, `removal` are accepted, checked and ignored since ORB-27911) | the user's own guidance, nonempty after trimming and at most 4,000 characters each, with no control characters other than newlines and tabs, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract; an ignored key is checked the same way but reaches no model | empty |
 | `[models] provider`, `session`, `annotation`, `ask`, `consistency`, `profile` | which model each call uses (timeouts are fixed in code, as today) | today's (Claude Code: `claude-sonnet-5-5` for `ask`, `claude-haiku-5-5` for the rest; Codex: `gpt-6-luna` for every call); `profile`: `claude-sonnet-5-5` under Claude Code, `gpt-6-luna` under Codex (the approved Luna default) |
 | `[sessions] inactive_after_days`, cadence keys | as today | as today |
 
@@ -6658,7 +6658,7 @@ scribe group open --title 'Release review' --kind review --project scribe \
   --related repo:scribe --quote 'open a release review'
 scribe group join <id> --as editor --role reviewer --author aide
 scribe search 'release checklist' --group <id> --kind message
-scribe group close <id>
+scribe group close <id> --summary '<text>'
 scribe group show <id> --json
 scribe group leave
 ```
@@ -6841,8 +6841,7 @@ clears the derived summary. A closed group stays closed.
 
 **Closing.** `group close <id>` checks the caller against the recorded opening
 session, or the newest transcript of the seat whose chain contains the opener
-(the seat's current holder after a clear or `--replace`), and its local
-provider transcript, an accident guard against closing from the wrong session.
+(the seat's current holder after a clear or `--replace`).
 An opener that holds no seat can be closed only by the opening session itself,
 and a caller that is not authorized is refused even on a closed group.
 `--quote '<span>'` is the one exception: `group close <id> --quote` closes the
@@ -6858,18 +6857,12 @@ first check and again before the commit, so a slug reused after a close or a
 concurrent reopen cannot apply an old request to the replacement group. The
 user's explicit ask satisfies the accident guard. The caller
 takes no seat, and the success audit names the consenting message id, as `open`
-does. Without a quote the seat rule above applies unchanged. It sends up to 16
-recent active handoffs and 32 recent stored user turns from the members, with
-each source clipped, to the configured ask model for one call with a 90-second
-budget. The summary names decisions,
-completed work and open work supported by those sources. Scribe appends the
-group's related references for work missing from the handoffs. Before writing,
-it checks that the evidence still matches and redacts the summary. The closing
+does. Without a quote the seat rule above applies unchanged. `group evidence` reads up to 16 recent active handoffs and 32 recent stored user turns, clipped per source, and returns a digest without an audit or write lock. The closer drafts a summary and supplies it with `--summary` (or `--summary -` on stdin), or explicitly selects `--no-summary`. `--if-evidence` checks the digest in the close transaction. The summary is redacted and must be 1–4,000 characters before and after redaction; related references are appended. Orbit's `scribe-group-close` job can draft the summary through its configurable `group_summary_crew` (default `haiku`); optional `[instructions] group_summary` guidance is carried to that activity. The closing
 timestamp, summary and success audit commit together. If store cleanup fails
 after that commit, the CLI reports the cleanup error and the committed success
 audit remains the sole audit for the attempt. A refusal or transaction failure
 leaves the group unchanged and records a failure audit. An already closed
-group returns its current record without another model call.
+group returns its current record unchanged.
 
 **Reading.** `group show <id>` and `group list --json` include related
 references, seat names and roles, transcript ids in join order, the newest
