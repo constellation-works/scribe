@@ -6083,7 +6083,7 @@ so no kind is ever unreadable outside the binary.
 | `[user] name` | how prompts name the user | none: "the user" |
 | `[tags.<name>]` `description`, `aliases`, `stale_after_days`, `action`, `require_quote`, `ask_first` | a tag's settings, as today | `preference` and `standard` as in §15.2 |
 | `[tags.<name>.capture]` `from`, `route`, `triggers`, `criteria`, `not`, `max_open` | what a catcher catches and what a catch becomes | as in §15.2; a new tag captures nothing until it has triggers |
-| `[instructions] session`, `annotation` (`ask` is accepted, checked and ignored since ORB-27911) | the user's own guidance, at most 1,000 characters each, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract | empty |
+| `[instructions] session`, `session_header`, `profile` (`annotation`, `ask`, `consistency`, `removal` are accepted, checked and ignored since ORB-27911) | the user's own guidance, nonempty after trimming and at most 4,000 characters each, with no control characters other than newlines and tabs, added to that prompt in a delimited "the user's instructions" block placed **before** the fixed output contract; an ignored key is checked the same way but reaches no model | empty |
 | `[models] provider`, `session`, `annotation`, `ask`, `consistency`, `profile` | which model each call uses (timeouts are fixed in code, as today) | today's (Claude Code: `claude-sonnet-5-5` for `ask`, `claude-haiku-5-5` for the rest; Codex: `gpt-6-luna` for every call); `profile`: `claude-sonnet-5-5` under Claude Code, `gpt-6-luna` under Codex (the approved Luna default) |
 | `[sessions] inactive_after_days`, cadence keys | as today | as today |
 
