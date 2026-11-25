@@ -181,8 +181,9 @@ pub(crate) fn run<E: PortError>(
     Ok(Outcome::Written(Box::new(proposal), changed))
 }
 
-/// The id of the proposal `input` resolves to, or `None` when it does
-/// not: the audit subject's target, which [`Command::subject`] names before the command runs.
+/// The id of the proposal `input` resolves to, or `None` when it does not: the
+/// audit subject's target, which [`Command::subject`] names before the command
+/// runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
     verbs::ProposalVerbs::resolve_proposal(ctx.store(), input)

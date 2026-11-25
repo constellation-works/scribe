@@ -321,8 +321,9 @@ pub(crate) fn run<E: PortError>(
     })))
 }
 
-/// The group `id` (an id, prefix or slug) resolves to, or `None` when it
-/// does not: the audit subject's target, which [`Command::subject`] names before the command runs.
+/// The group `id` (an id, prefix or slug) resolves to, or `None` when it does
+/// not: the audit subject's target, which [`Command::subject`] names before the
+/// command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, id: &str) -> Option<String> {
     ctx.store().read().groups().get(id).ok().map(|g| g.id)

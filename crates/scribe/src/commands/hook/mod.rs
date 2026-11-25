@@ -34,7 +34,7 @@ mod user_prompt_submit;
 use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, Subcommand};
-use scribe_core::apps::hook::{Event, Outcome, exec};
+use scribe_core::apps::hook::{Event, HookEvent, Outcome, exec};
 use scribe_core::composition::Context;
 
 pub(super) const HOOK_EXAMPLES: &str = "\
@@ -155,10 +155,10 @@ pub(super) fn run(command: HookCommand, ctx: &Context) -> Result<Output, CliErro
         |provider, id: &_, path: &_| group_add::read_past(&ctx.with_provider(provider), id, path);
     let event = if ctx.provider() == scribe_core::Provider::Codex {
         let event = match command {
-            HookCommand::SessionStart(_) => "SessionStart",
-            HookCommand::UserPromptSubmit(_) => "UserPromptSubmit",
-            HookCommand::Stop(_) => "Stop",
-            HookCommand::SessionEnd(_) => "SessionEnd",
+            HookCommand::SessionStart(_) => HookEvent::SessionStart,
+            HookCommand::UserPromptSubmit(_) => HookEvent::UserPromptSubmit,
+            HookCommand::Stop(_) => HookEvent::Stop,
+            HookCommand::SessionEnd(_) => HookEvent::SessionEnd,
         };
         Event::Codex {
             event,

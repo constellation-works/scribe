@@ -2027,7 +2027,7 @@ a real `claude -p` run. Why the CLI rather than an HTTP client:
 [4_decisions.md](./4_decisions.md#models-are-called-through-the-claude-cli).
 Tests use a fake `Models` implementation; no test calls a model.
 
-As built (S3), in `crates/scribe/src/models.rs`: the argv is exactly
+As built (S3), now in `crates/scribe-core/src/providers/cli.rs`: the argv is exactly
 `-p --safe-mode --tools "" --model <id> --output-format json --json-schema
 <schema>` (`--tools ""` is one empty argument); the environment is `PATH`,
 `HOME`, `LANG`, then each name in `[models] credentials` that is set, and

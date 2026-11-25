@@ -280,8 +280,9 @@ pub(crate) fn run<E: PortError>(
     Ok(Outcome::Written(Box::new(written)))
 }
 
-/// The id of the entry `input` resolves to, or `None` when it does not:
-/// the audit subject's target, which [`Command::subject`] names before the command runs.
+/// The id of the entry `input` resolves to, or `None` when it does not: the
+/// audit subject's target, which [`Command::subject`] names before the command
+/// runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
     resolve_entry(ctx.store(), input)

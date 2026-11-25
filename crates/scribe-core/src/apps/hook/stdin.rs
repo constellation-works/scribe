@@ -37,12 +37,11 @@ pub enum Event<'i> {
     Stop(Stdin),
     /// `hook session-end`.
     SessionEnd(Stdin),
-    /// Any of the four under Codex: `event` is the hook event name the
-    /// payload must carry.
+    /// Any of the four under Codex: `event` is the hook event the payload
+    /// must name.
     Codex {
-        /// The hook event (`SessionStart`, `UserPromptSubmit`, `Stop` or
-        /// `SessionEnd`).
-        event: &'static str,
+        /// The hook event.
+        event: HookEvent,
         /// The stdin.
         input: Stdin,
         /// Reads a named session's past transcript.
@@ -50,31 +49,60 @@ pub enum Event<'i> {
     },
 }
 
+/// One of the four provider lifecycle hook events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookEvent {
+    /// `SessionStart`.
+    SessionStart,
+    /// `UserPromptSubmit`.
+    UserPromptSubmit,
+    /// `Stop`.
+    Stop,
+    /// `SessionEnd`.
+    SessionEnd,
+}
+
+impl HookEvent {
+    /// The event's name, as a payload's `hook_event_name` spells it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SessionStart => "SessionStart",
+            Self::UserPromptSubmit => "UserPromptSubmit",
+            Self::Stop => "Stop",
+            Self::SessionEnd => "SessionEnd",
+        }
+    }
+
+    /// The hook verb's command path in the audit log.
+    const fn command(self) -> &'static str {
+        match self {
+            Self::SessionStart => "hook session-start",
+            Self::UserPromptSubmit => "hook user-prompt-submit",
+            Self::Stop => "hook stop",
+            Self::SessionEnd => "hook session-end",
+        }
+    }
+}
+
 impl Event<'_> {
     /// What the audit log records for this hook: every hook is audited,
     /// under its command path, whichever provider runs it. Each reports its
     /// writes and refusals; a silent read has no audit line. `Stop` may call
-    /// a model, so it commits stepwise.
+    /// a model, so it commits stepwise. Exhaustive, so a new event cannot
+    /// compile without deciding (STD-02 R27).
     #[must_use]
     pub fn audit(&self) -> Option<AuditMeta> {
         let event = match self {
-            Self::SessionStart(_) => "SessionStart",
-            Self::UserPromptSubmit { .. } => "UserPromptSubmit",
-            Self::Stop(_) => "Stop",
-            Self::SessionEnd(_) => "SessionEnd",
-            Self::Codex { event, .. } => event,
-        };
-        let command = match event {
-            "SessionStart" => "hook session-start",
-            "UserPromptSubmit" => "hook user-prompt-submit",
-            "Stop" => "hook stop",
-            "SessionEnd" => "hook session-end",
-            // No hook verb names another event.
-            _ => return None,
+            Self::SessionStart(_) => HookEvent::SessionStart,
+            Self::UserPromptSubmit { .. } => HookEvent::UserPromptSubmit,
+            Self::Stop(_) => HookEvent::Stop,
+            Self::SessionEnd(_) => HookEvent::SessionEnd,
+            Self::Codex { event, .. } => *event,
         };
         Some(AuditMeta {
-            command,
-            stepwise: event == "Stop",
+            command: event.command(),
+            stepwise: event == HookEvent::Stop,
         })
     }
 
@@ -145,7 +173,7 @@ pub(super) fn run_event(ctx: &Context, event: Event<'_>) -> Result<Outcome, Comm
             event,
             input,
             read_past,
-        } => codex(ctx, event, &input?, read_past),
+        } => codex(ctx, event.name(), &input?, read_past),
     }
 }
 

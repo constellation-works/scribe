@@ -1,6 +1,6 @@
 # Command guide
 
-The shipped skill tells agents how to use these commands. When a change here alters what an agent may or must do (a refusal, fallback, flag, limit, or an id or transcript rule), the change is not finished until the skill states the new rule.
+The shipped skill tells agents how to use these commands. Their refusals, fallbacks and limits are decided in the apps they call (`crates/scribe-core/src/apps/<app>/`), so this rule holds for a change there too. When a change alters what an agent may or must do (a refusal, fallback, flag, limit, or an id or transcript rule), the change is not finished until the skill states the new rule.
 
 Run these from the repository root, in order:
 

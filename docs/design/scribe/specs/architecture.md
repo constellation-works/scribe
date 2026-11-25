@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: architecture — four crates (scribe, scribe-core, scribe-store, scribe-tools), apps with one exec each, runtime and composition in core, repositories per record, record shapes as store contracts, tools that keep each subject whole (transcript finding, reading and parsing), and the migration from the domain/store/core/CLI split"
-last_validated: 2026-11-24
+last_validated: 2026-11-25
 ---
 
 # Spec: Architecture
@@ -18,6 +18,15 @@ replaces the layer model in `ARCHITECTURE.md` and supersedes the four-crate
 decision of ORB-27707; ORB-27921 carries the migration. Rationale and
 Daniel's words are in
 [4_decisions.md](../4_decisions.md#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools).
+
+Amended on 2026-11-25 (ORB-27921 step 6) to describe the tree as built. Each
+change is a departure the captain accepted during the migration, and each
+is listed under [Amendments](#amendments). The four invariants this spec
+sends back to Daniel are unchanged: the crates, one repository per record,
+contracts hold shapes only, and the tools' limits. The placement tables
+under [Where each current file goes](#where-each-current-file-goes) describe
+the tree at `763052c`. They are kept as the migration's plan, with the
+amended rows marked.
 
 ## Why This Exists
 
@@ -52,13 +61,15 @@ scribe  ->  scribe-core  ->  scribe-store
 | `scribe` (binary) | Argument declarations, the mapping from arguments to an app command, rendering, exit codes. The only stdout, stderr and terminal access. | `scribe-core` | `rusqlite`, `scribe-store`, `scribe-tools` |
 | `scribe-core` | The apps, the runtime they share, and composition. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts`). The only crate that touches the data root. | none | `clap`, `tracing-subscriber`, any terminal crate |
-| `scribe-tools` | The functions that hooks and activities need, each subject whole in one place: finding, reading and parsing transcripts, window building, marker and payload parsing. It has its own `fs` module and uses `scribe-store` as needed. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `std::net`, `std::process`, `std::env` |
+| `scribe-tools` | The functions that hooks and activities need, each subject whole in one place: finding, reading and parsing transcripts, window building, marker and payload parsing, project lookup. It has its own `fs` module and uses `scribe-store` as needed. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `std::net`, `std::process`, `std::env` |
 
-`scribe-domain` is deleted. Its contents go to three places by kind
+`scribe-domain` is deleted. Its contents went to three places by kind
 ([Where each current file goes](#where-each-current-file-goes)).
 
-The binary names only `scribe-core`. The core re-exports the record shapes it
-returns as `scribe_core::contracts`, so rendering needs no second dependency.
+The binary names only `scribe-core`. The core re-exports the record shapes
+it returns at its root (`scribe_core::Entry`, `scribe_core::SessionId`, …),
+and the moved modules at the paths they had in it (`scribe_core::handoff`,
+`scribe_core::capture`, …). Rendering needs no second dependency.
 
 ## `scribe` (binary)
 
@@ -82,12 +93,14 @@ Invariants:
 - No handler opens the store, resolves a path, reads a transcript, reads an
   environment variable or decides anything about a record. If a handler needs
   an `if` about a record's state, that branch belongs in the app.
-- `app.rs`, `models.rs`, `models/`, `commands/ports.rs` and
-  `audit_middleware.rs` leave the binary (see [Composition](#composition) and
-  [Runtime](#runtime)).
-- Hook payload parsing (`commands/hook/payload.rs`) moves to `scribe-tools`;
-  project resolution for a hook (`commands/hook/project.rs`) moves to the
-  `hook` app.
+- Composition, the model adapters, the host ports and the audit guard are
+  in the core (see [Composition](#composition), [Providers](#providers-interim)
+  and [Runtime](#runtime)).
+- Hook payload parsing is `scribe-tools/src/payload.rs`. Project resolution
+  is `scribe-tools/src/project.rs`: it reads git metadata from disk, so it
+  is a tool and not part of the `hook` app.
+- The binary declares no audit. Each app declares its own (see
+  [Apps](#apps)).
 - Every top-level command maps to exactly one app:
 
 | Command | App |
@@ -106,45 +119,59 @@ Invariants:
 | `init`, `store`, `export`, `plugin` | `admin` |
 
 A `plugin` routine tool (`session-pass`, `consistency-scan`,
-`memory-refresh`) is dispatched by `admin` to the app that owns the work; it
-has no flow of its own.
+`memory-refresh`) has no flow of its own. The binary's `plugin` handler
+resolves the envelope's root (`Context::at`) and calls the command handler
+that owns the work, which calls the session, consistency or memory app's
+`exec`. `admin` holds no plugin command.
 
 ## `scribe-core`
 
 ```
-lib.rs               pub mod apps; pub use composition::Env; pub use store contracts
+lib.rs               pub mod apps, composition, providers; the store's shapes and the moved modules re-exported
 apps/
   <app>/
-    mod.rs           Command, Outcome, Error, exec: dispatch only
+    mod.rs           Command (with audit and subject), Outcome, Error, exec, run: dispatch only
     <flow>.rs        one file per command or hook event
     rules.rs         this app's pure rules (rules/ when it outgrows one file)
+    verbs.rs         the app's private store verbs
 runtime/
-  mod.rs             Runtime, Ctx
-  host.rs            the real clock; the transcript port's implementation is in scribe-tools
+  mod.rs             Ctx, the port traits, RunLimits
+  host/              the ports implemented on Context: the clock, transcripts, the redactor
   resolve.rs         id and session resolution
-  errors.rs          Error, read and write error mapping
+  errors.rs          CommandError, read and write error mapping
   audit.rs           the audit guard around a mutating command
-composition.rs       Env, roots, config, store, redactor
+composition.rs       Env, Context: roots, config, store, redactor
 config.rs            config.toml shapes and parsing
-providers/           interim: the Models port, its shapes and adapters
+config/voice.rs      the prompt half of voice
+providers/           interim: the Models port, its shapes (models.rs) and adapters (cli.rs, cli/)
 ```
 
 ### Apps
 
 - An app is one subject a user names on the command line. Its public surface
-  is exactly `Command`, `Outcome`, `Error` and
+  is `Command`, `Outcome`, `Error` and
 
   ```rust
-  pub fn exec(env: &Env, command: Command) -> Result<Outcome, Error>
+  pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError>
   ```
 
-  `exec` starts the runtime, runs the command inside the audit guard when it
-  mutates, and returns. It contains no flow.
-- Under it, each app has `pub(crate) fn run(ctx: &Ctx<'_>, command: Command)`,
-  which is `exec` without the runtime start. Tests and other apps call `run`.
-  The crate's `test-support` feature exposes `run` and `Ctx` to the binary's
-  integration tests, as the existing feature does for the store's test
-  helpers.
+  `Context` is the composed host (see [Composition](#composition)). The
+  binary builds one per process and passes it to every `exec`.
+  `CommandError` is the one error every app's `exec` returns. `exec` runs the
+  command inside the audit guard when it mutates, and returns. It contains
+  no flow.
+- Each app declares its audit beside its `Command`:
+  `Command::audit(&self) -> Option<AuditMeta>` gives the command path and
+  whether it commits stepwise, or `None` for a read.
+  `Command::subject(&self, &Context) -> AuditSubject` gives the record and
+  author, resolved before the command runs. Both are exhaustive. `exec`
+  builds the `Audit` from them; the binary declares none. The hook app
+  declares on its `Event`.
+- Under it, each app has `pub(crate) fn run(ctx: &Ctx<'_, E>, command: Command)`,
+  which is `exec` without the audit guard. Other apps call `run`. Tests
+  reach a flow through `exec`, or through the entry points the crate's
+  `test-support` feature exposes (`exec_unaudited`, `hook::group_add`, the
+  `*Verbs` traits), as the store's `test-support` does for its helpers.
 - A flow has three steps, in this order:
   1. **load** what it needs from one `store.read()` snapshot into a plain
      input value;
@@ -155,16 +182,17 @@ providers/           interim: the Models port, its shapes and adapters
   A flow never interleaves reads and writes outside one write closure, and
   never holds a snapshot across a write.
 - The `*Verbs` extension traits on `Store` (`EntryVerbs`, `GroupVerbs`,
-  `SessionVerbs`, …) stop being exported. Each becomes private to its app or
-  is folded into the app's flows. Nothing outside `apps/<app>/` calls them.
+  `SessionVerbs`, …) are private to their app (`apps/<app>/verbs.rs`). They
+  are exported only under `test-support`, for tests. No production code
+  outside `apps/<app>/` calls them.
 - **An app may call another app only through that app's `run` or a function
   its `mod.rs` re-exports.** It never imports another app's `rules` or a flow
   file. App imports form a directed acyclic order, held in the guard script.
-  Starting order, lowest first; the implementer confirms it against the
-  imports and records the final order in `ARCHITECTURE.md`:
+  The order the imports confirmed, lowest first, as `ARCHITECTURE.md` and
+  the guard record it:
 
   ```
-  tag, mark  <  entry, proposal, memory  <  session, group  <  search, brief, consistency  <  hook, admin
+  tag < mark < memory < entry < proposal < session < group < search < brief < consistency < hook < admin
   ```
 - There is no `apps/common`, `apps/shared` or `apps/util`. Code two apps need
   goes to the lower of the two in the order above, to `runtime` if it is about
@@ -176,15 +204,15 @@ providers/           interim: the Models port, its shapes and adapters
 `runtime` is what every app runs against. It is `pub(crate)`: the binary never
 sees it.
 
-- `Runtime::start(env)` calls `composition` and owns the result: the store,
-  the config, the redactor, and the real clock and transcript ports.
+- Composition's `Context` owns the store, the config, the redactor and the
+  host roots. An app's `exec` lends a flow the `Ctx` built from it.
 - `Ctx` is the borrowed view a flow receives: `store`, `config`, `clock`,
   `transcripts`, `redaction`. The port traits (`Clock`, `Transcripts`,
-  `Redaction`, `AuditNotes`) stay as they are in `cases/ctx.rs`, so the
-  existing fakes keep working.
-- The real implementations that the binary supplies today from
-  `commands/ports.rs` leave it: the clock to `runtime/host.rs`, and transcript
-  discovery and reads to `scribe-tools`, beside the parsing they feed.
+  `Redaction`, `AuditNotes`) are in `runtime/mod.rs`, so test fakes
+  implement them.
+- `runtime/host/` implements the ports on `Context`: the clock, the provider
+  transcripts on this host and the redactor. Transcript discovery and reads
+  are `scribe-tools/src/transcript/`, beside the parsing they feed.
 - `runtime` holds four subjects and no others: the context, id resolution,
   error mapping and the audit guard. A function belongs here only if it is
   about one of them. "Two apps use it" is not a reason.
@@ -196,10 +224,11 @@ sees it.
 - `Env::from_process()` captures the environment variables scribe reads
   (`SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
   `CLAUDE_CODE_ENTRYPOINT`, the redaction variables). `main.rs` calls it once
-  and passes the value down. Tests build an `Env` by hand, as
-  `tests/app.rs` does with `AppEnv` today.
+  and passes the value down. Tests build an `Env` by hand.
 - Composition picks the data directory, reads `config.toml`, opens the
-  `Store`, and builds the redactor.
+  `Store`, and builds the redactor, into one `Context` (`Context::resolve`,
+  or `Context::at` for a root the caller names, as the plugin's envelope
+  does).
 - Outside `composition.rs`, nothing in the core reads an environment variable
   or discovers a path. Outside `composition.rs` and `providers/`, nothing in
   the core touches a file: it reaches the data root through the store and
@@ -215,11 +244,12 @@ is not decided (open-item-19) and this spec does not decide it.
 Until then:
 
 - `core/providers/` holds everything about calling a model: the `Models`
-  port, the request and answer shapes now in `providers/models.rs`,
-  and the adapters now in `crates/scribe/src/models.rs` and `models/codex.rs`
-  with their process supervision.
+  port (`providers/mod.rs`), the request and answer shapes
+  (`providers/models.rs`), and the CLI adapters with their process
+  supervision (`providers/cli.rs`, `providers/cli/`).
 - Only `providers/` spawns a process. Only the five callers' flows import
-  `providers`; the guard script lists them by path.
+  `providers`, with their apps' `mod.rs` and `runtime/errors.rs`; the guard
+  script lists them by path.
 - When a caller's job exists, its import goes. When the last one goes, the
   folder is deleted with the `[models]` config section. The credential names
   in `[models] credentials` also select what redaction masks: they move to
@@ -228,13 +258,17 @@ Until then:
 ## `scribe-store`
 
 ```
-lib.rs               Store::open, read() -> Snapshot, write(|tx| …)
+lib.rs               Store::open, read() -> Snapshot, write(|tx| …); the public contract modules
 db/                  the connection, schema and migrations, row access per table;
-                     fsio, locks, atomic writes, the codec, the archive import
+                     fsio, locks, atomic writes, the codec, the archive import, the log check
 repository/          one per record: entries, sessions, messages, proposals, tags,
                      groups, memory, marks, pickups, audit
 contracts/           record shapes
+error.rs             the store's Error and refusal codes
+digest.rs            the content hashes records carry
 redact.rs            the Redactor applied at the repository boundary
+fixtures.rs          shared test records, behind test-support
+seed.rs, testing.rs  test support, behind test-support
 ```
 
 Invariants:
@@ -249,8 +283,22 @@ Invariants:
 - **The store holds no rule and no use case.** No function named after a
   command (`settle_pass`, `close_group`), no validation beyond what a
   contract type enforces on itself, and no type named after a use case.
-  `CloseGroupOutcome`, `PassWrite` and `PassWritten` in today's `lib.rs` move
-  to the app whose flow produces them, or become a repository's plain result.
+  `CloseGroupOutcome`, `PassWrite` and `PassWritten` are in the apps whose
+  flows produce them. Four refusals stay in the store, each one a check
+  that every writer, including the store's own, must make at the point of
+  the write:
+  - `forgotten_refusal` (`error.rs`): a forgotten session is a tombstone,
+    and every writer that touches a session refuses it under the write
+    lock.
+  - `refuse_file_store` (`db/documents.rs`): a file store whose records
+    never moved into `scribe.db` is refused as a format.
+  - `check_log` (`db/log.rs`): the codec runs it on every session record it
+    reads, and the session writer before a write. A malformed log is
+    `store_corrupt`.
+  - `export_target_exists` (`repository/sessions.rs::prepare_target`):
+    `export` refuses a target that is not an empty directory. The check is
+    the precondition of the store's own filesystem write, and only the
+    store touches the filesystem.
 - **`contracts/` holds shapes only.** Allowed: type definitions, a
   constructor or parser that enforces the type's own invariant (`EntryId`
   accepts `e-<n>`, `TagName` its character set), serde and `Display`
@@ -262,8 +310,8 @@ Invariants:
   `rusqlite`. `db/fsio` imports nothing else from the store.
 - `Store` stays one concrete type. A trait is added when a second backend
   exists.
-- Project scaffolding (`init.rs`) is not persistence. It moves to the `admin`
-  app, which writes through a repository or `db/fsio` like any other flow.
+- Project scaffolding is not persistence. It is the `admin` app's
+  (`apps/admin/init.rs`).
 
 ## `scribe-tools`
 
@@ -276,11 +324,14 @@ spread across multiple places".
 
 ```
 fs.rs                            the crate's only file access
+host.rs                          host-file reads the transcript and project tools share
 transcript/                      discovery, reads, claude.rs and codex.rs parsing
 window.rs                        the turns a pass or a capture looks at
-markers.rs                       `#scribe` markers, settling lines, `/scribe` commands
+markers.rs, markers/control.rs   `#scribe` markers, settling lines, `/scribe` commands
+origin.rs                        whether a prompt was typed by the user
 payload.rs                       hook payloads -> typed events
-text.rs                          tokens, normalization, verbatim comparison
+project.rs                       the project a working directory belongs to
+text/                            tokens, normalization, verbatim comparison, claims, triggers
 ```
 
 Invariants:
@@ -323,9 +374,10 @@ request.
 
 | Module | Shapes to `store/contracts/` | Functions to |
 |---|---|---|
-| `record`, `origin`, `provider` | all | — |
+| `record`, `provider` | all | — |
+| `origin` | — | amended: `tools/origin.rs` (it classifies a prompt's text) |
 | `entry`, `entry/records`, `action`, `handoff` | `Entry`, ids, statuses, patches, filters, `Mode` | `apps/entry/rules` |
-| `session`, `activity`, `control` | `SessionRecord`, ids, `ControlState`, activity shapes | `apps/session/rules`; `control::parse` to `tools/markers` |
+| `session`, `activity`, `control` | `SessionRecord`, ids, `ControlState`, activity shapes | `apps/session/rules`; `control::parse` to `tools/markers`; amended: `check_log` to `store/db/log.rs` |
 | `proposal`, `pass/candidates` | `Proposal`, ids, states, `EntryCandidate` | `apps/proposal/rules` |
 | `tag` | `TagName` and tag shapes | `apps/tag/rules` |
 | `group` | group and seat shapes | `apps/group/rules` |
@@ -336,7 +388,7 @@ request.
 | `capture` | — | marker scanning to `tools/markers`; settling rules to `apps/hook/rules` |
 | `annotation` | mark shapes | `apps/mark/rules` |
 | `pass`, `pass/repair`, `instruction` | — | `apps/session/rules/` (window building to `tools/window`) |
-| `voice` | — | `tools/markers` if it only classifies text, else `apps/hook/rules` |
+| `voice` | — | amended: the prompt half to `core/config/voice.rs`, the entry half to `apps/entry/rules/voice.rs` |
 | `brief` | — | `apps/brief/rules` |
 | `consistency` | — | `apps/consistency/rules` |
 | `search` | — | `apps/search/rules`; the tokenizer to `tools/text` |
@@ -345,9 +397,9 @@ request.
 | `checks/candidates` | — | `apps/proposal/rules` |
 | `models` | — | `core/providers/` |
 | `config` | — | `core/config.rs` |
-| `error` | — | `core/runtime/errors.rs` |
+| `error` | — | amended: `store/error.rs` (the store's `Error`, which every store call returns); the apps' `CommandError` is `core/runtime/errors.rs` |
 | `redact` | — | `store/redact.rs` |
-| `fixtures` | — | `store`'s `test-support` feature |
+| `fixtures` | — | `store/fixtures.rs`, behind `test-support` |
 
 ### `scribe-core/src/cases/`
 
@@ -397,7 +449,7 @@ becomes `mod.rs`; the rest become flow files named for their command
 ## Guards
 
 `scripts/check-dependency-direction.sh` enforces what a crate edge cannot.
-The ring map for `scribe-domain` is removed with the crate. The script then
+The ring map for `scribe-domain` was removed with the crate. The script
 holds:
 
 - the banned crates per crate, from the table above (normal dependencies
@@ -408,12 +460,20 @@ holds:
 - in the core, only `composition.rs` names `std::env`, only `composition.rs`
   and `providers/` name `std::fs`, and only `providers/` names
   `std::process`;
-- only the five listed flows import `providers`;
+- only the five listed flows import `providers`, with their apps' `mod.rs`
+  (whose `Command` carries the adapter) and `runtime/errors.rs` (whose
+  `CommandError` carries the model failure); `providers/` imports no app
+  and no runtime;
 - the binary names no `scribe_store` and no `scribe_tools` path;
 - in `scribe-tools`, only `fs.rs` names `std::fs`, nothing names
   `scribe_core`, and nothing calls `Store::write`;
-- in the store: `contracts/` imports no `db` or `repository`; only `db/` uses
-  `rusqlite`; no `fn check_` under `contracts/`.
+- in `scribe-tools`, nothing reads the clock or draws randomness;
+- in the store: `contracts/` imports no `db` or `repository`, reads no
+  clock and has no `fn check_`; only `db/` uses `rusqlite`; `db/fsio.rs`
+  names nothing of the store but its error; the store reads no environment
+  variable and discovers no path;
+- the deleted paths (`scribe-domain`, `cases/`, the binary's moved files)
+  stay deleted.
 
 ## Migration
 
@@ -446,6 +506,46 @@ Daniel's approval (his rule of 2026-11-23); guards go in the script.
 Steps 2 and 3 can run before ORB-27911 finishes; they touch the same files as
 its step 2 (the annotation and consistency model judgements), so the captain
 sequences them. Step 5 is easier after ORB-27911, since less code moves.
+
+## Amendments
+
+Recorded on 2026-11-25 at the end of ORB-27921. Each is a departure the
+captain accepted on the pull request named, and none touches the four
+invariants.
+
+- **The app contract is `exec(&Context, Command) -> Result<Outcome,
+  CommandError>`**, not `exec(&Env, …) -> Result<…, Error>` (#434, #435).
+  The binary holds one composed `Context` per process, and every app
+  returns the core's `CommandError`. There is no `Runtime`: the `Context`
+  owns what `Runtime::start` was to own.
+- **Each app declares its audit beside its `Command`** (`Command::audit`,
+  `Command::subject`), and `exec` takes no `Audit` (#470, on Daniel's
+  direction). The plugin's routine `memory refresh` keeps its empty
+  subject through `Command::Refresh { routine }`.
+- **`run` stays `pub(crate)`.** Tests use `exec`, `exec_unaudited` and the
+  `test-support` entry points.
+- **The app order is a total order** (`tag < mark < memory < entry <
+  proposal < session < group < search < brief < consistency < hook <
+  admin`), as the imports set it (#425–#431).
+- **The store's error is `store/error.rs`**, not `core/runtime/errors.rs`
+  (#449). Every store call returns it, and the store sits below the core.
+- **`voice` is split** (#454): the prompt half is `core/config/voice.rs`,
+  the entry half `apps/entry/rules/voice.rs`.
+- **Four refusals stay in the store** (`forgotten_refusal`,
+  `refuse_file_store`, `check_log`, `export_target_exists`; #440, #444, #468,
+  #470), as listed under [`scribe-store`](#scribe-store).
+- **`origin` and project lookup are tools** (`tools/origin.rs`, #451;
+  `tools/project.rs`, #431, #433). The core re-exports `origin`.
+- **The core re-exports the store's shapes at its root and in modules at
+  their old paths**, not as `scribe_core::contracts` (#439–#469). Test
+  bodies moved unchanged against those paths.
+- **The plugin's routine tools are dispatched by the binary's handler**, not
+  by `admin` (#430, #434). It resolves the envelope's root with
+  `Context::at` and calls the owning command's handler.
+- **The `*Verbs` traits are exported under `test-support`** for tests, not
+  removed (#425–#431).
+- **`scribe-tools` bans `tempfile`** as well, and it, like the contracts,
+  reads no clock.
 
 ## Not decided here
 

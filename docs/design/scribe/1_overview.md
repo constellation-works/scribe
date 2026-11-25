@@ -202,20 +202,20 @@ can override.
 
 ## 5. At a glance
 
-| Concern | Where it will live | Slice |
+| Concern | Where it lives | Slice |
 |---------|--------------------|-------|
-| Entries, session records, proposals; the store | `crates/scribe-core/src/{entry,session,consistency}.rs`, `store/` | S1 |
-| `#scribe` parsing and capture | `crates/scribe-core/src/capture.rs`, `crates/scribe/src/commands/hook/` | S2, S3 |
-| `/scribe on` and session passes | `crates/scribe-core/src/{session,transcript}.rs`, `commands/hook/`, `commands/session.rs` | S4 |
-| Session links (`spawned_from`, `continues`) | `crates/scribe-core/src/{session,control}.rs`, `store/`, `commands/hook/scribe_command.rs`, `commands/session/` | ORB-23849 |
-| Consistency routine | `crates/scribe-core/src/consistency.rs`, `commands/consistency.rs` | S6 |
+| Entries, session records, proposals; the store | `crates/scribe-core/src/apps/{entry,session,proposal}/`, `crates/scribe-store/` | S1 |
+| `#scribe` parsing and capture | `crates/scribe-tools/src/markers.rs`, `crates/scribe-core/src/apps/hook/`, `crates/scribe/src/commands/hook/` | S2, S3 |
+| `/scribe on` and session passes | `crates/scribe-core/src/apps/{session,hook}/`, `crates/scribe-tools/src/transcript/`, `commands/session/` | S4 |
+| Session links (`spawned_from`, `continues`) | `crates/scribe-core/src/apps/session/rules/control.rs`, `apps/hook/scribe_command.rs`, `crates/scribe-store/`, `commands/session/` | ORB-23849 |
+| Consistency routine | `crates/scribe-core/src/apps/consistency/`, `commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
-| Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-core/src/{session,record,activity}.rs`, `store/` | S8 |
+| Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-store/src/contracts/{session,record}.rs`, `apps/session/rules/activity.rs`, `crates/scribe-store/` | S8 |
 | Segment-writing passes, `session rebuild` | `crates/scribe-core/src/apps/session/rules/pass.rs`, `commands/session/rebuild.rs` | S9 |
-| Deactivation routes | `crates/scribe-core/src/{activity,consistency}.rs`, `commands/session/activate.rs` | S10 |
-| `scribe search`, list filters, id prefixes | `crates/scribe-core/src/search.rs`, `commands/search.rs` | S11 |
-| Agent write verbs and the author guard | `commands/{entry,tag,proposal}.rs` | S12 |
+| Deactivation routes | `crates/scribe-core/src/apps/session/activity.rs`, `apps/consistency/`, `commands/session/activity.rs` | S10 |
+| `scribe search`, list filters, id prefixes | `crates/scribe-core/src/apps/search/`, `crates/scribe-store/src/repository/ids.rs`, `commands/search.rs` | S11 |
+| Agent write verbs and the author guard | `crates/scribe-core/src/apps/{entry,tag,proposal}/`, `commands/{entry,tag,proposal}.rs` | S12 |
 | The `scribe` skill | `skills/scribe/`, synced to `plugin/claude-code/skills/scribe/` | S13 |
 | `session catalog`, `transcript list/show` | `commands/session/catalog.rs`, `commands/transcript.rs` | S14 |
 

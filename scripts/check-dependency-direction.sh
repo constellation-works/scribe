@@ -15,8 +15,10 @@
 #      what a crate edge cannot express (std I/O, the environment, one
 #      module's mechanism inside a crate, the app order).
 #
-# The layer order is written down in ARCHITECTURE.md; change it and this
-# script in the same commit (STD-02 R6).
+# The crates, the app order and these guards are written down in
+# ARCHITECTURE.md, from the architecture spec's Guards section
+# (docs/design/scribe/specs/architecture.md); change them and this script in
+# the same commit (STD-02 R6).
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
@@ -92,7 +94,7 @@ for manifest in crates/*/Cargo.toml; do
     if [[ "$dep" == "$PREFIX" || "$dep" == "$PREFIX"-* ]]; then
       contains "$dep" "$ALLOWED" || err "$crate must not depend on internal crate $dep"
     elif contains "$dep" "$BANNED"; then
-      err "$crate must not depend on $dep (surface crate in the domain)"
+      err "$crate must not depend on $dep (banned for this crate)"
     fi
   done < <(declared_deps "$manifest")
 done
@@ -137,6 +139,8 @@ ban_std() {
 STORE=crates/scribe-store/src
 CORE=crates/scribe-core/src
 CLI=crates/scribe/src
+# Reading the clock: the contracts and the tools take a time as an argument.
+clock='(^|[^[:alnum:]_])(now_utc|now_local)\(|(OffsetDateTime|SystemTime|Instant|Utc|Local)::now([^[:alnum:]_]|$)'
 
 # The crate edges keep the use cases out of scribe-store, and rusqlite out
 # of every crate but the store. What they cannot keep out is std:
@@ -243,6 +247,10 @@ ban_std "$TOOLS/fs.rs" 'net|process' "scribe-tools/src/fs.rs: the tools spawn no
 ban "$TOOLS" 'std::env::|home_dir|current_dir\(\)' "scribe-tools must not read the environment or discover paths"
 ban "$TOOLS" 'scribe_core(::|[^[:alnum:]_]|$)' "scribe-tools must not name scribe_core: the core calls the tools"
 ban "$TOOLS" 'Store::write|\.write\([[:space:]]*\|' "scribe-tools must not write the store"
+# No clock and no randomness: a tool that needs the time takes it as an
+# argument.
+ban "$TOOLS" "$clock" "scribe-tools must not read the clock: take the time as an argument"
+ban "$TOOLS" '(^|[^[:alnum:]_])(rand|fastrand|getrandom|uuid)::' "scribe-tools must not draw randomness"
 
 # The model shapes must not import their callers.
 ban "$CORE/providers/models.rs" 'crate::(memory|group)(::|[^[:alnum:]_]|$)' "the model shapes must not import their callers"
@@ -261,24 +269,16 @@ if [[ -n "$port_grouped" ]]; then
   err "the model shapes must not import their callers"
 fi
 
-# Inside scribe-store: fsio is mechanism with no knowledge of records, and
-# the codec and audit record shapes do no I/O of their own (R4, R5).
-ban "$STORE/fsio.rs"        'crate::(entry|tag|session|proposal|record|config|verbatim)|super::' \
-                                                                 "store/fsio.rs is mechanism only; it must not know records or the store"
-for shape in codec:"converts bytes" audit:"is a record shape"; do
+# Inside scribe-store: the codec converts bytes and the audit repository
+# writes rows through db/; neither does file I/O of its own (R4, R5). fsio,
+# the mechanism, is held below to naming nothing of the store but its error.
+for shape in db/codec:"converts bytes" repository/audit:"writes its rows through db/"; do
   file="$STORE/${shape%%:*}.rs"
+  [[ -d "$STORE" && ! -f "$file" ]] && err "${file#crates/} is missing: update this guard with the file"
   ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
-  ban "$file" 'super::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" '(super|crate::db)::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
 done
-# SQLite is one store module's mechanism (2_design.md §15.7): every other
-# store module reaches scribe.db through it, and the crate policies keep
-# rusqlite out of every other crate. testing.rs is test support: it hands
-# the tests a connection.
-for path in "$STORE"/*; do
-  case "$(basename "$path")" in tests | db.rs | db | testing.rs) continue ;; esac
-  ban "$path" 'rusqlite' "scribe-store/${path#"$STORE"/} must not use rusqlite: scribe.db belongs to db.rs and db/"
-done
-# The domain receives resolved roots and configuration (R3).
+# The core and the store receive resolved roots and configuration (R3).
 # A child's working directory (`Command::current_dir(path)`, providers/) is
 # set, not discovered: only the no-argument `current_dir()` is a discovery.
 # In the core only composition.rs reads the environment or discovers a path.
@@ -294,13 +294,15 @@ done
 # Composition builds the context the apps run against; it imports no app.
 ban "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
-# ORB-27921 step 4: db/ holds the storage mechanism. Only db/ names
-# rusqlite (testing.rs, the test-support shim, hands tests a connection),
-# and db/fsio.rs, mechanism only, names nothing else of the store but its
-# error type.
+# ORB-27921 step 4: db/ holds the storage mechanism. SQLite is its
+# mechanism (2_design.md §15.7): only db/ names rusqlite (testing.rs, the
+# test-support shim, hands tests a connection), every other store module
+# reaches scribe.db through it, and the crate policies keep rusqlite out of
+# every other crate. db/fsio.rs, mechanism only, names nothing else of the
+# store but its error type.
 while IFS= read -r -d '' path; do
   case "$path" in "$STORE"/db/* | "$STORE"/testing.rs) continue ;; esac
-  ban "$path" '(^|[^[:alnum:]_])rusqlite::' "${path#crates/}: only scribe-store's db/ uses rusqlite"
+  ban "$path" '(^|[^[:alnum:]_])rusqlite([^[:alnum:]_]|$)' "${path#crates/}: only scribe-store's db/ uses rusqlite"
 done < <(find "$STORE" -name '*.rs' -not -path '*/tests/*' -print0)
 fsio_hits=$(grep -nE '(crate|super)::' "$STORE/db/fsio.rs" | grep -vE '^[0-9]+:[[:space:]]*//' | grep -v 'crate::error::' || true)
 if [[ -n "$fsio_hits" ]]; then
@@ -327,6 +329,8 @@ if [[ -n "$contracts_hits" ]]; then
 fi
 ban "$STORE/contracts" '(^|[^[:alnum:]_])fn[[:space:]]+check_' \
   "scribe-store/src/contracts: a contract decides nothing (no check_* function)"
+# A contract reads no clock: a time is a field, or an argument.
+ban "$STORE/contracts" "$clock" "scribe-store/src/contracts: a contract reads no clock"
 # Composition does not know about parsing, dispatch or rendering (R2).
 # The model adapters spawn supervised processes through providers/cli.rs's
 # supervisor in scribe-core, so process-group supervision, the cleared
