@@ -10,7 +10,6 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use scribe_core::apps::entry::{self, Command, Outcome, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{
     AuthorKind, AuthorName, EntryFilter, EntryId, EntryStatus, ItemState, Project, Related,
     TagName, Topic,
@@ -234,100 +233,17 @@ fn state_parser() -> impl TypedValueParser<Value = ItemState> {
     PossibleValuesParser::new(ItemState::NAMES).try_map(|s| s.parse::<ItemState>())
 }
 
-impl EntryCommand {
-    /// The entry and agent a write verb names, resolved before it runs, so a
-    /// refusal is attributable. `add` names its target only in its output.
-    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
-        match self {
-            Self::List(_) | Self::Show(_) => AuditSubject::default(),
-            Self::Add(args) => AuditSubject {
-                target: None,
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Update(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Retire(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Forget(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Pickup(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Answer(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Close(args) => AuditSubject {
-                target: resolved_entry(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-        }
-    }
-
-    /// Audit every write; list and show remain read-only.
-    /// See [`super::Command::audit`].
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::List(_) | Self::Show(_) => None,
-            Self::Add(_) => Some(AuditMeta {
-                command: "entry add",
-                stepwise: false,
-            }),
-            Self::Update(_) => Some(AuditMeta {
-                command: "entry update",
-                stepwise: false,
-            }),
-            Self::Retire(_) => Some(AuditMeta {
-                command: "entry retire",
-                stepwise: false,
-            }),
-            Self::Forget(_) => Some(AuditMeta {
-                command: "entry forget",
-                stepwise: false,
-            }),
-            Self::Pickup(_) => Some(AuditMeta {
-                command: "entry pickup",
-                stepwise: false,
-            }),
-            Self::Answer(_) => Some(AuditMeta {
-                command: "entry answer",
-                stepwise: false,
-            }),
-            Self::Close(_) => Some(AuditMeta {
-                command: "entry close",
-                stepwise: false,
-            }),
-        }
-    }
-}
-
-/// The id of the entry `input` resolves to, or `None` when it does not.
-fn resolved_entry(ctx: &Context, input: &str) -> Option<String> {
-    entry::resolved_id(ctx, input)
-}
-
 /// Run one `entry` verb.
-pub(super) fn run(
-    command: EntryCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: EntryCommand, ctx: &Context) -> Result<Output, CliError> {
     let command = match command {
         EntryCommand::List(args) => {
             let input = list_input(&args, ctx);
-            let outcome = exec(ctx, audit, Command::List(Box::new(input)))?;
+            let outcome = exec(ctx, Command::List(Box::new(input)))?;
             return Ok(output(outcome, false, Some(&args), ctx));
         }
         EntryCommand::Show(args) => {
             return Ok(output(
-                exec(ctx, audit, Command::Show(args.id))?,
+                exec(ctx, Command::Show(args.id))?,
                 args.window,
                 None,
                 ctx,
@@ -364,12 +280,7 @@ pub(super) fn run(
                 rejected,
                 provider: ctx.provider(),
             };
-            return Ok(output(
-                exec(ctx, audit, Command::Pickup(input))?,
-                false,
-                None,
-                ctx,
-            ));
+            return Ok(output(exec(ctx, Command::Pickup(input))?, false, None, ctx));
         }
         EntryCommand::Update(args) => Command::Update {
             id: args.id,
@@ -400,7 +311,7 @@ pub(super) fn run(
                 author,
                 instruction: instruction.case(ctx),
             };
-            return Ok(output(exec(ctx, audit, command)?, false, None, ctx));
+            return Ok(output(exec(ctx, command)?, false, None, ctx));
         }
         EntryCommand::Forget(args) => {
             let ForgetArgs {
@@ -415,7 +326,7 @@ pub(super) fn run(
                 confirm,
                 instruction: instruction.case(ctx),
             };
-            return Ok(output(exec(ctx, audit, command)?, false, None, ctx));
+            return Ok(output(exec(ctx, command)?, false, None, ctx));
         }
         EntryCommand::Answer(args) => Command::Answer {
             id: args.id,
@@ -431,7 +342,7 @@ pub(super) fn run(
             author: args.author,
         },
     };
-    Ok(output(exec(ctx, audit, command)?, false, None, ctx))
+    Ok(output(exec(ctx, command)?, false, None, ctx))
 }
 
 /// The output of `outcome`: `window` is `show --window`, and a list

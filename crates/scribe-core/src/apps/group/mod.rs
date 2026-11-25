@@ -32,7 +32,7 @@ use crate::group::{GroupAdded, GroupAddition, SeatStart};
 use crate::message::NewMessage;
 use crate::models::ModelError;
 use crate::runtime::audit::HookOutcome;
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::{Ctx, PortError, Unreadable, resolve};
 use crate::{Project, Provider, Redactor, Related, SessionId, Store, transcript};
@@ -68,6 +68,47 @@ pub enum Command<'i> {
     Show(String),
     /// `group list`.
     List,
+}
+
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        let command = match self {
+            Self::Open(_) => "group open",
+            Self::Join(_) => "group join",
+            Self::Leave { .. } => "group leave",
+            Self::Backfill { .. } => "group backfill",
+            Self::Close(_) => CLOSE_COMMAND,
+            Self::List | Self::Show(_) => return None,
+        };
+        Some(AuditMeta {
+            command,
+            stepwise: matches!(self, Self::Close(_)),
+        })
+    }
+
+    /// The record and agent this command names, resolved before it runs so
+    /// a refusal is attributable too. Exhaustive like [`Command::audit`].
+    #[must_use]
+    pub fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::Join(input) => AuditSubject {
+                author: Some(input.author.to_string()),
+                target: resolved_id(ctx, &input.id),
+            },
+            Self::Close(GroupCloseInput { id, .. }) | Self::Backfill { id, .. } => AuditSubject {
+                author: None,
+                target: resolved_id(ctx, id),
+            },
+            Self::Open(_) | Self::Leave { .. } | Self::List | Self::Show(_) => {
+                AuditSubject::default()
+            }
+        }
+    }
 }
 
 /// What a `group` command returns.
@@ -183,17 +224,14 @@ pub(crate) fn refusal(session: &SessionId, code: &'static str) -> HookOutcome {
     }
 }
 
-/// Run `command` against `ctx`, inside the audit guard when `audit` names
-/// one.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: the flow's own error, as it was before the app moved.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
@@ -284,8 +322,7 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The group `id` (an id, prefix or slug) resolves to, or `None` when it
-/// does not: the audit subject's target, which the binary names before the command
-/// runs.
+/// does not: the audit subject's target, which [`Command::subject`] names before the command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, id: &str) -> Option<String> {
     ctx.store().read().groups().get(id).ok().map(|g| g.id)

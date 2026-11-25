@@ -5,11 +5,10 @@ use super::{once, passed};
 use crate::error::CliError;
 use crate::output::Output;
 use clap::Args;
-use scribe_core::apps::session::{self as app, Command, RebuildInput, exec};
+use scribe_core::apps::session::{Command, RebuildInput, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuthorName, Config, Models, SessionId};
+use scribe_core::{AuthorName, Config, Models, SessionId};
 
-pub(in crate::commands) const COMMAND: &str = app::REBUILD_COMMAND;
 pub(super) const EXAMPLES: &str = "\
 Replaces the header and log only after every transcript window succeeds.
 Interrupted runs resume their private checkpoint; --confirm is required.
@@ -31,18 +30,13 @@ pub(crate) struct RebuildArgs {
     pub(crate) confirm: bool,
 }
 
-pub(super) fn run(
-    args: &RebuildArgs,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
-    run_audited(args, audit, ctx, |config| ctx.models(config))
+pub(super) fn run(args: &RebuildArgs, ctx: &Context) -> Result<Output, CliError> {
+    run_audited(args, ctx, |config| ctx.models(config))
 }
 
 /// [`run`] with the `Models` adapter `models` builds for the config.
 fn run_audited<M: Models>(
     args: &RebuildArgs,
-    audit: Option<Audit>,
     ctx: &Context,
     models: impl FnOnce(&Config) -> M,
 ) -> Result<Output, CliError> {
@@ -52,5 +46,5 @@ fn run_audited<M: Models>(
         confirm: args.confirm,
         models: once(models),
     };
-    Ok(passed(exec(ctx, audit, Command::Rebuild(input))?, ctx))
+    Ok(passed(exec(ctx, Command::Rebuild(input))?, ctx))
 }

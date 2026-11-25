@@ -29,7 +29,7 @@ pub use verbs::{ProposalVerbs, SessionForgetOutcome};
 
 use crate::composition::Context;
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::errors::{ReadError, WriteError};
 use crate::runtime::{Ctx, PortError};
@@ -54,6 +54,52 @@ pub enum Command<'i> {
     },
     /// `proposal settle`.
     Settle(ProposalSettleInput<'i>),
+}
+
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        match self {
+            Self::List(_) | Self::Show(_) => None,
+            Self::Add(_) => Some(AuditMeta {
+                command: "proposal add",
+                stepwise: false,
+            }),
+            Self::Update { .. } => Some(AuditMeta {
+                command: "proposal update",
+                stepwise: false,
+            }),
+            Self::Settle(_) => Some(AuditMeta {
+                command: "proposal settle",
+                stepwise: false,
+            }),
+        }
+    }
+
+    /// The record and agent this command names, resolved before it runs so
+    /// a refusal is attributable too. Exhaustive like [`Command::audit`].
+    #[must_use]
+    pub fn subject(&self, ctx: &Context) -> AuditSubject {
+        match self {
+            Self::List(_) | Self::Show(_) => AuditSubject::default(),
+            Self::Add(input) => AuditSubject {
+                target: None,
+                author: Some(input.author.as_str().to_owned()),
+            },
+            Self::Update { id, author, .. } => AuditSubject {
+                target: resolved_id(ctx, id),
+                author: Some(author.as_str().to_owned()),
+            },
+            Self::Settle(input) => AuditSubject {
+                target: resolved_id(ctx, input.id),
+                author: Some(input.author.as_str().to_owned()),
+            },
+        }
+    }
 }
 
 /// What a `proposal` command returns.
@@ -98,17 +144,15 @@ impl<E> From<crate::Error> for Error<E> {
     }
 }
 
-/// Run `command` against `runtime`.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: a refusal, a usage error, the instruction check, the
 /// redactor, or a store error.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
@@ -138,8 +182,7 @@ pub(crate) fn run<E: PortError>(
 }
 
 /// The id of the proposal `input` resolves to, or `None` when it does
-/// not: the audit subject's target, which the binary names before the
-/// command runs.
+/// not: the audit subject's target, which [`Command::subject`] names before the command runs.
 #[must_use]
 pub fn resolved_id(ctx: &Context, input: &str) -> Option<String> {
     verbs::ProposalVerbs::resolve_proposal(ctx.store(), input)

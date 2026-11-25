@@ -36,7 +36,6 @@ use crate::error::CliError;
 use crate::output::{Output, PassFailure, PassReport, PluginError, PluginReply, Record};
 use clap::{Args, Subcommand};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Read;
@@ -82,16 +81,6 @@ pub(crate) enum PluginCommand {
 /// Arguments to `plugin call`: none (the envelope is on stdin).
 #[derive(Debug, Args)]
 pub(crate) struct CallArgs {}
-
-impl PluginCommand {
-    /// `None`: the routine tools audit
-    /// themselves in the store their call names (see the module docs).
-    pub(super) fn audit(&self) -> Option<scribe_core::AuditMeta> {
-        match self {
-            Self::Call(_) => None,
-        }
-    }
-}
 
 /// Run one `plugin` verb.
 pub(super) fn run(command: PluginCommand, ctx: &Context) -> Result<Output, CliError> {
@@ -239,18 +228,6 @@ fn transcripts_dir(config: &Value) -> Result<PathBuf, PluginReply> {
     )
 }
 
-/// How a routine command is audited: under `command`, stepwise, naming no
-/// subject, as the routine tools have always been.
-fn routine_audit(command: &'static str) -> Option<Audit> {
-    Some(Audit {
-        meta: AuditMeta {
-            command,
-            stepwise: true,
-        },
-        subject: AuditSubject::default(),
-    })
-}
-
 /// The reply for a routine command's result.
 fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> PluginReply {
     match result {
@@ -301,13 +278,7 @@ fn session_pass(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
     let routine = Context::at(root, transcripts).with_codex_home(codex_home);
     let limits =
         RunLimits::new(scribe_core::pass::MAX_PER_RUN).start_by(Instant::now() + PASS_START_BY);
-    let result = session::pass::run_audited(
-        &routine,
-        routine_audit(session::pass::COMMAND),
-        |config| routine.models(config),
-        limits,
-        &[],
-    );
+    let result = session::pass::run_audited(&routine, |config| routine.models(config), limits, &[]);
     let reply = routine_reply(session::pass::COMMAND, result);
     pass_reply(reply)
 }
@@ -363,7 +334,7 @@ fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginRepl
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
-    let result = consistency::scan(&routine, routine_audit(consistency::COMMAND));
+    let result = consistency::scan(&routine);
     routine_reply(consistency::COMMAND, result)
 }
 
@@ -380,7 +351,7 @@ fn memory_refresh(input: &Value, config: &Value, _ctx: &Context) -> PluginReply 
         Err(reply) => return reply,
     };
     let routine = Context::at(root, None).with_codex_home(codex_home);
-    let result = super::memory::refresh(&routine, routine_audit("memory refresh"));
+    let result = super::memory::refresh(&routine, true);
     routine_reply("memory refresh", result)
 }
 

@@ -39,7 +39,7 @@
 use super::group_add;
 use crate::error::CliError;
 use crate::output::Output;
-use scribe_core::apps::hook::{Event, exec};
+use scribe_core::apps::hook::{Event, exec_unaudited};
 use scribe_core::composition::Context;
 
 /// Run the hook on `input`, unaudited, as the tests drive it.
@@ -50,5 +50,5 @@ pub(super) fn run(input: &[u8], ctx: &Context) -> Result<Output, CliError> {
         input: Ok(input.to_vec()),
         read_past: &mut read_past,
     };
-    Ok(super::replied(exec(ctx, None, event)?))
+    Ok(super::replied(exec_unaudited(ctx, event)?))
 }

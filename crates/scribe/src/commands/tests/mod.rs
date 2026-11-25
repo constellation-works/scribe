@@ -4,9 +4,7 @@ mod entry;
 mod search;
 mod transcript;
 
-use crate::cli::Cli;
 use crate::commands::ListNotice;
-use clap::Parser;
 
 fn notice(criteria: &[&str]) -> ListNotice<'static> {
     ListNotice {
@@ -43,42 +41,6 @@ fn a_cut_list_says_how_many_matched_and_a_whole_one_says_nothing() {
         Some("showing 2 of 5 matching entries; raise or drop --limit to see the rest")
     );
     assert_eq!(notice(&["--tag preferences"]).line(3, 3), None);
-}
-
-#[test]
-fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
-    // STD-01 R31: a read writes nothing, not even an audit line.
-    for args in [
-        &["scribe", "entry", "list"][..],
-        &["scribe", "entry", "show", "preferences-1"],
-        &["scribe", "session", "list"],
-        &["scribe", "session", "show", "s-1"],
-        &["scribe", "proposal", "list"],
-        &["scribe", "tag", "list"],
-        &["scribe", "transcript", "list", "--since", "2026-10-01"],
-        &["scribe", "transcript", "show", "abcd"],
-    ] {
-        let cli = Cli::try_parse_from(args).unwrap();
-        assert!(cli.command.audit().is_none(), "{args:?}");
-    }
-}
-
-#[test]
-fn both_hook_commands_are_audited_under_their_command_path() {
-    for (args, path) in [
-        (
-            &["scribe", "hook", "user-prompt-submit"][..],
-            "hook user-prompt-submit",
-        ),
-        (&["scribe", "hook", "stop"], "hook stop"),
-        (
-            &["scribe", "session", "catalog", "abcd", "--author", "daniel"],
-            "session catalog",
-        ),
-    ] {
-        let cli = Cli::try_parse_from(args).unwrap();
-        assert_eq!(cli.command.audit().map(|m| m.command), Some(path));
-    }
 }
 
 #[test]

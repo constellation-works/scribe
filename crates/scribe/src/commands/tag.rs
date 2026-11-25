@@ -6,7 +6,6 @@ use crate::output::{Output, Record, Records, TagPayload, TagShowPayload};
 use clap::{Args, Subcommand};
 use scribe_core::apps::tag::{Command, Outcome, TagAddInput, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta};
 
 pub(super) const TAG_EXAMPLES: &str = "\
 Examples:
@@ -64,29 +63,8 @@ pub(crate) struct ShowArgs {
 #[derive(Debug, Args)]
 pub(crate) struct ListArgs {}
 
-impl TagCommand {
-    /// Audit every write; listings remain read-only.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::List(_) | Self::Show(_) => None,
-            Self::Add(_) => Some(AuditMeta {
-                command: "tag add",
-                stepwise: false,
-            }),
-            Self::Update(_) => Some(AuditMeta {
-                command: "tag update",
-                stepwise: false,
-            }),
-        }
-    }
-}
-
 /// Run one `tag` verb.
-pub(super) fn run(
-    command: TagCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError> {
     let command = match command {
         TagCommand::List(ListArgs {}) => Command::List,
         TagCommand::Show(args) => Command::Show(args.tag),
@@ -108,7 +86,7 @@ pub(super) fn run(
             author: args.author,
         },
     };
-    Ok(match exec(ctx, audit, command)? {
+    Ok(match exec(ctx, command)? {
         Outcome::List(found) => list(found),
         Outcome::Show(shown) => Output::Show {
             record: Record::TagRules(Box::new(TagShowPayload::new(

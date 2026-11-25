@@ -14,7 +14,6 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::apps::memory::{Command, Outcome, Shown, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{AuthorName, Models, SessionId};
 
 pub(super) const MEMORY_EXAMPLES: &str = "\
@@ -179,47 +178,8 @@ pub(crate) struct RestoreArgs {
 #[derive(Debug, Args)]
 pub(crate) struct RefreshArgs {}
 
-impl MemoryCommand {
-    /// The file and agent a write names. See [`super::Command::subject`].
-    pub(super) fn subject(&self, _ctx: &Context) -> AuditSubject {
-        let of = |id: &str, author: &AuthorName| AuditSubject {
-            target: Some(format!("memory:{}", id.trim())),
-            author: Some(author.as_str().to_owned()),
-        };
-        match self {
-            Self::Show(_) | Self::Rules(_) => AuditSubject::default(),
-            Self::Ack(args) => of(&args.id, &args.author),
-            Self::Forget(args) => of(&args.id, &args.author),
-            Self::Restore(_) | Self::Refresh(_) => AuditSubject {
-                target: Some(String::from("memory:profile")),
-                author: None,
-            },
-        }
-    }
-
-    /// Audit every write; `show` and `rules` are read-only. See
-    /// [`super::Command::audit`].
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        let command = match self {
-            Self::Show(_) | Self::Rules(_) => return None,
-            Self::Ack(_) => "memory ack",
-            Self::Forget(_) => "memory forget",
-            Self::Restore(_) => "memory restore",
-            Self::Refresh(_) => "memory refresh",
-        };
-        Some(AuditMeta {
-            command,
-            stepwise: matches!(self, Self::Refresh(_)),
-        })
-    }
-}
-
 /// Run one `memory` verb.
-pub(super) fn run(
-    command: MemoryCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
     let mut page = false;
     let command = match command {
         MemoryCommand::Show(args) => {
@@ -248,19 +208,21 @@ pub(super) fn run(
         MemoryCommand::Restore(args) => Command::Restore {
             revision: args.revision,
         },
-        MemoryCommand::Refresh(RefreshArgs {}) => return refresh(ctx, audit),
+        MemoryCommand::Refresh(RefreshArgs {}) => return refresh(ctx, false),
     };
-    Ok(output(exec(ctx, audit, command)?, ctx, page))
+    Ok(output(exec(ctx, command)?, ctx, page))
 }
 
-/// `memory refresh` with the `claude` CLI as the profile model, audited as
-/// `audit` declares: the memory app's refresh.
-pub(crate) fn refresh(ctx: &Context, audit: Option<Audit>) -> Result<Output, CliError> {
+/// `memory refresh` with the `claude` CLI as the profile model: the memory
+/// app's refresh. `routine` is the plugin's routine tool, whose audit
+/// lines name no subject.
+pub(crate) fn refresh(ctx: &Context, routine: bool) -> Result<Output, CliError> {
     let command = Command::Refresh {
         provider: ctx.provider(),
         models: Box::new(|config| Box::new(ctx.models(config)) as Box<dyn Models>),
+        routine,
     };
-    Ok(output(exec(ctx, audit, command)?, ctx, false))
+    Ok(output(exec(ctx, command)?, ctx, false))
 }
 
 /// The output of `outcome`. `page` is `memory show --page`.

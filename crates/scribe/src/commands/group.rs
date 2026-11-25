@@ -5,11 +5,9 @@ use crate::error::CliError;
 use crate::output::{Output, Record, Records};
 use clap::Subcommand;
 use scribe_core::apps::group::{
-    self as app, CLOSE_COMMAND, Command, GroupBackfilled, GroupCloseInput, GroupJoinInput,
-    GroupOpenInput, Outcome, exec,
+    Command, GroupBackfilled, GroupCloseInput, GroupJoinInput, GroupOpenInput, Outcome, exec,
 };
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{AuthorName, Config, Label, Project, Related};
 
 pub(super) const EXAMPLES: &str = "Examples:
@@ -96,44 +94,7 @@ fn seat_name(value: &str) -> Result<Label, scribe_core::RecordError> {
     Label::try_from(value.to_owned())
 }
 
-impl GroupCommand {
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        let command = match self {
-            Self::Open { .. } => "group open",
-            Self::Join { .. } => "group join",
-            Self::Leave => "group leave",
-            Self::Backfill { .. } => "group backfill",
-            Self::Close { .. } => CLOSE_COMMAND,
-            Self::List | Self::Show { .. } => return None,
-        };
-        Some(AuditMeta {
-            command,
-            stepwise: matches!(self, Self::Close { .. }),
-        })
-    }
-
-    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
-        match self {
-            Self::Join { id, author, .. } => AuditSubject {
-                author: Some(author.to_string()),
-                target: app::resolved_id(ctx, id),
-            },
-            Self::Close { id, .. } | Self::Backfill { id } => AuditSubject {
-                author: None,
-                target: app::resolved_id(ctx, id),
-            },
-            Self::Open { .. } | Self::Leave | Self::List | Self::Show { .. } => {
-                AuditSubject::default()
-            }
-        }
-    }
-}
-
-pub(super) fn run(
-    command: GroupCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: GroupCommand, ctx: &Context) -> Result<Output, CliError> {
     let command = match command {
         GroupCommand::Open {
             title,
@@ -185,7 +146,7 @@ pub(super) fn run(
         GroupCommand::Show { id } => Command::Show(id),
         GroupCommand::List => Command::List,
     };
-    Ok(output(exec(ctx, audit, command)?))
+    Ok(output(exec(ctx, command)?))
 }
 
 /// A `group` outcome as its output.

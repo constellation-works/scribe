@@ -33,7 +33,7 @@ use crate::apps::tag::ConfigReads;
 use crate::composition::Context;
 use crate::memory::NowItem;
 use crate::models::ModelError;
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, MemoryShown, Models, Provider, SessionId};
@@ -82,7 +82,49 @@ pub enum Command<'m> {
         provider: Provider,
         /// The model adapter, built for the provider's config.
         models: ModelsFor<'m>,
+        /// Whether the plugin's routine tool runs it: its audit lines then
+        /// name no subject, as the routine's always have.
+        routine: bool,
     },
+}
+
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        let command = match self {
+            Self::Show { .. } => return None,
+            Self::Ack { .. } => "memory ack",
+            Self::Forget { .. } => "memory forget",
+            Self::Restore { .. } => "memory restore",
+            Self::Refresh { .. } => "memory refresh",
+        };
+        Some(AuditMeta {
+            command,
+            stepwise: matches!(self, Self::Refresh { .. }),
+        })
+    }
+
+    /// The record and agent this command names, resolved before it runs so
+    /// a refusal is attributable too. Exhaustive like [`Command::audit`].
+    #[must_use]
+    pub fn subject(&self, _ctx: &Context) -> AuditSubject {
+        let of = |id: &str, author: &AuthorName| AuditSubject {
+            target: Some(format!("memory:{}", id.trim())),
+            author: Some(author.as_str().to_owned()),
+        };
+        match self {
+            Self::Show { .. } | Self::Refresh { routine: true, .. } => AuditSubject::default(),
+            Self::Ack { id, author, .. } | Self::Forget { id, author, .. } => of(id, author),
+            Self::Restore { .. } | Self::Refresh { routine: false, .. } => AuditSubject {
+                target: Some(String::from("memory:profile")),
+                author: None,
+            },
+        }
+    }
 }
 
 /// What a `memory` command returns.
@@ -124,16 +166,14 @@ impl<E> From<ModelError> for Error<E> {
     }
 }
 
-/// Run `command` against `runtime`.
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
 ///
 /// # Errors
 ///
 /// [`Error`]: a refusal, the config, the redactor, the model, or the store.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
 }
 
@@ -164,7 +204,9 @@ pub(crate) fn run<E: PortError>(
             let (shown, written) = restore::restore(ctx, revision)?;
             Outcome::Restored(Box::new(shown), written)
         }
-        Command::Refresh { provider, models } => {
+        Command::Refresh {
+            provider, models, ..
+        } => {
             // The config is read before the refresh, as `memory refresh` read
             // it to build the adapter before the flow moved into the core.
             let config = ctx.store.read().tags().config()?.for_provider(provider);

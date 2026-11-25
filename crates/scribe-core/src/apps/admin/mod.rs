@@ -17,7 +17,7 @@ pub use init::{
 pub use migrate::MigrateTestWrites;
 
 use crate::composition::Context;
-use crate::runtime::audit::{Audit, Audited, Line, guarded};
+use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
 use crate::{ExportCounts, ExportFormat, Imported, Provider};
 use std::path::{Path, PathBuf};
@@ -47,6 +47,35 @@ pub enum Command<'i> {
     },
 }
 
+impl Command<'_> {
+    /// What the audit log records for this command, or `None` when it is
+    /// not audited: a read writes nothing, not even an audit line (STD-01
+    /// R31). Exhaustive, so a new command cannot compile without deciding
+    /// (STD-02 R27).
+    #[must_use]
+    pub fn audit(&self) -> Option<AuditMeta> {
+        match self {
+            Self::Init { .. } => Some(AuditMeta {
+                command: "init",
+                stepwise: false,
+            }),
+            Self::Migrate => Some(AuditMeta {
+                command: "store migrate",
+                stepwise: false,
+            }),
+            // An export writes nothing to the store (STD-01 R31).
+            Self::Export { .. } => None,
+        }
+    }
+
+    /// The record and agent this command names: none, since the admin
+    /// commands name theirs in their audit lines.
+    #[must_use]
+    pub fn subject(&self, _ctx: &Context) -> AuditSubject {
+        AuditSubject::default()
+    }
+}
+
 /// What an `admin` command returns.
 pub enum Outcome {
     /// What `init` installed.
@@ -70,7 +99,8 @@ pub struct ExportWritten {
 /// Why an `admin` command did not run.
 pub type Error = crate::Error;
 
-/// Run `command` inside the audit guard `audit` names. `init` first checks
+/// Run `command` inside the audit guard when [`Command::audit`] declares
+/// one. `init` first checks
 /// the selected runtime is on `PATH` and resolves the running executable,
 /// which its hooks point at. Admin is the top of the app order, so no app
 /// calls it and it has no `run` of its own.
@@ -79,11 +109,8 @@ pub type Error = crate::Error;
 ///
 /// A store error, a refused or failed install, a runtime missing from
 /// `PATH`, or an executable path that cannot be read or is not UTF-8.
-pub fn exec(
-    ctx: &Context,
-    audit: Option<Audit>,
-    command: Command<'_>,
-) -> Result<Outcome, CommandError> {
+pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || {
         Ok(match command {
             Command::Init {

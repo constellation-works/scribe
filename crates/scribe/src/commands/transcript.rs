@@ -87,15 +87,6 @@ pub(crate) struct ShowArgs {
     pub(crate) id: SessionId,
 }
 
-impl TranscriptCommand {
-    /// `list` and `show` read only, so they are not audited (STD-01 R31).
-    pub(super) fn audit(&self) -> Option<scribe_core::AuditMeta> {
-        match self {
-            Self::List(_) | Self::Show(_) => None,
-        }
-    }
-}
-
 /// Run one `transcript` verb.
 pub(super) fn run(command: TranscriptCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
@@ -127,7 +118,6 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     };
     let outcome = exec(
         ctx,
-        None,
         Command::TranscriptList {
             provider: ctx.provider(),
             input,
@@ -193,7 +183,6 @@ pub(in crate::commands) fn listed(
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     let outcome = exec(
         ctx,
-        None,
         Command::TranscriptShow {
             provider: ctx.provider(),
             id: args.id.clone(),

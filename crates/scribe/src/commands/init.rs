@@ -3,7 +3,6 @@
 use super::admin;
 use crate::{error::CliError, output::Output};
 use clap::Args;
-use scribe_core::Audit;
 use scribe_core::apps::admin::{Command, exec};
 use scribe_core::composition::Context;
 use std::path::PathBuf;
@@ -38,12 +37,12 @@ pub(crate) struct InitArgs {
     target: PathBuf,
 }
 
-pub(super) fn run(args: InitArgs, audit: Option<Audit>, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(args: InitArgs, ctx: &Context) -> Result<Output, CliError> {
     let command = Command::Init {
         target: &args.target,
         provider: ctx.provider(),
         skill: SKILL,
         skill_files: SKILL_FILES,
     };
-    Ok(admin::output(exec(ctx, audit, command)?))
+    Ok(admin::output(exec(ctx, command)?))
 }

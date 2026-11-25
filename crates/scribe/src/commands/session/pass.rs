@@ -1,5 +1,6 @@
 //! `scribe session pass`: the arguments, then the session app's pass.
 
+use super::Exec;
 use super::passed;
 use crate::commands::RunLimits;
 use crate::error::CliError;
@@ -7,7 +8,7 @@ use crate::output::Output;
 use clap::Args;
 use scribe_core::apps::session::{self as app, Command, PassInput, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, Config, Models, SessionId};
+use scribe_core::{Config, Models, SessionId};
 
 /// Redact, flatten and bound a failure reason, as a pass report has it.
 #[cfg(test)]
@@ -53,11 +54,7 @@ pub(crate) struct PassArgs {
 
 /// Pass the due sessions, or the sessions `--session` names (each a prefix
 /// of its id).
-pub(super) fn run(
-    args: &PassArgs,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(args: &PassArgs, ctx: &Context) -> Result<Output, CliError> {
     let max = if args.sessions.is_empty() {
         scribe_core::pass::MAX_PER_RUN
     } else {
@@ -65,7 +62,7 @@ pub(super) fn run(
     };
     pass(
         ctx,
-        audit,
+        exec,
         &args.sessions,
         true,
         |config: &Config| ctx.models(config),
@@ -85,25 +82,25 @@ pub(in crate::commands) fn run_with<M: Models>(
     limits: RunLimits,
     only: &[SessionId],
 ) -> Result<Output, CliError> {
-    run_audited(ctx, None, models, limits, only)
+    pass(ctx, app::exec_unaudited, only, false, models, limits)
 }
 
-/// [`run_with`], audited as `audit` declares: the plugin's routine tool.
+/// [`run_with`], audited: the plugin's routine tool.
 pub(in crate::commands) fn run_audited<M: Models>(
     ctx: &Context,
-    audit: Option<Audit>,
     models: impl FnMut(&Config) -> M,
     limits: RunLimits,
     only: &[SessionId],
 ) -> Result<Output, CliError> {
-    pass(ctx, audit, only, false, models, limits)
+    pass(ctx, exec, only, false, models, limits)
 }
 
 /// A pass over `sessions` (resolved as typed when `resolve`), each with the
-/// adapter `models` builds for its config.
+/// adapter `models` builds for its config, run by `exec`: the session app's
+/// audited `exec`, or the unaudited one the tests drive.
 fn pass<M: Models>(
     ctx: &Context,
-    audit: Option<Audit>,
+    exec: Exec,
     sessions: &[SessionId],
     resolve: bool,
     mut models: impl FnMut(&Config) -> M,
@@ -118,5 +115,5 @@ fn pass<M: Models>(
         limits,
         host: ctx.host(),
     };
-    Ok(passed(exec(ctx, audit, Command::Pass(input))?, ctx))
+    Ok(passed(exec(ctx, Command::Pass(input))?, ctx))
 }

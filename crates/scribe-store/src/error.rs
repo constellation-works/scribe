@@ -343,7 +343,8 @@ pub enum WriteRefusal {
     /// on, a rebuild checkpoint waits, or no archive is left to import.
     MigrateBlocked,
     /// `export_target_exists`: `export` was given a directory that is not
-    /// empty.
+    /// empty. The store refuses it itself, as the precondition of its own
+    /// export write.
     ExportTargetExists,
     /// `session_forgotten`: a write to a session `#scribe forget` erased
     /// (its record, or switching it on); a forgotten session takes none.

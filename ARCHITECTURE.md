@@ -30,7 +30,7 @@ rules the core's apps.
 | `scribe-store` | The data root and `scribe.db`: the `Store` (`open`, `read() -> Snapshot`, `write(\|tx\| …)` and the repositories), locks, atomic writes, format stamps, the import of the file store's archives, the audit record, the redactor every persisted free-text field passes (`redact.rs`), and the record shapes (`contracts/`: entries, sessions, proposals, tags, groups, marks, memory, messages, pickups and the shared metadata). The only crate that touches the data root. | — | `clap`, `tracing-subscriber` and any terminal crate |
 | `scribe-tools` | Functions of host files, bytes and text that decide nothing about a record: provider transcripts found under their roots, read under the provenance checks and parsed into typed messages (`transcript/`, with `codex`), the origin guard (`origin.rs`), a working directory's project from git's own files (`project.rs`), the `#scribe` markers, settling lines and `/scribe` control lines of a typed turn (`markers.rs`, with `control`), the fields of a hook's stdin payload and their decoding (`payload.rs`), a session pass's window over a transcript's messages (`window.rs`), the text primitives every layer may use: ranking tokens, sensitive and finance words, claim, verbatim and trigger predicates (`text/`), the host's name (`host.rs`), and the crate's only `std::fs` access (`fs.rs`). | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 | `scribe-core` | The apps (`apps/<app>/`, one per subject, each holding its use cases) and the `runtime/` they run against: the context and its ports, id resolution, the shared errors and the audit lines a use case owes. Each use case loads what it needs from a snapshot, plans with its app's rules, calls the ports and commits in one store write. Its root re-exports the store's contracts and the moved rules at the paths they had in it. `composition.rs` captures the environment (`Env`) and resolves the `Context` the apps run against; `runtime/host/` implements the ports on it; `providers/` holds the `Models` port and the model adapters. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
-| `scribe` (binary) | Arguments, the grouped root help, dispatch, the surface error and rendering. The audit guard runs inside the core's `exec` (`runtime/audit.rs`). | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
+| `scribe` (binary) | Arguments mapped to each app's command, the grouped root help, dispatch, the surface error and rendering. It declares no audit: each app declares its own beside its `Command` (`Command::audit`, `Command::subject`), and its `exec` runs the command inside the audit guard (`runtime/audit.rs`). | `scribe-core`, `scribe-tools` (interim) | `rusqlite` |
 
 The store holds no rule: a check that decides whether a write may happen
 belongs to its app, which passes it into the write as a closure the store
@@ -38,7 +38,11 @@ runs at the same step and under the same lock. `forgotten_refusal` is the
 deliberate exception. A forgotten session is a tombstone, and every writer
 that touches a session must refuse it under the write lock, including the
 store's own internal writers, so the refusal stays beside `Error` in the
-store's `error.rs` rather than in one app.
+store's `error.rs` rather than in one app. `export_target_exists` is the
+second: `export` refuses a target that is not an empty directory inside
+the store (`repository/sessions.rs::prepare_target`). The check is the
+precondition of the store's own filesystem write, and only the store
+touches the filesystem, so the admin app does not hold it.
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
 the tests of `scribe-core` and `scribe` stage database states with

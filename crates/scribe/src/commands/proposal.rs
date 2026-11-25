@@ -6,7 +6,6 @@ use crate::output::{Output, ProposalPayload, Record, Records};
 use clap::{Args, Subcommand};
 use scribe_core::apps::proposal::{self, Command, Outcome, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{AuthorKind, ProposalFilter, ProposalState};
 
 pub(super) const PROPOSAL_EXAMPLES: &str = "\
@@ -105,64 +104,14 @@ pub(crate) enum AuthorKindArg {
     Scribe,
 }
 
-impl ProposalCommand {
-    /// The proposal and agent a write verb names, resolved before it runs, so
-    /// a refusal is attributable. `add` names its target only in its output.
-    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
-        match self {
-            Self::List(_) | Self::Show(_) => AuditSubject::default(),
-            Self::Add(args) => AuditSubject {
-                target: None,
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Update(args) => AuditSubject {
-                target: resolved_proposal(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Settle(args) => AuditSubject {
-                target: resolved_proposal(ctx, &args.id),
-                author: Some(args.author.as_str().to_owned()),
-            },
-        }
-    }
-
-    /// Audit every write; listings remain read-only.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::List(_) | Self::Show(_) => None,
-            Self::Add(_) => Some(AuditMeta {
-                command: "proposal add",
-                stepwise: false,
-            }),
-            Self::Update(_) => Some(AuditMeta {
-                command: "proposal update",
-                stepwise: false,
-            }),
-            Self::Settle(_) => Some(AuditMeta {
-                command: "proposal settle",
-                stepwise: false,
-            }),
-        }
-    }
-}
-
-/// The id of the proposal `input` resolves to, or `None` when it does not.
-fn resolved_proposal(ctx: &Context, input: &str) -> Option<String> {
-    proposal::resolved_id(ctx, input)
-}
-
 /// Run one `proposal` verb.
-pub(super) fn run(
-    command: ProposalCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, CliError> {
     let outcome = match command {
         ProposalCommand::List(args) => {
-            let outcome = exec(ctx, audit, Command::List(list_input(&args)))?;
+            let outcome = exec(ctx, Command::List(list_input(&args)))?;
             return Ok(output(outcome, Some(&args), ctx));
         }
-        ProposalCommand::Show(args) => exec(ctx, audit, Command::Show(args.id))?,
+        ProposalCommand::Show(args) => exec(ctx, Command::Show(args.id))?,
         ProposalCommand::Add(args) => {
             let kind = match args.kind {
                 Kind::Stale => scribe_core::ProposalKind::Stale,
@@ -175,11 +124,10 @@ pub(super) fn run(
                 reason: &args.reason,
                 author: args.author,
             };
-            exec(ctx, audit, Command::Add(input))?
+            exec(ctx, Command::Add(input))?
         }
         ProposalCommand::Update(args) => exec(
             ctx,
-            audit,
             Command::Update {
                 id: args.id,
                 reason: args.reason,
@@ -194,7 +142,7 @@ pub(super) fn run(
                 author: args.author,
                 instruction: args.instruction.case(ctx),
             };
-            exec(ctx, audit, Command::Settle(input))?
+            exec(ctx, Command::Settle(input))?
         }
     };
     Ok(output(outcome, None, ctx))

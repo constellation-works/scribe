@@ -219,3 +219,115 @@ fn committed_flag_suppresses_guard_lines_on_mark_result_and_drop() {
     drop(unwind_guard);
     assert!(store.audit_events().unwrap().0.is_empty());
 }
+
+#[test]
+fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
+    // STD-01 R31: a read writes nothing, not even an audit line.
+    use crate::apps::{entry, proposal, session, tag};
+    use crate::{DateRange, Provider, SessionId};
+    let provider = Provider::ClaudeCode;
+    let id = |id: &str| id.parse::<SessionId>().unwrap();
+    for (command, audit) in [
+        (
+            "entry list",
+            entry::Command::List(Box::new(entry::ListInput {
+                filter: crate::EntryFilter::default(),
+                since: None,
+                until: None,
+                group: None,
+                provider,
+            }))
+            .audit(),
+        ),
+        (
+            "entry show",
+            entry::Command::Show(String::from("preferences-1")).audit(),
+        ),
+        (
+            "session list",
+            session::Command::List(Box::new(session::ListInput {
+                filter: crate::SessionFilter::default(),
+                since: None,
+                until: None,
+                group: None,
+                provider,
+            }))
+            .audit(),
+        ),
+        (
+            "session show",
+            session::Command::Show {
+                id: id("s-1"),
+                segment: None,
+            }
+            .audit(),
+        ),
+        (
+            "proposal list",
+            proposal::Command::List(proposal::ListInput {
+                filter: crate::ProposalFilter::default(),
+                entry: None,
+                since: None,
+                until: None,
+            })
+            .audit(),
+        ),
+        ("tag list", tag::Command::List.audit()),
+        (
+            "transcript list",
+            session::Command::TranscriptList {
+                provider,
+                input: session::TranscriptListInput {
+                    since: time::macros::date!(2026 - 10 - 01),
+                    dates: DateRange::default(),
+                    projects: &[],
+                    min_turns: 20,
+                    limit: None,
+                },
+            }
+            .audit(),
+        ),
+        (
+            "transcript show",
+            session::Command::TranscriptShow {
+                provider,
+                id: id("abcd"),
+            }
+            .audit(),
+        ),
+    ] {
+        assert!(audit.is_none(), "{command}");
+    }
+}
+
+#[test]
+fn both_hook_commands_are_audited_under_their_command_path() {
+    use crate::apps::hook::Event;
+    use crate::apps::session;
+    use crate::{AuthorName, Label, Provider, SessionId};
+    let mut read_past = |_: Provider, _: &SessionId, _: &std::path::Path| Ok(None);
+    let (id, author): (SessionId, AuthorName) =
+        ("abcd".parse().unwrap(), "daniel".parse().unwrap());
+    let catalog = session::Command::Catalog(session::CatalogInput {
+        id: &id,
+        author: &author,
+        project: None,
+        provider: Provider::ClaudeCode,
+        host: Label::sanitized("host", "host"),
+        models: Box::new(|_| unreachable!("audit() never runs the command")),
+    });
+    for (audit, path) in [
+        (
+            Event::UserPromptSubmit {
+                input: Ok(Vec::new()),
+                read_past: &mut read_past,
+            }
+            .audit(),
+            "hook user-prompt-submit",
+        ),
+        (Event::Stop(Ok(Vec::new())).audit(), "hook stop"),
+        (catalog.audit(), "session catalog"),
+    ] {
+        assert_eq!(audit.map(|m| m.command), Some(path));
+    }
+}

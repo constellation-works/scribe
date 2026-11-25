@@ -25,7 +25,6 @@ use crate::output::{
 use clap::{Args, Subcommand};
 use scribe_core::apps::session::{self as app, Command, ModelsOnce, Outcome, Shown, exec};
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject};
 use scribe_core::{
     Config, Models, Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus,
     Topic,
@@ -173,74 +172,20 @@ pub(crate) struct ShowArgs {
 
 pub(crate) use scribe_core::apps::session::{SessionRef, parse_session_ref};
 
-impl SessionCommand {
-    /// The session and agent a write verb names, resolved before it runs, so
-    /// a refusal is attributable. `list`, `show` and `pass` name none here: a
-    /// pass's lines come from its outcomes.
-    pub(super) fn subject(&self, ctx: &Context) -> AuditSubject {
-        match self {
-            Self::List(_) | Self::Show(_) | Self::Pass(_) => AuditSubject::default(),
-            // A prefix is resolved before the line is written; an id that
-            // resolves to no record leaves the target null, never the typed id.
-            Self::Rebuild(args) => AuditSubject {
-                target: app::resolved_id(ctx, &args.id).map(|id| format!("session:{id}")),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Catalog(args) => AuditSubject {
-                target: app::resolve_transcript(ctx, ctx.provider(), &args.id)
-                    .ok()
-                    .map(|id| format!("session:{id}")),
-                author: Some(args.author.as_str().to_owned()),
-            },
-            Self::Deactivate(args) => activity::subject(ctx, &args.id, &args.author),
-            Self::Activate(args) => activity::subject(ctx, &args.id, &args.author),
-        }
-    }
-
-    /// The audit entry for this verb: `None` for `list` and `show`, which
-    /// read (STD-01 R31); `pass` writes records and `control.json`;
-    /// `deactivate` and `activate` write one record.
-    pub(super) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::List(_) | Self::Show(_) => None,
-            Self::Rebuild(_) => Some(AuditMeta {
-                command: rebuild::COMMAND,
-                stepwise: true,
-            }),
-            Self::Pass(_) => Some(AuditMeta {
-                command: pass::COMMAND,
-                stepwise: true,
-            }),
-            Self::Deactivate(_) => Some(AuditMeta {
-                command: activity::DEACTIVATE_COMMAND,
-                stepwise: false,
-            }),
-            Self::Activate(_) => Some(AuditMeta {
-                command: activity::ACTIVATE_COMMAND,
-                stepwise: false,
-            }),
-            Self::Catalog(_) => Some(AuditMeta {
-                command: catalog::COMMAND,
-                stepwise: true,
-            }),
-        }
-    }
-}
+/// A session app entry point: its `exec`, which audits the commands that
+/// write, or in tests its unaudited one.
+type Exec = fn(&Context, Command<'_>) -> Result<Outcome, scribe_core::CommandError>;
 
 /// Run one `session` verb.
-pub(super) fn run(
-    command: SessionCommand,
-    audit: Option<Audit>,
-    ctx: &Context,
-) -> Result<Output, CliError> {
+pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliError> {
     match command {
         SessionCommand::List(args) => list(args, ctx),
         SessionCommand::Show(args) => show(&args, ctx),
-        SessionCommand::Rebuild(args) => rebuild::run(&args, audit, ctx),
-        SessionCommand::Pass(args) => pass::run(&args, audit, ctx),
-        SessionCommand::Deactivate(args) => activity::deactivate(args, audit, ctx),
-        SessionCommand::Activate(args) => activity::activate(args, audit, ctx),
-        SessionCommand::Catalog(args) => catalog::run(&args, audit, ctx),
+        SessionCommand::Rebuild(args) => rebuild::run(&args, ctx),
+        SessionCommand::Pass(args) => pass::run(&args, ctx),
+        SessionCommand::Deactivate(args) => activity::deactivate(args, ctx),
+        SessionCommand::Activate(args) => activity::activate(args, ctx),
+        SessionCommand::Catalog(args) => catalog::run(&args, ctx),
     }
 }
 
@@ -261,7 +206,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         group: args.group.clone(),
         provider: ctx.provider(),
     };
-    let outcome = exec(ctx, None, Command::List(Box::new(input)))?;
+    let outcome = exec(ctx, Command::List(Box::new(input)))?;
     Ok(output(
         outcome,
         View {
@@ -361,7 +306,6 @@ fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     };
     let outcome = exec(
         ctx,
-        None,
         Command::Show {
             id: args.id.id.clone(),
             segment,

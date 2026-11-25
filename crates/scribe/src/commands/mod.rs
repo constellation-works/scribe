@@ -33,7 +33,7 @@ use crate::output::{Output, Records, WarningPayload};
 use clap::{Args, Subcommand};
 pub(crate) use scribe_core::RunLimits;
 use scribe_core::composition::Context;
-use scribe_core::{Audit, AuditMeta, AuditSubject, DateRange, Skipped};
+use scribe_core::{DateRange, Skipped};
 use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
@@ -118,61 +118,6 @@ pub(crate) enum Command {
     Plugin(PluginCommand),
 }
 
-impl Command {
-    /// The record and agent a write names, resolved before it runs, so a
-    /// refusal is attributable too. Exhaustive like [`Command::audit`].
-    pub(crate) fn subject(&self, ctx: &Context) -> AuditSubject {
-        match self {
-            Self::Group(command) => command.subject(ctx),
-            Self::Entry(command) => command.subject(ctx),
-            Self::Session(command) => command.subject(ctx),
-            Self::Proposal(command) => command.subject(ctx),
-            Self::Memory(command) => command.subject(ctx),
-            Self::Mark(command) => command.subject(ctx),
-            Self::Init(_)
-            | Self::Transcript(_)
-            | Self::Search(_)
-            | Self::Consistency(_)
-            | Self::Tag(_)
-            | Self::Hook(_)
-            | Self::Brief(_)
-            | Self::Store(_)
-            | Self::Export(_)
-            | Self::Plugin(_) => AuditSubject::default(),
-        }
-    }
-
-    /// What the audit log records for this command, or `None` when it is not
-    /// audited. Only commands that change durable state are: a read-only
-    /// command must not write, not even an audit line (STD-01 R31). The
-    /// hooks, passes, scans and direct agent write verbs are writers. Exhaustive, so a new command cannot
-    /// compile without deciding (STD-02 R27).
-    pub(crate) fn audit(&self) -> Option<AuditMeta> {
-        match self {
-            Self::Init(_) => Some(AuditMeta {
-                command: "init",
-                stepwise: false,
-            }),
-            Self::Group(command) => command.audit(),
-            Self::Entry(command) => command.audit(),
-            Self::Session(command) => command.audit(),
-            Self::Transcript(command) => command.audit(),
-            Self::Mark(command) => command.audit(),
-            Self::Proposal(command) => command.audit(),
-            Self::Memory(command) => command.audit(),
-            Self::Search(args) => search::audit(args),
-            Self::Consistency(command) => command.audit(),
-            Self::Store(command) => command.audit(),
-            Self::Tag(command) => command.audit(),
-            Self::Hook(command) => command.audit(),
-            // Read-only: the brief only reads, and an export writes nothing
-            // to the store (STD-01 R31).
-            Self::Brief(_) | Self::Export(_) => None,
-            Self::Plugin(command) => command.audit(),
-        }
-    }
-}
-
 /// Display names for session ids in non-JSON output, unique across stored
 /// sessions, group members and local transcripts. Cataloged sessions use their
 /// stable aliases; others use prefixes. Failed reads leave full ids available.
@@ -233,33 +178,24 @@ pub(crate) fn short_ids(output: &Output, ctx: &Context) -> scribe_core::ShortIds
     ctx.short_ids(extra)
 }
 
-/// Run one command, auditing it if it is audited: the command's path and
-/// subject, declared here, are handed to its app's `exec`, which runs it
-/// inside the audit guard (`scribe_core::Audit`).
+/// Run one command: its arguments mapped to its app's command, whose `exec`
+/// declares whether it is audited and runs it inside the audit guard.
 pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
-    let audit = command.audit().map(|meta| Audit {
-        meta,
-        subject: command.subject(ctx),
-    });
-    dispatch(command, audit, ctx)
-}
-
-fn dispatch(command: Command, audit: Option<Audit>, ctx: &Context) -> Result<Output, CliError> {
     match command {
-        Command::Init(args) => init::run(args, audit, ctx),
-        Command::Group(command) => group::run(command, audit, ctx),
-        Command::Entry(command) => entry::run(command, audit, ctx),
-        Command::Session(command) => session::run(command, audit, ctx),
+        Command::Init(args) => init::run(args, ctx),
+        Command::Group(command) => group::run(command, ctx),
+        Command::Entry(command) => entry::run(command, ctx),
+        Command::Session(command) => session::run(command, ctx),
         Command::Transcript(command) => transcript::run(command, ctx),
         Command::Mark(command) => mark::run(command, ctx),
-        Command::Proposal(command) => proposal::run(command, audit, ctx),
-        Command::Memory(command) => memory::run(command, audit, ctx),
+        Command::Proposal(command) => proposal::run(command, ctx),
+        Command::Memory(command) => memory::run(command, ctx),
         Command::Search(args) => search::run(args, ctx),
-        Command::Consistency(command) => consistency::run(command, audit, ctx),
-        Command::Store(command) => store::run(command, audit, ctx),
+        Command::Consistency(command) => consistency::run(command, ctx),
+        Command::Store(command) => store::run(command, ctx),
         Command::Export(args) => export::run(&args, ctx),
-        Command::Tag(command) => tag::run(command, audit, ctx),
-        Command::Hook(command) => hook::run(command, audit, ctx),
+        Command::Tag(command) => tag::run(command, ctx),
+        Command::Hook(command) => hook::run(command, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
         Command::Plugin(command) => plugin::run(command, ctx),
     }
