@@ -10,9 +10,7 @@ use super::rules::{
 };
 use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;
-use crate::entry::{
-    AgentEntry, Cite, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG, is_decision_or_item,
-};
+use crate::entry::{AgentEntry, Cite, DECISION_TAG, EntryPatch, OPEN_ITEM_TAG};
 use crate::record::patch;
 use crate::runtime::resolve::refuse_forgotten;
 use crate::store::refusal;
@@ -384,7 +382,7 @@ impl EntryVerbs for Store {
         if let Some(decision) = &entry.decision {
             check_decision_size(decision, &entry.content, entry.quote.as_deref())?;
         }
-        if !is_decision_or_item(entry.tag.as_str())
+        if !entry.tag.is_decision_or_item()
             && let Some(cover) =
                 crate::pass::covering_entry(&entries, &entry.content, &entry.tag, &entry.project)
         {

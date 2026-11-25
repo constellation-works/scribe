@@ -16,7 +16,7 @@ use crate::{
     Author, AuthorKind, AuthorName, EntryId, EntryStatus, Error, Proposal, ProposalId,
     ProposalKind, ProposalState, Redactor, Result, Store, Tx, WriteRefusal,
 };
-use crate::{SessionForget, SessionId, handoff};
+use crate::{SessionForget, SessionId};
 use std::num::NonZeroU64;
 use time::OffsetDateTime;
 
@@ -726,7 +726,7 @@ fn forget_session(
                     .all()?
                     .0
                     .iter()
-                    .any(|entry| handoff::session_ids(entry).contains(input));
+                    .any(|entry| entry.session_ids().contains(input));
             if !known {
                 return Err(error);
             }

@@ -37,8 +37,8 @@ tree() {
   printf '[package]\nname = "scribe"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
     >"$root/crates/scribe/Cargo.toml"
   printf '//! core\npub mod entry;\n' >"$root/crates/scribe-core/src/lib.rs"
-  printf '//! domain\npub mod entry;\n' >"$root/crates/scribe-domain/src/lib.rs"
-  printf '//! entry\nuse std::fmt;\n' >"$root/crates/scribe-domain/src/entry.rs"
+  printf '//! domain\npub mod record;\n' >"$root/crates/scribe-domain/src/lib.rs"
+  printf '//! record\nuse std::fmt;\n' >"$root/crates/scribe-domain/src/record.rs"
   printf 'fn main() {}\n' >"$root/crates/scribe/src/main.rs"
   echo "$root"
 }
@@ -72,12 +72,12 @@ expect pass check-dependency-direction.sh "$deps" "a domain module with use std:
 
 for import in 'use std::{fmt, fs};' 'use std::{io, fs::File};' $'use std::{\n    fmt,\n    process::Command,\n};'; do
   bad=$(tree "deps-grouped-$n")
-  printf '//! entry\n%s\n' "$import" >"$bad/crates/scribe-domain/src/entry.rs"
+  printf '//! record\n%s\n' "$import" >"$bad/crates/scribe-domain/src/record.rs"
   expect fail check-dependency-direction.sh "$bad" "a domain module with $(echo "$import" | tr -s '\n ' ' ')"
 done
 
 near=$(tree deps-near)
-printf '//! entry\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-domain/src/entry.rs"
+printf '//! record\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-domain/src/record.rs"
 expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
 
 # The Models port may not depend on its callers.

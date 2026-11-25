@@ -10,26 +10,8 @@
 use crate::entry::{Entry, EntryStatus};
 use crate::record::{Related, RelatedKind};
 use crate::session::SessionId;
+use scribe_store::handoff::{HANDOFF_TAG, HEADINGS, MAX_CHARS};
 use std::collections::BTreeSet;
-
-/// The shipped tag name for agent-written session handoffs.
-pub const HANDOFF_TAG: &str = "handoff";
-
-pub use crate::entry::HandoffMode as Mode;
-
-/// The six required level-2 Markdown headings, in exact order.
-pub const HEADINGS: [&str; 6] = [
-    "State",
-    "In flight",
-    "Next",
-    "Waiting on you",
-    "Do not touch",
-    "Pointers",
-];
-
-/// The longest handoff body accepted, in characters, so a handoff fits one
-/// screen (~40 lines at 75 columns).
-pub const MAX_CHARS: usize = 3000;
 
 /// Why a handoff body was refused. Each variant names the exact fault.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -223,21 +205,6 @@ pub fn for_session<'a>(entries: &'a [Entry], id: &SessionId) -> Vec<&'a Entry> {
         .collect();
     found.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| b.id.cmp(&a.id)));
     found
-}
-
-/// Every `session:<id>` reference an entry carries that parses as a
-/// [`SessionId`].
-pub fn session_ids(entry: &Entry) -> Vec<SessionId> {
-    let mut ids = Vec::new();
-    for rel in &entry.related {
-        if rel.kind() == RelatedKind::Session
-            && let Ok(id) = rel.target().parse::<SessionId>()
-            && !ids.contains(&id)
-        {
-            ids.push(id);
-        }
-    }
-    ids
 }
 
 fn references_session(entry: &Entry, id: &SessionId) -> bool {

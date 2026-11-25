@@ -2,10 +2,10 @@
 //! store's (`tests/redact.rs`) and scribe-core's, which build the redactor
 //! from a `Config`.
 
+use crate::fixtures::{T0, entry, session};
 use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
 pub use crate::redact::{entry_fields, proposal_fields, session_fields};
 use crate::session::{SessionRecord, Term};
-use scribe_domain::fixtures::{T0, entry, session};
 
 /// A configured secret's value.
 pub const SECRET: &str = "sk-live-0123456789abcdef";

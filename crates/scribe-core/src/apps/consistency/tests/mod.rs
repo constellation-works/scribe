@@ -3,4 +3,4 @@
 
 mod rules;
 
-pub(crate) use scribe_domain::fixtures::entry;
+pub(crate) use scribe_store::fixtures::entry;

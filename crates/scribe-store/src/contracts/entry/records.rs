@@ -12,9 +12,12 @@ pub const DECISION_TAG: &str = "decision";
 /// The tag of an open-item entry.
 pub const OPEN_ITEM_TAG: &str = "open-item";
 
-/// Whether `tag` is the decision or the open-item tag.
-pub fn is_decision_or_item(tag: &str) -> bool {
-    matches!(tag, DECISION_TAG | OPEN_ITEM_TAG)
+impl super::TagName {
+    /// Whether this is the decision or the open-item tag.
+    #[must_use]
+    pub fn is_decision_or_item(&self) -> bool {
+        matches!(self.as_str(), DECISION_TAG | OPEN_ITEM_TAG)
+    }
 }
 
 /// A choice that outlives its task.

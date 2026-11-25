@@ -3,9 +3,7 @@
 //! they reach only `pub(crate)` items. The store's tests live in
 //! `store/tests/`.
 
-mod entry;
-mod handoff;
 mod record;
 mod session;
 
-pub(crate) use crate::fixtures::{T0, entry, session};
+pub(crate) use crate::fixtures::{T0, session};

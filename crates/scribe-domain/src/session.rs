@@ -112,7 +112,8 @@ impl SessionId {
     pub const MAX_CHARS: usize = 128;
 
     /// The synthetic source id on a citation whose session was erased.
-    pub(crate) fn deleted() -> Self {
+    #[must_use]
+    pub fn deleted() -> Self {
         Self(String::from("deleted"))
     }
 

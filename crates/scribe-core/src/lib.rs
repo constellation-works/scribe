@@ -95,7 +95,7 @@ pub mod control {
     pub use crate::apps::session::rules::control::*;
     pub use scribe_tools::markers::control::*;
 }
-pub(crate) use scribe_domain::entry;
+pub(crate) use scribe_store::entry;
 pub(crate) use scribe_store::error;
 /// `group` at its old path: the group shapes (the store's contracts), the
 /// group app's requests, outcomes and consent (`apps/group`), and the
@@ -109,7 +109,12 @@ pub mod group {
     pub use crate::models::CloseEvidence;
     pub use scribe_store::{Group, NewGroup, Seat, SeatHold};
 }
-pub use scribe_domain::handoff;
+/// `handoff` at its old path: the handoff record's shape (the store's
+/// contracts) and the checks a handoff write must pass (`apps/entry`).
+pub mod handoff {
+    pub use crate::apps::entry::rules::handoff::*;
+    pub use scribe_store::handoff::*;
+}
 /// `instruction` at its old path: the instruction check (`apps/entry`) and
 /// what a member's Claude capture has seen (the store's contracts).
 pub mod instruction {

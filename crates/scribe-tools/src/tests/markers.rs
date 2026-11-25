@@ -1,9 +1,9 @@
 use crate::markers::Settle;
 use crate::markers::{self as capture, Parsed, Refusal};
 use crate::{markers as annotation, markers::MarkProblem};
-use scribe_domain::entry::EntryId;
 use scribe_store::ProposalId;
 use scribe_store::TagTable;
+use scribe_store::entry::EntryId;
 
 /// `(line, code)` of each settling line of `prompt`: `settle`,
 /// or the refusal's code.

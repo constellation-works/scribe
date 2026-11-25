@@ -16,7 +16,7 @@ pub use records::{
     AnswerIn, Decision, InvalidAnswerIn, InvalidItemState, ItemAnswer, ItemClosure, ItemState,
     OpenItem,
 };
-pub use records::{DECISION_TAG, OPEN_ITEM_TAG, is_decision_or_item};
+pub use records::{DECISION_TAG, OPEN_ITEM_TAG};
 
 use crate::record::{
     Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, Related, Topic, Topics,
@@ -131,13 +131,13 @@ impl fmt::Display for TagName {
 /// reused within its tag.
 ///
 /// ```
-/// use scribe_domain::EntryId;
+/// use scribe_store::entry::EntryId;
 ///
 /// let id: EntryId = "preferences-12".parse()?;
 /// assert_eq!(id.tag().as_str(), "preferences");
 /// assert_eq!(id.number(), 12);
 /// assert!("preferences-0".parse::<EntryId>().is_err(), "numbers start at 1");
-/// # Ok::<(), scribe_domain::EntryError>(())
+/// # Ok::<(), scribe_store::entry::EntryError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
