@@ -2984,9 +2984,11 @@ automatically: its state becomes `rejected`, `settled_author` is
 `{kind: scribe, name: tag-retired}`, `settled_by` is `null`, and the new
 field `closed_reason` is `tag_retired`. This runs under the store lock in
 the candidate write path before the cap is counted, so every pass frees
-the slots, and in `consistency scan`; each close is one audit line. If the
-command fails after those closures are already on disk, it still writes one
-success audit line per closed proposal, then its failure line. It
+the slots, and in `consistency scan`; each close is one audit line. If a
+stepwise `session pass` fails after those closures are already on disk, it
+still writes one success audit line per closed proposal, then its failure
+line; `consistency scan` runs in one transaction, so a failure rolls back its
+closures and writes only its failure line. It
 needs no model and writes no entry. A closed candidate stays in the
 suppression set like any rejection, and `proposal list --state rejected`
 shows its reason. On 2026-11-21 it would close 16 of the 20 (7 `decisions`,

@@ -25,9 +25,8 @@
 //! Pinned sessions (`keep_active`) are never deactivated by a scan.
 //! Each reapplied approval, closed retired-tag candidate, covered-candidate
 //! close, opened proposal and deactivated session is one audit line; a scan that changes nothing and fails nothing writes none.
-//! When a later step fails after earlier mutations are already on disk, the
-//! scan still writes one success line per persisted write, then its failure
-//! line.
+//! A scan runs in one store transaction with its audit lines, so a failure
+//! rolls back every change and writes only its failure line.
 
 use crate::error::CliError;
 use crate::output::{

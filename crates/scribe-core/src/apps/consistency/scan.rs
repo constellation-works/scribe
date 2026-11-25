@@ -1,15 +1,13 @@
 //! `scribe consistency scan` (ORB-27707 step 3d), the consistency routine's
 //! job (docs/design/scribe/2_design.md §7). The CLI's `consistency.rs`
-//! documents the steps; this is their order, and the audit lines a scan
-//! owes for writes already on disk when a later step fails. It calls no
-//! model (ORB-27911 step 2a).
+//! documents the steps; this is their order. It calls no model (ORB-27911 step
+//! 2a).
 
 use crate::activity::{self, ActiveRoute, SetActive};
 use crate::apps::proposal;
 use crate::apps::session;
 use crate::apps::tag::ConfigReads;
 use crate::consistency::{self, ReapplyReport};
-use crate::runtime::audit::PersistedAudit;
 use crate::runtime::{Ctx, PortError};
 use crate::{Config, EntryFilter, Proposal, Provider, Redactor, SessionFilter, SessionId, Store};
 
@@ -91,17 +89,8 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: ScanInput) -> Result<ScanOutco
     // Fail closed before any write (the reapply below writes entries) when
     // a configured [redact] env name has no value in this environment.
     let redactor = ctx.redaction.redactor(&config).map_err(ScanError::Port)?;
-    // Armed until the success return. Every durable write in the scan records
-    // its audit target here right after persisting, so a later `?` drops this
-    // and audits what is already on disk before the middleware writes the
-    // scan's failure line. Success disarms it so the middleware writes those
-    // lines once with the command's real duration.
-    let mut persisted = PersistedAudit::new(store, COMMAND, now);
     let repaired = proposal::reapply_approved(store, now)?;
-    persisted.extend(repaired.applied.iter().map(|r| r.entry.to_string()));
-    persisted.extend(repaired.covered.iter().map(|c| c.proposal.to_string()));
     let closed = proposal::close_retired_candidates(store, now)?;
-    persisted.extend(closed.iter().map(|proposal| proposal.id.to_string()));
     let entries = store
         .read()
         .entries()
@@ -122,9 +111,8 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: ScanInput) -> Result<ScanOutco
     let drafts: Vec<_> = stale.iter().map(consistency::stale).collect();
     if !drafts.is_empty() {
         report.opened = proposal::open_proposals(store, drafts, now, &redactor)?;
-        persisted.extend(report.opened.iter().map(|proposal| proposal.id.to_string()));
     }
-    deactivate_aged(store, now, &config, &redactor, &mut report, &mut persisted)?;
+    deactivate_aged(store, now, &config, &redactor, &mut report)?;
     let changed = !(report.reapplied.applied.is_empty()
         && report.opened.is_empty()
         && report.closed.is_empty()
@@ -136,7 +124,6 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: ScanInput) -> Result<ScanOutco
             .notices
             .push(String::from("nothing to propose: no entry due for review"));
     }
-    persisted.disarm();
     Ok(report)
 }
 
@@ -149,7 +136,6 @@ fn deactivate_aged(
     config: &Config,
     redactor: &Redactor,
     report: &mut ScanOutcome,
-    persisted: &mut PersistedAudit<'_>,
 ) -> crate::Result<()> {
     let filter = SessionFilter {
         include_inactive: true,
@@ -180,7 +166,6 @@ fn deactivate_aged(
         if !outcome.changed() {
             continue;
         }
-        persisted.record(format!("session:{id}"));
         if let SetActive::Deactivate { reason, .. } = change {
             report.deactivated.push(Deactivated {
                 session: id.to_string(),
