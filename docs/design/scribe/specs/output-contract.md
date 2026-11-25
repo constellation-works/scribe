@@ -769,9 +769,18 @@ session:<id> --quote '<their words>' --spoken '<statement>'. If it marks
 nothing, record nothing.` `--tag` is the marker's tag hint when it names a
 known tag, else `<tag>`; `--project` is `global` for `#scribe/global`, else
 the turn's project; each hashtag on the line is a `--topic`. When the hint
-is an action tag, a `require_evidence` tag or `handoff`, which refuse
-`--spoken` (`not_memory_tag`), the command ends `--quote '<their words>'
-'<statement>'` instead. The marker is
+is an action tag or `handoff`, which refuse `--spoken` (`not_memory_tag`),
+the command ends `--quote '<their words>' '<statement>'` instead. When the hint
+is a `require_evidence` tag, the line reads instead `scribe: the user marked
+a line with #scribe for you to record — "<line>". If it marks a result to
+keep, and you can point to its evidence, record it as your finding with a
+nonempty evidence pointer (a path, task, run, experiment or commit): scribe
+entry add --tag <tag> --project <project> [--topic <topic>]... --author <name>
+--related session:<id> --evidence '<pointer>' '<statement>'. If it marks
+nothing, record nothing.` It has no `--quote` and no `--spoken`: `entry add`
+refuses `--quote` under a tag without `require_quote` (`not_action_tag`) and
+`--spoken` under a `require_evidence` tag (`not_memory_tag`), and the finding
+is the agent's own result, not the user's words. The marker is
 recorded final as `refused` with code `agent_handoff`, so it is handed over
 once. When the store's config cannot be read or the marks cannot be
 written, `Stop` echoes `scribe: could not hand over #scribe in your message —
