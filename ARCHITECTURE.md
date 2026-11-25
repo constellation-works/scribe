@@ -166,8 +166,9 @@ calls `session`; `brief` calls `memory`; `consistency` calls `proposal` and
 one, to `runtime` if it is about the context (ids, errors, audit), or to
 `scribe-tools` if it is about transcripts, windows, markers or payloads.
 There is no `apps/common`, `apps/shared` or `apps/util`. A relative `super::`
-import is read as the `crate::` path it names, so the guard holds it to the
-same order.
+import is read as the `crate::` path it names, and a grouped import is read
+as the paths it names (`crate::{apps::entry::X}`, `crate::apps::{entry::X}`),
+so the guard holds each to the same order.
 
 ### Runtime, composition and providers
 

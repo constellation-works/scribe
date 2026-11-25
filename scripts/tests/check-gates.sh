@@ -95,11 +95,38 @@ for spec in \
   'apps/entry/flow.rs|use super::super::session::Entry;' \
   'apps/entry/mod.rs|use super::{session::Entry};' \
   $'apps/entry/mod.rs|use super::{\n    session::Entry,\n};' \
+  'apps/tag/mod.rs|use super::entry::Command;' \
+  'apps/tag/flow.rs|use super::super::entry::Command;' \
+  'apps/tag/mod.rs|use crate::{apps::entry::Command};' \
+  'apps/tag/mod.rs|use crate::{config, apps::entry::Command};' \
+  'apps/tag/mod.rs|use crate::{apps::{entry::Command}};' \
+  'apps/tag/mod.rs|use crate::{apps::{mark::Mark, entry::{Command, Outcome}}};' \
+  'apps/tag/mod.rs|use crate::apps::{mark::Mark, entry::{Command, Outcome}};' \
+  'apps/tag/mod.rs|use super::super::{apps::entry::Command};' \
+  $'apps/tag/mod.rs|use crate::{\n    config,\n    apps::entry::Command,\n};' \
+  'apps/mark/mod.rs|use crate::{apps::entry::flow::Step};' \
+  'apps/mark/mod.rs|use crate::apps::{entry::{flow::Step}};' \
+  'apps/tag/mod.rs|use crate::{apps::nosuch::Command};' \
   'providers/models.rs|use super::super::apps::session::Entry;'; do
   bad=$(tree "rel-up-$n")
-  mkdir -p "$bad/crates/scribe-core/src/apps/entry" "$bad/crates/scribe-core/src/providers"
+  mkdir -p "$bad/crates/scribe-core/src/providers" "$bad/crates/scribe-core/src/$(dirname "${spec%%|*}")"
   printf '%s\n' "${spec#*|}" >"$bad/crates/scribe-core/src/${spec%%|*}"
-  expect fail check-dependency-direction.sh "$bad" "a relative import of ${spec%%|*}: $(echo "${spec#*|}" | tr -s '\n ' ' ')"
+  expect fail check-dependency-direction.sh "$bad" "an upward or reaching import in ${spec%%|*}: $(echo "${spec#*|}" | tr -s '\n ' ' ')"
+done
+
+# The downward twins of the grouped and relative spellings above are legal.
+for spec in \
+  'apps/entry/mod.rs|use super::tag::Command;' \
+  'apps/entry/flow.rs|use super::super::tag::Command;' \
+  'apps/entry/mod.rs|use crate::{apps::tag::Command};' \
+  'apps/entry/mod.rs|use crate::{config, apps::{tag::Command, mark::{Mark, Outcome}}};' \
+  'apps/entry/mod.rs|use crate::apps::{tag::Command, mark::{Mark, Outcome}};' \
+  $'apps/entry/mod.rs|use crate::{\n    config,\n    apps::tag::Command,\n};' \
+  'apps/entry/mod.rs|use crate::{config, runtime::Ctx};'; do
+  ok=$(tree "rel-down-$n")
+  mkdir -p "$ok/crates/scribe-core/src/$(dirname "${spec%%|*}")"
+  printf '%s\n' "${spec#*|}" >"$ok/crates/scribe-core/src/${spec%%|*}"
+  expect pass check-dependency-direction.sh "$ok" "a downward import in ${spec%%|*}: $(echo "${spec#*|}" | tr -s '\n ' ' ')"
 done
 
 for decl in 'mod extra;' 'pub mod extra;'; do
