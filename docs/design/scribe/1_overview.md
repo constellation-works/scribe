@@ -9,7 +9,7 @@ next: 2_design.md §14 annotations built (steps 1–3, store format 22; Codex wi
 feature: scribe
 doc_role: overview
 type: design
-summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on or names (each a header over an append-only log), answers agents' questions about him with verbatim citations, and lets agents search and write through its CLI under one skill.
+summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on or names (each a header over an append-only log), lets agents search, read and write those records through its CLI under one skill, with verbatim citations.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]

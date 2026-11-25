@@ -216,7 +216,7 @@ session age and redaction. The layout and every key are in the
 [store spec](design/scribe/specs/store.md).
 
 A store that another user owns or could write, a linked file, and a record
-from a newer build are refused. List, show, search, brief and question
+from a newer build are refused. List, show, search, brief and transcript
 commands only read: they take no lock and write nothing, including audit
 lines. Direct writes, session passes and rebuilds, `session deactivate` and
 `session activate`, and consistency scans are audited.
@@ -318,7 +318,7 @@ credentials = ["OPENAI_API_KEY"]   # an existing Codex login also works
 ```
 
 `[models]` keeps the Claude defaults. It also accepts `provider = "codex"` for
-global routing, and then defaults its model ids to Luna. Global question jobs
+global routing, and then defaults its model ids to Luna. Global group-close summaries
 otherwise use `[models]`. The `annotation` and `consistency` keys still load
 but are unused. `--provider codex` selects the Codex
 model table for those CLI calls. An explicit id is honored. Model children run
@@ -335,8 +335,7 @@ build that can write the exact files the manifest names. Codex needs its `tmp`
 directory and `installation_id` file writable at startup, even for an ephemeral
 model call. Its auth, configuration and transcripts stay read-only. Scribe
 copies no credentials and requests no whole-home write. The default
-`plugin/.orbit-plugin/` stays the Claude-only package. Both variants keep ask
-as the only agent-callable tool and ship routines disabled. Upgrading preserves
+`plugin/.orbit-plugin/` stays the Claude-only package. Neither variant exposes an agent-callable tool, and both ship routines disabled. Upgrading preserves
 existing enablement and schedules.
 
 Lifecycle and trust: [Codex hooks](https://learn.chatgpt.com/docs/hooks).
