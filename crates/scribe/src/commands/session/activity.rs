@@ -28,7 +28,7 @@ pub(in crate::commands) const DEACTIVATE_COMMAND: &str = "session deactivate";
 pub(in crate::commands) const ACTIVATE_COMMAND: &str = "session activate";
 
 pub(super) const DEACTIVATE_EXAMPLES: &str = "\
-Hides the session from session list and ask, as a superseded entry is
+Hides the session from session list and search, as a superseded entry is
 hidden; session show still shows it, with the reason.
 Deactivating a pinned session also unpins it. Check that the feature is
 gone before you deactivate: scribe takes your reason as given.

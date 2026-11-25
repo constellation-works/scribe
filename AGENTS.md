@@ -1,6 +1,6 @@
 # scribe — agent guide
 
-scribe is a standalone Rust CLI and Orbit plugin that records explicitly marked preferences, catalogs opted-in sessions, and answers agents with verbatim citations. Product behavior is in [the design](docs/design/scribe/1_overview.md); code boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
+scribe is a standalone Rust CLI and Orbit plugin that records explicitly marked preferences, catalogs opted-in sessions, lets agents search and read those records through the CLI, and provides the routines that keep them current. Product behavior is in [the design](docs/design/scribe/1_overview.md); code boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Rules
 

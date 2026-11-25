@@ -8,7 +8,7 @@
   <a href="https://github.com/constellation-works/scribe/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/constellation-works/scribe/ci.yml?branch=agent-main" alt="CI" /></a>
 </p>
 
-Scribe keeps the preferences you mark and the chat sessions you choose to catalog, on your own machine. An agent that asks it a question gets an answer that quotes those records.
+Scribe keeps the preferences you mark and the chat sessions you choose to catalog, on your own machine. An agent can search those records and read them with the same command-line tool.
 
 Scribe is pre-1.0. It runs on Linux and macOS; a Windows host is not supported.
 
@@ -16,7 +16,7 @@ Scribe is pre-1.0. It runs on Linux and macOS; a Windows host is not supported.
 
 - You mark a sentence in a chat, and scribe stores your words.
 - You turn a session on, and scribe writes a record of it.
-- You ask a question, and the answer quotes the record it used.
+- An agent searches the records, and each hit cites the record it came from.
 - The files stay in one directory on your machine.
 - You and an agent read and write them with one command-line tool.
 
@@ -63,7 +63,7 @@ scribe group show <slug> --json
 <details>
 <summary>Other ways to set it up</summary>
 
-`scribe init` scaffolds the skill and hooks into a project you already have. The Orbit plugin answers the same questions for an agent. Both are in the [guide](docs/guide.md).
+`scribe init` scaffolds the skill and hooks into a project you already have. The Orbit plugin runs the routines that keep the records current. Both are in the [guide](docs/guide.md).
 
 </details>
 

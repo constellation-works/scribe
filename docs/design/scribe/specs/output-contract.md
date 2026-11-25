@@ -81,7 +81,7 @@ proposal's quote line).
 | `transcript list` *(S14)* | `session project user_turns bytes started ended first_prompt` |
 
 Search hits are best first; on a tie entries come before sessions, then
-the newest first (as `ask` ranks); transcripts newest first by
+the newest first; transcripts newest first by
 `started`. Entries are oldest first (by `created`, then `started`, ties by
 id). Proposals are ordered by number; tags by name. Table output indents the
 title two spaces per level; plain output does not indent, and the `parent`
@@ -217,7 +217,7 @@ the agent's: table detail's `stated_by` reads `agent:<name> (content is agent
 (<name>)'s statement of the user's turn)` before `quote`, plain prints
 `stated_by\tagent:<name>\t<quote>`, `search` snippets open with `agent
 (<name>)'s statement of the user's turn: <statement> | The user's words:
-"<quote>"`, and `ask` attributes quotes inside `quote` to the user and quotes
+"<quote>"`, and `entry show` attributes quotes inside `quote` to the user and quotes
 in `content` to `agent (<name>)'s statement of the user's turn`.
 
 Store format 28 adds `handoff_mode` to entry JSON. It is `continue` or `new`
@@ -602,9 +602,7 @@ a handoff's `session:` reference),
 decision or spoken-instruction quote that redaction would alter), `not_agent_note`
 (`entry update --content` on an approved claim rather than a direct agent
 note), for `session pass`
-`session_pass_failed` and `session_not_on`, and for `question
-ask` the model codes `model_timeout`, `model_unavailable`, `model_failed`,
-`model_malformed`. A hook's refusals
+`session_pass_failed` and `session_not_on`. A hook's refusals
 are not errors and appear only in its reply and audit lines:
 `unknown_tag`, `unparsed_instruction`, `too_many_marks`,
 `provenance_failed` and `unknown_scribe_command`; `agent_handoff` records a
