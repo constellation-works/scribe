@@ -29,6 +29,27 @@
         "type": "object"
       },
       "maxItems": 1
+    },
+    "catalog": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "author"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [],

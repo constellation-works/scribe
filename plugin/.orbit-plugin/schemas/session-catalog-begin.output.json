@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "string"
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "wrote_switch": {
+      "type": "boolean"
+    },
+    "catalog": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "session",
+    "sessions",
+    "wrote_switch",
+    "catalog"
+  ],
+  "additionalProperties": false
+}

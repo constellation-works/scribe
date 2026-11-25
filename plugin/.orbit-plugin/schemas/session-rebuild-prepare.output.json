@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "needs_model": {
+      "type": "boolean"
+    },
+    "ready_to_finish": {
+      "type": "boolean"
+    },
+    "expected_updated": {
+      "type": "string"
+    },
+    "basis": {
+      "type": "object"
+    },
+    "cursor": {
+      "type": "object"
+    },
+    "window_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "session_distill_crew": {
+      "type": "string"
+    },
+    "session_header_crew": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "needs_model",
+    "ready_to_finish",
+    "expected_updated",
+    "basis",
+    "cursor",
+    "window_request",
+    "session_distill_crew",
+    "session_header_crew"
+  ],
+  "additionalProperties": false
+}

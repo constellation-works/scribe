@@ -1,0 +1,157 @@
+schemaVersion: 2
+kind: Job
+metadata:
+  name: scribe-session-rebuild
+spec:
+  state: enabled
+  kind: workflow
+  # With the optimistic checks in apply and finish, this replaces the old
+  # rebuild lock (2_design.md §19.6).
+  max_active_runs: 1
+  # `session`, `author` and `confirm: true` are required; prepare refuses
+  # without them.
+  default_input:
+    session: ""
+    author: ""
+    confirm: false
+  steps:
+    # Fan-in seeds an empty cursor and replaces it with the committed
+    # continuation after each iteration. A fan-out step takes its timeout on
+    # its worker.
+    - id: seed_cursor
+      fan_out:
+        items: "[]"
+        worker:
+          id: unused_seed
+          timeout_seconds: 60
+          spec:
+            type: deterministic
+            action: plugin.tool_call
+            config:
+              tool: scribe.session-rebuild-prepare
+      fan_in:
+        join: { mode: all }
+        collect: rebuild_cursor
+    - id: windows
+      loop:
+        # One window, or one finish, per iteration. A rebuild that runs out
+        # fails the run with its checkpoint kept; running the job again
+        # resumes it.
+        max_iterations: 100
+        fail_when_exhausted: true
+        break_when: "{{ steps.finish.output.done }} == true"
+        steps:
+          - id: prepare
+            timeout_seconds: 60
+            spec:
+              type: deterministic
+              action: plugin.tool_call
+              config:
+                tool: scribe.session-rebuild-prepare
+            default_input:
+              input:
+                session: "{{ input.session }}"
+                author: "{{ input.author }}"
+                confirm: "{{ input.confirm }}"
+                progress: "{{ steps.rebuild_cursor.output }}"
+          # The skipped second worker gives the join a successful branch so
+          # apply receives the worker's error and fails the run with its code.
+          - id: distill
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: distill_window
+                timeout_seconds: 300
+                when: "{{ item }} == true && {{ steps.prepare.output.needs_model }} == true"
+                target: activity:scribe_session_distill
+                default_input:
+                  request: "{{ steps.prepare.output.window_request }}"
+                  crew: "{{ steps.prepare.output.session_distill_crew }}"
+            fan_in:
+              join: { mode: any }
+              errors: distill_errors
+          - id: apply
+            timeout_seconds: 60
+            spec:
+              type: deterministic
+              action: plugin.tool_call
+              config:
+                tool: scribe.session-rebuild-apply
+            default_input:
+              input:
+                basis: "{{ steps.prepare.output.basis }}"
+                cursor: "{{ steps.prepare.output.cursor }}"
+                answer: "{{ steps.distill.output }}"
+                errors: "{{ steps.distill_errors.output }}"
+          - id: compress
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: compress_header
+                timeout_seconds: 300
+                when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_header"
+                target: activity:scribe_session_header_compress
+                default_input:
+                  request: "{{ steps.apply.output.header_request }}"
+                  crew: "{{ steps.prepare.output.session_header_crew }}"
+            fan_in:
+              join: { mode: any }
+              errors: compress_errors
+          - id: distill_retry
+            fan_out:
+              items: "[true, false]"
+              max_workers: 1
+              worker:
+                id: distill_corrected_window
+                timeout_seconds: 300
+                when: "{{ item }} == true && {{ steps.apply.output.status }} == retry_window"
+                target: activity:scribe_session_distill
+                default_input:
+                  request: "{{ steps.apply.output.window_request }}"
+                  crew: "{{ steps.prepare.output.session_distill_crew }}"
+            fan_in:
+              join: { mode: any }
+              errors: distill_retry_errors
+          # The final attempt: repair, or fail the run with the refusal's
+          # code. Without a retry it carries the cursor.
+          - id: carry
+            fan_out:
+              items: "[true]"
+              worker:
+                id: apply_retry
+                timeout_seconds: 60
+                spec:
+                  type: deterministic
+                  action: plugin.tool_call
+                  config:
+                    tool: scribe.session-rebuild-apply
+                default_input:
+                  input:
+                    basis: "{{ steps.prepare.output.basis }}"
+                    cursor: "{{ steps.apply.output.cursor }}"
+                    answer: "{{ steps.distill.output }}"
+                    retry_answer: "{{ steps.distill_retry.output }}"
+                    header: "{{ steps.compress.output }}"
+                    header_errors: "{{ steps.compress_errors.output }}"
+                    retry_errors: "{{ steps.distill_retry_errors.output }}"
+                    correction: "{{ steps.apply.output.correction }}"
+                    repair: true
+                    previous_status: "{{ steps.apply.output.status }}"
+            fan_in:
+              join: { mode: all }
+              collect: rebuild_cursor
+          # Writes only when prepare found every message in the checkpoint;
+          # else it ends nothing and the next prepare reads again.
+          - id: finish
+            timeout_seconds: 60
+            spec:
+              type: deterministic
+              action: plugin.tool_call
+              config:
+                tool: scribe.session-rebuild-finish
+            default_input:
+              input:
+                basis: "{{ steps.prepare.output.basis }}"
+                progress: "{{ steps.rebuild_cursor.output }}"

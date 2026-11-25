@@ -34,7 +34,7 @@ pub use pass::{
 #[cfg(any(test, feature = "test-support"))]
 pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
 #[cfg(any(test, feature = "test-support"))]
-pub use rebuild::RebuildVerbs;
+pub use rebuild::{Finished, Mark, RebuildVerbs};
 pub use rebuild::{
     REBUILD_COMMAND, RebuildApplied, RebuildApplyInput, RebuildBasis, RebuildCursor, RebuildError,
     RebuildFinishInput, RebuildFinished, RebuildInput, RebuildPrepareInput, RebuildPrepared,

@@ -3,6 +3,7 @@ use crate::ProposalVerbs;
 use crate::consistency::Settle;
 use crate::entry::Cite;
 use crate::testing::ViewTestReads;
+use crate::apps::session::{Finished, Mark};
 use crate::{PassVerbs, RebuildVerbs};
 use crate::{Redactor, SegmentOrigin, SegmentState, SessionFilter, Store};
 use time::macros::datetime;
@@ -17,13 +18,15 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
     store
         .settle_pass(&id, Some(original.clone()), false, None, &redactor)
         .unwrap();
-    let _guard = store.lock_rebuild(&original).unwrap();
     let mut rebuilt = original.clone();
     rebuilt.summary = String::from("Rebuilt header");
     rebuilt.log[0].origin = SegmentOrigin::Rebuild;
-    store
-        .checkpoint_rebuild(rebuilt.clone(), &redactor)
-        .unwrap();
+    assert!(
+        store
+            .checkpoint_rebuild(rebuilt.clone(), None, &redactor)
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(store.session(&id).unwrap().record, original);
     assert_eq!(
         store
@@ -52,18 +55,23 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
             &redactor,
         )
         .unwrap();
-    assert!(
+    // The visible record advanced: the checkpoint is rebased onto it.
+    let mark = Mark::of(&rebuilt);
+    assert!(matches!(
         store
-            .finish_rebuild(rebuilt.clone(), original.updated, &redactor)
-            .unwrap()
-            .is_none()
-    );
+            .finish_rebuild(rebuilt.clone(), &mark, &redactor)
+            .unwrap(),
+        Finished::Rebased(at) if at == advanced.updated
+    ));
     assert_eq!(store.session(&id).unwrap().record, advanced);
+    let mut rebased = rebuilt.clone();
+    rebased.updated = advanced.updated;
+    let mark = Mark::of(&rebased);
     rebuilt.updated += time::Duration::seconds(2);
-    let written = store
-        .finish_rebuild(rebuilt, advanced.updated, &redactor)
-        .unwrap()
-        .unwrap();
+    let Finished::Written(written) = store.finish_rebuild(rebuilt, &mark, &redactor).unwrap()
+    else {
+        panic!("the rebased checkpoint replaces the record");
+    };
     assert!(!written.active);
     assert!(written.keep_active);
     assert_eq!(written.created, original.created);
@@ -73,7 +81,7 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
 }
 
 #[test]
-fn a_forgotten_session_takes_no_rebuild_lock_and_no_checkpoint() {
+fn a_forgotten_session_takes_no_checkpoint_and_no_finish() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let redactor = Redactor::new([]);
@@ -99,9 +107,13 @@ fn a_forgotten_session_takes_no_rebuild_lock_and_no_checkpoint() {
         .unwrap();
     let mut rebuilt = original.clone();
     rebuilt.summary = String::from("Rebuilt header");
-    let err = store.checkpoint_rebuild(rebuilt, &redactor).unwrap_err();
+    let err = store
+        .checkpoint_rebuild(rebuilt.clone(), None, &redactor)
+        .unwrap_err();
     assert_eq!(err.code(), "session_forgotten");
     assert_eq!(store.rebuild_checkpoint(&original).unwrap(), None);
-    let err = store.lock_rebuild(&original).unwrap_err();
+    let err = store
+        .finish_rebuild(rebuilt.clone(), &Mark::of(&rebuilt), &redactor)
+        .unwrap_err();
     assert_eq!(err.code(), "session_forgotten");
 }

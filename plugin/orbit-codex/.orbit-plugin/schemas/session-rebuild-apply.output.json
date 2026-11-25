@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "idle",
+        "written",
+        "stale",
+        "retry_header",
+        "retry_window"
+      ]
+    },
+    "cursor": {
+      "type": "object"
+    },
+    "correction": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "header_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "window_request": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "cursor",
+    "correction",
+    "header_request",
+    "window_request"
+  ],
+  "additionalProperties": false
+}

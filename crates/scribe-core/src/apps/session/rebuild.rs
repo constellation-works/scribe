@@ -89,7 +89,9 @@ pub struct Mark {
 }
 
 impl Mark {
-    fn of(record: &SessionRecord) -> Self {
+    /// The mark of `record` as a stored checkpoint.
+    #[must_use]
+    pub fn of(record: &SessionRecord) -> Self {
         Self {
             through: record.scribed_through.clone(),
             updated: record.updated,
@@ -451,6 +453,9 @@ pub struct RebuildApplyInput {
     /// Header compression result.
     #[serde(default)]
     pub header: Option<ActivityAnswer<SessionHeader>>,
+    /// The compression's position-aligned worker errors.
+    #[serde(default)]
+    pub header_errors: Vec<Option<String>>,
     /// Whole-window retry result.
     #[serde(default)]
     pub retry_answer: Option<ActivityAnswer<SessionAnswer>>,
@@ -873,6 +878,7 @@ pub(crate) fn apply<E: PortError>(
         answer,
         errors,
         header,
+        header_errors,
         retry_answer,
         retry_errors,
         repair,
@@ -907,7 +913,7 @@ pub(crate) fn apply<E: PortError>(
     let (answer, failed_with) = if previous_status == Some(RebuildStatus::RetryWindow) {
         (retry_answer.and_then(ActivityAnswer::first), retry_errors)
     } else if previous_status == Some(RebuildStatus::RetryHeader) {
-        (first.clone().filter(|_| header.is_some()), retry_errors)
+        (first.clone().filter(|_| header.is_some()), header_errors)
     } else {
         (first.clone(), errors)
     };

@@ -849,10 +849,22 @@ fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
     rebuilt.summary = String::from("Rebuilt header");
     rebuilt.updated = t0 + time::Duration::hours(2);
     rebuilt.log[0].origin = SegmentOrigin::Rebuild;
-    let rebuilt = store
-        .finish_rebuild(rebuilt, stale.updated, &redactor)
-        .unwrap()
+    let mut checkpoint = rebuilt.clone();
+    checkpoint.updated = stale.updated;
+    store
+        .checkpoint_rebuild(checkpoint.clone(), None, &redactor)
         .unwrap();
+    let crate::apps::session::Finished::Written(rebuilt) = store
+        .finish_rebuild(
+            rebuilt,
+            &crate::apps::session::Mark::of(&checkpoint),
+            &redactor,
+        )
+        .unwrap()
+    else {
+        panic!("the rebuild replaces the record");
+    };
+    let rebuilt = *rebuilt;
     let rebuilt_bytes = stored(&store, &id);
     store
         .update_control(|state| control::fail(state, &id, t0))
