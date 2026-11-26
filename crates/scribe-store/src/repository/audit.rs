@@ -114,7 +114,7 @@ impl Store {
         if !self.root_exists()? {
             return Ok((Vec::new(), 0));
         }
-        let (mut lines, drained) = match self.read_db(|conn, path| {
+        let (mut lines, drained) = match self.read_db(|conn, _version, path| {
             let drained = docs::spooled_names(conn, path)?;
             Ok((docs::audit(conn, path)?, drained))
         })? {

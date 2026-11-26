@@ -5336,3 +5336,69 @@ filter would leave erased text in closed journal rows.
 
 **Cost:** Changes to the entry format or journal representation must
 account for existing records and check that they still read and replay.
+
+## Opening, configuring and migrating scribe.db goes through cw-sqlite
+
+**Recorded:** 2026-11-26 · ORB-28614
+**Code anchors:** `crates/scribe-store/src/db/mod.rs`, `crates/scribe-store/src/db/scope.rs`, `crates/scribe-store/src/db/write.rs`, `crates/scribe-store/src/db/memory.rs`
+
+### Context
+
+`crates/scribe-store/src/db/mod.rs` carried scribe's own SQLite open flags,
+owner-only companion checks, retried WAL switch, `synchronous = FULL`,
+`PersistWal`, `busy_timeout`, `PRAGMA user_version` migration loop, newer-schema
+refusal, read-only `immutable=1` fallback, and WAL `TRUNCATE` checkpointing.
+The cw-kit design (constellation `docs/design/cw-kit/2_design.md`, §cw-sqlite)
+moved those mechanisms into `cw-sqlite`, pinned alongside `cw-fs` at one
+satellites `agent-main` revision (`bdce98be91251d442cde3a8d0f3ddec13a81e362`,
+after `ORB-28703` added `Db::open_writer`, `Writer`, `Db::checkpoint_truncate`,
+and `Step::checkpoint_truncate_before`).
+
+### Decision
+
+`scribe-store` opens, configures, checkpoints and migrates `scribe.db` only
+through `cw-sqlite` (with `secure_delete(true)` enabled) and reaches `rusqlite`
+only through `cw_sqlite::rusqlite`. No scribe source sets `journal_mode`,
+`synchronous`, `busy_timeout`, `user_version`, `secure_delete`, `PersistWal` or
+`wal_checkpoint` itself; read paths use `Reader::version()` and `Writer::version()`
+instead of querying `PRAGMA user_version`.
+
+What stays in scribe, per the cw-kit design:
+
+- **Thread-local write scope and savepoints** (`db/scope.rs`, `db/write.rs`):
+  `Store::transaction` and `Store::write_step` hold an `Rc<cw_sqlite::Writer>`
+  across multi-step writes, savepoints, in-transaction reads, and same-commit
+  audit rows.
+- **Post-forget WAL truncation policy** (`db/mod.rs::truncate_wal` /
+  `truncate_wal_of`): calls `Writer::checkpoint_truncate` /
+  `Db::checkpoint_truncate` after commit and logs a warning (rather than failing
+  the already-committed forget) if a concurrent reader still blocks truncation
+  past the lock wait.
+- **Migration steps and queries** (`db/mod.rs::MIGRATIONS` and `db/*.rs`):
+  `V1` inserts `meta` via `Step::function`, and `V9` / `V10` carry
+  `Step::checkpoint_truncate_before()` to preserve the schema 8/9 WAL cleanup
+  barrier.
+
+### Consequences
+
+- **Foreign keys enforced:** `cw-sqlite` enables `PRAGMA foreign_keys = ON` on
+  every writer connection (scribe previously left SQLite's default `OFF`).
+  `ON DELETE CASCADE` on `group_claude_progress` and `group_claude_seen` now
+  fires on member deletion, and invalid foreign-key writes are rejected.
+- **Clock-bounded busy handler:** `cw-sqlite` uses a clock-bounded busy handler
+  for `lock_wait` (covering open, WAL switch, migration, and each subsequent
+  wait on a `Writer`) instead of SQLite's planned-sleep `busy_timeout`.
+- **Stricter read-only fallback and reader snapshots:** `cw-sqlite` opens every
+  reader with `query_only = ON`, `SQLITE_OPEN_NOFOLLOW`, `NO_CKPT_ON_CLOSE`, and
+  one `BEGIN DEFERRED` snapshot for the reader's lifetime (checked against
+  `MIGRATIONS.len()` so every reader—including `revision_at`, `pending_read`,
+  and `sessions::read_moved`—refuses a newer schema). In a non-writable
+  directory with a non-empty `-wal` that cannot be recovered read-only, the read
+  is refused instead of falling back to `immutable=1` and silently omitting
+  committed WAL pages; in a writable directory `immutable=1` is never used.
+- **Neutral lock holder and busy classification:** `Error::Locked` from SQLite
+  now reports the neutral holder `"another scribe.db connection"` across open,
+  migration, checkpoint, and write contention (previously writes said
+  `"another scribe.db writer"` while checkpoint barriers said
+  `"another scribe.db connection"`), and `db_error` classifies busy/locked SQLite
+  errors as `Error::Locked` (`store_locked`) via `cw_sqlite::Error::sqlite`.

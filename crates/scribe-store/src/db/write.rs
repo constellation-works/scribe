@@ -3,7 +3,7 @@
 //! rewrite of every document.
 //!
 //! - **One transaction per write.** [`Store::write`] runs its step inside
-//!   one `BEGIN IMMEDIATE` transaction with `busy_timeout` equal to the
+//!   one `BEGIN IMMEDIATE` transaction with `cw-sqlite`'s clock-bounded
 //!   lock wait; a timeout is [`Error::Locked`], as the lock's was. Its
 //!   reads see what it has written so far, and a step that refuses rolls
 //!   back to its savepoint, so a refused write changes nothing.
@@ -151,7 +151,7 @@ struct Pending {
 
 /// The transaction, once the first write began it.
 struct Open {
-    conn: Rc<Connection>,
+    conn: Rc<cw_sqlite::Writer>,
     scope: scope::Scope,
 }
 
@@ -298,6 +298,7 @@ impl Store {
             Ok(value) => {
                 let committed = scope::commit_outer(&open.conn, &path);
                 let truncate = open.scope.leave();
+                drop(open.conn);
                 committed?;
                 Ok((
                     value,
@@ -353,7 +354,7 @@ impl Store {
     }
 
     /// The connection of the transaction under way, if it began.
-    pub(crate) fn open_conn(&self) -> Option<Rc<Connection>> {
+    pub(crate) fn open_conn(&self) -> Option<Rc<cw_sqlite::Writer>> {
         PENDING.with(|p| {
             p.borrow()
                 .as_ref()
@@ -364,7 +365,7 @@ impl Store {
 
     /// Begin the pending transaction at its first write, moving any record
     /// kind still in files in first; or the one already begun.
-    fn begin(&self) -> Result<Rc<Connection>> {
+    fn begin(&self) -> Result<Rc<cw_sqlite::Writer>> {
         if let Some(conn) = self.open_conn() {
             return Ok(conn);
         }
@@ -445,9 +446,7 @@ impl Store {
     /// removed and open memory journals applied.
     fn after_commit(&self, after: After, _now: OffsetDateTime, truncate: bool) -> Result<()> {
         if truncate {
-            let path = self.root.join(DB_FILE);
-            let conn = db::open_new_writer(&self.root, self.lock_wait)?;
-            db::truncate_wal(&conn, &path, std::time::Instant::now())?;
+            db::truncate_wal_of(&self.root, self.lock_wait)?;
         }
         #[cfg(test)]
         if !after.archive_removals.is_empty() && CRASH_BEFORE_REMOVAL.with(|c| c.replace(false)) {

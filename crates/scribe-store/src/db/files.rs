@@ -101,14 +101,3 @@ pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
     }
     cw_fs::remove(&target).map_err(Error::from)
 }
-
-/// Create `path` empty and owner-only unless it exists. An existing file is
-/// left as it is; the caller has inspected it.
-pub(crate) fn create_empty(path: &Path) -> Result<()> {
-    match cw_fs::create_new(path, b"") {
-        Err(cw_fs::Error::Io { source, .. }) if source.kind() == io::ErrorKind::AlreadyExists => {
-            Ok(())
-        }
-        other => other.map_err(Error::from),
-    }
-}

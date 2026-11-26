@@ -6077,8 +6077,9 @@ with phase 4):
 
 - **Lock and atomic writes.** The store lock (`cw_fs::Lock`, `.lock`)
   and the whole-file atomic rewrite of every document give way to SQLite
-  transactions. Hooks in concurrent sessions take `BEGIN IMMEDIATE` with a
-  `busy_timeout` equal to today's `lock_wait`, and a timeout is still
+  transactions opened, configured and migrated through `cw-sqlite`. Hooks in
+  concurrent sessions take `BEGIN IMMEDIATE` with `cw-sqlite`'s clock-bounded
+  lock wait equal to today's `lock_wait`, and a timeout is still
   `Error::Locked`.
 - **One commit per write.** A write and its audit row commit together. This
   removes two gaps of the file store:

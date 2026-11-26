@@ -182,11 +182,18 @@ store_tree() {
 store=$(store_tree store-clean)
 expect pass check-dependency-direction.sh "$store" "a store whose codec and audit do no file I/O"
 for shape in db/codec repository/audit; do
-  for import in 'use super::files;' 'use crate::db::files;' 'use cw_fs::Cap;' 'use std::fs;'; do
+  for import in 'use super::files;' 'use crate::db::files;' 'use cw_fs::Cap;' 'use cw_sqlite::Db;' 'use std::fs;'; do
     bad=$(store_tree "store-io-$n")
     printf '//! shape\n%s\n' "$import" >"$bad/crates/scribe-store/src/${shape}.rs"
     expect fail check-dependency-direction.sh "$bad" "a store $shape with $import"
   done
+done
+
+# scribe-store opens, configures and migrates scribe.db only through cw-sqlite.
+for pragma in 'PRAGMA journal_mode = WAL' 'PRAGMA synchronous = FULL' 'PRAGMA user_version = 1' 'conn.busy_timeout(wait)'; do
+  bad=$(store_tree "store-pragma-$n")
+  printf '//! db\nlet _ = "%s";\n' "$pragma" >"$bad/crates/scribe-store/src/db/mod.rs"
+  expect fail check-dependency-direction.sh "$bad" "scribe-store db/mod.rs setting $pragma directly"
 done
 
 # Exercise direct, relative and grouped paths in both guarded shapes, plus

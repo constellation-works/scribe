@@ -19,6 +19,9 @@ allow = [
     "Apache-2.0",
     # Unicode-3.0: unicode-ident.
     "Unicode-3.0",
+    # Zlib: foldhash (transitive via hashbrown <- hashlink <- rusqlite's cache
+    # feature, enabled by cw-sqlite).
+    "Zlib",
 ]
 confidence-threshold = 0.9
 

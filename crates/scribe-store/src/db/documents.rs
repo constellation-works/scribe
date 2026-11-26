@@ -77,14 +77,14 @@ impl Store {
         if !self.root_exists()? {
             return Ok(false);
         }
-        Ok(docs::read(&self.root, |_, _| Ok(()))?.is_some())
+        Ok(docs::read(&self.root, |_, _, _| Ok(()))?.is_some())
     }
 
     /// Run `f` on the document tables when the documents live in the
     /// database (after checking the format stamp), else `None`.
     pub(crate) fn read_db<T>(
         &self,
-        f: impl Fn(&Connection, &Path) -> Result<T>,
+        f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
     ) -> Result<Option<T>> {
         if !self.root_exists()? {
             return Ok(None);
@@ -100,9 +100,9 @@ impl Store {
     /// database yet; a file store is refused.
     pub(crate) fn read_or_empty<T>(
         &self,
-        f: impl Fn(&Connection, &Path) -> Result<Vec<T>>,
+        f: impl FnOnce(&Connection, &Path) -> Result<Vec<T>>,
     ) -> Result<Vec<T>> {
-        match self.read_db(f)? {
+        match self.read_db(|conn, _version, path| f(conn, path))? {
             Some(found) => Ok(found),
             None => {
                 self.refuse_file_store()?;
@@ -126,8 +126,9 @@ impl Store {
         let conn = db::open_writer(&self.root, self.lock_wait)?;
         let path = self.root.join(DB_FILE);
         let fail = |e| db::db_error("move documents into", &path, e);
-        let sessions_moved = db::sessions::moved(&conn).map_err(fail)?;
-        let documents_moved = docs::moved(&conn).map_err(fail)?;
+        let version = conn.version();
+        let sessions_moved = db::sessions::moved(&conn, version).map_err(fail)?;
+        let documents_moved = docs::moved(&conn, version).map_err(fail)?;
         let leftovers = self.file_store_items()?;
         if !(leftovers.is_empty() || sessions_moved && documents_moved) {
             return Err(self.file_store_error());

@@ -161,7 +161,8 @@ metadata (see
 ## scribe.db (phase 4)
 
 The SQLite database of [2_design.md §15.7](../2_design.md#157-storage),
-built with `rusqlite`'s `bundled` feature (SQLite compiled in, FTS5 on).
+opened, configured, checkpointed and migrated through the kit's `cw-sqlite`
+(which compiles bundled SQLite with FTS5 on and re-exports `rusqlite`).
 Only `scribe-store`'s `db/` opens it. It holds the session pass's
 messages (phase 4) and memory's rows (phase 5): the pending `now`
 candidates, removed items' history, the profile revisions and cursor, the
@@ -171,29 +172,33 @@ and the file store's imported archives (phase 8).
 Only `config.toml` and `memory/`'s files remain as primary data files outside the database.
 
 - **Privacy.** `scribe.db`, `scribe.db-wal` and `scribe.db-shm` are checked
-  like any store file on every open, read or write: a link, another user's
+  through `cw-sqlite` and `cw-fs` on every open, read or write: a link, another user's
   file or any group or other mode bit is refused (`store_symlink`,
   `store_foreign_owner`, `store_permissions`). The database is created
   `0600` before SQLite opens it, and SQLite gives the `-wal` and `-shm`
   files the database's mode.
-- **Writers** open read-write and set `busy_timeout` to the lock wait
-  (10 seconds), `SQLITE_FCNTL_PERSIST_WAL`, `journal_mode = WAL`,
-  `synchronous = FULL` and `secure_delete = ON`. SQLite does not call the
-  busy handler for the journal-mode change, so a writer racing another on
-  a new database retries it every 20 ms within the same wait. Every write
-  is one `BEGIN IMMEDIATE` transaction; a busy database past the wait is
-  `store_locked` (holder `another scribe.db writer`). Writers do not take
+- **Writers** open through `cw-sqlite` (`Db::open_writer` with
+  `secure_delete(true)` and `lock_wait`, default 10 seconds): read-write,
+  `SQLITE_OPEN_NOFOLLOW`, clock-bounded busy handler for the lock wait,
+  `SQLITE_FCNTL_PERSIST_WAL`, `journal_mode = WAL` (retried within the wait),
+  `synchronous = FULL`, `foreign_keys = ON`, and `secure_delete = ON`. Every
+  write runs in a `BEGIN IMMEDIATE` transaction inside scribe's thread-local
+  write scope and savepoints; a busy database past the wait is
+  `store_locked` (holder `another scribe.db connection`). Writers do not take
   `.lock` (phase 7 retires the lock protocol).
-- **Readers** take no lock and write nothing: they open
-  `SQLITE_OPEN_READ_ONLY`. A missing database matches nothing. When SQLite
-  cannot open the WAL read-only (`SQLITE_CANTOPEN` or `SQLITE_READONLY`:
-  the `-wal` or `-shm` file is missing and the directory is not writable,
-  as in a copied or mounted store), the reader opens `file:<path>?immutable=1`
-  and the output says `read-only copy`.
-- **Schema.** `PRAGMA user_version` is the schema version; migrations are a
-  numbered list, each run in its own `BEGIN IMMEDIATE` transaction that
-  re-reads the version, so racing writers run each step once. A version
-  above this build's is `store_too_new` for readers and writers. Version 1
+- **Readers** open through `cw-sqlite` (`Db::read`), taking no lock and
+  writing no database row: `SQLITE_OPEN_READ_ONLY`, `query_only = ON`, and
+  one `BEGIN DEFERRED` snapshot for the reader's life. A missing or empty
+  database matches nothing. In a non-writable directory when SQLite cannot
+  open the WAL read-only and the `-wal` file is absent or empty, `cw-sqlite`
+  falls back to `file:<path>?immutable=1` and the output says `read-only copy`
+  (when a non-empty `-wal` exists in a non-writable directory, the read is
+  refused rather than silently omitting committed WAL pages).
+- **Schema.** `cw-sqlite` tracks `PRAGMA user_version` and runs `MIGRATIONS`
+  as an append-only list of `Step`s, each in its own `BEGIN IMMEDIATE`
+  transaction that re-reads the version under the write lock, so racing
+  writers run each step once. A version above this build's is `store_too_new`
+  for readers and writers (checked before a writer alters the database). Version 1
   is phase 4's; version 2 (phase 5) adds `memory_journal`,
   `memory_messages` and `pass_signals`; version 3 (phase 6) adds
   `sessions`, `segments`, `session_links`, `session_terms`,
