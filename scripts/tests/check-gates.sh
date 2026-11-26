@@ -694,6 +694,30 @@ if ! grep -Fq "terminal-guard: cannot scan" "$work/out"; then
   fail=1
 fi
 
+# Scan files come from mktemp. With TMPDIR absent none can be created, and a
+# redirection into a missing file exits 1, the status of a clean no-match. So
+# the guard must fail with its cannot-scan diagnostic and never print ok, for
+# a tree with a violation and for a clean one (STD-04 R10). The usable-TMPDIR
+# controls show the same trees decide on their content, so the absent
+# directory is the only cause of the failure.
+absent_tmp="$work/absent-tmpdir"
+guard_violation=$(guard_tree guard-violation-tmp)
+printf 'pub(crate) fn h() {\n println!("hi");\n}\n' >>"$guard_violation/crates/scribe/src/commands/entry.rs"
+guard_clean=$(guard_tree guard-clean-tmp)
+
+for tree in "$guard_violation" "$guard_clean"; do
+  TMPDIR="$absent_tmp" expect fail check-terminal-guard.sh "$tree" \
+    "a tree with TMPDIR absent, so no scan file can be created"
+  if ! grep -Fq "terminal-guard: cannot scan" "$work/out" || grep -Fq "terminal-guard: ok" "$work/out"; then
+    echo "check-gates: FAIL: $tree with TMPDIR absent did not report cannot-scan without ok" >&2
+    fail=1
+  fi
+done
+TMPDIR="$work" expect pass check-terminal-guard.sh "$guard_clean" \
+  "a clean readable tree with a usable TMPDIR has no matches and passes"
+TMPDIR="$work" expect fail check-terminal-guard.sh "$guard_violation" \
+  "a terminal violation with a usable TMPDIR still fails"
+
 # --- clippy.toml: disallowed host operations in scribe-core (STD-02 R6) ----
 # Build a minimal workspace inheriting [workspace.lints] and clippy.toml so
 # every host operation banned in scribe-core fails regardless of path spelling

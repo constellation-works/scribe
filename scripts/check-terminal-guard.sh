@@ -30,14 +30,26 @@ ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG
 # Matches outside tests, in code rather than a comment. A doc comment naming
 # the variable it documents is not a read.
 #
+# Each scan file must exist before grep runs. A file that cannot be created
+# leaves nothing to redirect into, and the failed redirection exits 1, the
+# status of a clean no-match. So a scan that cannot create its files fails
+# here (status 2) and is never read as no matches.
+#
 # grep exit 1 (no matches) is a clean result; only an exit above 1 is a scan
-# failure. The trailing `|| true` covers only the comment filter's own
-# no-match, never the scan itself.
+# failure. The comment filter's exit 1 is likewise its no-match, and only an
+# exit above 1 from it fails the scan.
 scan() {
   local pattern="$1"
-  local out err rc=0
-  out=$(mktemp)
-  err=$(mktemp)
+  local out err rc=0 filter_rc=0
+  if ! out=$(mktemp); then
+    echo "terminal-guard: cannot scan: cannot create a scan file in ${TMPDIR:-/tmp}" >&2
+    return 2
+  fi
+  if ! err=$(mktemp); then
+    rm -f "$out"
+    echo "terminal-guard: cannot scan: cannot create a scan file in ${TMPDIR:-/tmp}" >&2
+    return 2
+  fi
   grep -rnE --include='*.rs' --exclude-dir=tests "$pattern" crates >"$out" 2>"$err" || rc=$?
   if [[ "$rc" -gt 1 ]]; then
     cat "$err" >&2
@@ -46,8 +58,13 @@ scan() {
     return 2
   fi
   rm -f "$err"
-  grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' "$out" || true
+  grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' "$out" || filter_rc=$?
   rm -f "$out"
+  if [[ "$filter_rc" -gt 1 ]]; then
+    echo "terminal-guard: scan failed (comment filter exit $filter_rc)" >&2
+    return 2
+  fi
+  return 0
 }
 
 # Fail closed when there is nothing to scan (STD-04 R10): an unusable root
