@@ -7,7 +7,7 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (approved 2026-11-23; records built by [ORB-27655] and settling built by [ORB-27656], with reading, skill and formation follow-up) defines `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (approved 2026-11-25, not built) replaces the five remaining model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs, keeping the callers in `providers/` until the replacement jobs are in place.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (approved 2026-11-23; records built by [ORB-27655] and settling built by [ORB-27656], with reading, skill and formation follow-up) defines `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (approved 2026-11-25; the five replacement Orbit jobs are built, and only the §19.5 `providers/` deletion and model-config migration (ORB-28144) remain) replaced the five model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs; no app flow calls `Models`.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
@@ -2050,7 +2050,7 @@ proposals'.
 
 ## 8. Models
 
-> **Interim until [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved) is implemented:** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. The five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) still call `Models` through `crates/scribe-core/src/providers/` until their replacement jobs are in place.
+> **After [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved):** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. The five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) now run through deterministic `prepare`/`apply` CLI and plugin primitives and Orbit `agent_loop` jobs; no app flow calls `Models`. Only the §19.5 `providers/` deletion and `[models]` config migration ([ORB-28144]) remain.
 
 | Use | Config key | Default | Called from | Budget |
 |---|---|---|---|---|
@@ -7322,8 +7322,8 @@ store with shipped decisions.
 3. **Settling, built** (scribe, [ORB-27656]): `entry answer`, `entry close`, `entry list
    --state`, the derived `state`; refusals; goldens.
 4. **Reading** (scribe): the `## Open items` brief part and JSON, the
-   `systemMessage` count, `search` labels and the open-item exclusion.
-   `ask` attribution was removed with `ask` in [ORB-27911].
+   `systemMessage` count and `search` labels.
+   `ask` attribution was removed with `ask` in [ORB-27911]; `search` returns matching decision and open-item entries (§18.5), with no open-item exclusion.
 5. **Skill** (scribe): `references/decisions.md` and the router line.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
@@ -7508,9 +7508,9 @@ Current surfaces:
 
 ### 19.5 Deletions and configuration migration (after approval)
 
-Only after the Orbit jobs are in place:
+The Orbit jobs are in place; what remains ([ORB-28144]):
 
-1. Delete `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`) and remove `ModelsOnce`, `ModelsEach`, and `ModelsFor` from `apps/{session,memory,group}/mod.rs`.
+1. Delete `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`).
 2. Update `scripts/check-dependency-direction.sh` and `ARCHITECTURE.md` to remove the `providers/` exceptions (`std::process`, `std::fs`, and the five-caller allowlist; remove `rustix`/`tempfile` from `scribe-core` dependencies if nothing else uses them).
 3. In `config.rs`, deprecate `[models]` and `[codex.models]` (accepting them with load warnings during transition) and move the default credential names (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) into `[redact] env` defaults so redaction continues to mask them without `[models]` ([specs/architecture.md](./specs/architecture.md#providers-interim)). Keep `[user] name` so `prepare` carries it to Orbit activities.
 4. Remove `claude` from `plugin/.orbit-plugin/plugin.yaml` `requires.programs`, set `permissions.network: none`, clear `permissions.env_pass`, and keep `plugin/orbit-codex/.orbit-plugin/` and `scripts/sync-orbit-packages.py` for now ([§19.7](#197-decisions-on-the-open-questions), decision 3).
@@ -7608,7 +7608,7 @@ Daniel approved §19 on 2026-11-25 with these four answers ("Approve"); its `age
 - [ORB-28068] — drafted §19 (approved 2026-11-25): replace the five remaining model callers
   (`session pass`, `session catalog`, `session rebuild`, `memory refresh`,
   `group close` summary) with deterministic `prepare`/`apply` primitives and
-  Orbit `agent_loop` jobs; callers stay in `providers/` until the replacement jobs are in place.
+  Orbit `agent_loop` jobs; the five callers now run through the replacement jobs and no app flow calls `Models`, with only the §19.5 `providers/` deletion and model-config migration ([ORB-28144]) remaining.
 - [ORB-27911] — deleted `ask`, the tmux popup and the in-process model
   steps that could go without a job; holds Daniel's words that §19 carries out.
 - [ORB-28109] — the scribe captain's assignment of 2026-11-25; Daniel's
