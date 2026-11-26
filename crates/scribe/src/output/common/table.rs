@@ -2,6 +2,7 @@
 
 use cw_cli::{Cell as KitCell, Column, Mode, Role, Table};
 use scribe_core::ShortIds;
+use std::borrow::Cow;
 use time::format_description::well_known::{Iso8601, Rfc3339};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -63,6 +64,16 @@ pub(crate) fn table(mode: Mode, columns: Vec<Column>, rows: Vec<Vec<Cell>>) -> T
 /// Display names for non-JSON output; JSON retains provider ids.
 pub(crate) fn table_shorts(mode: Mode, shorts: &ShortIds) -> Option<&ShortIds> {
     (mode != Mode::Json).then_some(shorts)
+}
+
+/// The ids a list renders for `mode`: prefix-only session ids in a table, the
+/// display ids on other non-JSON output, and none in JSON (provider ids).
+pub(crate) fn list_shorts(mode: Mode, shorts: &ShortIds) -> Option<Cow<'_, ShortIds>> {
+    if mode == Mode::Table {
+        Some(Cow::Owned(shorts.prefixes_only()))
+    } else {
+        table_shorts(mode, shorts).map(Cow::Borrowed)
+    }
 }
 
 /// A session id in its display form when `shorts` is set.

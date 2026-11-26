@@ -5,8 +5,8 @@ use super::common::console::{Sink, notice};
 use super::common::detail::{Detail, emit_detail, field, field_role, joined_lines};
 use super::common::record::{AuthorPayload, Timestamp, WarningPayload, author, envelope, strings};
 use super::common::table::{
-    Cell, Result, cut, due_role, joined, left, list_timestamp, one_line, or_dash, plain_line,
-    right, shown_id, table, table_shorts, timestamp, yes_no,
+    Cell, Result, cut, due_role, joined, left, list_shorts, list_timestamp, one_line, or_dash,
+    plain_line, right, shown_id, table, timestamp, yes_no,
 };
 use cw_cli::{Column, Mode, Role};
 use scribe_core::activity::{ActiveChange, CatalogedBy};
@@ -487,16 +487,11 @@ pub(crate) fn list<O: Write, E: Write>(
     let mode = sink.terminal().mode();
     let active = active_column.is_shown();
     sink.emit(&json, |_| {
-        let prefixes = shorts.prefixes_only();
-        let list_ids = if mode == Mode::Table {
-            &prefixes
-        } else {
-            shorts
-        };
+        let list_ids = list_shorts(mode, shorts);
         let columns = with_active(session_columns(), active, 2);
         let rows = items
             .iter()
-            .map(|s| session_row(s, active, table_shorts(mode, list_ids), mode))
+            .map(|s| session_row(s, active, list_ids.as_deref(), mode))
             .collect();
         table(mode, columns, rows)
     })
@@ -515,16 +510,11 @@ pub(crate) fn list_tree<O: Write, E: Write>(
     let mode = sink.terminal().mode();
     let active = active_column.is_shown();
     sink.emit(&json, |_| {
-        let prefixes = shorts.prefixes_only();
-        let list_ids = if mode == Mode::Table {
-            &prefixes
-        } else {
-            shorts
-        };
+        let list_ids = list_shorts(mode, shorts);
         let columns = with_active(session_tree_columns(), active, 3);
         let table_rows = rows
             .iter()
-            .map(|row| tree_row(row, table_shorts(mode, list_ids), active, mode))
+            .map(|row| tree_row(row, list_ids.as_deref(), active, mode))
             .collect();
         table(mode, columns, table_rows)
     })
@@ -574,16 +564,11 @@ pub(crate) fn emit_pass<O: Write, E: Write>(
     }
     let mode = sink.terminal().mode();
     sink.emit(report, |report| {
-        let prefixes = shorts.prefixes_only();
-        let pass_ids = if mode == Mode::Table {
-            &prefixes
-        } else {
-            shorts
-        };
+        let list_ids = list_shorts(mode, shorts);
         let rows = report
             .passes
             .iter()
-            .map(|p| pass_row(p, table_shorts(mode, pass_ids)))
+            .map(|p| pass_row(p, list_ids.as_deref()))
             .collect();
         table(mode, pass_columns(), rows)
     })
