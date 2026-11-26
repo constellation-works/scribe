@@ -11,8 +11,11 @@ This file is the layout as built. Its source is
 amended at the end of ORB-27921 to the tree that migration produced.
 [`scripts/check-dependency-direction.sh`](scripts/check-dependency-direction.sh)
 enforces it ([STD-02](docs/standards/STD-02-rust-architecture-and-errors/STD-02.md)
-R1–R6). A new crate, edge, app or guard changes this file, the spec and that
-script in the same commit. Other decisions are in
+R1–R6). Every crate and top-level module has its place here, and every path
+written in code formatting exists
+([`scripts/check-architecture-map.sh`](scripts/check-architecture-map.sh),
+STD-02 R43). A new crate, edge, app or guard changes this file, the spec and
+those scripts in the same commit. Other decisions are in
 [4_decisions.md](docs/design/scribe/4_decisions.md).
 
 ## Crates
@@ -166,7 +169,7 @@ calls `session`; `brief` calls `memory`; `consistency` calls `proposal` and
 `session`; `hook` calls all of them. Code two apps need goes to the lower
 one, to `runtime` if it is about the context (ids, errors, audit), or to
 `scribe-tools` if it is about transcripts, windows, markers or payloads.
-There is no `apps/common`, `apps/shared` or `apps/util`. A relative `super::`
+There is no common, shared or util app. A relative `super::`
 import is read as the `crate::` path it names, and a grouped import is read
 as the paths it names (`crate::{apps::entry::X}`, `crate::apps::{entry::X}`),
 so the guard holds each to the same order.
@@ -181,7 +184,7 @@ so the guard holds each to the same order.
   `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT`, the
   redaction variables). `Context::resolve` picks the data directory, opens the
   `Store` and resolves the transcript roots and the provider. `config.rs`
-  parses `config.toml`; `Context::redactor` and `Context::models` build from a
+  parses the config file; `Context::redactor` and `Context::models` build from a
   parsed `Config`. `runtime/host/` implements the ports on the `Context`.
 - `providers/` holds everything about calling a model until ORB-27911
   removes scribe's own model calls. Session catalog and rebuild still use it.
@@ -201,7 +204,8 @@ error.rs             Error, Result, WriteRefusal and the refusal codes
 digest.rs            the content hashes records carry
 redact.rs            the Redactor every persisted free-text field passes
 fixtures.rs          shared test records (test-support)
-seed.rs, testing.rs  test support (test-support)
+seed.rs              seed records for tests (test-support)
+testing.rs           test support (test-support)
 ```
 
 - **One repository per record, never per app.** An app composes repositories
@@ -222,7 +226,7 @@ seed.rs, testing.rs  test support (test-support)
   - `forgotten_refusal` (defined in `error.rs`): a forgotten session is a
     tombstone, and every writer that touches a session refuses it under the
     write lock. The store's session writers (`db/`) and the core's session
-    verbs (`apps/session/verbs.rs`) make that check and call the helper.
+    verbs (`crates/scribe-core/src/apps/session/verbs.rs`) make that check and call the helper.
   - `refuse_file_store` (`db/documents.rs`): a file store whose records never
     moved into `scribe.db` is refused as a format.
   - `check_log` (`db/log.rs`): the codec runs it when it decodes and encodes a
@@ -265,6 +269,11 @@ markers.rs, markers/control.rs   `#scribe` markers, settling lines, `/scribe` co
 origin.rs                        whether a prompt was typed by the user
 payload.rs                       hook payloads -> typed events
 project.rs                       a working directory's project, from git's own files
+group_close.rs                   pure group-close request and answer shapes
+memory_refresh.rs                pure memory-refresh request, answer, basis and apply shapes
+session_distill.rs               shared inputs, output contracts and prompting rules for session distillation
+session_distill/                 the distillation checks (check.rs, check/repair.rs)
+voice.rs                         the user noun and configurable instruction text for model requests
 text/                            tokens, normalization, verbatim comparison, claims, triggers
 ```
 
@@ -300,8 +309,8 @@ cannot express. "Module" includes any file added later.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
 - **App order:** every directory under `apps/` is in the order above; an app
-  imports only lower apps, through their `mod.rs`; no `apps/common`,
-  `apps/shared` or `apps/util`.
+  imports only lower apps, through their `mod.rs`; no common, shared
+  or util app.
 - **The environment and the host, in the core:** only `composition.rs`
   reads the environment or discovers a path (`std::env::`, `home_dir`,
   `current_dir()`), and it imports no app. Only `composition.rs` and
@@ -325,5 +334,5 @@ cannot express. "Module" includes any file added later.
   touches stdout or stderr, asks whether a stream is a terminal, or reads the
   color and format variables.
 - **History:** a persisted timestamp never defaults to the current time
-  (R16), and the deleted paths (`scribe-domain`, `cases/`, the binary's moved
+  (R16), and the deleted paths (`scribe-domain`, cases, the binary's moved
   files, the core's retired module names) stay deleted (R17).

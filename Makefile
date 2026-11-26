@@ -52,11 +52,13 @@ fmt:
 fmt-check:
 	$(CARGO) fmt --all -- --check
 
-# Source-only structure checks: dependency direction (STD-02 R1-R6), unit-test
-# module reachability (STD-02 R19), terminal/stream ownership (STD-01 R17),
-# current-format claims in the store spec against FORMAT, and the cases that
-# test those gates themselves (STD-04 R2, R12).
+# Source-only structure checks: the architecture map (STD-02 R43), dependency
+# direction (STD-02 R1-R6), unit-test module reachability (STD-02 R19),
+# terminal/stream ownership (STD-01 R17), current-format claims in the store
+# spec against FORMAT, and the cases that test those gates themselves
+# (STD-04 R2, R12).
 structure:
+	./scripts/check-architecture-map.sh
 	python3 scripts/sync-skills.py --check
 	python3 scripts/sync-orbit-packages.py --check
 	./scripts/check-dependency-direction.sh
