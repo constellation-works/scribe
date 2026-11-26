@@ -4,8 +4,8 @@ use super::common::console::Sink;
 use super::common::detail::{Detail, emit_detail, field};
 use super::common::record::{Timestamp, WarningPayload, envelope};
 use super::common::table::{
-    Cell, Result, cut, left, one_line, optional_list_timestamp, plain_line, right, shown_id, table,
-    table_shorts, timestamp,
+    Cell, Result, cut, left, list_shorts, one_line, optional_list_timestamp, plain_line, right,
+    shown_id, table, timestamp,
 };
 use cw_cli::{Column, Mode};
 use scribe_core::ShortIds;
@@ -55,15 +55,10 @@ pub(crate) fn list<O: Write, E: Write>(
     let json = envelope("transcripts", items, total, warnings);
     let mode = sink.terminal().mode();
     sink.emit(&json, |_| {
-        let prefixes = shorts.prefixes_only();
-        let list_ids = if mode == Mode::Table {
-            &prefixes
-        } else {
-            shorts
-        };
+        let list_ids = list_shorts(mode, shorts);
         let rows = items
             .iter()
-            .map(|t| transcript_row(t, mode, table_shorts(mode, list_ids)))
+            .map(|t| transcript_row(t, mode, list_ids.as_deref()))
             .collect();
         table(mode, transcript_columns(), rows)
     })
