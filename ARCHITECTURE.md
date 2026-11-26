@@ -373,7 +373,8 @@ script. The Makefile formats these files alongside Cargo's module tree.
 Checked across the workspace by `clippy.toml` (`clippy::disallowed_types` and
 `clippy::disallowed_methods`, denied workspace-wide in `Cargo.toml`, with
 `#[expect(..., reason = "...")]` on the boundary owners — statement-level on
-`scribe-store/src/db/files.rs`, module-level `#![expect(...)]` elsewhere),
+`scribe-store/src/db/files.rs` and `scribe-core/src/providers/cli.rs`,
+module-level `#![expect(...)]` elsewhere),
 the independent `clippy::exit` lint for calls outside `main`,
 `scripts/check-dependency-direction.sh`, and (for the terminal)
 `scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
@@ -395,9 +396,11 @@ express. "Module" includes any file added later.
   `scribe-tools/src/fs.rs` (host `std::fs` adapter),
   `scribe-core/src/composition.rs` (environment capture, the `cw-app`
   snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`
-  (supervised process spawn; its drain result travels on capacity-one
-  `std::sync::mpsc::sync_channel`, which is not a banned path). The binary
-  has no exemption:
+  (statement-level on `supervise`'s `Command::spawn` call only; its drain
+  result travels on capacity-one `std::sync::mpsc::sync_channel`, which is not
+  a banned path, so `std::sync::mpsc::channel` and other disallowed methods
+  remain banned throughout `providers/cli.rs` and `providers/cli/codex.rs`).
+  The binary has no exemption:
   `main` and the output layer receive captured values.
   `std::process::exit` calls outside `main` are also denied by `clippy::exit`,
   which remains active in the exempt modules; the disallowed-path lint covers

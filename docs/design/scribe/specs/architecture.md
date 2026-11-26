@@ -487,9 +487,12 @@ denied workspace-wide in `Cargo.toml`) and
 (STD-02 R6). The ring map for `scribe-domain` was removed with the crate.
 
 `clippy.toml` holds the path boundaries (resolved regardless of import
-spelling), with lint expectations only on boundary owners. The store file adapter scopes
-its expectations to individual filesystem statements; other owners use
-module-level `#![expect(..., reason = "...")]`:
+spelling), with lint expectations only on boundary owners. The store file
+adapter (`scribe-store/src/db/files.rs`, on its individual filesystem statements)
+and the provider CLI adapter (`scribe-core/src/providers/cli.rs`, on
+`supervise`'s `Command::spawn` statement) scope their expectations to
+individual statements; other owners use module-level
+`#![expect(..., reason = "...")]`:
 
 - `std::fs` I/O types (`File`, `OpenOptions`, `ReadDir`, `DirEntry`,
   `DirBuilder`) and filesystem functions (`read`, `read_to_string`, `write`,
@@ -502,14 +505,16 @@ module-level `#![expect(..., reason = "...")]`:
   `vars_os`, `current_dir`, `home_dir`, `temp_dir`) and the process snapshot
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
   binary has no exemption);
-- `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`);
+- `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`,
+  statement-scoped on `supervise`'s `Command::spawn` call so other disallowed
+  paths remain banned across `providers/cli.rs` and `providers/cli/codex.rs`);
 - `std::process::exit` (also denied outside `main` by the independent
   `clippy::exit` lint, including in modules with disallowed-method expectations;
   the disallowed-path lint covers `main`, so commands exit through normal
   error handling and `ExitCode`);
-- `std::sync::mpsc::channel` (banned with no production exemption; the
-  provider drain carries its single result on capacity-one
-  `std::sync::mpsc::sync_channel`);
+- `std::sync::mpsc::channel` (banned with no production exemption, including
+  in `providers/cli.rs` and `providers/cli/codex.rs`; the provider drain
+  carries its single result on capacity-one `std::sync::mpsc::sync_channel`);
 - `rusqlite::Connection::open` and its `open_with_flags` forms (banned with no
   production exemption since `scribe-store` opens `scribe.db` through
   `cw-sqlite`).
