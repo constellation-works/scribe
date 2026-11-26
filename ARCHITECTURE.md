@@ -55,6 +55,7 @@ main.rs              parse, resolve the output sink and the Context from the pro
 cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
+commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
 output/              payloads, rendering, the sink
 error.rs             app errors -> one-line message and exit code
 tests/               the binary's own tests (cfg(test))

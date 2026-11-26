@@ -77,6 +77,7 @@ and the moved modules at the paths they had in it (`scribe_core::handoff`,
 main.rs              capture the environment, parse, dispatch, map the result to an exit code
 cli.rs               clap declarations
 commands/<noun>.rs   arguments -> apps::<app>::Command; outcome -> payload
+commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
 output/              payloads, rendering, the sink
 error.rs             app errors -> one-line message and exit code
 help.rs

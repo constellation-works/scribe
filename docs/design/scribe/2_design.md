@@ -3495,8 +3495,8 @@ runs these checks; any failure refuses the command and changes nothing.
 1. **Provenance.** The transcript passes §4.1's checks (under the
    transcripts root, owned by this uid and writable by no group or other user,
    named `<id>.jsonl`, one no-follow handle for check and read), as
-   `verify_quote` does today
-   (`crates/scribe/src/commands/entry.rs`). No transcript on this host:
+   quote verification does today
+   (`crates/scribe-core/src/apps/entry/verify.rs`). No transcript on this host:
    `instruction_not_found`.
 2. **His typed turn.** `--instruction` is a verbatim span (§6.4's check) of
    one user turn that §4.1's origin guard accepts as plainly typed:
