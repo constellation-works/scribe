@@ -259,6 +259,52 @@ fn brief_marks_recorded_sessions_with_newest_handoff_and_lists_unrecorded_ones()
 }
 
 #[test]
+fn open_items_with_session_answer_in_use_short_ids() {
+    use crate::ShortIds;
+    use crate::entry::{AnswerIn, OpenItem};
+    let session_full = "8dc9df2b-5808-47cf-8be4-190c9c6e0711";
+    let mut item = entry("open-item-1", T0);
+    item.item = Some(OpenItem {
+        asked_by: "captain".parse().unwrap(),
+        options: vec![],
+        recommended: None,
+        why: None,
+        blocked: "nothing".into(),
+        answer_in: AnswerIn::Session(session_full.parse().unwrap()),
+        answer: None,
+        closed: None,
+    });
+    let mut page = brief::build(&[], &[], &[], None, None, 5);
+    page.open_items = brief::open_items(std::slice::from_ref(&item));
+    assert_eq!(
+        page.open_items[0].answer_in,
+        format!("session:{session_full}")
+    );
+
+    // A cataloged session prints as its `s-<n>` alias.
+    let mut ids = ShortIds::new([session_full.to_owned()]);
+    ids.set_aliases([(session_full.to_owned(), String::from("s-3"))]);
+    assert!(
+        page.text_with_ids(&ids)
+            .contains("- open-item-1 · open · captain · - · session:s-3 · something\n"),
+        "{}",
+        page.text_with_ids(&ids)
+    );
+
+    // An uncataloged session prints as its shortest unique prefix.
+    let other = "8dc9df2c-5808-47cf-8be4-190c9c6e0711";
+    let prefixed = ShortIds::new([session_full.to_owned(), other.to_owned()]);
+    let line = page
+        .text_with_ids(&prefixed)
+        .lines()
+        .find(|line| line.starts_with("- open-item-1 "))
+        .unwrap()
+        .to_owned();
+    assert!(line.contains("session:8dc9df2b · "), "{line}");
+    assert!(!line.contains(session_full), "{line}");
+}
+
+#[test]
 fn open_items_are_ordered_capped_and_include_legacy_records() {
     use crate::entry::{AnswerIn, ItemAnswer, OpenItem};
     let mut answered = entry("open-item-1", T0);

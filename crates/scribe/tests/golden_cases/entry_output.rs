@@ -676,3 +676,106 @@ fn typed_records_match_goldens() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn brief_shortens_session_answer_in_but_json_keeps_the_full_id() {
+    use scribe_core::{AgentEntry, AnswerIn, Label, OpenItem, Project, Redactor, Store, Topics};
+    let fx = Fixture::new();
+    let store = Store::open(fx.root());
+    let now = time::macros::datetime!(2026-11-10 01:00 UTC);
+    let author = || "opus".parse().unwrap();
+    let cataloged = "8dc9df2b-5808-47cf-8be4-190c9c6e0711";
+    let uncataloged = "f1e2d3c4-5555-4666-b777-888899990000";
+    // Switching a session on catalogs it, so it owns an `s-<n>` alias.
+    let cataloged_id: scribe_core::SessionId = cataloged.parse().unwrap();
+    store
+        .update_control(|state| {
+            scribe_core::control::switch(
+                state,
+                &cataloged_id,
+                &scribe_core::control::Switch::On,
+                now,
+            );
+        })
+        .unwrap();
+    let alias = format!(
+        "s-{}",
+        store.session_numbers().unwrap()[&cataloged_id].get()
+    );
+    let draft = |answer_in: AnswerIn, content: &str| AgentEntry {
+        tag: "open-item".parse().unwrap(),
+        content: content.to_owned(),
+        project: Project::sanitized("scribe"),
+        topics: Topics::default(),
+        related: Vec::new(),
+        host: Label::sanitized("host", "host"),
+        quote: None,
+        decision: None,
+        item: Some(OpenItem {
+            asked_by: "orbit-0-capt".parse().unwrap(),
+            options: Vec::new(),
+            recommended: None,
+            why: None,
+            blocked: "Publishing the release".to_owned(),
+            answer_in,
+            answer: None,
+            closed: None,
+        }),
+        evidence: None,
+        as_of: None,
+        handoff_mode: None,
+        self_refresh_verified: false,
+        spoken: false,
+    };
+    store
+        .add_agent_entry(
+            draft(
+                AnswerIn::Session(cataloged.parse().unwrap()),
+                "Which API should the release use?",
+            ),
+            author(),
+            now,
+            &Redactor::default(),
+        )
+        .unwrap();
+    store
+        .add_agent_entry(
+            draft(
+                AnswerIn::Session(uncataloged.parse().unwrap()),
+                "Restart the dashboard",
+            ),
+            author(),
+            now,
+            &Redactor::default(),
+        )
+        .unwrap();
+    for (suffix, mode) in MODES {
+        let out = fx.check(&[&["brief"][..], *mode].concat(), Success);
+        if *suffix == "json" {
+            let brief: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let answers: Vec<String> = brief["open_items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["answer_in"].as_str().unwrap().to_owned())
+                .collect();
+            assert_eq!(
+                answers,
+                [
+                    format!("session:{cataloged}"),
+                    format!("session:{uncataloged}")
+                ],
+                "JSON keeps the full provider ids"
+            );
+        } else {
+            let body = text(&out.stdout);
+            assert!(
+                body.contains(&format!("session:{alias} · ")),
+                "{suffix}: {body}"
+            );
+            assert!(!body.contains(cataloged), "{suffix}: {body}");
+            assert!(body.contains("session:f1e2d3c4 · "), "{suffix}: {body}");
+            assert!(!body.contains(uncataloged), "{suffix}: {body}");
+        }
+    }
+}
