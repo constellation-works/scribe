@@ -5718,7 +5718,7 @@ STD-12's checks name one gate per rule, and its Adopting v1 clause lets an exist
 
 Each MUST rule below without its gate is deviated from as recorded: `STD-12@4 §Rn`, its status, and its follow-up. Existing checks stay active. Already met: §R3 and §R11 (`make fmt-check`; `rustfmt.toml` holds only `edition` and `max_width = 100`) and §R18 (`missing_docs` at warn, run with `-D warnings` by `make ci-lint`).
 
-§R20 and §R23 have a cited adoption deviation until ORB-28950 enables their lints. The cleanup tasks (ORB-28939 config; ORB-28941 to ORB-28949 disjoint source batches) do not claim either rule is enforced, and no duplicate gate task is filed. §R21 and §R22 use the separate template style-gate path. §R24 and §R25 are review-only, as are STD-02@10 §R50 and §R52.
+At adoption, §R20 and §R23 had cited adoption deviations pending ORB-28950. That task enables both lints at warn; `make ci-lint` verifies the configured item groups and struct field order across workspace targets with `-D warnings`. The cleanup tasks (ORB-28939 config; ORB-28941 to ORB-28949 disjoint source batches) prepared the tree for enforcement, and no duplicate gate task was filed. §R21 and §R22 use the separate template style-gate path. §R24 and §R25 are review-only, as are STD-02@10 §R50 and §R52.
 
 | Rule | Gate (checks.md) | Status | Evidence | Follow-up |
 |---|---|---|---|---|
@@ -5729,17 +5729,17 @@ Each MUST rule below without its gate is deviated from as recorded: `STD-12@4 §
 | STD-12@4 §R15, no glob imports | `clippy::wildcard_imports` and `clippy::enum_glob_use` | deferred | 0 reported sites; 48 text matches, all covered by the lints' default exemptions | enable both lints; no code change |
 | STD-12@4 §R16, one module per `use` | `scripts/check-source-style.sh` | deferred | 21 `use` lines with a brace group holding `::` (text match, not verified) | script in the template |
 | STD-12@4 §R19, `rustfmt::skip` comment | `scripts/check-source-style.sh` | deferred | 0 uses | script in the template; no code change |
-| STD-12@4 §R20, top-level item order | `clippy::arbitrary_source_item_ordering` with the STD-12 groupings in `clippy.toml` | deferred; cited adoption deviation until ORB-28950 | 311 sites (first: `crates/scribe-store/src/lib.rs:73`) | ORB-28939 (config), ORB-28941 to ORB-28949 (disjoint source batches), ORB-28950 (final enablement) |
+| STD-12@4 §R20, top-level item order | `clippy::arbitrary_source_item_ordering` with the STD-12 groupings in `clippy.toml` | met | Enabled at warn; `make ci-lint` passes all workspace targets with `-D warnings` on Clippy 1.96.0. The missed `RefreshCommitState` ordering in `crates/scribe-core/src/apps/memory/verbs.rs` was corrected. | closed by ORB-28950 after ORB-28939 (config) and ORB-28941 to ORB-28949 (disjoint source batches) |
 | STD-12@4 §R21, type adjacent to its impls | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
 | STD-12@4 §R22, order inside an impl | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
-| STD-12@4 §R23, struct literal field order | `clippy::inconsistent_struct_constructor` with `check-inconsistent-struct-field-initializers = true` | deferred; cited adoption deviation until ORB-28950 | 30 sites | ORB-28939 (config), ORB-28941 to ORB-28949 (disjoint source batches), ORB-28950 (final enablement) |
+| STD-12@4 §R23, struct literal field order | `clippy::inconsistent_struct_constructor` with `check-inconsistent-struct-field-initializers = true` | met | Enabled at warn; `make ci-lint` passes all workspace targets with `-D warnings` on Clippy 1.96.0. | closed by ORB-28950 after ORB-28939 (config) and ORB-28941 to ORB-28949 (disjoint source batches) |
 | STD-12@4 §R26, no `super::super` | `scripts/check-source-style.sh` | deferred | 11 text matches: 9 code paths and 2 comments | ORB-28928 (backlog) |
 
 ### Consequences
 
 - Cost: each row's rule is unchecked in CI until its gate lands. Reviewers check them by hand meanwhile.
 - Cost: the counts come from one run and will move as the code does. Rows marked not measured have no count yet.
-- Cost: the captain's measurement for §R20 and §R23 is 341 primary diagnostic locations in 158 files (311 and 30 above), taken with both canon lints verified on 1.96.0 fixtures. Those rules stay unchecked until ORB-28950.
+- The adoption measurement for §R20 and §R23 was 341 primary diagnostic locations in 158 files (311 and 30 above), taken with both canonical lints verified on 1.96.0 fixtures. ORB-28950 enabled the lints at warn, corrected one missed ordering site in `memory/verbs.rs`, and verified the current workspace with `make ci-lint`.
 
 ## Pre-release migrations and file-store archives stay until Daniel exports them (STD-14@1 §R1)
 
