@@ -16,7 +16,11 @@
 # Environment reads as such (`std::env::var` and its kin) are clippy's
 # (clippy.toml), not this script's.
 set -euo pipefail
-cd "${1:-$(dirname "$0")/..}"
+root="${1:-$(dirname "$0")/..}"
+if ! cd "$root"; then
+  echo "terminal-guard: cannot scan: root '$root' is missing or not a directory" >&2
+  exit 1
+fi
 
 OUTPUT_DIR=crates/scribe/src/output
 COMPOSITION=crates/scribe-core/src/composition.rs
@@ -25,21 +29,70 @@ ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG
 
 # Matches outside tests, in code rather than a comment. A doc comment naming
 # the variable it documents is not a read.
+#
+# grep exit 1 (no matches) is a clean result; only an exit above 1 is a scan
+# failure. The trailing `|| true` covers only the comment filter's own
+# no-match, never the scan itself.
 scan() {
-  grep -rnE --include='*.rs' --exclude-dir=tests "$1" crates 2>/dev/null \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true
+  local pattern="$1"
+  local out err rc=0
+  out=$(mktemp)
+  err=$(mktemp)
+  grep -rnE --include='*.rs' --exclude-dir=tests "$pattern" crates >"$out" 2>"$err" || rc=$?
+  if [[ "$rc" -gt 1 ]]; then
+    cat "$err" >&2
+    echo "terminal-guard: scan failed (grep exit $rc)" >&2
+    rm -f "$out" "$err"
+    return 2
+  fi
+  rm -f "$err"
+  grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' "$out" || true
+  rm -f "$out"
 }
+
+# Fail closed when there is nothing to scan (STD-04 R10): an unusable root
+# must not report ok.
+if [[ ! -d crates ]]; then
+  echo "terminal-guard: cannot scan: crates/ is missing or not a directory" >&2
+  exit 1
+fi
+if ! find crates -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
+  echo "terminal-guard: cannot scan: no Rust sources under crates/" >&2
+  exit 1
+fi
 
 status=0
 
-terminal_hits=$(scan "$TERMINAL" | grep -v "^$OUTPUT_DIR/" || true)
+if terminal_raw=$(scan "$TERMINAL"); then
+  :
+else
+  scan_rc=$?
+  echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
+  exit "$scan_rc"
+fi
+if [[ -n "$terminal_raw" ]]; then
+  terminal_hits=$(printf '%s\n' "$terminal_raw" | grep -v "^$OUTPUT_DIR/" || true)
+else
+  terminal_hits=""
+fi
 if [[ -n "$terminal_hits" ]]; then
   echo "$terminal_hits" >&2
   echo "terminal-guard: terminal state and std streams belong to $OUTPUT_DIR only" >&2
   status=1
 fi
 
-env_hits=$(scan "$ENV_NAMES" | grep -v "^$COMPOSITION:" || true)
+if env_raw=$(scan "$ENV_NAMES"); then
+  :
+else
+  scan_rc=$?
+  echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
+  exit "$scan_rc"
+fi
+if [[ -n "$env_raw" ]]; then
+  env_hits=$(printf '%s\n' "$env_raw" | grep -v "^$COMPOSITION:" || true)
+else
+  env_hits=""
+fi
 if [[ -n "$env_hits" ]]; then
   echo "$env_hits" >&2
   echo "terminal-guard: terminal and log environment names are captured by $COMPOSITION only" >&2
