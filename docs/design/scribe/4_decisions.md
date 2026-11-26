@@ -1484,9 +1484,9 @@ The `scribe-session-pass` routine was switched off that day.
   successful checkpoints, adds bounded automatic backoff, and lets Daniel
   retry immediately with `--session`. `gave_up` stays in the `--json`
   report, always `false`.
-- A run with any failed pass prints its report and then exits 1 with
-  `session_pass_failed`, naming each failed session and its code;
-  `scribe.session-pass` answers the same code and message, not retryable.
+- A run with any failed pass prints its report and then, on writable stdout, exits 1 with
+  `session_pass_failed`, naming each failed session and its code (on a closed stdout it exits 0
+  with no aggregate pass error); `scribe.session-pass` answers the same code and message, not retryable.
 - `scribe session pass --session <id>` (repeatable) passes the named
   sessions whether or not they are due, each once and without the
   five-per-run cap, and refuses a session that is not on

@@ -141,10 +141,11 @@ pub(crate) fn init_logging(log: Option<&OsStr>) {
         .try_init();
 }
 
-/// Render a command's outcome and return the process exit code. A session
-/// pass report with a failed pass is printed, then reported as an error
-/// naming each failed session, its code and its redacted reason (exit 1,
-/// STD-01 R20).
+/// Render a command's outcome and return the process exit code. On writable
+/// stdout a session pass report with a failed pass is printed, then reported
+/// as an error naming each failed session, its code and its redacted reason
+/// (exit 1, STD-01 R20); on a closed stdout the report ends silently with
+/// exit 0 and no aggregate pass error (STD-01 R13).
 pub(crate) fn finish(console: &Console, outcome: Result<(Output, ShortIds), CliError>) -> ExitCode {
     let result = outcome.and_then(|(output, shorts)| {
         let mut sink = console.sink(&output);

@@ -948,9 +948,10 @@ shape). A pass also carries `segments_sealed` (segments sealed in this
 invocation) and `segments` (the latest persisted record/checkpoint's segment
 count, or `null`). `session rebuild` prints this report with its one session,
 `remaining: 0` and an additional `author: {kind: agent, name: <name>}` naming
-its requester (`author` is `null` for ordinary passes). A failed rebuild keeps its private checkpoint and exits 1
+its requester (`author` is `null` for ordinary passes). A failed rebuild keeps its private checkpoint and, on writable stdout, exits 1
 with `session_pass_failed`, naming the failure and the rebuild command to
-resume; it does not change the control switch. `--confirm` missing refuses
+resume; on a closed stdout it exits 0 with no aggregate pass error;
+it does not change the control switch. `--confirm` missing refuses
 with `confirm_required`, naming the current segment and pass counts;
 `transcript_missing` and `session_busy` also refuse before model calls.
 One audit line names `session:<id>` for success or refusal. (Format 19) A
@@ -967,8 +968,8 @@ line names each `memory:now/<stem>` and `memory:milestones/<stem>` it wrote
 in `targets`. *(S14, built)*
 `session catalog` prints the same report with its one session and
 `remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
-field). A failure exits 1 with `session_pass_failed` and names
-`session catalog` to resume. A session that already has a record or a
+field). On writable stdout a failure exits 1 with `session_pass_failed` and names
+`session catalog` to resume; on a closed stdout it exits 0 with no aggregate pass error. A session that already has a record or a
 switch catalog did not write is refused `session_cataloged` before a
 model call. When this run wrote the switch, the audit log gains a
 success line for that switch ahead of the pass line; both name
@@ -1002,11 +1003,11 @@ with nothing due stdout is empty, stderr says `no session pass is due` and
 the exit is 0. If all due sessions are waiting for backoff, `passes` is
 empty, `remaining` counts them, and stderr names the retry wait. Automatic
 retries wait 5, 10, 20, 40, then at most 60 minutes; `--session <id>` ignores
-backoff. When any pass failed, the report is printed as usual and
-the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
+backoff. When any pass failed, the report is printed as usual and,
+on writable stdout, the run then exits 1 with `session_pass_failed` on stderr, `error: <n>
 session pass(es) failed: <id> <code>: <reason>, ...; each stays due with retry
 backoff; use 'orbit job run scribe-session-pass' with explicit sessions to retry now` (or that message in the JSON error object
-under `--json`). `--session <id>` naming a session that is not on exits 1
+under `--json`); on a closed stdout the run exits 0 with no aggregate pass error (EPIPE ends silently, as §Errors states). `--session <id>` naming a session that is not on exits 1
 with `session_not_on` before any pass. Each pass except a `waiting`
 one writes one audit line (`target` `session:<id>`, with its code only; the
 reason is never added to the audit line).
