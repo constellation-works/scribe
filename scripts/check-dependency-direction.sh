@@ -72,20 +72,91 @@ policy() {
   esac
 }
 
-# Print the dependency names declared in the non-dev dependency tables of a
-# Cargo.toml: [dependencies], [build-dependencies] and target-specific ones.
+# The Cargo packages a manifest depends on through its non-dev dependency
+# tables, as "<package> <line>" pairs. A dependency's package is its table key
+# unless `package = "..."` renames it, so the policy and the crate graph see
+# the crate Cargo resolves, not the alias. Every declaration form is read:
+#   [dependencies]  key = "1"  /  key = { package = "x" }  /  key.package = "x"
+#   [dependencies.key]  package = "x"  (and a dotted `dependencies.key = ...`
+#     line outside a dependency table)
+#   key.workspace = true  /  key = { workspace = true }  (the package comes
+#     from the root manifest's [workspace.dependencies])
+# in [dependencies], [build-dependencies] and [target.<cfg>.*]; dev-dependencies
+# are exempt. POSIX awk only (macOS ships BWK awk, not gawk). The first file is
+# the root manifest, the second the member's.
+DECLARED_DEPS_AWK='
+function unquote(s) {
+  gsub(/^[ \t]+|[ \t]+$/, "", s)
+  if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+  return s
+}
+# The string value of `package = "x"` inside an inline table or a dotted line.
+function package_of(text,    s) {
+  if (!match(text, /(^|[{,. \t])package[ \t]*=[ \t]*("[^"]*"|\047[^\047]*\047)/)) return ""
+  s = substr(text, RSTART, RLENGTH)
+  sub(/^[^=]*=[ \t]*/, "", s)
+  return unquote(s)
+}
+function note(key, where, pkg, ws) {
+  if (FILENAME == ARGV[1]) {
+    if (pkg != "") wspkg[key] = pkg
+    return
+  }
+  if (!(key in seen)) { order[++n] = key; seen[key] = where }
+  if (pkg != "") named[key] = pkg
+  if (ws) viaws[key] = 1
+}
+# Sets mode: "" (not a dependency table), "table" ([dependencies]) or "sub"
+# (a [dependencies.key] subtable, key in subkey).
+function classify(h,    root) {
+  mode = ""; subkey = ""
+  root = (FILENAME == ARGV[1])
+  sub(/^\[[ \t]*/, "", h); sub(/[ \t]*\]$/, "", h)
+  if (root) {
+    if (h == "workspace.dependencies") mode = "table"
+    else if (h ~ /^workspace\.dependencies\./) {
+      mode = "sub"; subkey = unquote(substr(h, length("workspace.dependencies.") + 1))
+    }
+  } else if (h ~ /^(target\..*\.)?(build-)?dependencies$/) mode = "table"
+  else if (h ~ /^(target\..*\.)?(build-)?dependencies\./) {
+    sub(/^(target\..*\.)?(build-)?dependencies\./, "", h)
+    mode = "sub"; subkey = unquote(h)
+  }
+  if (mode == "sub") note(subkey, FNR, "", 0)
+}
+FNR == 1 { mode = ""; subkey = "" }
+/^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
+/^[ \t]*(#|$)/ { next }
+mode == "sub" {
+  if ($0 ~ /^[ \t]*package[ \t]*=/) note(subkey, FNR, package_of($0), 0)
+  else if ($0 ~ /^[ \t]*workspace[ \t]*=[ \t]*true/) note(subkey, FNR, "", 1)
+  next
+}
+mode == "table" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*(build-)?dependencies[ \t]*\./) {
+  line = $0; sub(/^[ \t]+/, "", line)
+  if (mode == "") sub(/^(build-)?dependencies[ \t]*\./, "", line)
+  if (!match(line, /^("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)/)) next
+  key = unquote(substr(line, 1, RLENGTH)); rest = substr(line, RLENGTH + 1)
+  sub(/^[ \t]+/, "", rest)
+  if (rest ~ /^\.[ \t]*package[ \t]*=/) note(key, FNR, package_of(rest), 0)
+  else if (rest ~ /^\.[ \t]*workspace[ \t]*=[ \t]*true/) note(key, FNR, "", 1)
+  else if (rest ~ /^\.[ \t]*[A-Za-z0-9_-]+[ \t]*=/) note(key, FNR, "", 0)
+  else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*workspace[ \t]*=[ \t]*true/)
+  next
+}
+END {
+  for (i = 1; i <= n; i++) {
+    key = order[i]
+    pkg = (key in named) ? named[key] : ((key in viaws && key in wspkg) ? wspkg[key] : key)
+    print pkg, seen[key]
+  }
+}'
+
+# Print "<package> <line>" for each non-dev dependency of a Cargo.toml.
 declared_deps() {
-  awk '
-    /^\[/ {
-      section = $0
-      in_deps = (section ~ /^\[(target\..*\.)?(build-)?dependencies\]$/)
-      next
-    }
-    in_deps && /^[A-Za-z0-9_-]+[[:space:]]*(\.workspace)?[[:space:]]*=/ {
-      name = $1; sub(/\.workspace$/, "", name); sub(/=.*/, "", name)
-      gsub(/[[:space:]]/, "", name); print name
-    }
-  ' "$1"
+  local root=Cargo.toml
+  [[ -f "$root" ]] || root=/dev/null
+  awk "$DECLARED_DEPS_AWK" "$root" "$1"
 }
 
 contains() { # contains <word> <space-separated list>
@@ -100,7 +171,7 @@ for manifest in crates/*/Cargo.toml; do
     err "crate '$crate' ($manifest) has no policy; add one here and a row in ARCHITECTURE.md"
     continue
   fi
-  while IFS= read -r dep; do
+  while read -r dep _; do
     if [[ "$dep" == "$PREFIX" || "$dep" == "$PREFIX"-* ]]; then
       contains "$dep" "$ALLOWED" || err "$crate must not depend on internal crate $dep"
     elif contains "$dep" "$BANNED"; then
@@ -593,7 +664,8 @@ COMMANDS_ORDER='instruction store brief consistency entry export group hook init
 
 if ! command -v python3 >/dev/null 2>&1; then
   err "python3 is required for the import-cycle and in-layer order check"
-elif ! DB_ORDER="$DB_ORDER" \
+elif ! DECLARED_DEPS_AWK="$DECLARED_DEPS_AWK" \
+  DB_ORDER="$DB_ORDER" \
   CONTRACTS_ORDER="$CONTRACTS_ORDER" \
   REPOSITORY_ORDER="$REPOSITORY_ORDER" \
   TOOLS_ORDER="$TOOLS_ORDER" \
@@ -603,6 +675,7 @@ import collections
 import glob
 import os
 import re
+import subprocess
 import sys
 
 errors = []
@@ -615,22 +688,18 @@ crate_edges = collections.defaultdict(set)
 crate_manifests = {}
 for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
     name = None
-    in_deps = False
-    deps = []
     with open(manifest, encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, 1):
-            stripped = line.strip()
-            if name is None:
-                m = re.match(r'^name\s*=\s*"([^"]+)"', stripped)
-                if m:
-                    name = m.group(1)
-            if stripped.startswith("["):
-                in_deps = re.match(r'^\[(target\..*\.)?(build-)?dependencies\]$', stripped) is not None
-                continue
-            if in_deps:
-                m = re.match(r'^([A-Za-z0-9_-]+)(?:\.workspace)?\s*=', stripped)
-                if m:
-                    deps.append((m.group(1), lineno))
+        for line in fh:
+            m = re.match(r'^name\s*=\s*"([^"]+)"', line.strip())
+            if m:
+                name = m.group(1)
+                break
+    root = "Cargo.toml" if os.path.isfile("Cargo.toml") else os.devnull
+    # The same parser as the policy check: it resolves `package = ...`
+    # renames, dependency subtables and workspace-inherited dependencies.
+    out = subprocess.run(["awk", os.environ["DECLARED_DEPS_AWK"], root, manifest],
+                         check=True, capture_output=True, text=True).stdout
+    deps = [(pkg, int(lineno)) for pkg, lineno in (row.split() for row in out.splitlines())]
     if name:
         crate_manifests[name] = (manifest, deps)
 
