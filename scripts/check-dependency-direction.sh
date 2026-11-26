@@ -788,7 +788,7 @@ USE_STMT_RE = re.compile(
     r'(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);',
     re.M,
 )
-INLINE_PATH_RE = re.compile(r'(?<![\w:])((?:crate|super|self)(?:::\w+)+)')
+INLINE_PATH_RE = re.compile(r'(?<![\w:])((?:crate|super|self)(?:::(?:r#)?\w+)+)')
 # A test-only cfg is read from the attribute's tokens, never from its text:
 # comments drop out and string literals stay whole, so cfg-like text in a doc
 # string or a comment is no cfg, a comment inside a cfg is ignored, and
@@ -960,8 +960,15 @@ def flatten_use_tree(prefix, tree):
                 out.append((prefix + item, alias))
     return out
 
+def canonical_ident(name):
+    """A raw identifier (r#store) names the same module as its plain spelling."""
+    return name[2:] if name.startswith("r#") else name
+
+def path_segments(path_str):
+    return [canonical_ident(s) for s in path_str.lstrip(":").split("::") if s]
+
 def resolve_to_crate(path_str, mod_parts, aliases):
-    segs = [s for s in path_str.lstrip(":").split("::") if s]
+    segs = path_segments(path_str)
     if not segs:
         return None
     if segs[0] == "crate":
@@ -1000,7 +1007,7 @@ def collect_root_aliases(src_dir, top_units):
             if clean[stmt_start : m.start(2)].startswith((" ", "\t")):
                 continue
             for raw, binding in flatten_use_tree("", tree):
-                segs = [s for s in raw.lstrip(":").split("::") if s]
+                segs = path_segments(raw)
                 if segs and segs[0] == "crate":
                     segs = segs[1:]
                 if len(segs) >= 2 and segs[0] in top_units and segs[-1] != "*":
@@ -1044,7 +1051,7 @@ def file_mod_parts(src_dir, fp):
 
 INLINE_MOD_RE = re.compile(
     r'(?:^|(?<=[;{}]))[ \t\n]*((?:#\[[^\]]*\][ \t\n]*)*)'
-    r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*\{', re.M
+    r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+((?:r#)?\w+)\s*\{', re.M
 )
 
 def inline_modules(clean, raw, base):
@@ -1059,7 +1066,7 @@ def inline_modules(clean, raw, base):
             if m and all(item is not None for item in stack):
                 parent = stack[-1][0] if stack else tuple(base)
                 ignored = (stack and stack[-1][1]) or has_test_cfg(raw[m.start(1):m.end(1)])
-                path = parent + (m.group(2),)
+                path = parent + (canonical_ident(m.group(2)),)
                 stack.append((path, ignored, pos))
             else:
                 stack.append(None)

@@ -479,6 +479,61 @@ if grep -Eq "module '(decoy|tests|support)' has no place" "$work/out"; then
   fail=1
 fi
 
+# Raw identifiers (r#name) name the same inline module as the plain spelling
+# (ORB-28902). A permitted edge stays permitted in every spelling; an upward edge
+# fails in every spelling, and its diagnostic names the canonical module.
+raw_ok=$(store_tree order-db-raw-permitted)
+cat >"$raw_ok/crates/scribe-store/src/db/mod.rs" <<'EOF'
+mod r#groups {}
+mod r#sessions { use super::r#groups; }
+EOF
+expect pass check-dependency-direction.sh "$raw_ok" "raw inline siblings with a downward edge"
+
+mixed_ok=$(store_tree order-db-mixed-permitted)
+cat >"$mixed_ok/crates/scribe-store/src/db/mod.rs" <<'EOF'
+mod groups {}
+mod r#sessions { use super::groups; fn f() { super::r#groups::g(); } }
+EOF
+expect pass check-dependency-direction.sh "$mixed_ok" "downward edges in plain and raw spellings, use and path"
+
+for body in \
+  $'mod r#log { use super::codec; }\nmod codec {}' \
+  $'mod log { use super::r#codec; }\nmod r#codec {}' \
+  $'mod r#log { use super::r#codec; }\nmod r#codec {}' \
+  $'mod log { fn f() { super::r#codec::g(); } }\nmod r#codec {}'; do
+  bad=$(store_tree "order-db-raw-upward-$n")
+  printf '%s\n' "$body" >"$bad/crates/scribe-store/src/db/mod.rs"
+  expect fail check-dependency-direction.sh "$bad" "raw upward edge: $(echo "$body" | tr -s '\n ' ' ')"
+  if ! grep -Fq "scribe-store::db: log imports codec, which is not lower" "$work/out"; then
+    echo "check-gates: FAIL: raw upward edge lacks the canonical diagnostic" >&2
+    fail=1
+  fi
+done
+
+unlisted_raw=$(store_tree order-db-raw-unlisted)
+printf 'pub(crate) mod r#inline_extra {}\n' >"$unlisted_raw/crates/scribe-store/src/db/mod.rs"
+expect fail check-dependency-direction.sh "$unlisted_raw" "raw-spelled unlisted inline module in scribe-store::db"
+if ! grep -Fq "scribe-store::db: module 'inline_extra' has no place in the declared order" "$work/out"; then
+  echo "check-gates: FAIL: raw unlisted module lacks the canonical diagnostic" >&2
+  fail=1
+fi
+
+# A root re-export names its target through a raw path; the alias resolves to the
+# canonical module, so an upward edge through it fails and a downward one passes.
+alias_up=$(store_tree order-db-raw-alias-upward)
+printf 'pub use crate::db::r#codec as enc;\n' >"$alias_up/crates/scribe-store/src/lib.rs"
+printf '//! log\nuse crate::enc::Thing;\n' >"$alias_up/crates/scribe-store/src/db/log.rs"
+expect fail check-dependency-direction.sh "$alias_up" "upward edge through a root alias of a raw path"
+if ! grep -Fq "scribe-store::db: log imports codec, which is not lower" "$work/out"; then
+  echo "check-gates: FAIL: root alias of a raw path lacks the canonical diagnostic" >&2
+  fail=1
+fi
+alias_down=$(store_tree order-db-raw-alias-downward)
+printf 'pub use crate::db::r#log as lg;\n' >"$alias_down/crates/scribe-store/src/lib.rs"
+printf '//! log\n' >"$alias_down/crates/scribe-store/src/db/log.rs"
+printf '//! codec\nuse crate::lg::Thing;\n' >"$alias_down/crates/scribe-store/src/db/codec.rs"
+expect pass check-dependency-direction.sh "$alias_down" "downward edge through a root alias of a raw path"
+
 # --- test cfg attributes are read as attributes (ORB-28901) ------------------
 # A test-only cfg is read from the attribute itself. Text that only looks like
 # one (a doc string, a comment) is not a cfg, a comment inside a cfg is ignored,
