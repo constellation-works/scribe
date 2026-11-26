@@ -2052,15 +2052,46 @@ proposals'.
 
 > **After [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved):** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. The five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) now run through deterministic `prepare`/`apply` CLI and plugin primitives and Orbit `agent_loop` jobs; no app flow calls `Models`. Only the §19.5 `providers/` deletion and `[models]` config migration ([ORB-28144]) remain.
 
-| Use | Config key | Default | Called from | Budget |
-|---|---|---|---|---|
-| Referent of "this"/"it" | `models.referent` | `claude-haiku-5-5` | `UserPromptSubmit` hook | 20 s |
-| Session pass (also `session rebuild` and `session catalog`, from S9/S14) | `models.session` | `claude-haiku-5-5` | `scribe.session-pass` job, the CLI | 120 s |
-| Group close summary | Orbit `group_summary_crew` | `haiku` | `scribe-group-close` job | 120 s |
-| Distilling a discussion | `models.distill` | `claude-sonnet-5-5` | `UserPromptSubmit` hook, run as a detached job like a session pass | 180 s |
+**Settings the shipped Orbit jobs use.** No scribe command calls a model. Each
+model step is an Orbit `agent_loop` activity, and the crew that runs it is a
+plugin config key (`plugin/.orbit-plugin/plugin.yaml` `spec.config.defaults`,
+`schemas/config.json`). The job's prepare tool reads the key and returns the
+crew in its output; the job passes that crew to the activity as `crew`. A key
+that is unset or blank falls back to `haiku` in the prepare tool.
 
-The remaining in-process calls go through the `Models` port and `ClaudeCliModels`:
-it runs `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
+| Use | Plugin config key | Default | Job and activity | Activity limit |
+|---|---|---|---|---|
+| Session window distillation (`session pass`, `session catalog`, `session rebuild`) | `session_distill_crew` | `haiku` | `scribe-session-pass`, `scribe-session-catalog`, `scribe-session-rebuild`: `scribe_session_distill` | 120 s wall clock per attempt; the job step allows 300 s |
+| Session header compression (the same three jobs) | `session_header_crew` | `haiku` | `scribe_session_header_compress` | 120 s wall clock; step 300 s |
+| Memory profile refresh (`memory refresh`) | `profile_refresh_crew` | `haiku` | `scribe-memory-refresh`: `scribe_profile_refresh` (and `refresh_retry`) | 120 s wall clock; step 300 s |
+| Group close summary | `group_summary_crew` | `haiku` | `scribe-group-close`: `scribe_group_summarize` | 120 s wall clock; step 300 s |
+
+The crews are Orbit's: a crew names the provider, model and effort, so the
+model ids, `[models] provider` and the credential names no longer choose
+a model for these calls. The settings are the plugin's, not `config.toml`'s.
+
+**Retired in-process settings.** The `Models` port, `ClaudeCliModels` and the
+Codex adapter in `crates/scribe-core/src/providers/` have no caller in any app
+flow; [§19.5](#195-deletions-and-configuration-migration-after-approval) deletes them, with the
+`[models]` migration ([ORB-28144]). Until then `config.toml` still loads
+`[models]` and `[codex.models]`, with these meanings:
+
+| Key | Status |
+|---|---|
+| `models.referent`, `codex.models.referent` | Retired with the referent call (§14.6). Loads with a warning that the key is unused. |
+| `models.annotation`, `models.consistency` (and the `codex.models` twins) | Retired ([ORB-27911] step 2a). Accepted, checked and ignored. |
+| `models.ask` | Retired with `ask` ([ORB-27911]). Parsed and validated, and no job reads it: the group summary's model is `group_summary_crew`. |
+| `models.session` | Parsed, and copied into the prepared window request's `model` field, but the activity takes its model from `session_distill_crew`; it chooses nothing. |
+| `models.profile` | Parsed and validated; the refresh's model is `profile_refresh_crew`. |
+| `models.provider` (the transport, `claude` or `codex`) and `models.credentials` | Still read: by the retired adapter's composition, and by redaction, which masks the configured credential names. They set no model for a shipped job. |
+| `models.distill` | Never a `config.toml` key and no flow calls it. |
+
+The adapter's own details below are as built for the retired in-process calls
+(S3) and stay as history until [§19.5](#195-deletions-and-configuration-migration-after-approval)
+deletes the code. No shipped job runs `claude -p` from scribe: Orbit starts the
+agent, with its own sandbox and environment.
+
+`ClaudeCliModels` ran `claude -p --safe-mode --tools "" --model <id> --output-format json --json-schema <schema-json>`
 with the prompt on stdin, in its own process group, from a cleared
 environment holding only `PATH`, `HOME`, `LANG` and the credential names
 Daniel configures (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`;
@@ -5815,12 +5846,15 @@ a `now` file (`raised: {at, session}`), set by `scribe memory ack <id>`.
 ### 15.6 The weekly profile job
 
 `scribe memory refresh` rebuilds `profile.md` and settles passed `now`
-items. Any scheduler can call it: the seeded Orbit routine, cron, or a
-user's own launchd job. It has no dependency on Orbit, built in phase 5,
-when the database exists. It writes through a SQLite write transaction and
-the journal of §15.6, and holds the store lock as well until phase 7
-retires it. It is audited, and is idempotent: a second run
-with nothing new writes nothing.
+items. The rebuild is the Orbit job `scribe-memory-refresh`
+([§19.3.5](#1935-memory-refresh-scribe-memory-refresh-job-and-routine)),
+which the seeded routine runs weekly (disabled until the user enables it) and
+a user can start with `orbit job run scribe-memory-refresh`. The command
+itself is deterministic: it replays an open journal and archives legacy items,
+and when a model rebuild is due it exits with a usage error naming the job.
+It writes through a SQLite write transaction and the journal of §15.6, and
+holds the store lock as well until phase 7 retires it. It is audited, and is
+idempotent: a second run with nothing new writes nothing.
 
 **Input** (bounded, STD-08 §R1):
 
@@ -5841,10 +5875,28 @@ with nothing new writes nothing.
 - the preference entries' ids and subjects, so "How they work" can link
   them.
 
-**Model.** `[models] profile`: `claude-sonnet-5-5` under Claude Code, a
-stronger model than the pass's `claude-haiku-5-5`, and `gpt-6-luna` under
-Codex, Luna being the approved Codex default for every call. One call, with
-a 120 s budget fixed in code.
+**Model.** The job's steps are:
+
+1. `prepare` (`scribe.memory-refresh-prepare`, 60 s) builds the bounded input
+   above and the basis it was read from, and returns the activity crew:
+   the plugin config key `profile_refresh_crew`, default `haiku` (blank or
+   unset also gives `haiku`). It returns `nothing_new: true` when there is no
+   session after the cursor, no hand edit and no passed item; then no later
+   step runs and nothing is written.
+2. `refresh` runs the `scribe_profile_refresh` `agent_loop` activity on that
+   crew, with no tools (120 s activity wall clock, 300 s step timeout). No
+   model id is configured: `[models] profile` no longer selects a model.
+3. `apply` (`scribe.memory-refresh-apply`, 60 s) takes the answer and the
+   basis and runs the output checks below and the write under the lock. When
+   a check refuses (`profile_shape`, `profile_pinned`, `profile_too_long`,
+   `profile_unknown_link`, `profile_sensitive` or `profile_milestone`) it
+   writes nothing and returns `status: retry` with a correction naming the
+   code.
+4. `refresh_retry` runs the activity once more with that `correction`, and
+   `apply_retry` applies its answer with `allow_retry: false`. This is the
+   only retry: a second refusal fails the run with its code, and the cursor
+   stays. Any other `apply` error (such as `memory_changed`) fails the run
+   without a retry.
 
 **Output checks** (model-free, before anything is written):
 
