@@ -4858,7 +4858,7 @@ backfills its own transcript only.
 
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 
-**Recorded:** 2026-11-23 · [ORB-27638] · **Overridable by Daniel** · proposed, not built
+**Recorded:** 2026-11-23 · [ORB-27638] · **Overridable by Daniel** · record and settling steps built ([ORB-27655], [ORB-27656])
 
 ### Context
 
@@ -4878,8 +4878,8 @@ wrote 14 decisions and 6 open items in its first 15 minutes
 ### Decision
 
 This supersedes [ORB-25980]'s decision for decisions that outlive one task,
-and only that. `decision` and `open-item` ship as agent-written memory tags
-with typed, checked fields ([2_design.md §18](./2_design.md#18-decisions-and-open-items-proposed)):
+and only that. `decision` and `open-item` ship as agent-written entry tags
+with typed, checked fields ([2_design.md §18](./2_design.md#18-decisions-and-open-items)):
 
 - A decision names who decided. Daniel's words, and his reason when he gave
   one, are verbatim quotes of his typed turns; an agent's decision requires a
@@ -4909,7 +4909,7 @@ chat.
   prose shape. Rejected: the shape drifted within the hour, `retired` meant
   both closed and withdrawn, and quotes of Daniel were never checked.
 - **A record kind of its own**, outside entries. Rejected: entries already
-  carry authors, quotes and their check, `superseded_by`, search and `ask`;
+  carry authors, quotes and their check, `superseded_by` and search;
   two optional objects on an entry cost one format step.
 - **Keep [ORB-25980] and record standing choices as preferences.** Rejected:
   a preference needs his typed approval and binds every session; a grant or a

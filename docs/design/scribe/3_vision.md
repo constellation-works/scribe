@@ -1,7 +1,7 @@
 ---
 title: scribe — Vision
 owner: claude
-last_updated: 2026-11-21
+last_updated: 2026-11-26
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -21,11 +21,10 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
 
 ## 1. Open Questions
 
-1. **Other providers.** Claude Code is first because its hooks see the
-   user's typed turn before the model does. Codex and other providers need
-   an equivalent pre-model hook, or a transcript watcher that only reads
-   sessions Daniel switched on. Which provider comes second, and does a
-   watcher keep the "user-typed only" rule honest?
+1. **Other providers.** Claude Code and Codex are supported. Claude Code
+   uses provider hooks; Codex reads its rollout through its hook adapter.
+   What provider should come next, and what hook or transcript contract
+   would preserve the user-typed provenance rule?
 2. **Two hosts.** Sessions run on the Mac and on dk-server-1, each with its
    own `~/.scribe`. Should one host own the store and the other forward
    `#scribe` writes to it (over the SSH transport Daniel already uses), or
@@ -86,11 +85,10 @@ plan in [2_design.md §10](./2_design.md#10-slice-plan).
 
 ## 3. What May Be Distinctive
 
-Daniel's words have no agent in their path. Until S12 the write path had
-no agent at all; from S12 agents write too, through the CLI, but every
-record says who wrote it, only Daniel's typed turns add his entries or
-settle and forget them, and every answer carries a quote that code, not
-the model, has checked against the record.
+When an entry attributes words to Daniel, the record identifies the typed
+turn and checks its quote against that source. Agent-authored records carry
+the agent's author name, so their content is not attributed to Daniel.
+Agents read and write through the CLI and the scribe skill.
 
 ## 4. Deliberately Out of Scope
 
