@@ -9,7 +9,7 @@ use crate::error::CliError;
 use crate::output::Output;
 use clap::{Args, ValueEnum};
 use scribe_core::ExportFormat;
-use scribe_core::apps::admin::{Command, exec};
+use scribe_core::apps::store::{Command, exec};
 use scribe_core::composition::Context;
 use std::path::PathBuf;
 
@@ -50,5 +50,5 @@ pub(super) fn run(args: &ExportArgs, ctx: &Context) -> Result<Output, CliError> 
         dir: &args.dir,
         format,
     };
-    Ok(super::admin::output(exec(ctx, command)?))
+    Ok(super::store::output(exec(ctx, command)?))
 }

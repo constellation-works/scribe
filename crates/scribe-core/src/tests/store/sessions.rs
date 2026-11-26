@@ -3,8 +3,8 @@
 
 use super::{SESSION_BODY, Seed, on_disk, private_tempdir, seed, session_text};
 use crate::SessionVerbs;
-use crate::apps::admin::MigrateTestWrites;
 use crate::apps::memory::WindowMemory as PassMemory;
+use crate::apps::store::MigrateTestWrites;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, Speaker};

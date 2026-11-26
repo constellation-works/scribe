@@ -5,7 +5,7 @@
 use super::{Seed, private_tempdir, seed};
 use crate::ProposalVerbs;
 use crate::annotation::{MarkRecord, MarkState};
-use crate::apps::admin::MigrateTestWrites;
+use crate::apps::store::MigrateTestWrites;
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};
 use crate::control::{self, Switch};
 use crate::entry::{Cite, ContentFrom, Entry, EntryStatus};

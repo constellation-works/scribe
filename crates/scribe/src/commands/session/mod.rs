@@ -385,19 +385,15 @@ pub(in crate::commands) struct View<'a> {
     pub(in crate::commands) log: bool,
     /// `session show`'s segment.
     pub(in crate::commands) segment: Option<NonZeroU32>,
-    /// `transcript list`'s criteria.
-    pub(in crate::commands) transcripts: &'a [String],
 }
 
-/// A `session` or `transcript` outcome as its output.
+/// A `session` outcome as its output.
 pub(in crate::commands) fn output(outcome: Outcome, view: View<'_>, ctx: &Context) -> Output {
     match outcome {
         Outcome::Listed(found) => listed(*found, view.list, ctx),
         Outcome::Shown(read) => shown(*read, view.log, view.segment),
         Outcome::Passed(report) => Output::Pass(*report),
         Outcome::Activity(written) => activity::output(*written),
-        Outcome::Transcripts(found) => crate::commands::transcript::listed(found, view.transcripts),
-        Outcome::Transcript(surveyed) => crate::commands::transcript::shown(*surveyed),
         Outcome::PassPrepared(_)
         | Outcome::PassApplied(_)
         | Outcome::PassFailed(_)

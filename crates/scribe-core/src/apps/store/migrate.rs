@@ -2,7 +2,7 @@
 //! inside its write, before anything is imported
 //! ([`Store::import_file_store`]).
 
-use super::rules as admin;
+use super::rules;
 use crate::{ImportFacts, Result, Store};
 use time::OffsetDateTime;
 
@@ -15,10 +15,10 @@ use time::OffsetDateTime;
 ///
 /// `migrate_blocked`, and the store's read errors.
 pub(crate) fn check_migrate(facts: &ImportFacts<'_>) -> Result<()> {
-    admin::check_migrate_pending(facts.pending()?)?;
-    admin::check_migrate_none_on(&facts.control()?)?;
+    rules::check_migrate_pending(facts.pending()?)?;
+    rules::check_migrate_none_on(&facts.control()?)?;
     let checkpoints = facts.checkpoint_files()?;
-    admin::check_migrate_no_checkpoint(checkpoints.first().map(|(id, path)| (id, path.as_path())))
+    rules::check_migrate_no_checkpoint(checkpoints.first().map(|(id, path)| (id, path.as_path())))
 }
 
 /// `store migrate` at `now`: the import, refused first by [`check_migrate`]

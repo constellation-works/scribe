@@ -1,8 +1,10 @@
 //! `scribe transcript list|show` (ORB-27707 step 3d): the transcripts on
 //! this host with no session record, surveyed without cataloging them.
-//! Both read transcripts and the store and write nothing.
+//! Both read transcripts and the store and write nothing. Discovery and
+//! parsing are the tools' (`scribe-tools`); the cataloged-session and
+//! transcript-id lookups are the `session` app's public entry points.
 
-use super::catalog::{self, CatalogError};
+use crate::apps::session::{CatalogError, list_sessions, resolve_transcript};
 use crate::apps::tag::ConfigReads;
 use crate::runtime::{Ctx, PortError, Unreadable};
 use crate::transcript::{self, Survey};
@@ -64,7 +66,7 @@ pub fn show<E: PortError>(
     provider: Provider,
     input: &SessionId,
 ) -> Result<Surveyed, CatalogError<E>> {
-    let id = catalog::resolve_transcript(ctx, provider, input)?;
+    let id = resolve_transcript(ctx, provider, input)?;
     let dir = ctx
         .transcripts
         .dir(provider)
@@ -232,7 +234,7 @@ fn since_start(since: time::Date) -> std::time::SystemTime {
 /// Session ids that already have a record (including a file that did not
 /// parse) or a switch. Those transcripts are not candidates.
 fn cataloged<E>(ctx: &Ctx<'_, E>) -> crate::Result<std::collections::BTreeSet<String>> {
-    let found = crate::apps::session::list_sessions(
+    let found = list_sessions(
         &ctx.store.read(),
         &crate::SessionFilter {
             include_inactive: true,

@@ -108,7 +108,8 @@ Invariants:
 |---|---|
 | `entry` | `entry` |
 | `group` | `group` |
-| `session`, `transcript` | `session` |
+| `session` | `session` |
+| `transcript` | `transcript` |
 | `mark` | `mark` |
 | `proposal` | `proposal` |
 | `memory` | `memory` |
@@ -117,14 +118,19 @@ Invariants:
 | `brief` | `brief` |
 | `consistency` | `consistency` |
 | `hook` | `hook` |
-| `init`, `store`, `export`, `plugin` | `admin` |
+| `init` | `init` |
+| `store`, `export` | `store` (both act on the one store resource; see the amendment below) |
+
+Every top-level command except `plugin` maps to exactly one app.
 
 A `plugin` routine or workflow tool (`session-pass-prepare`, `session-pass-apply`,
 `session-pass-fail`, `consistency-scan`,
 `memory-refresh-prepare`, `memory-refresh-apply`, `group-close-prepare`,
 `group-close-apply`) has no flow of its own. The binary's `plugin` handler
 resolves the envelope's root (`Context::at`) and calls the app's `exec` (or
-command handler that owns the work). `admin` holds no plugin command.
+command handler that owns the work). `plugin` is the Orbit backend's transport,
+not a subject, so it has no app and no row in the table; each of its tools calls
+the app that owns the operation.
 
 ## `scribe-core`
 
@@ -195,7 +201,7 @@ providers/           interim: the Models port, its shapes (models.rs) and adapte
   the guard record it:
 
   ```
-  tag < mark < memory < entry < proposal < session < group < search < brief < consistency < hook < admin
+  tag < mark < memory < entry < proposal < session < transcript < group < search < brief < consistency < hook < init < store
   ```
 - There is no `apps/common`, `apps/shared` or `apps/util`. Code two apps need
   goes to the lower of the two in the order above, to `runtime` if it is about
@@ -319,8 +325,8 @@ Invariants:
   (ORB-28612).
 - `Store` stays one concrete type. A trait is added when a second backend
   exists.
-- Project scaffolding is not persistence. It is the `admin` app's
-  (`apps/admin/init.rs`).
+- Project scaffolding is not persistence. It is the `init` app's
+  (`apps/init/install.rs`).
 
 ## `scribe-tools`
 
@@ -558,6 +564,15 @@ invariants.
   removed (#425–#431).
 - **`scribe-tools` bans `tempfile`** as well, and it, like the contracts,
   reads no clock.
+- **The `admin` app is split by subject** (ORB-28770; [decision](../4_decisions.md#application-units-are-sliced-by-subject-std-02-r45),
+  STD-02@8 §R45). `init` is its own app (`apps/init/`, with the scaffold in
+  `install.rs`). `store` holds `store migrate` and `export`, which both act on
+  the one store resource. `transcript` is its own app (`apps/transcript/`) and
+  reaches `session` and `tag` only through their public exports. The app order
+  in the layer rules is the current one; the total order quoted above is
+  ORB-27921's, with `admin` last. `plugin` is no app, so it has no row in the
+  command table. The migration tables and steps above describe ORB-27921's
+  moves and are unchanged.
 
 ## Not decided here
 

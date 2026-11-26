@@ -5162,7 +5162,7 @@ it as an unknown key, so a config that sets it there fails to load. Existing
 ## The file layer is the cw-kit's cw-fs
 
 **Recorded:** 2026-11-26 · ORB-28612
-**Code anchors:** `crates/scribe-store/src/db/files.rs`, `crates/scribe-core/src/apps/admin/init.rs`, `crates/scribe-tools/src/fs.rs::read_bounded_beneath`
+**Code anchors:** `crates/scribe-store/src/db/files.rs`, `crates/scribe-core/src/apps/init/install.rs`, `crates/scribe-tools/src/fs.rs::read_bounded_beneath`
 **Supersedes in part:** the code anchors of [Store state is owner-only and checked on every load](#store-state-is-owner-only-and-checked-on-every-load), [Store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit) and the entries that name `fsio.rs`: the rules they record stand; the mechanism moved.
 
 ### Context
@@ -5402,3 +5402,85 @@ What stays in scribe, per the cw-kit design:
   `"another scribe.db writer"` while checkpoint barriers said
   `"another scribe.db connection"`), and `db_error` classifies busy/locked SQLite
   errors as `Error::Locked` (`store_locked`) via `cw_sqlite::Error::sqlite`.
+
+## Application units are sliced by subject (STD-02 R45)
+
+**Recorded:** 2026-11-25 · ORB-28770 · **Daniel's decision** (option 1, dr-29c48f488ba9200f)
+**Code anchors:** `crates/scribe-core/src/apps/init/mod.rs`, `crates/scribe-core/src/apps/store/mod.rs`, `crates/scribe-core/src/apps/transcript/mod.rs`, `scripts/check-dependency-direction.sh`
+**Amends:** the `admin` app of [Scribe is laid out by app, in four crates: scribe, core, store and tools](#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools)
+
+### Context
+
+ORB-27921 laid `scribe-core` out as one folder per app. The `admin` app then
+held three subjects with nothing in common: `init` (project scaffolding in
+`install.rs`), and `store migrate` and `export` (the store's operations, with
+their rules in `rules.rs`). `admin` was the last app in the order. The
+transcript reads `transcript list` and `transcript show` sat under `session`, in
+`session/transcript.rs`, although a user names `transcript` on the command line.
+
+STD-02@8 §R45 asks for one application unit per subject a user can name, with one
+public entry point that every surface calls, and for a surface command to map to
+exactly one such unit. A unit named for no subject groups operations on unrelated
+resources, so a change to project setup and a change to the store touched the same
+unit.
+
+Daniel chose option 1 on ORB-28770 (dr-29c48f488ba9200f): give project setup and
+transcript reads their own applications, and keep migration and export together as
+operations on the store.
+
+### Decision
+
+- **`init` is its own unit, `apps/init/`.** Its subject is the project's files. The
+  scaffold stays in `install.rs`, the one file that names `cw-fs`. It calls no app.
+- **`store` is one unit, `apps/store/`, for `store migrate` and `export`.** Both act
+  on the one persisted resource, `scribe.db` and its records, so one unit and one
+  persistence repository hold that subject. Migrate's refusals live in
+  `apps/store/migrate.rs` and `apps/store/rules.rs`. It calls no app.
+- **`transcript` is its own unit, `apps/transcript/`, for `transcript list` and
+  `transcript show`.** Transcript discovery and parsing stay in `scribe-tools`, which
+  `transcript` and `session` both use. `transcript` reaches `session`'s catalog
+  (`list_sessions`, `resolve_transcript`, `CatalogError`) and `tag`'s `ConfigReads`
+  only through their public exports, so the dependency runs one way.
+- **The app order is `… session < transcript < group < … < init < store`**, in
+  `scripts/check-dependency-direction.sh` and in [ARCHITECTURE.md](../../../ARCHITECTURE.md).
+- **`plugin` is not a unit.** It is the Orbit backend's transport, not a subject. Its
+  routine tools are dispatched by the binary's handler to the app that owns each
+  routine.
+
+### Retained deviations
+
+- **`export` has no unit of its own** (`STD-02@8 §R45`). R45 gives each subject a user
+  can name one unit, and `export` is a command a user names. It shares `store` because
+  it reads the same records as `store migrate`, and splitting the two would put one
+  resource's operations in two units. Revisit if `export` gains rules that `store`
+  does not already hold.
+- **`plugin` does not map to exactly one unit** (`STD-02@8 §R45`). R45 says a surface
+  command maps to exactly one unit. The plugin is a surface that maps to several, one
+  per routine, so it is the transport, not a subject, and it has no unit.
+
+### Alternatives
+
+- **Keep `admin` and rename it.** Rejected: a unit named for no subject still groups
+  unrelated resources (STD-02 R43).
+- **Move `init` into `store`.** Rejected: project files are not the store's records.
+- **Split `export` from `store migrate`.** Not chosen, because the two act on one
+  resource. This is the retained deviation above.
+- **Move transcript reads into `scribe-tools`.** Rejected: a command's entry point,
+  audit declaration and output belong to an app. Parsing and discovery stay shared in
+  `scribe-tools`.
+
+### Consequences
+
+- **No behavior change.** Command spellings, inputs, help, output, exit codes, audit
+  lines, the store format and the export document are unchanged. `transcript` reads
+  stay unaudited, as `session`'s reads were.
+- **Output mapping follows the unit.** `commands/init.rs`, `commands/store.rs` (whose
+  `output` is shared with `commands/export.rs`) and `commands/transcript.rs` each map
+  their own outcome. `commands/admin.rs` is removed.
+- **No `FORMAT` bump and no migration.** No persisted or exported shape changed.
+- **ORB-27921's migration tables stay as written.** They record the moves ORB-27921
+  made. The amendment in [specs/architecture.md](specs/architecture.md) records this
+  split.
+- **ORB-28767 targets the new path.** The migrate adapter moved from
+  `apps/admin/migrate.rs` to `apps/store/migrate.rs`, and work on ORB-28767 should use
+  that path.

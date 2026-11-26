@@ -1,11 +1,12 @@
 //! The `session` app: session records and the passes that write them
-//! (`scribe session`, `scribe transcript`; 2_design.md §6, §11, §15).
+//! (`scribe session`; 2_design.md §6, §11, §15).
 //!
-//! `list`, `show` and the `transcript` reads read only. `pass` settles or
+//! `list` and `show` read only. `pass` settles or
 //! prepares and applies Orbit windows. `catalog` and `rebuild` write records; `activate` and
 //! `deactivate` write one record. The links, the activity switch, a
 //! continuation's handoff and its predecessor are here too, for the hooks
-//! and the consistency scan.
+//! and the consistency scan. Transcript inspection, which can precede any
+//! session record, is the `transcript` app.
 
 mod activity;
 mod catalog;
@@ -17,14 +18,15 @@ pub mod rules;
 mod show;
 #[cfg(test)]
 mod tests;
-mod transcript;
 mod verbs;
 mod view;
 
 pub use activity::{
     ActivateInput, ActivityWritten, DeactivateInput, SessionRef, parse_session_ref,
 };
-pub use catalog::{Begun, CatalogBeginInput, CatalogBegun, CatalogError, CatalogInput};
+pub use catalog::{
+    Begun, CatalogBeginInput, CatalogBegun, CatalogError, CatalogInput, resolve_transcript,
+};
 pub use list::{ListInput, Listed};
 pub use pass::{
     ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CATALOG_COMMAND, CatalogSelection,
@@ -41,7 +43,6 @@ pub use rebuild::{
     RebuildStatus,
 };
 pub use show::Shown;
-pub use transcript::{ListInput as TranscriptListInput, Listed as TranscriptsListed, Surveyed};
 pub use verbs::HandoffSelection;
 #[cfg(any(test, feature = "test-support"))]
 pub use verbs::SessionVerbs;
@@ -59,7 +60,7 @@ use crate::{Author, AuthorName, Provider, Redactor, SessionId, SessionLink, Stor
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
-/// A `session` or `transcript` command.
+/// A `session` command.
 pub enum Command<'i> {
     /// `session list`.
     List(Box<ListInput>),
@@ -95,20 +96,6 @@ pub enum Command<'i> {
     Deactivate(DeactivateInput<'i>),
     /// `session activate`.
     Activate(ActivateInput<'i>),
-    /// `transcript list`.
-    TranscriptList {
-        /// The provider whose transcripts are listed.
-        provider: Provider,
-        /// What to list.
-        input: TranscriptListInput<'i>,
-    },
-    /// `transcript show`.
-    TranscriptShow {
-        /// The provider whose transcript it is.
-        provider: Provider,
-        /// The transcript: an id or unique prefix.
-        id: SessionId,
-    },
 }
 
 /// `session deactivate`'s command path in the audit log.
@@ -125,10 +112,7 @@ impl Command<'_> {
     #[must_use]
     pub fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::List(_)
-            | Self::Show { .. }
-            | Self::TranscriptList { .. }
-            | Self::TranscriptShow { .. } => None,
+            Self::List(_) | Self::Show { .. } => None,
             Self::Rebuild(_) | Self::RebuildPrepare(_) => Some(AuditMeta {
                 command: REBUILD_COMMAND,
                 stepwise: true,
@@ -201,15 +185,12 @@ impl Command<'_> {
                 .as_ref()
                 .map(|b| catalog_subject(None, b.catalog()))
                 .unwrap_or_default(),
-            Self::List(_)
-            | Self::Show { .. }
-            | Self::Pass(..)
-            | Self::PassPrepare(..)
-            | Self::TranscriptList { .. }
-            | Self::TranscriptShow { .. } => AuditSubject::default(),
+            Self::List(_) | Self::Show { .. } | Self::Pass(..) | Self::PassPrepare(..) => {
+                AuditSubject::default()
+            }
             Self::CatalogBegin(input, provider) => AuditSubject {
                 target: resolve_transcript(
-                    ctx,
+                    &ctx.core(),
                     input.provider.unwrap_or(*provider),
                     &input.session,
                 )
@@ -230,7 +211,7 @@ impl Command<'_> {
                 author: Some(input.author.as_str().to_owned()),
             },
             Self::Catalog(input) => AuditSubject {
-                target: resolve_transcript(ctx, input.provider, input.id)
+                target: resolve_transcript(&ctx.core(), input.provider, input.id)
                     .ok()
                     .map(|id| format!("session:{id}")),
                 author: Some(input.author.as_str().to_owned()),
@@ -303,11 +284,6 @@ pub enum Outcome {
     PassFailed(Option<Box<PassPayload>>),
     /// The record an `activate` or `deactivate` left.
     Activity(Box<ActivityWritten>),
-    /// The uncataloged transcripts; `None` when there is no transcripts
-    /// directory.
-    Transcripts(Option<Box<TranscriptsListed>>),
-    /// One transcript.
-    Transcript(Box<Surveyed>),
 }
 
 /// Why a `session` or `transcript` command did not run.
@@ -319,7 +295,7 @@ pub enum Error<E> {
     Write(WriteError<E>),
     /// A `pass`'s error.
     Pass(PassRunError<E>),
-    /// A `catalog`'s or a transcript read's error.
+    /// A `catalog`'s error.
     Catalog(CatalogError<E>),
     /// A `rebuild`'s error.
     Rebuild(RebuildError<E>),
@@ -415,12 +391,6 @@ pub(crate) fn run<E: PortError>(
             Outcome::Activity(Box::new(activity::deactivate(ctx, input)?))
         }
         Command::Activate(input) => Outcome::Activity(Box::new(activity::activate(ctx, input)?)),
-        Command::TranscriptList { provider, input } => {
-            Outcome::Transcripts(transcript::list(ctx, provider, &input)?.map(Box::new))
-        }
-        Command::TranscriptShow { provider, id } => {
-            Outcome::Transcript(Box::new(transcript::show(ctx, provider, &id)?))
-        }
     })
 }
 
@@ -430,21 +400,6 @@ pub(crate) fn run<E: PortError>(
 #[must_use]
 pub fn resolved_id(ctx: &Context, id: &SessionId) -> Option<SessionId> {
     ctx.store().read().sessions().resolve(id).ok()
-}
-
-/// The transcript `input` names, resolved against the `provider`
-/// transcripts on this host. Reads only: `session catalog`'s audit
-/// target, which [`Command::subject`] names before the command runs.
-///
-/// # Errors
-///
-/// An unknown or ambiguous id.
-pub fn resolve_transcript(
-    ctx: &Context,
-    provider: Provider,
-    input: &SessionId,
-) -> Result<SessionId, CatalogError<CommandError>> {
-    catalog::resolve_transcript(&ctx.core(), provider, input)
 }
 
 /// Begin a catalog of `input` by `by`: its switch, whether this run wrote
@@ -598,9 +553,7 @@ impl Audited for Outcome {
                 written.changed,
             ),
             // Reads: never audited (STD-01 R31).
-            Self::Listed(_) | Self::Shown(_) | Self::Transcripts(_) | Self::Transcript(_) => {
-                vec![Line::success(None)]
-            }
+            Self::Listed(_) | Self::Shown(_) => vec![Line::success(None)],
         }
     }
 }

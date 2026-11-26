@@ -9,7 +9,6 @@
 //! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
 //! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
 
-mod admin;
 pub(in crate::commands) mod brief;
 mod consistency;
 mod entry;
