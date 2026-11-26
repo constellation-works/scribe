@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (approved 2026-11-23; records built by [ORB-27655] and settling built by [ORB-27656], with reading, skill and formation follow-up) defines `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (approved 2026-11-25; the five replacement Orbit jobs are built, and only the §19.5 `providers/` deletion and model-config migration (ORB-28144) remain) replaced the five model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs; no app flow calls `Models`.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22; most of its phases are built, phases 2 and 3 partly, §15.9 has the status) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (approved 2026-11-23; records built by [ORB-27655] and settling built by [ORB-27656], with reading, skill and formation follow-up) defines `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (approved 2026-11-25; the five replacement Orbit jobs are built, and only the §19.5 `providers/` deletion and model-config migration (ORB-28144) remain) replaced the five model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs; no app flow calls `Models`.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27655, ORB-27656, ORB-27911, ORB-28068, ORB-28109]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26656, ORB-26657, ORB-26826, ORB-26827, ORB-27638, ORB-27655, ORB-27656, ORB-27911, ORB-28068, ORB-28109]
 ---
 
 # scribe — Design
@@ -5279,11 +5279,13 @@ Answered 2026-11-21 ("Approve as proposed"): all five as proposed.
 
 ## 15. Catchers, claims with context, one memory shape and a SQLite store (proposed)
 
-[ORB-26640], designed 2026-11-22 and **not built**. Nothing in this section
-is implemented until Daniel approves it. After that, its tasks land in the
-order of [§15.9](#159-phases). Where it changes a rule stated earlier, the
-earlier text describes what is built at store format 22 and carries a pointer
-here once the phase that changes it lands:
+[ORB-26640], designed 2026-11-22 and accepted by Daniel that day. Its phases
+land in the order of [§15.9](#159-phases), which records what each one shipped
+and what is still open, as of `20d36fc` (2026-11-26). The text below is the
+proposal as written, kept as the historical record. Where a sentence describes
+a phase as future, §15.9's status gives the current state. Where it changes a
+rule stated earlier, the earlier text describes what is built at store format
+22 and carries a pointer here once the phase that changes it lands:
 
 - §3, the Markdown store;
 - §5.3, the pass's claims;
@@ -6303,8 +6305,57 @@ goldens. Each line gives what the phase does, then what it proves.
      keeps unrelated archived records and the legacy audit fields. A store
      migrated in phases 6–7 still loads and exports unchanged.
 
-**Implementation tasks** (titles and scope; none is filed until Daniel
-approves this design; each carries the `scribe` tag):
+**Status at `20d36fc` (2026-11-26).** Checked against the code, the commit
+log and `make goldens`, which passes. The other proof points in each phase's
+"Proves" line (replay fixtures, redaction, ownership checks) were not checked
+here.
+
+- **Phase 1: built.** The memory check refuses a `working` item
+  (`crates/scribe-core/src/apps/memory/tests/rules.rs`,
+  `shape_finance_and_mood_refuse_before_the_write`), and §13 records the
+  removal. The brief shipped beside it in [ORB-26642] (`6ba16a7`) as
+  `scribe brief` (`crates/scribe/src/commands/brief.rs`).
+- **Phase 2: partly built.** Built: `[user]` and `[instructions]`
+  (`crates/scribe-core/src/config/voice.rs`); `from` takes `user`, `assistant`
+  or `both`, and `daniel` reads as `user` with a warning
+  (`crates/scribe-core/src/config/tags.rs`); `max_open`; `AuthorKind::User`
+  with `daniel` as an alias (`crates/scribe-store/src/contracts/record.rs`);
+  no `issue` noun in the CLI. Open: the personal name remains in the plugin
+  manifests (`plugin/.claude-plugin/marketplace.json:4`,
+  `plugin/claude-code/.claude-plugin/plugin.json:6`), and 158 non-test Rust
+  lines still say it. Those are doc comments and legacy `daniel` reads (serde
+  and CLI aliases, origin values). The prompts and skills name no one. So the
+  proof "a grep of shipped text finds no name" does not yet hold.
+- **Phase 3: partly built.** Claims carry `context`, at most 600 characters in
+  two sentences (`crates/scribe-store/src/contracts/proposal.rs:228–259`). No
+  collected entry or annotation contract has the field.
+- **Phase 4: built.** `scribe.db` holds `messages` with `messages_fts` and the
+  memory support tables (`crates/scribe-store/src/db/mod.rs`, migration 1), and
+  `scribe search --kind message` exists
+  (`crates/scribe-core/src/apps/search/rules.rs`).
+- **Phase 5: built.** `memory/profile.md`, `now/` and `milestones/`
+  (`crates/scribe-store/src/repository/memory.rs`), `scribe memory refresh`,
+  and the weekly job (`plugin/.orbit-plugin/jobs/memory_refresh.yaml`). The
+  `[memory]` keys load with a deprecation warning, and memory consolidation is
+  removed (`crates/scribe-core/src/config.rs:295–304`). The `m-<n>` migration
+  was not checked.
+- **Phase 6: built.** Sessions, segments, links, terms, codex cursors and
+  rebuild checkpoints are rows of `scribe.db` (`crates/scribe-store/src/db/mod.rs`,
+  migration 3); `s-<n>` ids; `scribe export` and `scribe store migrate`
+  (`crates/scribe/src/commands/export.rs`, `commands/store.rs`).
+- **Phase 7: built.** Entries, claims, agent tags, marks, pickups and audit are
+  rows of `scribe.db` (migration 5), landed in [ORB-26656] (`14c0b18`). The
+  per-session locks remain lock files in `locks/`
+  (`crates/scribe-store/src/db/locks.rs`), as §15.11 says.
+- **Phase 8: built.** [ORB-26657] (`8c4d4e1`) removed the file store:
+  `store/format.rs` and `UPGRADES` are gone, and the archive import is
+  migration 20 (`crates/scribe-store/src/db/archive.rs`).
+- **Not built, as §15.12 says:** embeddings over messages, storing every
+  assistant turn, per-user memory sections or switches, a hosted store, and a
+  configurable profile layout.
+
+**Implementation tasks** (titles and scope as proposed; each carries the
+`scribe` tag; the rows that landed are named in the status above):
 
 | # | Title | Scope |
 |---|---|---|
