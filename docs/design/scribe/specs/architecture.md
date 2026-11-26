@@ -283,13 +283,11 @@ Invariants:
   on which no record write is callable; only a `write(|tx| …)`'s
   `ReadWrite` repositories write, inside that transaction. The audit
   guard's own line outside a write goes through `Store::record_audit`.
-- **The store holds no rule and no use case.** No function named after a
-  command (`settle_pass`, `close_group`), no validation beyond what a
-  contract type enforces on itself, and no type named after a use case.
-  `CloseGroupOutcome`, `PassWrite` and `PassWritten` are in the apps whose
-  flows produce them. Four refusals stay in the store, each one a check
-  that every writer, including the store's own, must make at the point of
-  the write:
+- **The app owns product rules and use cases.** `CloseGroupOutcome`,
+  `PassWrite` and `PassWritten` are in the apps whose flows produce them.
+  Each app runs its atomic checks inside the store transaction. Store
+  APIs are named for the records they persist. The store owns format and
+  persistence checks such as these:
   - `forgotten_refusal` (`error.rs`): a forgotten session is a tombstone,
     and every writer that touches a session refuses it under the write
     lock.
@@ -298,6 +296,12 @@ Invariants:
   - `check_log` (`db/log.rs`): the codec runs it on every session record it
     reads, and the session writer before a write. A malformed log is
     `store_corrupt`.
+  - `validate_entry` (`db/codec/entry.rs`): entry rows must agree with their
+    ids and encode consistent provenance on read and write. The proposal app
+    checks approval before materializing the entry in its transaction.
+  - `Writer::scrub_journal` (`db/memory.rs`): remove old copies of file
+    operations superseded by a replacement or identified by the caller's
+    erasure predicate.
   - `export_target_exists` (`repository/sessions/export.rs::prepare_target`):
     `export` refuses a target that is not an empty directory. The check is
     the precondition of the store's own filesystem write, and only the
@@ -538,9 +542,9 @@ invariants.
   (#449). Every store call returns it, and the store sits below the core.
 - **`voice` is split** (#454): the prompt half is `core/config/voice.rs`,
   the entry half `apps/entry/rules/voice.rs`.
-- **Four refusals stay in the store** (`forgotten_refusal`,
-  `refuse_file_store`, `check_log`, `export_target_exists`; #440, #444, #468,
-  #470), as listed under [`scribe-store`](#scribe-store).
+- **Storage mechanisms stay in the store**, including the four refusals
+  from #440, #444, #468 and #470 and the
+  [entry provenance and journal checks](../4_decisions.md#entry-provenance-and-memory-journal-scrubbing-are-storage-mechanisms).
 - **`origin` and project lookup are tools** (`tools/origin.rs`, #451;
   `tools/project.rs`, #431, #433). The core re-exports `origin`.
 - **The core re-exports the store's shapes at its root and in modules at
