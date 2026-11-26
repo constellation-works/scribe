@@ -964,29 +964,38 @@ session's final pass keeps none and drops the session's rows. A file whose
 bytes would not change is not written. The window's `signal` (0–3, how
 much it says about who the user is) is kept in `pass_signals`.
 
-**The refresh** (§15.6, `scribe memory refresh`, weekly). Under the lock
-it reads the sessions after `profile_cursor` in `(updated, id)` order,
-active only, at most 40 (the rest are its `backlog`, taken by later runs);
+**The refresh** (§15.6, the `scribe-memory-refresh` Orbit job, weekly;
+`scribe memory refresh` runs only its deterministic part and names the job
+when a rebuild is due). Prepare reads, under the lock, the sessions after
+`profile_cursor` in `(updated, id)` order, active only, at most 40 (the rest
+are its `backlog`, taken by later runs);
 each with its summary and goals, cut at 1,500 characters, and the three
 with the highest summed signal (ties: the longer user text) also with
 their kept user turns, cut at 12,000. It adds the hand edits since the last
 revision as a line diff, the migrated `profile` and `projects` history
 rows as hints while there is no revision, the `now` items, the ones past
-their 14 days, the milestones and the preference entries. It calls
-`models.profile` once without the lock, then writes under the lock only if
-nothing changed meanwhile (the latest revision, the profile file's hash,
-the cursor and the `now` stems; else `memory_changed`). The answer is
+their 14 days, the milestones and the preference entries, and records the
+basis (the latest revision, the profile file's hash, the cursor and the
+`now` stems). With no session after the cursor, no hand edit and no passed
+item it returns `nothing_new` and the job runs no later step and writes
+nothing. Otherwise the job runs the `scribe_profile_refresh` activity on the
+crew prepare returns from the plugin key `profile_refresh_crew` (default
+`haiku`), once and without the lock; `[models] profile` selects no model.
+Apply then writes under the lock only if nothing changed meanwhile (the
+basis; else `memory_changed`). The answer is
 refused whole when the profile does not have the seven headings
 (`profile_shape`), changes Pinned by a byte (`profile_pinned`), is over
 6,000 characters (`profile_too_long`), links an entry id that does not
 exist (`profile_unknown_link`) or holds a credential, finance or
 sensitive word outside Pinned (`profile_sensitive`); a promoted milestone
 naming no passed item or with no real date is `profile_milestone`. A
-refused answer keeps the cursor. A changed profile is a new revision; an
+refusal of the first apply writes nothing and returns a correction, and the
+job runs the activity once more with it; the second apply allows no retry,
+so a second refusal fails the run with its code. Either refusal keeps the
+cursor. A changed profile is a new revision; an
 unchanged one writes none. Each passed `now` item becomes the milestone
 the answer names for it, or else a `memory_history` row, and its file is
-removed. A run with no session after the cursor, no hand edit and no
-passed item calls no model and writes nothing.
+removed.
 
 **Migration** (§15.11; phases 5–7, history). The first memory write on a store holding
 `m-<n>.md` items migrated them through one journal: an active `now` item
