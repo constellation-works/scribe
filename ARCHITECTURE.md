@@ -28,8 +28,8 @@ scribe  ->  scribe-core  ->  scribe-store
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access, through the kit's `cw-cli` sink. It reads no environment variable: composition reads selected configuration and log values and passes them alongside a `cw-app` process snapshot for the terminal decision. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
-| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`, which reads selected configuration and log variables and separately captures the full process environment as the terminal snapshot, and declares fixed variables in the environment usage table as `cw-app` `EnvVar`s), the config (`config.rs`) and, for now, the model adapters (`providers/`). Configured redaction variables are read live when composition builds the redactor. Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
+| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access, through the kit's `cw-cli` sink. It reads no environment variable: composition reads selected host, configuration and log values and passes them alongside a `cw-app` process snapshot for the terminal decision. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
+| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`, which reads selected host, configuration and log variables and separately captures the full process environment as the terminal snapshot, and declares fixed variables in the environment usage table as `cw-app` `EnvVar`s), the config (`config.rs`) and, for now, the model adapters (`providers/`). Configured redaction variables are read live when composition builds the redactor. Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock) and its SQLite open, configuration, migration and WAL-checkpoint layer is the kit's `cw-sqlite` (using `cw-sqlite`'s re-exported `rusqlite`); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile` |
 
@@ -54,7 +54,7 @@ second dependency.
 ## `scribe` (binary)
 
 ```
-main.rs              read selected configuration and log values and capture the terminal environment snapshot (composition), parse, decide the terminal once, resolve the Context, run, render, map the result to an exit code
+main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
@@ -192,17 +192,26 @@ so the guard holds each to the same order.
 - `runtime` is `pub(crate)`: the binary never names it. It holds four
   subjects: the context (`Ctx` and its ports), id resolution, error mapping
   (`CommandError`, the one error every `exec` returns) and the audit guard.
+  `Ctx` is the borrowed view of `store`, `clock`, `transcripts` and `redaction`
+  that a flow receives.
 - `composition.rs` is the one place that resolves anything about the host.
   `Env::from_process()` reads `SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT` and `SCRIBE_LOG` individually for
-  configuration and logging. It also captures the full process environment
-  once as `cw_app::Env` for the binary's terminal decision; that snapshot can
-  include and reread those same variables, as well as configured redaction
-  variables present in the process when captured. Redactor construction uses a
-  separate source: `Context::redactor` reads the configured `[redact] env`
-  names live from the process environment when it builds a redactor.
-  `Context::resolve` picks the data directory, opens the `Store` and resolves
-  the transcript roots and provider. `config.rs` parses the config file, and
+  host context, configuration and logging. It also captures the full process
+  environment once as `cw_app::Env`. The binary probes help width from this
+  snapshot before parsing; after parsing, `Console::detect` uses the same
+  snapshot, a console probe and the parsed format to decide console output.
+  The snapshot can include and reread those same variables, as well as
+  configured redaction variables present in the process when captured.
+  Redactor construction uses a separate source: `Context::redactor` reads the
+  configured `[redact] env` names live from the process environment when it
+  builds a redactor. `Context::resolve` selects the data directory
+  (`--root` > `SCRIBE_ROOT` > `$HOME/.scribe`), opens a `Store` handle and
+  resolves the transcript roots and provider state. `Context::at` wraps the
+  root and optional transcripts supplied by the plugin. Neither constructor
+  reads the config file; `Store::open` performs no I/O. Commands that need
+  configuration read it on demand through the store-backed config access
+  (for example, tag configuration parses the config file or shipped defaults).
   `Context::models` reads its allowed process values when building the model
   adapter.
   `composition/host/` implements `runtime`'s ports on the `Context` (STD-02

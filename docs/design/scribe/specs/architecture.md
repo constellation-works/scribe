@@ -74,7 +74,7 @@ and the moved modules at the paths they had in it (`scribe_core::handoff`,
 ## `scribe` (binary)
 
 ```
-main.rs              read selected configuration and log values and capture the terminal environment snapshot (composition), parse, dispatch, map the result to an exit code
+main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, dispatch, map the result to an exit code
 cli.rs               clap declarations
 commands/<noun>.rs   arguments -> apps::<app>::Command; outcome -> payload
 commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
@@ -217,8 +217,8 @@ sees it.
   redaction port by building a redactor from the supplied config and the live
   values of configured `[redact] env` variables. An app's `exec` lends a flow
   the `Ctx` built from it.
-- `Ctx` is the borrowed view a flow receives: `store`, `config`, `clock`,
-  `transcripts`, `redaction`. The port traits (`Clock`, `Transcripts`,
+- `Ctx` is the borrowed view a flow receives: `store`, `clock`, `transcripts`,
+  `redaction`. It has no `config` field. The port traits (`Clock`, `Transcripts`,
   `Redaction`, `AuditNotes`) are in `runtime/mod.rs`, so test fakes
   implement them.
 - `composition/host/` implements `runtime`'s ports on `Context`: the clock,
@@ -235,20 +235,26 @@ sees it.
 
 - `Env::from_process()` reads `SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT` and `SCRIBE_LOG` individually for
-  configuration and logging. It also captures the full process environment
-  once as `cw_app::Env` for the binary's terminal decision (color, width,
-  format); this snapshot can include and reread those same variables, as well
-  as configured redaction variables present in the process when captured.
-  `main.rs` passes both the selected values and snapshot down, and the core does
-  not consult the terminal snapshot. Tests build an `Env` by hand. Redactor
-  construction uses a separate source: `Context::redactor` reads the configured
-  `[redact] env` names live from the process environment when it builds a
-  redactor.
-- Composition picks the data directory, reads `config.toml`, opens the
-  `Store`, and resolves host paths into one `Context` (`Context::resolve`, or
-  `Context::at` for a root the caller names, as the plugin's envelope does).
-  `Context::redactor` builds a redactor on demand from the parsed config and
-  live process values for its configured `[redact] env` names.
+  host context, configuration and logging. It also captures the full process
+  environment once as `cw_app::Env` for terminal color, width and format; this
+  snapshot can include and reread those same variables, as well as configured
+  redaction variables present in the process when captured. `main.rs` uses it
+  to probe help width before parsing, then `Console::detect` combines the same
+  snapshot, a console probe and the parsed requested format for the normal
+  console decision. It passes both the selected values and snapshot down, and
+  the core does not consult the terminal snapshot. Tests build an `Env` by
+  hand. Redactor construction uses a separate source: `Context::redactor` reads
+  the configured `[redact] env` names live from the process environment when it
+  builds a redactor.
+- `Context::resolve` selects the data directory (`--root` > `SCRIBE_ROOT` >
+  `$HOME/.scribe`), opens a `Store` handle and resolves host paths and provider
+  state. `Context::at` wraps the root and optional transcript path supplied by
+  the plugin. Neither constructor reads the config file; `Store::open` performs
+  no I/O. Commands that need configuration load it on demand through the
+  store-backed config access (for example, tag configuration parses the config
+  file or the shipped defaults). `Context::redactor` builds a redactor
+  on demand from the supplied config and live process values for its configured
+  `[redact] env` names.
 - Outside `composition.rs`, nothing in the core reads an environment variable
   or discovers a path. Outside `composition.rs` and `providers/`, nothing in
   the core touches a file: it reaches the data root through the store and
