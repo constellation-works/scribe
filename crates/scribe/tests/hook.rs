@@ -970,6 +970,57 @@ fn an_evidence_tag_handoff_gives_the_evidence_pointer_its_command_needs() {
 }
 
 #[test]
+fn a_quote_and_evidence_tag_handoff_gives_both_required_values() {
+    let fx = Fixture::new();
+    fx.config("[tags.finding]\nrequire_quote = true\nrequire_evidence = true\n");
+    let claude = Claude::new(&fx);
+    let quote = "the reviewer mix alone predicts a 7-point gap";
+    marked_turns(&claude, &[("u-0", &format!("#scribe finding: {quote}"))]);
+
+    let out = hook_ok(&fx, "stop", &claude.payload("stop.json"));
+    let context = reply(&out)["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        context.contains(
+            "scribe entry add --tag finding --project scribe --author <name> \
+             --related session:"
+        ),
+        "{context}"
+    );
+    assert!(
+        context.contains("--quote '<their words>' --evidence '<pointer>' '<statement>'"),
+        "{context}"
+    );
+    assert!(!context.contains("--spoken"), "{context}");
+
+    // Filling both placeholders with the user's verbatim words and a pointer
+    // passes the entry checks for this non-action tag.
+    fx.ok(&[
+        "entry",
+        "add",
+        "--tag",
+        "finding",
+        "--project",
+        "scribe",
+        "--author",
+        "opus",
+        "--related",
+        &format!("session:{SESSION}"),
+        "--quote",
+        quote,
+        "--evidence",
+        "exp-1",
+        "The reviewer mix alone predicts a 7-point gap",
+    ]);
+    let recorded = entries(&fx);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["tag"], "finding");
+    assert_eq!(recorded[0]["quote"], quote);
+}
+
+#[test]
 fn store_tag_capture_and_daniel_approval_of_agent_proposal() {
     let fx = Fixture::new();
     fx.ok(&[

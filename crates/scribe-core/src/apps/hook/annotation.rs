@@ -91,12 +91,14 @@ enum Say {
     /// Its reason, for a refusal the checks made.
     Reason(String),
     /// Handed to the agent: the line as typed, the `entry add` hints, whether
-    /// the hinted tag takes `--spoken` and whether it requires `--evidence`.
+    /// the hinted tag takes `--spoken`, requires `--evidence`, or requires a
+    /// quote.
     Handoff {
         said: String,
         hints: String,
         spoken: bool,
         evidence: bool,
+        quote_required: bool,
     },
 }
 
@@ -288,6 +290,7 @@ pub fn run<E: PortError>(
                     hints: hints(mark, &item.turn, &config.tags),
                     spoken: spoken(mark, &config.tags),
                     evidence: evidence(mark, &config.tags),
+                    quote_required: requires_quote(mark, &config.tags),
                 });
             }
         }
@@ -353,6 +356,14 @@ fn evidence(mark: &Mark, tags: &TagTable) -> bool {
         .is_some_and(|def| def.require_evidence)
 }
 
+/// Whether the hinted tag requires the agent's entry to quote the user's
+/// words. Evidence tags may require both fields.
+fn requires_quote(mark: &Mark, tags: &TagTable) -> bool {
+    mark.hint(tags)
+        .and_then(|name| tags.get(name))
+        .is_some_and(|def| def.requires_quote())
+}
+
 /// The echo and audit outcome of one recorded marker.
 fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) {
     match (result, say) {
@@ -370,6 +381,7 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
                 hints,
                 spoken,
                 evidence,
+                quote_required,
             },
         ) => {
             out.echoes.push(format!(
@@ -380,12 +392,19 @@ fn echo(out: &mut Cataloged, session: &SessionId, result: MarkResult, say: Say) 
             // user's words character for character. Only the user's echo above
             // is flattened and cut.
             let context = if evidence {
-                // A finding is the agent's own result: `entry add` refuses
-                // --quote and --spoken under its tag, and takes the pointer
-                // that shows the result.
-                format!(
-                    "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks a result to keep, and you can point to its evidence, record it as your finding with a nonempty evidence pointer (a path, task, run, experiment or commit): scribe entry add {hints} --author <name> --related session:{session} --evidence '<pointer>' '<statement>'. If it marks nothing, record nothing."
-                )
+                if quote_required {
+                    // Some memory tags ask the agent to retain a result with
+                    // both the user's exact words and the result's evidence.
+                    format!(
+                        "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks a result to keep, and you can point to its evidence, record it with the user's exact words and a nonempty evidence pointer (a path, task, run, experiment or commit): scribe entry add {hints} --author <name> --related session:{session} --quote '<their words>' --evidence '<pointer>' '<statement>'. If it marks nothing, record nothing."
+                    )
+                } else {
+                    // An evidence-only tag records the agent's own result;
+                    // it takes the pointer that shows the result.
+                    format!(
+                        "scribe: the user marked a line with #scribe for you to record — \"{said}\". If it marks a result to keep, and you can point to its evidence, record it as your finding with a nonempty evidence pointer (a path, task, run, experiment or commit): scribe entry add {hints} --author <name> --related session:{session} --evidence '<pointer>' '<statement>'. If it marks nothing, record nothing."
+                    )
+                }
             } else {
                 let statement = if spoken {
                     "--spoken '<statement>'"
