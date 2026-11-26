@@ -365,6 +365,61 @@ fn a_failed_pass_stays_due_exits_1_naming_it_and_the_next_run_retries_it() {
 }
 
 #[test]
+fn a_failed_cli_pass_with_closed_stdout_exits_quietly_with_zero() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
+
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    std::fs::set_permissions(setup.transcript(ON), std::fs::Permissions::from_mode(0o620))
+        .expect("make transcript fail its provenance check");
+
+    // Close stdout's reader before the child starts so EPIPE is deterministic
+    // when the failed pass report reaches stdout.
+    let (reader, writer) = std::os::unix::net::UnixStream::pair().expect("create stdout stream");
+    drop(reader);
+    let mut command = setup.fx.cmd(&["session", "pass", "--session", ON]);
+    command
+        .env("PATH", &setup.path)
+        .stdout(Stdio::from(std::os::fd::OwnedFd::from(writer)))
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("start failed session pass");
+    let out = support::ChildGuard::new(child).finish();
+
+    assert_eq!(setup.control()["due"], true, "the failed pass stays due");
+    assert_eq!(
+        setup.control()["consecutive_failures"],
+        1,
+        "the pass failed on the transcript provenance check"
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        !text(&out.stderr).contains("error:"),
+        "stderr: {}",
+        text(&out.stderr)
+    );
+}
+
+#[test]
+fn a_failed_cli_pass_with_writable_stdout_still_reports_exit_one() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    std::fs::set_permissions(setup.transcript(ON), std::fs::Permissions::from_mode(0o620))
+        .expect("make transcript fail its provenance check");
+
+    let out = setup.run_any(&["session", "pass", "--session", ON], b"");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("failed"),
+        "stdout: {}",
+        text(&out.stdout)
+    );
+    assert!(text(&out.stderr).contains("error: 1 session pass(es) failed"));
+}
+
+#[test]
 fn a_failed_pass_redacts_the_model_reason_in_json_and_the_aggregate_error() {
     const SECRET: &str = "pass-error-secret-value-123";
     const SECRET_NAME: &str = "SCRIBE_PASS_ERROR_SECRET";
