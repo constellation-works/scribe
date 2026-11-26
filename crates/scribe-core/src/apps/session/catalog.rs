@@ -84,7 +84,8 @@ pub enum CatalogError<E> {
         /// The read error.
         source: std::io::Error,
     },
-    /// The session already has a record or a `/scribe on` switch.
+    /// The session has a record or switch, except an on, due catalog switch
+    /// that can resume even when a partial record exists.
     SessionCataloged(SessionId),
     /// A usage error.
     Usage(String),

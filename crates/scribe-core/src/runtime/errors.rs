@@ -167,8 +167,8 @@ pub enum CommandError {
         /// Why the check refused it.
         reason: String,
     },
-    /// `session catalog` named a session that already has a record or a
-    /// switch it did not write.
+    /// `session catalog` found a record without a resumable catalog switch,
+    /// or a switch that is not still on and due with `cataloged_by` set.
     #[error(
         "session {0} already has a record or was switched on; use 'orbit job run scribe-session-pass' with this session, or 'scribe session rebuild {0} --author <name> --confirm'"
     )]

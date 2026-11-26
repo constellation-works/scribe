@@ -487,12 +487,13 @@ retire`, `entry pickup` (format 8; prints the entry it noted), `entry answer`,
 `proposal settle`, `session activate` and `session deactivate` print the
 record they wrote in its `show` shape (`--json`: the record object). A
 write that changed nothing prints the record unchanged and `nothing
-changed` on stderr. `session rebuild` and `session catalog` print the
-session pass report. As built ([ORB-28143]) neither runs a window:
-`session catalog` reports its one session `waiting` with `remaining: 1`
-and `switch_written`, and `session rebuild` reports no passes with
-`remaining: 1`, each with a notice on stderr naming the `orbit job run`
-command that runs the windows. *(S10, as built)* `session deactivate` and `session
+changed` on stderr. `session rebuild` and `session catalog` are preflights;
+neither runs a window or calls a model. A successful catalog preflight
+reports one `waiting` pass with `error_code: null` and `remaining: 1`;
+rebuild reports `passes: []` and `remaining: 1`. Each prints the `orbit job
+run` command that runs its windows on stderr. `switch_written` is internal,
+not an output field. See [design §19.3.3 and §19.3.4](../2_design.md#1933-session-catalog-scribe-session-catalog-job-and-cli-switch)
+for job behavior. *(S10, as built)* `session deactivate` and `session
 activate` print the session in `session show`'s shape (`--json`: the
 object with every segment); a change writes one audit line (`session
 deactivate` or `session activate`, target `session:<id>`) and an
@@ -948,15 +949,16 @@ unknown or future, or whose lengths were invalid; `gave_up` is always
 `false` (a failed pass is never given up; the field is kept for the
 shape). A pass also carries `segments_sealed` (segments sealed in this
 invocation) and `segments` (the latest persisted record/checkpoint's segment
-count, or `null`). `session rebuild` prints this report with its one session,
-`remaining: 0` and an additional `author: {kind: agent, name: <name>}` naming
-its requester (`author` is `null` for ordinary passes). A failed rebuild keeps its private checkpoint and, on writable stdout, exits 1
-with `session_pass_failed`, naming the failure and the rebuild command to
-resume; on a closed stdout it exits 0 with no aggregate pass error;
-it does not change the control switch. `--confirm` missing refuses
-with `confirm_required`, naming the current segment and pass counts;
-`transcript_missing` and `session_busy` also refuse before model calls.
-One audit line names `session:<id>` for success or refusal. (Format 19) A
+count, or `null`). A rebuild job's completed pass payload includes
+`author: {kind: agent, name: <name>}`; ordinary passes have `author: null`. The
+`scribe session rebuild` preflight instead returns `passes: []` and
+`remaining: 1`, then names the job on stderr. The job runs model windows,
+keeps its private checkpoint after a failure, and resumes it on another job
+run; it does not change the control switch (see [design §19.3.4](../2_design.md#1934-session-rebuild-scribe-session-rebuild-job)).
+Missing `--confirm` refuses with `confirm_required`, naming the current
+segment and pass counts; `transcript_missing` and `session_busy` also refuse
+before model calls. One audit line names `session:<id>` for success or
+refusal. (Format 19) A
 pass also carries `memory_written` (format 25: `now` and milestone files
 written across persisted windows), (format 25) `memory_pending` (undated
 `now` candidates kept), `memory_promoted` and `memory_proposed` (both
@@ -968,14 +970,17 @@ kept because field names are a contract) and `memory_refused`
 `memory_pending_full`); a refusal is not a failure, and the pass's audit
 line names each `memory:now/<stem>` and `memory:milestones/<stem>` it wrote
 in `targets`. *(S14, built)*
-`session catalog` prints the same report with its one session and
-`remaining: 0`. `author` stays `null` (the catalog flag is not a JSON
-field). On writable stdout a failure exits 1 with `session_pass_failed` and names
-`session catalog` to resume; on a closed stdout it exits 0 with no aggregate pass error. A session that already has a record or a
-switch catalog did not write is refused `session_cataloged` before a
-model call. When this run wrote the switch, the audit log gains a
-success line for that switch ahead of the pass line; both name
-`session:<id>`.
+The `scribe session catalog` preflight reports one session `waiting` with
+`error_code: null` and `remaining: 1`; `author` stays `null` (the catalog
+flag is not a JSON field). Its notice names the catalog job on stderr. The
+job runs model windows; a failed window leaves the switch due, and another
+job run resumes it (see [design §19.3.3](../2_design.md#1933-session-catalog-scribe-session-catalog-job-and-cli-switch)).
+The preflight succeeds with exit 0 and cannot return `session_pass_failed`.
+It refuses `session_cataloged` when a session has a record or an existing
+switch that cannot resume. A catalog switch with `cataloged_by` that is
+still on and due can resume, even when it has a partial record. When this
+run writes the switch, the audit log gains a success line for that switch
+ahead of the pass line; both name `session:<id>`.
 `warnings` is an array of strings, empty when no deterministic repair was
 persisted in this invocation. After the existing one model retry, scribe
 repairs header budget overruns (sentence or bullet boundary, else a word
