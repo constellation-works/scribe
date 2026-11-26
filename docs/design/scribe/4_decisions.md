@@ -2862,7 +2862,7 @@ line until the entries are picked up or retired.
 ## The quote check runs in the CLI against this host's transcript
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe/src/commands/entry.rs` (`verify_quote`), `crates/scribe-core/src/apps/entry/rules.rs` (`quote_found`)
+**Code anchors:** `crates/scribe-core/src/apps/entry/verify.rs` (quote verification), `crates/scribe-core/src/apps/entry/rules.rs` (`quote_found`)
 
 A `standard` entry changes rules for every agent, so an agent may write
 one only from the human's own correction: `--quote` must be a verbatim
@@ -2877,7 +2877,7 @@ an agent on another host than its session's transcript cannot write a
 ## The owner host reads action entries over SSH
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe/src/commands/entry.rs` (`list --after --window`, `pickup`)
+**Code anchors:** `crates/scribe/src/commands/entry/list.rs` (`list --after --window`), `crates/scribe/src/commands/entry/pickup.rs` (`pickup`)
 
 ### Context
 
@@ -3208,7 +3208,7 @@ guards stay; ORB-25987's content becomes the statement and its point 4
 
 **Recorded:** 2026-11-21 · [ORB-26204] · **Overridable by Daniel** · proposed, not built
 **Refines:** "Daniel writes only through his typed prompt; agent names are attribution" (no CLI path records `{kind: daniel}`), "Entries Daniel wrote are settled only by Daniel", and §5.3's "Agents cannot settle or edit candidate proposals"
-**Paths:** `crates/scribe-core/src/store/agent.rs` (`change_agent_proposal`, the `daniel_only` refusal of a candidate), `crates/scribe/src/commands/entry.rs` (`verify_quote`, `RetireArgs`), `crates/scribe/src/commands/proposal.rs` — design §12
+**Paths:** `crates/scribe-core/src/store/agent.rs` (`change_agent_proposal`, the `daniel_only` refusal of a candidate), `crates/scribe-core/src/apps/entry/verify.rs` (quote verification), `crates/scribe/src/commands/entry/retire.rs` (`RetireArgs`), `crates/scribe/src/commands/proposal.rs` — design §12
 
 ### Context
 
@@ -4582,7 +4582,7 @@ new ones, for three reasons:
 
 A second deviation, from **STD-01@2 §R35**, covers one accepted value.
 `--author-kind daniel` and the stored `daniel` author stay accepted, as a clap
-value alias (`crates/scribe/src/commands/entry.rs`,
+value alias (`crates/scribe/src/commands/entry/mod.rs`,
 `crates/scribe/src/commands/proposal.rs`) and a serde alias
 (`crates/scribe-core/src/record.rs`), and they print nothing. R35 requires a
 stderr warning on use of a renamed flag or config key; an accepted value is
