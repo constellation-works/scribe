@@ -65,8 +65,8 @@ deterministic call at 300 seconds. Model activities run in Orbit.
 | `scribe.session-pass-fail` | `mutating` | `false` | `none` | activity failure backoff |
 | `scribe.consistency-scan` | `mutating` | `false` | `none` | consistency scan report |
 | `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply` | `mutating` | `false` | `none` | refresh inputs and result |
-| `scribe.group-close-prepare` | `read_only` | `false` | `none` | group evidence |
-| `scribe.group-close-apply` | `mutating` | `false` | `none` | close result |
+| `scribe.group-close-prepare` | `read_only` | `false` | `none` | open group: `{id, closed: false, evidence: {title, handoffs, turns}, related, evidence_sha256, instructions, crew}`; closed group: `{id, closed: true, crew}` |
+| `scribe.group-close-apply` | `mutating` | `false` | `none` | `{group: <closed group record>, changed: <boolean>}`; input requires `summary` and `evidence_sha256` |
 
 The Codex-enabled package declares the same tools, routines and jobs and the
 same `timeout_ms`. Its schema describes `codex_home` as required.
@@ -7480,7 +7480,7 @@ Resolves the open question in [specs/architecture.md](./specs/architecture.md#no
 
 ### 19.4 Surface summary (CLI and Orbit plugin)
 
-Once approved and built:
+Current surfaces:
 
 - **Plugin `plugin/.orbit-plugin/`**:
   - Deterministic `exec` tools (`agent_callable: false`, `mcp_scope: none`):
@@ -7495,7 +7495,8 @@ Once approved and built:
   - Jobs: `scribe-consistency` (unchanged), `scribe-session-pass`, `scribe-session-catalog`, `scribe-session-rebuild`, `scribe-memory-refresh`, `scribe-group-close`.
   - Routines (seeded `enabled: false`): `consistency`, `session-pass`, `memory-refresh`.
 - **CLI (`scribe`)**:
-  - `group evidence <id>` and `group close <id> (--summary <text> | --no-summary) [--if-evidence <sha256>]`
+  - `group evidence <id> [--quote '<span>'] [--json]` and `group close <id> [--quote '<span>'] (--summary <text> | --summary - | --no-summary) [--if-evidence <sha256>]`
+  - `group evidence --json` returns `{id, closed, evidence, related, evidence_sha256, instructions}` while open, or `{id, closed: true}` when closed. `evidence.turns` contains `[session id, provider message id, text]` tuples. `group close --json` prints the updated group record.
   - `session catalog <id> --author <name> [--project <slug>]` writes the catalog switch deterministically and prints the queued switch + `orbit job run scribe-session-catalog` command.
   - `session pass` handles model-free settlements and directs the caller to `orbit job run scribe-session-pass` when new windows need distillation. `session pass-prepare` and `session pass-apply` read JSON on stdin and use the same app flows as the plugin tools.
 

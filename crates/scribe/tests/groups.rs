@@ -574,6 +574,15 @@ fn opener_closes_with_one_bounded_summary_and_the_project_brief_shows_it() {
         evidence["turns"].to_string().contains("sprucechecklist"),
         "{evidence}"
     );
+    let turn = evidence["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|turn| turn[2].as_str().unwrap().contains("sprucechecklist"))
+        .unwrap();
+    assert_eq!(turn.as_array().unwrap().len(), 3, "{turn}");
+    assert_eq!(turn[0], B, "{turn}");
+    assert_eq!(turn[1], "u", "{turn}");
     assert!(!evidence.to_string().contains(private));
     assert!(evidence.to_string().len() < 2500);
     let shown = invoke(&f, A, &["group", "show", "g-1"], 0);

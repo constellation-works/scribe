@@ -8,7 +8,7 @@ pub struct CloseEvidence {
     pub title: String,
     /// Each handoff as (id, text).
     pub handoffs: Vec<(String, String)>,
-    /// Each typed turn as (session, time, text).
+    /// Each typed turn as (session id, provider message id, text).
     pub turns: Vec<(String, String, String)>,
 }
 
