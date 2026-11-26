@@ -59,7 +59,7 @@ cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
 commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
-output/              payloads, rendering, the sink
+output/              payloads (including session and memory shapes), rendering (including record detail), the sink
 error.rs             app errors -> one-line message and exit code
 tests/               the binary's own tests (cfg(test))
 ```
@@ -108,6 +108,7 @@ runtime/
   audit.rs           the audit guard around a mutating command
 composition.rs       Env, Context: the captured environment, and the resolved roots, store, provider and audit state
 config.rs            config.toml shapes and parsing
+config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
 providers/           interim: the Models port, its shapes (models.rs) and the CLI adapters (cli.rs, cli/)
 ```
@@ -200,7 +201,7 @@ so the guard holds each to the same order.
 
 ```
 lib.rs               Store::open, read() -> Snapshot, write(|tx| …); the public contract modules
-db/                  the connection, schema and migrations, row access per table;
+db/                  the connection, schema and migrations, row access per table (including messages and their FTS index);
                      files.rs (the store's use of the kit's cw-fs: read caps, the root link), locks,
                      the codec, the archive import, the log check (log.rs)
 repository/          one per record: entries, sessions, messages, proposals, tags,
@@ -239,7 +240,7 @@ testing.rs           test support (test-support)
     session record (`encode_session` refuses a write that would not read
     back), and the session row reader runs it on each row; a malformed log is
     `store_corrupt`.
-  - `export_target_exists` (`repository/sessions.rs::prepare_target`):
+  - `export_target_exists` (`repository/sessions/export.rs::prepare_target`):
     `export` refuses a target that is not an empty directory. The check is
     the precondition of the store's own filesystem write, and only the store
     touches the filesystem.
@@ -269,7 +270,7 @@ What the core and the tools import from `scribe_store`:
 ```
 fs.rs                            the crate's only file access
 host.rs                          the host's name and the host-file reads the tools share
-transcript/                      discovery, provenance-checked reads, claude.rs and codex.rs parsing (parse.rs)
+transcript/                      discovery, provenance-checked reads, provider parsing and project attribution
 window.rs                        a pass's window over a transcript, and its limits
 markers.rs, markers/control.rs   `#scribe` markers, settling lines, `/scribe` control lines
 origin.rs                        whether a prompt was typed by the user

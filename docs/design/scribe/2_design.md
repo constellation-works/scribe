@@ -2947,7 +2947,7 @@ column.
 upgrade).
 
 **Built (step a1).** The trigger matcher is `scribe-core/src/trigger.rs`;
-the rules are `tag::CaptureRules`, read from config by `config.rs` with each
+the rules are `tag::CaptureRules`, read from config by `config/tags.rs` with each
 field's line. The pass sends the model only the Daniel turns that fire a
 trigger (with tag, trigger and matched words) and those tags' `criteria`
 and `not`; when none fires it requests no claims. The store checks each
@@ -5338,7 +5338,7 @@ correct? not sure why it shows up as command. it should be a tag".
 
 A tag is a **catcher**: a rule in `config.toml` that says what to catch from
 a session and what a catch becomes. Today's `[tags.<name>]` and
-`[tags.<name>.capture]` (§11.2, `config.rs::RawCapture`,
+`[tags.<name>.capture]` (§11.2, `config/tags.rs::RawCapture`,
 `tag::CaptureRules`) are already most of one. Triggers, criteria, `not` and
 a route exist and are checked twice: before the model call and again under
 the lock. The redesign generalises what is there instead of adding a

@@ -2750,7 +2750,7 @@ is settled. The refusal's forms text includes `#scribe/global`.
 ## Action tags are marked in config, and three ship
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config.rs` (`RawTag`)
+**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config/tags.rs` (`RawTag`)
 
 > **Superseded in part, 2026-11-20 ([ORB-25977]):** the shipped set. `task`
 > and `friction` no longer ship; `standard`, `remind` and `idea` do
@@ -3857,7 +3857,7 @@ entries already inactive, since no better time exists in an older record.
 ## Config tags merge with the shipped set
 
 **Recorded:** 2026-11-21 · [ORB-26405] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/config.rs` (`Config::parse`, `merge_with_shipped`), `crates/scribe-core/src/tag.rs` (`TagTable::shipped`, `TagTable::defaults`)
+**Code anchors:** `crates/scribe-core/src/config.rs` (`Config::parse`), `crates/scribe-core/src/config/tags.rs` (`merge_with_shipped`), `crates/scribe-core/src/tag.rs` (`TagTable::shipped`, `TagTable::defaults`)
 
 ### Context
 
@@ -5206,3 +5206,91 @@ scribe's own, and why:
   holder record in the lock file is one JSON line, not `pid N (label) since T`.
 - `list` and `remove` check the directory they work in, so a directory inside the
   store open to group or other is refused by a listing that did not check it.
+
+## Split large Rust modules where responsibilities diverge
+
+**Recorded:** 2026-11-26 · ORB-28769
+**Standard:** [STD-02@8 §R18](../../standards/STD-02-rust-architecture-and-errors/STD-02.md#logging-contracts-and-size)
+
+### Context
+
+The review started from the 20 non-test Rust sources above 800 lines identified
+at `6c1be11`. The physical line counts below are from the delivery base
+`d9bdf070`, which includes subsequent changes to group rows and the pass
+workflow. R18 uses size to prompt a responsibility check.
+
+### Decision
+
+| Source | Base lines | Outcome and reason |
+|---|---:|---|
+| `crates/scribe/src/output/render.rs` | 2,222 | **Split.** `output/render/detail.rs` owns single-record output and the untruncated detail fields. Lists and command reports still use the shared row and formatting helpers in the parent, including the rows also used by plain detail output. |
+| `crates/scribe/src/output/payload.rs` | 2,061 | **Split.** `output/payload/session.rs` owns session records, logs and handoffs. `output/payload/memory.rs` owns memory reads, rules and refresh results. The parent assembles these and the other payloads into the shared output enums. |
+| `crates/scribe-store/src/db/mod.rs` | 1,229 | **Split.** `db/messages.rs` owns message row writes, deletion and FTS queries. Connection setup, read-only fallback, WAL checkpointing and the append-only migration registry stay together in the database module. |
+| `crates/scribe-store/src/repository/sessions.rs` | 1,223 | **Split.** `repository/sessions/export.rs` owns export formats, table selection and target directory writes. The session repository keeps access to records, control, checkpoints and id resolution. |
+| `crates/scribe-core/src/apps/session/rebuild.rs` | 1,219 | **Keep.** Prepare, apply and finish share one checkpoint and transcript admission contract. The basis, digest and optimistic checks need to agree all the way through promotion. |
+| `crates/scribe-core/src/apps/session/pass/run/workflow.rs` | 1,203 | **Keep.** Selection, prepare, apply and fail implement one resumable pass protocol. Cursor validation, the prepared basis and cumulative tallies span the steps, which are reviewed together when resumption changes. |
+| `crates/scribe-store/src/db/groups.rs` | 1,165 | **Keep.** `db/groups/claude.rs` and `db/groups/rows.rs` already group capture progress and close-evidence rows. The remaining group, roster and seat operations share membership, capture-consent and erasure invariants in the same database transaction. |
+| `crates/scribe-core/src/config.rs` | 1,112 | **Split.** `config/tags.rs` owns `[tags]` deserialization, capture overrides and the collision rules for shipped names and aliases. The parent owns top-level config parsing and combines the resolved tables. |
+| `crates/scribe-store/src/db/sessions.rs` | 1,067 | **Keep.** This is the SQL mapping of a session aggregate. Header, log, links, terms, control, checkpoint and tombstone writes share the parent id and transaction. These operations can be checked against the same record reconstruction and erasure paths. |
+| `crates/scribe-store/src/db/import.rs` | 1,042 | **Split.** `db/import/forget.rs` owns erasure and matching across imported archive rows. The import keeps directory discovery, decoding, counting and cleanup, and calls the same erasure code to replay pending forgets. |
+| `crates/scribe-store/src/db/codec.rs` | 1,028 | **Split.** `db/codec/entry.rs` owns entry validation and its Markdown shape. The parent keeps the format probe and frontmatter handling shared by record codecs and stamps. |
+| `crates/scribe-tools/src/transcript/parse.rs` | 988 | **Split.** `transcript/attribution.rs` owns path mention counts and project selection, which operate on transcript bytes independently of message decoding. Parsing and survey keep the same borrowed line shapes, typed-turn checks and replay handling. |
+| `crates/scribe-store/src/repository/memory.rs` | 962 | **Keep.** Reads, staging and recovery share one view of files overlaid by the pending memory journal. Separating them by operation would spread path validation and the crash-recovery protocol across files. |
+| `crates/scribe-core/src/apps/search/rules.rs` | 956 | **Keep.** The record ranking pipeline and the already-ranked FTS message path share the query scope, hit shape and snippet rules. Keeping visibility, filters and hit assembly together makes it possible to check that both paths apply the same scope. |
+| `crates/scribe-store/src/db/docs.rs` | 913 | **Keep.** The tables use the same field-to-column mapping and object reconstruction. Schema and row operations are reviewed together for entries, claims, tags, marks, pickups and audit so compatibility checks cover the actual records read and written. |
+| `crates/scribe-core/src/apps/entry/rules.rs` | 880 | **Split.** `apps/entry/rules/records.rs` owns decision and open-item field validation and updates. It uses the base entry text checks that also serve ordinary entries. |
+| `crates/scribe-core/src/apps/session/pass/run.rs` | 866 | **Keep.** The pass and catalog workflows use one window job for transcript reads, window writes, limits and tallies. Those helpers act on the same per-session job state. The workflow protocol already has its own child module. |
+| `crates/scribe-tools/src/session_distill.rs` | 850 | **Keep.** Prompt assembly, request fields and answer types describe the same distillation exchange. Keeping them together makes it possible to review what a model sees against the fields its answer must supply. Answer validation already lives in `session_distill/check.rs`. |
+| `crates/scribe-store/src/contracts/entry.rs` | 835 | **Keep.** Entry ids, provenance, persisted fields and construction describe the same record contract. Decision and open-item shapes already have a child module. |
+| `crates/scribe-core/src/apps/entry/verbs.rs` | 815 | **Keep.** The 12 entry verbs apply write rules under the same transaction and use the same provenance, cross-record link and erasure checks. Per-command and pure-rule code already live outside the transaction verbs. |
+
+### Type and module measurements
+
+A Rust syntax-tree inventory followed the module trees of the four workspace
+crate roots, covering 243 production source files at the base and 253 after
+the splits. It omitted unit and integration tests and `test-support`-only
+declarations. It counted each inherent `pub fn` once on its type across
+files and access variants, including associated functions. Restricted
+visibility and public trait declarations were checked separately. Local
+macros which generate methods were checked at their call sites. Module
+counts are direct `mod` declarations per parent, including inline modules
+and excluding `use` re-exports. The survey and its source are attached to
+ORB-28769.
+
+| Type | Result and responsibility check |
+|---|---|
+| `scribe_store::repository::Sessions` | **31** public methods in one file, 20 available with either access capability and 11 limited to `ReadWrite`. Keep one repository for the session aggregate. The types returned by `Snapshot` and `Tx` already enforce which operations can mutate it. |
+| `scribe_store::Store` | **13** public and **103** restricted methods across **16 → 17** files. The public facade owns opening and transaction capabilities. Internal impls are grouped by table, repository or lifecycle operation. Moving export isolates its target filesystem handling from session access without widening the facade. |
+| `scribe_store::repository::{ReadGroupRows, GroupRows}` | **24** and **23** directly declared public methods respectively across three files each. The write view also exposes the read view through `Deref`. Keep the capability boundary and the existing grouping of seat and membership operations, close evidence and Claude capture state. |
+| `scribe_core::Context` | **12** public and **13** restricted methods across three files in the production build, including ten macro-generated accessors that become public under `test-support`. Composition, port implementations and the config accessor use the same resolved host context. |
+| `scribe_store::entry::{Entry, TagName}` | **3** and **2** public methods respectively, each across two files. The secondary impls belong with the handoff conversion and the decision/open-item tag classification that use those shapes. |
+
+`Sessions` is the only type above 25 directly declared public inherent
+methods. The 22 public trait declarations top out at 15 methods
+(`GroupVerbs`, with production declarations counted). The repository macro
+generates ten accessors each for `Snapshot` and `Tx`, for totals of 11 and
+10 respectively. Among types with both inherent and trait impls,
+`Cadence` keeps its defaults in config and its due rule in the session app.
+The store error and `CommandError` keep conversions beside the row and app
+errors they accept. Core traits implemented for `Store` stay with their
+owning apps.
+
+| Module parent | Direct siblings, base → candidate | Responsibility check |
+|---|---:|---|
+| `scribe_core` | 23 → 23 | Five file-backed architecture modules and 18 inline API modules. Keep the inline paths for callers while the implementation remains grouped by app, runtime and provider. |
+| `scribe::commands` | 18 → 18 | Each handler maps a CLI noun or entry point to an app. The larger entry and hook command families already have child modules. |
+| `scribe_core::apps::entry` | 16 → 16 | The command files share one entry lifecycle, and shared rules and store verbs have their own modules. The decision and open-item rules are grouped under `rules/`. |
+| `scribe_core::apps::hook` | 13 → 13 | Event handlers live next to dispatch and the modules for shared hook rules and replies. Provider-specific Codex and session-start code already have their own grouping. |
+| `scribe_store::db` | 13 → 14 | The parent handles SQLite lifecycle. Table access, connection helpers and document compatibility are already separate responsibilities. The message module now gives its table and index the same boundary as the other row modules. |
+| `scribe_tools` | 13 → 13 | Each sibling is a tool or a support module used across tools. Transcript, marker, text and distillation internals are grouped under their owning modules. |
+
+Three parents are exactly at 12 direct declarations (`scribe_core::apps`,
+`scribe_store::contracts` and `scribe_store::repository`). Their existing
+grouping follows app and record boundaries.
+
+### Consequences
+
+The splits preserve caller paths through re-exports and move implementations
+with their existing input and output shapes. CLI output, persisted format and
+database migrations retain their existing contracts. The remaining large
+files can be reassessed when their responsibilities change.

@@ -13,6 +13,7 @@
 //! the caller's context: composition resolves the roots and passes them down.
 
 #[cfg(unix)]
+mod attribution;
 mod claude;
 pub mod codex;
 mod parse;
@@ -22,6 +23,7 @@ mod tests;
 use crate::fs::{self, File, Metadata};
 // Transcript bytes read into typed messages (the domain's `transcript`
 // until ORB-27921 PR 5-12), at this module's path.
+pub use attribution::{attribute, mention_counts};
 pub use parse::*;
 #[cfg(unix)]
 use scribe_store::ClaudeCapturePosition;
