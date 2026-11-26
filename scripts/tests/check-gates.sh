@@ -382,6 +382,41 @@ if ! grep -Fq "has no place in the declared order" "$work/out"; then
   fail=1
 fi
 
+# Inline siblings have the same order and edge rules as file modules.
+ord_inline=$(store_tree order-db-inline)
+cat >"$ord_inline/crates/scribe-store/src/db/mod.rs" <<'EOF'
+mod log {}
+mod codec { use super::log; }
+EOF
+expect pass check-dependency-direction.sh "$ord_inline" "listed inline siblings with a downward edge"
+cat >"$ord_inline/crates/scribe-store/src/db/mod.rs" <<'EOF'
+mod log { use super::codec; }
+mod codec {}
+EOF
+expect fail check-dependency-direction.sh "$ord_inline" "inline sibling upward edge (log -> codec)"
+if ! grep -Fq "scribe-store::db: log imports codec, which is not lower" "$work/out"; then
+  echo "check-gates: FAIL: missing inline upward-edge diagnostic" >&2
+  fail=1
+fi
+cat >"$ord_inline/crates/scribe-store/src/db/mod.rs" <<'EOF'
+// mod decoy {}
+const TEXT: &str = "mod decoy {}";
+#[cfg(test)]
+mod tests { mod decoy {} }
+#[cfg(any(test, feature = "test-support"))]
+mod support { use super::inline_extra; }
+pub(crate) mod inline_extra {}
+EOF
+expect fail check-dependency-direction.sh "$ord_inline" "unlisted inline module in scribe-store::db"
+if ! grep -Fq "scribe-store::db: module 'inline_extra' has no place in the declared order" "$work/out"; then
+  echo "check-gates: FAIL: missing inline unlisted-module diagnostic" >&2
+  fail=1
+fi
+if grep -Eq "module '(decoy|tests|support)' has no place" "$work/out"; then
+  echo "check-gates: FAIL: comment, string, or test module counted as a unit" >&2
+  fail=1
+fi
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.
