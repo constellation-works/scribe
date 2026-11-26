@@ -1468,13 +1468,19 @@ failure. No persisted shape changes.
 
 > **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
 > no plugin tool answers the `session_pass_failed` and "not retryable" promise in the
-> Decision below. The CLI rule there stands: a run with a failed pass exits 1 with
-> `session_pass_failed` on writable stdout. The plugin's session-pass steps report a failed
+> Decision below. The CLI rule there stands with its streams kept apart: a run with a
+> failed pass prints its report to writable stdout, then exits 1 with a `session_pass_failed`
+> diagnostic on stderr (a JSON object carrying the code in JSON mode). On a closed stdout it
+> exits 0 with no aggregate pass error. The plugin's session-pass steps report a failed
 > session in their own payloads. `scribe.session-pass-apply` returns `status: "failed"`, moves
 > the cursor on, and carries the `error_code` in `pass` when it recorded the failure.
-> `scribe.session-pass-fail` records the backoff and returns `{"pass": ...}` with the code or,
-> with `abort: true`, returns a plugin error with that model code, not retryable. In every case
-> the session stays due ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
+> `scribe.session-pass-fail` records backoff only when its basis still names a switched-on,
+> unforgotten session whose record revision is unchanged; a null `basis` or a stale basis
+> writes no backoff and returns `{"pass": null}`. Otherwise it returns `{"pass": ...}` with
+> the model code, or, with `abort: true`, a plugin error with that model code, not retryable,
+> naming the session. With `abort: true` and no pass recorded it answers the generic message
+> with `model_failed`, not retryable. In every case the session stays due
+> ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
 
 ### Context
 
@@ -1723,9 +1729,13 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
 
 > **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
 > the 50-second start cutoff in the Decision applies to `scribe.session-pass-prepare`, which
-> starts no session or window 50 s after the run's first prepare. The `not_configured` rule
-> for a missing `transcripts` setting now covers the session-pass, catalog-begin and rebuild
-> steps ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
+> starts no session or window once 50 s have passed since the run's first prepare (or an
+> earlier `deadline_epoch_s`); the run's first window always starts. Catalog mode sets no
+> automatic 50-second start deadline, so only `deadline_epoch_s` can stop it starting. The
+> `not_configured` rule for a missing `transcripts` setting now covers the session-pass,
+> catalog-begin and rebuild steps, except for a valid Codex-only configuration — an absolute
+> `codex_home` with `transcripts` empty or absent — which runs those steps with no Claude
+> transcripts directory ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
 
 ### Context
 
