@@ -9,7 +9,7 @@
     },
     "transcripts": {
       "type": "string",
-      "description": "Claude Code's projects directory, an absolute path (~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects). scribe.session-pass reads the transcripts of sessions switched on with /scribe on there; until it is set (the default is empty), it answers not_configured."
+      "description": "Claude Code's projects directory, an absolute path (~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects). The session steps (scribe.session-pass-prepare, -apply and -fail, scribe.session-catalog-begin and scribe.session-rebuild-*) read the transcripts of sessions switched on with /scribe on there; until it is set (the default is empty), they answer not_configured unless codex_home is set."
     },
     "codex_home": {
       "type": "string",

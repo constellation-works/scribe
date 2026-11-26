@@ -367,6 +367,11 @@ is enough there.
 **Recorded:** 2026-11 · [ORB-21747]
 **Code anchors:** `plugin/.orbit-plugin/definitions/routines/scribe-session-pass.yaml` (from S4)
 
+> **Superseded in part, 2026-11-24 ([ORB-28142]):** the routine no longer runs
+> `scribe.session-pass`, which is removed. It runs the `scribe-session-pass` job, whose
+> steps are `scribe.session-pass-prepare`, `scribe.session-pass-apply` and
+> `scribe.session-pass-fail` ([2_design.md §19.3.2](./2_design.md#1932-session-pass-scribe-session-pass-job-and-routine)).
+
 ### Context
 
 A pass takes up to two minutes of model time, longer than a hook may block.
@@ -1461,6 +1466,16 @@ failure. No persisted shape changes.
 `crates/scribe/src/output/mod.rs` (`finish`); `crates/scribe/src/commands/plugin.rs`
 (`failed_passes`)
 
+> **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
+> no plugin tool answers the `session_pass_failed` and "not retryable" promise in the
+> Decision below. The CLI rule there stands: a run with a failed pass exits 1 with
+> `session_pass_failed` on writable stdout. The plugin's session-pass steps report a failed
+> session in their own payloads. `scribe.session-pass-apply` returns `status: "failed"`, moves
+> the cursor on, and carries the `error_code` in `pass` when it recorded the failure.
+> `scribe.session-pass-fail` records the backoff and returns `{"pass": ...}` with the code or,
+> with `abort: true`, returns a plugin error with that model code, not retryable. In every case
+> the session stays due ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
+
 ### Context
 
 On the Mac the Orbit clock's `PATH` holds no `claude`, so from 2026-11-08
@@ -1705,6 +1720,12 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
 
 **Recorded:** 2026-11 · [ORB-21795]
 **Code anchors:** `crates/scribe/src/commands/plugin.rs::audited`, `crates/scribe/src/commands/mod.rs::RunLimits`
+
+> **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
+> the 50-second start cutoff in the Decision applies to `scribe.session-pass-prepare`, which
+> starts no session or window 50 s after the run's first prepare. The `not_configured` rule
+> for a missing `transcripts` setting now covers the session-pass, catalog-begin and rebuild
+> steps ([plugin envelope](./specs/output-contract.md#plugin-envelope)).
 
 ### Context
 

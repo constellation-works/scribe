@@ -1275,8 +1275,10 @@ both packages.
 
 **Errors.** The `code` is `invalid_envelope`, `unknown_tool`, `invalid_input`
 (unknown keys included; the no-arg tools take `{}`), `not_configured` (above),
-`internal_error` (a routine that returned no report), a model code, a store
-code, or `session_pass_failed`.
+`internal_error` (a routine that returned no report), a model code or a store
+code. The session-pass steps never answer `session_pass_failed`: that code
+belongs to the CLI's `scribe session pass` exit, and a failed session reaches
+the plugin in the step payloads below.
 
 **Session-pass steps.** Prepare takes optional `sessions`, `resolve`,
 `max_sessions`, `deadline_epoch_s`, `progress` and `catalog`. It returns
@@ -1297,11 +1299,15 @@ session or window 50 s after the run's first prepare (or after an earlier
 `session pass-prepare` and `session pass-apply` exchange those JSON payloads
 directly. The failure tool receives the prepared `basis`, optional
 `error_code`, `reason` and the fan-in's `errors`, records backoff, and
-returns `{"pass": <pass or null>}` with `model_timeout`,
-`model_unavailable` or `model_failed`. Apply without an answer then returns
-`status: "failed"` with the cursor moved to the next session. A store or
-transcript error in prepare or apply fails that pass with its code and
-backs the session off. Optional `catalog: {author, project?}` selects the
+returns `{"pass": <pass or null>}` whose `error_code` is `model_timeout`,
+`model_unavailable`, `model_malformed` or `model_failed`. With `abort: true` it
+instead answers a plugin error with that model code, `retryable: false` and the
+session named in its message. Apply without an answer, or with an invalid
+answer after its retry, then returns `status: "failed"` with the cursor moved to
+the next session; when apply recorded the failure, `pass` carries its
+`error_code` (such as `session_answer_invalid`). A store or transcript error in
+prepare or apply fails that pass with its code and backs the session off.
+Optional `catalog: {author, project?}` selects the
 `scribe-session-catalog` job's catalog mode: exactly the one named session,
 requiring its switch to carry `cataloged_by`, with no 50-second start
 cutoff, and the selection sealed into the basis; apply and the failure tool
