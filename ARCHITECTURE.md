@@ -28,7 +28,7 @@ scribe  ->  scribe-core  ->  scribe-store
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
+| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access, through the kit's `cw-cli` sink (`cw-app` is named for its `Env` only). It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
 | `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock) and its SQLite open, configuration, migration and WAL-checkpoint layer is the kit's `cw-sqlite` (using `cw-sqlite`'s re-exported `rusqlite`); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile` |
@@ -54,12 +54,12 @@ second dependency.
 ## `scribe` (binary)
 
 ```
-main.rs              parse, resolve the output sink and the Context from the process environment, run, render, map the result to an exit code
+main.rs              parse, decide the terminal once and resolve the Context from the process environment, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
 commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
-output/              payloads (including session and memory shapes), rendering (including record detail), the sink
+output/              payloads (including session and memory shapes), rendering (including record detail); the sink itself is the kit's `cw-cli`
 error.rs             app errors -> one-line message and exit code
 tests/               the binary's own tests (cfg(test))
 ```

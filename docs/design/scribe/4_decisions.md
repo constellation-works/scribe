@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613]
 ---
 
 # scribe — Decisions
@@ -1152,7 +1152,7 @@ fails.
 ## Environment settings fall back rather than refuse
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/output/sink.rs::resolve_mode`; `crates/scribe/src/output/mod.rs::init_logging`
+**Code anchors:** `crates/scribe/src/output/mod.rs::Console::detect`; `crates/scribe/src/output/mod.rs::init_logging`
 
 ### Context
 
@@ -5484,3 +5484,74 @@ operations on the store.
 - **ORB-28767 targets the new path.** The migrate adapter moved from
   `apps/admin/migrate.rs` to `apps/store/migrate.rs`, and work on ORB-28767 should use
   that path.
+
+## Stdout and its terminal decision are the cw-kit's cw-cli
+
+**Recorded:** 2026-11-26 · ORB-28613
+**Code anchors:** `crates/scribe/src/output/mod.rs` (`Console`, `finish`, `emit`), `crates/scribe/src/output/render.rs`, `crates/scribe/src/output/render/detail.rs`
+
+### Context
+
+`crates/scribe/src/output/sink.rs` decided the output mode, colour and table
+width from the terminal and the environment, `output/table.rs` drew the borderless
+table, and `output/printable.rs` rewrote control characters on the way to stdout and
+stderr. The cw-kit design (constellation `docs/design/cw-kit/2_design.md`, §cw-cli)
+took scribe's sink as the source of `cw-cli`'s and lists scribe's adoption as its
+step three. The workspace pins one satellites revision for every kit crate, now
+`79c755a6615ca4da7063738a3326fbb3c96dea1f`, which holds `Sink::pretty_json`
+(ORB-28677) and the `cw-sqlite` revision of ORB-28614.
+
+### Decision
+
+The binary writes its payload through `cw_cli::Sink`, decided once by
+`cw_cli::Terminal` from the captured environment (`cw_app::Env`, named for that type
+alone: scribe's audit guard stays its own and `cw-app`'s execution and audit are not
+adopted). `sink.rs` and `table.rs` are deleted. The renderers only build what the
+sink writes: a `Table`, a detail view of `TextSpan`s, or the payload's JSON.
+`--format`'s type is `cw_cli::Format`.
+
+- A document the user reads as JSON stays indented (`Sink::pretty_json`), so every
+  JSON golden is unchanged. A hook reply, a plugin reply and a group backfill stay
+  compact, and the hook, plugin, session pass step and group evidence documents stay
+  JSON whatever `--format` says: they go through a sink built from a second terminal
+  decision that asks for JSON.
+- Not adopted: the kit's error rendering, logging and grouped help. Usage errors and
+  `error:` lines keep their own code (`finish_parse_error`, `report_error`), because
+  the kit's error rendering takes a `cw_base::Error` and scribe's errors are not that
+  type. `usage::raw_args_request_json` reads the raw arguments of a command line that
+  failed to parse, which the kit has no part for. The kit's pager is left out: scribe
+  has none, and its tmux popup stays scribe's.
+- A hit's title cap (40 display columns, in the table only) stays in
+  `render.rs::cap_title`: it is scribe's rule about its own column, which the kit's
+  fit-to-terminal truncation does not express.
+
+### Consequences
+
+Differences a user can see:
+
+- **A closed stdout latches shut and the command runs to its end.** Output stops at
+  the first failed write and the process exits as the command decided: 0, or 1 with
+  `error:` on stderr when a session pass failed. Before, the first failed write ended
+  the command at once with exit 0, so a failed session pass behind a closed pipe
+  exited 0 and reported nothing. Any other failed write is reported after the
+  command, as before.
+- **Control characters are visible escapes, not U+FFFD**, in every human output and
+  stderr notice: `\u{1b}`, `\r`, `\n`, `\t`, and C1 controls as `\u{85}`. A tab or
+  line break inside a table or plain cell is escaped too (the cells are flattened to
+  one line before that, so only a cell that is not free text is affected). A detail
+  view keeps its own line breaks and tabs. A stderr notice keeps its line breaks, one
+  escaped line each, and a tab in it is `\t`. JSON is unchanged.
+- **`warning:` is coloured on a terminal's stderr**, decided for stderr on its own, so
+  `scribe … | less` still colours it.
+- **A human view ends in exactly one line break**: a memory block, revision or brief
+  whose text lacks a final line break gets one.
+- **A truncated column that already ends in `…` gets no second one.**
+- The table's `-` for an empty cell, the continuation row of a proposal's quote,
+  `COLUMNS` and the terminal's width, `NO_COLOR`, `TERM=dumb` and
+  `CLICOLOR_FORCE` are as before.
+- **The pin moves** from `bdce98b` to `79c755a`, which adds `cw_sqlite::Error::WalUnavailable`
+  (a strict read refusing a database whose log files are missing). Scribe makes no
+  strict read; the store maps the variant to its database error so the match stays
+  exhaustive.
+- `rustix`'s `termios` feature and the crate's own `rustix` dependency are gone: the
+  kit asks the terminal its width.

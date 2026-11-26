@@ -1,10 +1,10 @@
 use crate::output::printable::Printable;
 use std::io::Write;
 
-fn through(allow_color: bool, chunks: &[&[u8]]) -> String {
+fn through(chunks: &[&[u8]]) -> String {
     let mut out = Vec::new();
     {
-        let mut p = Printable::new(&mut out, allow_color);
+        let mut p = Printable::new(&mut out);
         for chunk in chunks {
             p.write_all(chunk).unwrap();
         }
@@ -16,35 +16,30 @@ fn through(allow_color: bool, chunks: &[&[u8]]) -> String {
 #[test]
 fn control_characters_become_replacement_characters() {
     assert_eq!(
-        through(false, &[b"a\x1b[31mb\x07c\rd\x7fe\x00f"]),
+        through(&[b"a\x1b[31mb\x07c\rd\x7fe\x00f"]),
         "a\u{FFFD}[31mb\u{FFFD}c\u{FFFD}d\u{FFFD}e\u{FFFD}f"
     );
 }
 
 #[test]
 fn line_breaks_tabs_and_ordinary_text_pass() {
-    assert_eq!(through(false, &["é日\t1\n".as_bytes()]), "é日\t1\n");
+    assert_eq!(through(&["é日\t1\n".as_bytes()]), "é日\t1\n");
 }
 
 #[test]
 fn a_c1_control_is_caught_across_a_write_split() {
-    assert_eq!(through(false, &[b"x\xc2", b"\x9bq"]), "x\u{FFFD}q");
+    assert_eq!(through(&[b"x\xc2", b"\x9bq"]), "x\u{FFFD}q");
     assert_eq!(
-        through(false, &[b"x\xc2", "\u{a9}".as_bytes()[1..].as_ref()]),
+        through(&[b"x\xc2", "\u{a9}".as_bytes()[1..].as_ref()]),
         "x\u{a9}"
     );
-    assert_eq!(through(false, &[b"x\xc2\x85y"]), "x\u{FFFD}y");
+    assert_eq!(through(&[b"x\xc2\x85y"]), "x\u{FFFD}y");
 }
 
 #[test]
-fn own_color_codes_pass_only_when_color_is_on() {
-    let painted = b"\x1b[33mid\x1b[0m \x1b[31mno\x1b[0m";
+fn an_escape_sequence_never_passes() {
     assert_eq!(
-        through(true, &[painted]),
-        "\x1b[33mid\x1b[0m \u{FFFD}[31mno\x1b[0m"
-    );
-    assert_eq!(
-        through(false, &[painted]),
-        "\u{FFFD}[33mid\u{FFFD}[0m \u{FFFD}[31mno\u{FFFD}[0m"
+        through(&[b"\x1b[33mid\x1b[0m"]),
+        "\u{FFFD}[33mid\u{FFFD}[0m"
     );
 }

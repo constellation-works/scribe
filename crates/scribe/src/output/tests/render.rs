@@ -3,7 +3,8 @@ use crate::output::payload::{
     SessionHandoffsPayload, TagPayload, WarningPayload,
 };
 use crate::output::render::{list, show, table_date};
-use crate::output::sink::{OutputMode, Sink};
+use cw_app::Env;
+use cw_cli::{Format, Mode, Probe, Sink, Terminal};
 use scribe_core::ShortIds;
 use time::macros::datetime;
 
@@ -63,24 +64,38 @@ fn entry(id: &str, content: &str) -> EntryPayload {
     }
 }
 
-fn sink(mode: OutputMode) -> Sink {
-    Sink {
-        mode,
-        color: false,
-        width: None,
-    }
+/// A sink on in-memory buffers, deciding as a pipe (or a terminal `width`
+/// columns wide, in a table) would.
+fn sink_at(mode: Mode, width: Option<usize>) -> Sink<Vec<u8>, Vec<u8>> {
+    let format = match mode {
+        Mode::Table => Format::Table,
+        Mode::Plain => Format::Auto,
+        Mode::Json => Format::Json,
+    };
+    let probe = width.map_or_else(Probe::piped, |w| Probe::terminal(Some(w)));
+    let terminal = Terminal::decide(
+        &Env::from_vars([("NO_COLOR", "1")]),
+        "scribe",
+        probe,
+        Some(format),
+    );
+    Sink::new(terminal, Vec::new(), Vec::new())
 }
 
-fn render_list(
-    mode: OutputMode,
-    records: &Records,
-    total: usize,
-    warnings: &[WarningPayload],
-) -> String {
-    let mut out = Vec::new();
+fn sink(mode: Mode) -> Sink<Vec<u8>, Vec<u8>> {
+    sink_at(mode, None)
+}
+
+/// What a sink wrote to stdout.
+fn written(mut sink: Sink<Vec<u8>, Vec<u8>>) -> String {
+    sink.finish().unwrap();
+    String::from_utf8(sink.into_parts().0).unwrap()
+}
+
+fn render_list(mode: Mode, records: &Records, total: usize, warnings: &[WarningPayload]) -> String {
+    let mut sink = sink(mode);
     list(
-        &mut out,
-        &sink(mode),
+        &mut sink,
         &ShortIds::default(),
         records,
         total,
@@ -88,7 +103,17 @@ fn render_list(
         None,
     )
     .unwrap();
-    String::from_utf8(out).unwrap()
+    written(sink)
+}
+
+fn render_show_at(mode: Mode, width: Option<usize>, record: &Record) -> String {
+    let mut sink = sink_at(mode, width);
+    show(&mut sink, &ShortIds::default(), record).unwrap();
+    written(sink)
+}
+
+fn render_show(mode: Mode, record: &Record) -> String {
+    render_show_at(mode, None, record)
 }
 
 fn entries(items: Vec<EntryPayload>) -> Records {
@@ -102,7 +127,7 @@ fn the_plain_form_is_one_tab_separated_line_per_record_with_text_flattened() {
         entry("preferences-1", "one\ntwo\tthree"),
         entry("preferences-2", ""),
     ]);
-    let text = render_list(OutputMode::Plain, &records, 2, &[]);
+    let text = render_list(Mode::Plain, &records, 2, &[]);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines,
@@ -150,10 +175,10 @@ fn an_empty_list_is_empty_stdout_in_human_modes_and_an_empty_envelope_in_json() 
         (Records::Tags(Vec::new()), "tags"),
         (Records::Transcripts(Vec::new()), "transcripts"),
     ] {
-        assert_eq!(render_list(OutputMode::Plain, &records, 0, &[]), "");
-        assert_eq!(render_list(OutputMode::Table, &records, 0, &[]), "");
+        assert_eq!(render_list(Mode::Plain, &records, 0, &[]), "");
+        assert_eq!(render_list(Mode::Table, &records, 0, &[]), "");
         let json: serde_json::Value =
-            serde_json::from_str(&render_list(OutputMode::Json, &records, 0, &[])).unwrap();
+            serde_json::from_str(&render_list(Mode::Json, &records, 0, &[])).unwrap();
         assert_eq!(
             json,
             serde_json::json!({key: [], "total": 0, "truncated": false, "warnings": []})
@@ -171,7 +196,7 @@ fn a_cut_list_and_its_skipped_files_show_in_the_json_envelope() {
     };
     let records = entries(vec![entry("preferences-1", "x")]);
     let json: serde_json::Value =
-        serde_json::from_str(&render_list(OutputMode::Json, &records, 4, &[warning])).unwrap();
+        serde_json::from_str(&render_list(Mode::Json, &records, 4, &[warning])).unwrap();
     assert_eq!(json["total"], 4);
     assert_eq!(json["truncated"], true);
     assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
@@ -181,16 +206,8 @@ fn a_cut_list_and_its_skipped_files_show_in_the_json_envelope() {
 #[test]
 fn json_carries_null_for_absent_values_rather_than_omitting_them() {
     // STD-01 R11.
-    let mut out = Vec::new();
     let record = Record::Entry(Box::new(entry("preferences-1", "x")));
-    show(
-        &mut out,
-        &sink(OutputMode::Json),
-        &ShortIds::default(),
-        &record,
-    )
-    .unwrap();
-    let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&render_show(Mode::Json, &record)).unwrap();
     for key in ["superseded_by", "review_after"] {
         assert!(
             value.get(key).is_some_and(serde_json::Value::is_null),
@@ -207,17 +224,11 @@ fn json_carries_null_for_absent_values_rather_than_omitting_them() {
 fn the_detail_view_keeps_the_content_whole() {
     // STD-01 R15: show is where a cut table cell is read in full.
     let long = "word ".repeat(60);
-    let mut out = Vec::new();
     let record = Record::Entry(Box::new(entry(
         "preferences-1",
         &format!("{long}\nsecond line"),
     )));
-    let narrow = Sink {
-        width: Some(40),
-        ..sink(OutputMode::Table)
-    };
-    show(&mut out, &narrow, &ShortIds::default(), &record).unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = render_show_at(Mode::Table, Some(40), &record);
     assert!(text.contains(long.trim_end()), "{text}");
     assert!(text.contains("second line"), "{text}");
 }
@@ -237,7 +248,7 @@ fn a_single_record_list_is_still_a_table_and_counts_align_right() {
         action: None,
         route: None,
     };
-    let text = render_list(OutputMode::Table, &Records::Tags(vec![tag]), 1, &[]);
+    let text = render_list(Mode::Table, &Records::Tags(vec![tag]), 1, &[]);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with("NAME"));
@@ -271,42 +282,20 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
         }],
     };
 
-    let mut json_buf = Vec::new();
-    show(
-        &mut json_buf,
-        &sink(OutputMode::Json),
-        &ShortIds::default(),
-        &Record::SessionHandoffs(Box::new(payload.clone())),
-    )
-    .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&json_buf).unwrap();
+    let handoffs = Record::SessionHandoffs(Box::new(payload.clone()));
+    let json: serde_json::Value =
+        serde_json::from_str(&render_show(Mode::Json, &handoffs)).unwrap();
     assert_eq!(json["has_record"], false);
     assert_eq!(json["on"], true);
     assert_eq!(json["due"], true);
 
-    let mut plain_buf = Vec::new();
-    show(
-        &mut plain_buf,
-        &sink(OutputMode::Plain),
-        &ShortIds::default(),
-        &Record::SessionHandoffs(Box::new(payload.clone())),
-    )
-    .unwrap();
-    let plain = String::from_utf8(plain_buf).unwrap();
+    let plain = render_show(Mode::Plain, &handoffs);
     assert!(
         plain.starts_with("s-on\thandoff-only\tyes\tscribe\t-\t2026-11-22T10:00:00Z\t"),
         "{plain}"
     );
 
-    let mut table_buf = Vec::new();
-    show(
-        &mut table_buf,
-        &sink(OutputMode::Table),
-        &ShortIds::default(),
-        &Record::SessionHandoffs(Box::new(payload.clone())),
-    )
-    .unwrap();
-    let table = String::from_utf8(table_buf).unwrap();
+    let table = render_show(Mode::Table, &handoffs);
     assert!(table.contains("no catalog record yet"), "{table}");
     assert!(
         table
@@ -323,15 +312,7 @@ fn handoff_only_session_renders_switch_state_in_every_mode() {
 
     payload.on = false;
     payload.due = false;
-    let mut off_buf = Vec::new();
-    show(
-        &mut off_buf,
-        &sink(OutputMode::Table),
-        &ShortIds::default(),
-        &Record::SessionHandoffs(Box::new(payload)),
-    )
-    .unwrap();
-    let off_table = String::from_utf8(off_buf).unwrap();
+    let off_table = render_show(Mode::Table, &Record::SessionHandoffs(Box::new(payload)));
     assert!(
         off_table.contains("session was not switched on"),
         "{off_table}"
@@ -372,7 +353,7 @@ fn the_group_list_table_holds_short_values_and_counts_seats() {
     closed.opened = String::from("2026-11-22T23:30:00-05:00");
     closed.closed = Some(String::from("2026-11-24T00:30:00+02:00"));
     let records = Records::Groups(vec![closed, group("g-2", None)]);
-    let text = render_list(OutputMode::Table, &records, 2, &[]);
+    let text = render_list(Mode::Table, &records, 2, &[]);
     assert_eq!(
         text,
         "ID   TITLE           KIND    PROJECT  OPENED      CLOSED      SEATS\n\
@@ -385,14 +366,9 @@ fn the_group_list_table_holds_short_values_and_counts_seats() {
 fn only_the_group_title_truncates_on_a_narrow_terminal() {
     let mut long = group("g-1", None);
     long.title = "A title that is far too long to fit on a narrow terminal".into();
-    let narrow = Sink {
-        width: Some(80),
-        ..sink(OutputMode::Table)
-    };
-    let mut out = Vec::new();
+    let mut narrow = sink_at(Mode::Table, Some(80));
     list(
-        &mut out,
-        &narrow,
+        &mut narrow,
         &ShortIds::default(),
         &Records::Groups(vec![long]),
         1,
@@ -400,7 +376,7 @@ fn only_the_group_title_truncates_on_a_narrow_terminal() {
         None,
     )
     .unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = written(narrow);
     for line in text.lines() {
         assert!(line.chars().count() <= 80, "line too wide: {line:?}");
     }
@@ -411,7 +387,7 @@ fn only_the_group_title_truncates_on_a_narrow_terminal() {
 #[test]
 fn the_group_plain_line_and_show_keep_every_field_and_dash_an_absent_summary() {
     let records = Records::Groups(vec![group("g-2", None)]);
-    let plain = render_list(OutputMode::Plain, &records, 1, &[]);
+    let plain = render_list(Mode::Plain, &records, 1, &[]);
     let fields: Vec<&str> = plain.trim_end().split('\t').collect();
     assert_eq!(fields.len(), 10, "{plain:?}");
     assert!(
@@ -423,15 +399,7 @@ fn the_group_plain_line_and_show_keep_every_field_and_dash_an_absent_summary() {
 
     let mut shown_group = group("g-1", Some("Review complete."));
     shown_group.closed = Some(String::from("2026-11-22T10:00:00Z"));
-    let mut out = Vec::new();
-    show(
-        &mut out,
-        &sink(OutputMode::Table),
-        &ShortIds::default(),
-        &Record::Group(Box::new(shown_group)),
-    )
-    .unwrap();
-    let shown = String::from_utf8(out).unwrap();
+    let shown = render_show(Mode::Table, &Record::Group(Box::new(shown_group)));
     for label in ["opener", "related", "seats", "summary"] {
         assert!(shown.lines().any(|l| l.starts_with(label)), "{shown}");
     }

@@ -6,9 +6,9 @@
 //! lists those nouns under headings (`help`).
 
 use crate::commands::Command;
-use crate::output::FormatArg;
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, FromArgMatches, Parser};
+use cw_cli::Format;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -57,7 +57,7 @@ pub(crate) struct GlobalArgs {
 
     /// Output format; auto is a table on a terminal, tab-separated lines otherwise, and json is one JSON document [default: $SCRIBE_FORMAT, else auto]
     #[arg(long, global = true, value_enum, value_name = "FORMAT", help_heading = GLOBAL)]
-    pub(crate) format: Option<FormatArg>,
+    pub(crate) format: Option<Format>,
 
     /// Shorthand for --format json
     #[arg(long, global = true, help_heading = GLOBAL)]
@@ -75,7 +75,7 @@ impl Cli {
         let cmd = crate::help::install_root_help(Self::command(), crate::output::help_width());
         let matches = cmd.try_get_matches_from(args)?;
         let cli = Self::from_arg_matches(&matches)?;
-        if cli.global.json && cli.global.format.is_some_and(|f| f != FormatArg::Json) {
+        if cli.global.json && cli.global.format.is_some_and(|f| f != Format::Json) {
             return Err(Self::command().error(
                 ErrorKind::ArgumentConflict,
                 "--json cannot be used with a --format other than json",
@@ -107,9 +107,9 @@ impl Cli {
 impl GlobalArgs {
     /// The output format the flags ask for, or `None` to defer to the
     /// environment and then `auto`.
-    pub(crate) fn requested_format(&self) -> Option<FormatArg> {
+    pub(crate) fn requested_format(&self) -> Option<Format> {
         if self.json {
-            Some(FormatArg::Json)
+            Some(Format::Json)
         } else {
             self.format
         }

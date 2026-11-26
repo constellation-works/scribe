@@ -1,18 +1,19 @@
 //! The output layer: the only code that writes to stdout or stderr.
 //!
-//! stdout carries the payload and nothing else; notices, errors and logs go
-//! to stderr in every mode (STD-01 R12). Writes go through `writeln!` on a
-//! locked handle rather than `println!`, so a closed pipe comes back as an
-//! `io::Error` that [`finish`] turns into a silent exit 0 (STD-01 R13)
-//! instead of a panic.
+//! The sink is the kit's (`cw-cli`): stdout carries the payload and nothing
+//! else, in a table, tab-separated lines or JSON; notices, warnings and errors
+//! go to stderr in every mode (STD-01 R12). A closed stdout latches the sink
+//! shut and the command runs to its end, so [`finish`] exits as the command
+//! decided (STD-01 R13). The renderers here only build what the sink writes:
+//! a table, a detail view, or the payload's JSON.
 
 mod color;
 mod payload;
 mod printable;
 mod render;
-mod sink;
-mod table;
+mod usage;
 
+pub(crate) use cw_cli::Sink;
 #[cfg(test)]
 pub(crate) use payload::PassPayload;
 pub(crate) use payload::{
@@ -23,14 +24,81 @@ pub(crate) use payload::{
     RefreshRetryPayload, RevisionPayload, ScanReport, SessionHandoffsPayload, SessionPayload,
     TagPayload, TagShowPayload, TranscriptPayload, TreeRow, WarningPayload,
 };
-pub(crate) use sink::{FORMAT_ENV, FormatArg, Sink, help_width};
 
 use crate::error::CliError;
+use cw_app::Env;
+use cw_cli::{Format, Mode, Probe, Terminal};
 use scribe_core::ShortIds;
 use serde::Serialize;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
+
+/// The program's name in the kit's terms: it names `SCRIBE_FORMAT`.
+const APP: &str = "scribe";
+
+/// The one terminal decision of an invocation, and the sinks built from it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Console {
+    /// How the user asked for the payload.
+    terminal: Terminal,
+    /// The decision for output a program reads, whatever the user asked:
+    /// the same streams, always JSON.
+    json: Terminal,
+}
+
+impl Console {
+    /// Decide once, from the captured environment, the streams and the
+    /// `--format` the command line asked for.
+    pub(crate) fn detect(env: &Env, requested: Option<Format>) -> Self {
+        let probe = Probe::detect();
+        Self {
+            terminal: Terminal::decide(env, APP, probe, requested),
+            json: Terminal::decide(env, APP, probe, Some(Format::Json)),
+        }
+    }
+
+    /// Whether rendering needs session display names; JSON keeps provider ids.
+    pub(crate) fn shortens_ids(&self) -> bool {
+        self.terminal.mode() != Mode::Json
+    }
+
+    /// The sink `output` is written through. A document the user reads in
+    /// JSON is indented, as it always was; a hook reply, a plugin reply and
+    /// a group backfill stay compact, and the machine replies are JSON in
+    /// every mode.
+    fn sink(&self, output: &Output) -> Sink {
+        match output {
+            Output::Hook(_) | Output::Plugin(_) => Sink::stdio(self.json),
+            Output::GroupEvidence(_) | Output::PassStep(_) => Sink::stdio(self.json).pretty_json(),
+            Output::GroupBackfill(_) => Sink::stdio(self.terminal),
+            Output::Init(_)
+            | Output::List { .. }
+            | Output::Show { .. }
+            | Output::Written { .. }
+            | Output::Pass(_)
+            | Output::Scan(_) => Sink::stdio(self.terminal).pretty_json(),
+        }
+    }
+}
+
+/// Columns the root help may wrap command rows into.
+///
+/// `None` when stdout is not a terminal or no width is known, so each
+/// command stays on one line. Piped `--help`, which is how the golden is
+/// captured, therefore does not depend on the machine (STD-01 R17, R24).
+pub(crate) fn help_width() -> Option<usize> {
+    Terminal::detect(&Env::capture(), APP, None).width()
+}
+
+/// A failure of the sink as an `io::Error`, the form the binary's error wraps.
+fn io_error(error: cw_cli::Error) -> io::Error {
+    match error {
+        cw_cli::Error::Output(error) => error,
+        cw_cli::Error::Encode(error) => io::Error::from(error),
+        error @ cw_cli::Error::Summaries { .. } => io::Error::other(error),
+    }
+}
 
 /// Environment variable holding the log filter (`warn` when unset).
 const LOG_ENV: &str = "SCRIBE_LOG";
@@ -73,9 +141,13 @@ pub(crate) fn init_logging() {
 /// pass report with a failed pass is printed, then reported as an error
 /// naming each failed session, its code and its redacted reason (exit 1,
 /// STD-01 R20).
-pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>) -> ExitCode {
+pub(crate) fn finish(console: &Console, outcome: Result<(Output, ShortIds), CliError>) -> ExitCode {
     let result = outcome.and_then(|(output, shorts)| {
-        emit(sink, &shorts, &output).map_err(CliError::Output)?;
+        let mut sink = console.sink(&output);
+        emit(&mut sink, &shorts, &output).map_err(|e| CliError::Output(io_error(e)))?;
+        // A closed stdout is success; any other failed write is reported now
+        // that the command is done.
+        sink.finish().map_err(|e| CliError::Output(io_error(e)))?;
         match &output {
             Output::Pass(report) => report.failure().map_or(Ok(()), Err),
             Output::Init(_)
@@ -92,9 +164,8 @@ pub(crate) fn finish(sink: &Sink, outcome: Result<(Output, ShortIds), CliError>)
     });
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(CliError::Output(e)) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(err) => {
-            report_error(sink.mode == sink::OutputMode::Json, &err);
+            report_error(console.terminal.mode() == Mode::Json, &err);
             ExitCode::from(err.exit_code())
         }
     }
@@ -113,9 +184,10 @@ pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString]) -> ExitCo
             _ => ExitCode::from(code),
         };
     }
-    let env_format = std::env::var(FORMAT_ENV).ok();
+    let env = Env::capture();
+    let env_format = env.app(APP).format().and_then(|value| value.to_str());
     let rendered = err.render().to_string();
-    if sink::raw_args_request_json(args, env_format.as_deref()) {
+    if usage::raw_args_request_json(args, env_format) {
         write_json_error(&usage_message(&rendered), "usage_error");
     } else {
         let _ = io::stderr().lock().write_all(rendered.as_bytes());
@@ -136,119 +208,94 @@ fn usage_message(rendered: &str) -> String {
     joined.strip_prefix("error: ").unwrap_or(&joined).to_owned()
 }
 
-/// Stderr for notices and warnings, which can quote stored text: control
-/// characters print as U+FFFD (STD-01 R9).
-fn stderr() -> printable::Printable<io::StderrLock<'static>> {
-    printable::Printable::new(io::stderr().lock(), false)
+/// Several lines of stored text on stderr, one escaped line per line break.
+fn notice<O: Write, E: Write>(sink: &mut Sink<O, E>, text: &str) {
+    sink.notice_lines(text.split('\n'));
 }
 
-fn emit(sink: &Sink, shorts: &ShortIds, output: &Output) -> io::Result<()> {
-    if let Output::List {
-        warnings, notices, ..
-    } = output
-    {
-        // Fail open (STD-02 R31): a notice that cannot reach stderr never
-        // fails a command whose payload is fine.
-        let mut err = stderr();
-        for warning in warnings {
-            let _ = writeln!(err, "warning: skipped {}", warning.error);
-        }
-        for notice in notices {
-            let _ = writeln!(err, "{notice}");
-        }
-    }
-    if let Output::Pass(report) = output {
-        let mut err = stderr();
-        for pass in &report.passes {
-            for warning in &pass.warnings {
-                let _ = writeln!(err, "warning: session {}: {warning}", pass.session);
+fn emit<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    shorts: &ShortIds,
+    output: &Output,
+) -> cw_cli::Result<()> {
+    // Notices and warnings go first, and to stderr in every mode. The sink
+    // never fails on them (STD-02 R31): one that cannot reach stderr never
+    // fails a command whose payload is fine.
+    match output {
+        Output::List {
+            warnings, notices, ..
+        } => {
+            for warning in warnings {
+                sink.warn(&format!("skipped {}", warning.error));
+            }
+            for text in notices {
+                notice(sink, text);
             }
         }
-        for notice in &report.notices {
-            let _ = writeln!(err, "{notice}");
+        Output::Pass(report) => {
+            for pass in &report.passes {
+                for warning in &pass.warnings {
+                    sink.warn(&format!("session {}: {warning}", pass.session));
+                }
+            }
+            for text in &report.notices {
+                notice(sink, text);
+            }
         }
-    }
-    if let Output::Scan(report) = output {
-        let mut err = stderr();
-        for notice in &report.notices {
-            let _ = writeln!(err, "{notice}");
+        Output::Scan(report) => {
+            for text in &report.notices {
+                notice(sink, text);
+            }
         }
-    }
-    if let Output::Show {
-        record: Record::MemoryBlock(block),
-    } = output
-    {
-        let mut err = stderr();
-        for warning in &block.warnings {
-            let _ = writeln!(err, "{warning}");
+        Output::Show {
+            record: Record::MemoryBlock(block),
+        } => {
+            for warning in &block.warnings {
+                notice(sink, warning);
+            }
         }
-    }
-    if let Output::Show {
-        record: Record::Brief(brief),
-    } = output
-    {
-        let mut err = stderr();
-        for warning in &brief.warnings {
-            let _ = writeln!(err, "{warning}");
+        Output::Show {
+            record: Record::Brief(brief),
+        } => {
+            for warning in &brief.warnings {
+                notice(sink, warning);
+            }
         }
-    }
-    if let Output::Written { notices, .. } = output {
-        let mut err = stderr();
-        for notice in notices {
-            let _ = writeln!(err, "{notice}");
+        Output::Written { notices, .. } => {
+            for text in notices {
+                notice(sink, text);
+            }
         }
-    }
-    let stdout = io::stdout().lock();
-    let color = match output {
-        // Machine output: the encoder escapes control characters itself,
-        // and quotes stay verbatim.
-        Output::Hook(_) | Output::Plugin(_) | Output::PassStep(_) => None,
         Output::Init(_)
-        | Output::List { .. }
         | Output::Show { .. }
-        | Output::Written { .. }
-        | Output::Pass(_)
         | Output::GroupEvidence(_)
         | Output::GroupBackfill(_)
-        | Output::Scan(_) => Some(sink.color),
-    };
-    let mut out: Box<dyn Write> = match color {
-        Some(color) if sink.mode != sink::OutputMode::Json => {
-            Box::new(printable::Printable::new(stdout, color))
-        }
-        Some(_) | None => Box::new(stdout),
-    };
+        | Output::PassStep(_)
+        | Output::Hook(_)
+        | Output::Plugin(_) => {}
+    }
     match output {
-        Output::Init(report) => render::init(&mut out, sink, report)?,
+        Output::Init(report) => render::init(sink, report),
         Output::List {
             records,
             total,
             warnings,
             message_matches,
             ..
-        } => render::list(
-            &mut out,
-            sink,
-            shorts,
-            records,
-            *total,
-            warnings,
-            *message_matches,
-        )?,
+        } => render::list(sink, shorts, records, *total, warnings, *message_matches),
         Output::Show { record } | Output::Written { record, .. } => {
-            render::show(&mut out, sink, shorts, record)?;
+            render::show(sink, shorts, record)
         }
+        // Machine output: the document is the payload, whatever the mode.
         Output::GroupEvidence(value) | Output::PassStep(value) => {
-            serde_json::to_writer_pretty(&mut out, value).map_err(io::Error::from)?;
-            writeln!(out)?;
+            sink.emit_text(value, |_| String::new())
         }
-        Output::GroupBackfill(report) => render::group_backfill(&mut out, sink, shorts, report)?,
-        Output::Hook(reply) => render::hook(&mut out, reply)?,
-        Output::Pass(report) => render::pass(&mut out, sink, shorts, report)?,
-        Output::Scan(report) => render::scan(&mut out, sink, shorts, report)?,
-        Output::Plugin(reply) => render::plugin(&mut out, reply)?,
+        Output::GroupBackfill(report) => render::group_backfill(sink, shorts, report),
+        Output::Hook(reply) => render::hook(sink, reply),
+        Output::Pass(report) => render::pass(sink, shorts, report),
+        Output::Scan(report) => render::scan(sink, shorts, report),
+        Output::Plugin(reply) => render::plugin(sink, reply),
     }
-    out.flush()
 }
 
 /// Report an error on stderr: one JSON object in JSON mode, else one
@@ -283,7 +330,7 @@ fn write_json_error(message: &str, code: &str) {
         error: message,
         code,
     };
-    let mut err = stderr();
+    let mut err = printable::Printable::new(io::stderr().lock());
     if serde_json::to_writer(&mut err, &payload).is_ok() {
         let _ = writeln!(err);
     }

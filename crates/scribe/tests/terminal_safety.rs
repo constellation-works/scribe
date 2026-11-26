@@ -1,7 +1,7 @@
 //! Stored text reaches a pipe as text, never as terminal control
 //! (STD-01 R9): an entry or tag description holding ESC, BEL or CR prints
-//! them as U+FFFD in human output, while `--json` keeps the stored text
-//! verbatim behind its own escaping. Through the built binary against a
+//! them as visible escapes (`\u{1b}`) in human output, while `--json` keeps
+//! the stored text verbatim behind its own escaping. Through the built binary against a
 //! temp `HOME` and data root.
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -21,7 +21,7 @@ const CONTENT: &str = "Keep \x1b[31mred\x1b[0m stable\r over\x07 time.";
 const DESCRIPTION: &str = "Agent \x1b]0;pwned\x07 notes";
 
 #[test]
-fn stored_escapes_print_as_replacement_characters_and_json_keeps_them() {
+fn stored_escapes_print_as_visible_escapes_and_json_keeps_them() {
     let fx = Fixture::new();
     let added: Value = fx.check(
         &[
@@ -60,7 +60,7 @@ fn stored_escapes_print_as_replacement_characters_and_json_keeps_them() {
         no_control(&format!("{args:?} stderr"), &out.stderr);
     }
     let shown = fx.check(&["show", id.as_str()], Text);
-    assert!(shown.contains("Keep \u{FFFD}[31mred"), "{shown}");
+    assert!(shown.contains("Keep \\u{1b}[31mred"), "{shown}");
 
     let json: Value = fx.check(&["show", id.as_str(), "--json"], Json);
     assert_eq!(json["content"], CONTENT);

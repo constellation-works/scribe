@@ -21,12 +21,16 @@ repository = "https://github.com/constellation-works/scribe"
 
 [workspace.dependencies]
 # The cw-kit (https://github.com/constellation-works/satellites): file access
-# for a private data directory (cw-fs) and SQLite open/configure/migrate
-# (cw-sqlite). No release is published yet, so the workspace pins one commit
+# for a private data directory (cw-fs), SQLite open/configure/migrate
+# (cw-sqlite) and the output sink (cw-cli). cw-app is named only for the
+# captured `Env` that cw-cli's terminal decision reads; scribe's audit guard
+# is not the kit's. No release is published yet, so the workspace pins one commit
 # of the satellites `agent-main` for every kit crate; moving the pin is a
 # change of its own.
-cw-fs = { git = "https://github.com/constellation-works/satellites", rev = "bdce98be91251d442cde3a8d0f3ddec13a81e362" }
-cw-sqlite = { git = "https://github.com/constellation-works/satellites", rev = "bdce98be91251d442cde3a8d0f3ddec13a81e362" }
+cw-fs = { git = "https://github.com/constellation-works/satellites", rev = "79c755a6615ca4da7063738a3326fbb3c96dea1f" }
+cw-sqlite = { git = "https://github.com/constellation-works/satellites", rev = "79c755a6615ca4da7063738a3326fbb3c96dea1f" }
+cw-cli = { git = "https://github.com/constellation-works/satellites", rev = "79c755a6615ca4da7063738a3326fbb3c96dea1f" }
+cw-app = { git = "https://github.com/constellation-works/satellites", rev = "79c755a6615ca4da7063738a3326fbb3c96dea1f" }
 scribe-store = { path = "crates/scribe-store" }
 scribe-tools = { path = "crates/scribe-tools" }
 scribe-core = { path = "crates/scribe-core" }
