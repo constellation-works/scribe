@@ -58,10 +58,10 @@ scribe  ->  scribe-core  ->  scribe-store
 
 | Crate | Owns | Internal dependencies | Banned |
 |---|---|---|---|
-| `scribe` (binary) | Argument declarations, the mapping from arguments to an app command, rendering, exit codes. The only stdout, stderr and terminal access. | `scribe-core` | `rusqlite`, `scribe-store`, `scribe-tools` |
-| `scribe-core` | The apps, the runtime they share, and composition. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
-| `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts`). The only crate that touches the data root. | none | `clap`, `tracing-subscriber`, any terminal crate |
-| `scribe-tools` | The functions that hooks and activities need, each subject whole in one place: finding, reading and parsing transcripts, window building, marker and payload parsing, project lookup. It has its own `fs` module and uses `scribe-store` as needed. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile`, `std::net`, `std::process`, `std::env` |
+| `scribe` (binary) | Argument declarations, the mapping from arguments to an app command, rendering, exit codes. The only stdout, stderr and terminal access. | `scribe-core` | `rusqlite`, `cw-sqlite`, `scribe-store`, `scribe-tools` |
+| `scribe-core` | The apps, the runtime they share, and composition. | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
+| `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts`). The only crate that touches the data root. | none | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
+| `scribe-tools` | The functions that hooks and activities need, each subject whole in one place: finding, reading and parsing transcripts, window building, marker and payload parsing, project lookup. It has its own `fs` module and uses `scribe-store` as needed. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile`, `std::net`, `std::process`, `std::env` |
 
 `scribe-domain` is deleted. Its contents went to three places by kind
 ([Where each current file goes](#where-each-current-file-goes)).
@@ -487,9 +487,13 @@ holds:
   `scribe_core`, and nothing calls `Store::write`;
 - in `scribe-tools`, nothing reads the clock or draws randomness;
 - in the store: `contracts/` imports no `db` or `repository`, reads no
-  clock and has no `fn check_`; only `db/` uses `rusqlite`; `db/files.rs`
-  names nothing of the store but its error; the store reads no environment
-  variable and discovers no path;
+  clock and has no `fn check_`; only `db/` uses `cw-sqlite` and its
+  re-exported `rusqlite`, and no scribe source sets `journal_mode`,
+  `synchronous`, `busy_timeout`, `user_version`, `secure_delete`,
+  `PersistWal` or `wal_checkpoint` itself, so scribe.db is opened,
+  configured, checkpointed and migrated only through `cw-sqlite`;
+  `db/files.rs` names nothing of the store but its error; the store reads no
+  environment variable and discovers no path;
 - the deleted paths (`scribe-domain`, `cases/`, the binary's moved files)
   stay deleted.
 

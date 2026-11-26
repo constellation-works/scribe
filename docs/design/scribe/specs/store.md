@@ -217,15 +217,16 @@ Only `config.toml` and `memory/`'s files remain as primary data files outside th
   registrations for those two tags. Existing entry rows retain every previous
   field, id and status. Reads at earlier schemas return null for the new
   fields and leave the database unchanged. Every application table is `STRICT`; the one virtual table, `messages_fts`, is an FTS5 index (`CREATE VIRTUAL TABLE`), and a virtual table takes no `STRICT` option. Times are RFC 3339 UTC text.
-- **Errors.** Contention is `store_locked`: a write that waits past the lock
-  wait (`SQLITE_BUSY` or `SQLITE_LOCKED`) fails with holder
-  `another scribe.db writer`, and a schema 8 or 9 WAL cleanup blocked by an
-  active reader or writer fails with holder `another scribe.db connection`,
-  leaving the version for retry. A file SQLite cannot read as a database, or one it
-  reports as corrupt (`SQLITE_NOTADB` or `SQLITE_CORRUPT`), is
-  `store_corrupt`, naming the file. Any other SQLite failure is
-  `store_database`; readers set no busy timeout, so a read SQLite reports
-  busy is one too.
+- **Errors.** Contention is `store_locked`: any open, migration, checkpoint,
+  write or read that SQLite reports busy or locked (`SQLITE_BUSY` or
+  `SQLITE_LOCKED`) and that is still busy past the lock wait fails with holder
+  `another scribe.db connection`. `cw-sqlite` installs its clock-bounded busy
+  handler on readers as well as writers, so a read waits at most the same lock
+  wait. A schema 8 or 9 WAL cleanup blocked by an active reader or writer fails
+  with the same holder, leaving the version for retry. A file SQLite cannot read
+  as a database, or one it reports as corrupt (`SQLITE_NOTADB` or
+  `SQLITE_CORRUPT`), is `store_corrupt`, naming the file. Any other SQLite
+  failure is `store_database`.
 
 Schema version 15 adds the local Claude group capture checkpoint and
 first-seen message index. Existing membership cursors carry forward and seed
