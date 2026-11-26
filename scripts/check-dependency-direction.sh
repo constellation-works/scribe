@@ -373,13 +373,15 @@ if [[ -n "$port_grouped" ]]; then
 fi
 
 # Inside scribe-store: the codec converts bytes and the audit repository
-# writes rows through db/; neither does file I/O of its own (R4, R5). fsio,
-# the mechanism, is held below to naming nothing of the store but its error.
+# writes rows through db/; neither does file I/O of its own (R4, R5). The
+# file layer is db/files.rs, the cw-fs adapter held below to naming nothing
+# of the store but its error: neither shape names it, cw-fs or std::fs.
 for shape in db/codec:"converts bytes" repository/audit:"writes its rows through db/"; do
   file="$STORE/${shape%%:*}.rs"
   [[ -d "$STORE" && ! -f "$file" ]] && err "${file#crates/} is missing: update this guard with the file"
   ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
-  ban "$file" '(super|crate::db)::fsio' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" '(super|crate::db)::files' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
 done
 # The core and the store receive resolved roots and configuration (R3).
 # A child's working directory (`Command::current_dir(path)`, providers/) is

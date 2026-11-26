@@ -167,6 +167,28 @@ for module in memory group; do
   expect fail check-dependency-direction.sh "$port" "a port importing $module in a group"
 done
 
+# Inside scribe-store, db/codec.rs and repository/audit.rs do no file I/O:
+# neither names db/files.rs, cw-fs or std::fs (the fsio module they once
+# named is retired).
+store_tree() {
+  local root
+  root=$(tree "$1")
+  mkdir -p "$root/crates/scribe-store/src/db" "$root/crates/scribe-store/src/repository"
+  printf '[package]\nname = "scribe-store"\n' >"$root/crates/scribe-store/Cargo.toml"
+  printf '//! codec\n' >"$root/crates/scribe-store/src/db/codec.rs"
+  printf '//! audit\n' >"$root/crates/scribe-store/src/repository/audit.rs"
+  echo "$root"
+}
+store=$(store_tree store-clean)
+expect pass check-dependency-direction.sh "$store" "a store whose codec and audit do no file I/O"
+for shape in db/codec repository/audit; do
+  for import in 'use super::files;' 'use crate::db::files;' 'use cw_fs::Cap;' 'use std::fs;'; do
+    bad=$(store_tree "store-io-$n")
+    printf '//! shape\n%s\n' "$import" >"$bad/crates/scribe-store/src/${shape}.rs"
+    expect fail check-dependency-direction.sh "$bad" "a store $shape with $import"
+  done
+done
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.
