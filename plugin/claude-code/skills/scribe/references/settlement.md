@@ -64,7 +64,7 @@ or delete. Every act follows the same order.
      | Non-action memory tag (`preferences` or a configured memory tag) | Use `scribe entry add --spoken` with the human's quote. |
      | Action tag (such as `standard`) | Use the action-tag route with the human's words as `--quote` where required. |
      | `handoff` | Write a new handoff. |
-     | `require_evidence` tag (such as `finding`) | Use `scribe entry add --evidence <pointer>` to record your finding. |
+     | `require_evidence` tag (such as `finding`) | Use `scribe entry add --evidence <pointer>` to record your finding; include `--quote <their words>` when the tag also sets `require_quote = true`. |
 
      Reserve `--spoken` for non-action memory tags. An action, `handoff` or
      `require_evidence` tag refuses it with `not_memory_tag`.

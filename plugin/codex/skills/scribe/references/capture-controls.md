@@ -48,10 +48,11 @@ words, using the flags scribe gives: `scribe entry add --tag <tag> --project
 --spoken '<statement>'`. For an action tag such as `standard` the command
 scribe gives has no `--spoken`, since `entry add` refuses it there.
 
-For a `require_evidence` tag such as `finding`, the command scribe gives has
-neither `--quote` nor `--spoken`: it ends `--evidence '<pointer>'
-'<statement>'`. That finding is your own result, not theirs, so record it only
-when you can point to its evidence (a path, task, run, experiment or commit).
+For a `require_evidence` tag such as `finding`, the evidence-only command has
+no `--quote` or `--spoken`: `--evidence '<pointer>' '<statement>'`. If
+`require_quote = true`, scribe gives `--quote '<their words>' --evidence
+'<pointer>' '<statement>'` (still no `--spoken`). Record your finding only
+when you can point to evidence (a path, task, run, experiment or commit).
 
 A tag named after the marker or at the end of its line is the `--tag`;
 `#scribe/global` gives `--project global` for every repository. Quote only
