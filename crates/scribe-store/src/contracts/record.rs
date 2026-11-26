@@ -11,11 +11,70 @@
 //! (`db/mod.rs`'s `MIGRATIONS`) and, for an exported shape, a `FORMAT` bump
 //! (`db/codec.rs`).
 
+/// `review_after` and other calendar dates: `YYYY-MM-DD`, `null` when
+/// absent, the key always present.
+pub mod nullable_date {
+    /// A calendar date whose key must hold one: `YYYY-MM-DD`, never `null`.
+    pub mod required {
+        use serde::{Deserialize, Deserializer, Serializer};
+        use time::Date;
+
+        /// Write `date` as `YYYY-MM-DD`.
+        pub fn serialize<S: Serializer>(date: &Date, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str(&super::format(*date))
+        }
+
+        /// Read a `YYYY-MM-DD` date.
+        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
+            let text = String::deserialize(deserializer)?;
+            Date::parse(&text, super::FORMAT).map_err(serde::de::Error::custom)
+        }
+    }
+
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Date;
+    use time::format_description::BorrowedFormatItem;
+    use time::macros::format_description;
+
+    pub(crate) const FORMAT: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day]");
+
+    /// Render a date as `YYYY-MM-DD`.
+    pub fn format(date: Date) -> String {
+        date.format(FORMAT).unwrap_or_else(|_| date.to_string())
+    }
+
+    /// Serialize an optional date as `YYYY-MM-DD` or `null`.
+    pub fn serialize<S: Serializer>(date: &Option<Date>, serializer: S) -> Result<S::Ok, S::Error> {
+        match date {
+            Some(date) => serializer.serialize_str(&format(*date)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Deserialize `YYYY-MM-DD` or `null` into an optional date.
+    ///
+    /// # Errors
+    ///
+    /// When the text is not a `YYYY-MM-DD` date.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Date>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| Date::parse(&text, FORMAT).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}
+
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use time::{Date, OffsetDateTime};
+
+/// The user channel's author name in stores before format 23, read as
+/// [`Author::user`].
+const LEGACY_USER_NAME: &str = "daniel";
 
 /// Why a value was rejected as record metadata.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -159,10 +218,6 @@ impl fmt::Display for AuthorName {
         f.write_str(&self.0)
     }
 }
-
-/// The user channel's author name in stores before format 23, read as
-/// [`Author::user`].
-const LEGACY_USER_NAME: &str = "daniel";
 
 /// Who wrote a record or a change: `{kind, name}` (store format 4).
 ///
@@ -425,18 +480,6 @@ impl Topic {
     }
 }
 
-/// Lowercase letters and digits in words joined by single hyphens.
-pub fn is_kebab(value: &str, max: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max
-        && value.split('-').all(|word| {
-            !word.is_empty()
-                && word
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        })
-}
-
 impl TryFrom<String> for Topic {
     type Error = RecordError;
 
@@ -604,16 +647,6 @@ impl TryFrom<String> for Related {
     }
 }
 
-fn doc_target(target: &str) -> bool {
-    target.split_once('#').is_some_and(|(location, anchor)| {
-        !anchor.is_empty()
-            && !anchor.contains('#')
-            && location
-                .split_once('/')
-                .is_some_and(|(repo, path)| !repo.is_empty() && !path.is_empty())
-    })
-}
-
 impl FromStr for Related {
     type Err = RecordError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -689,16 +722,6 @@ impl DateRange {
     }
 }
 
-/// Parse a calendar day, `YYYY-MM-DD`.
-///
-/// # Errors
-///
-/// A message naming the text and the expected form.
-pub fn parse_day(text: &str) -> std::result::Result<Date, String> {
-    Date::parse(text, nullable_date::FORMAT)
-        .map_err(|_| format!("{text:?} is not a date in the form YYYY-MM-DD"))
-}
-
 /// What a listing found: the records returned and how many matched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listing<T> {
@@ -728,6 +751,38 @@ impl<T> Listing<T> {
     }
 }
 
+/// Lowercase letters and digits in words joined by single hyphens.
+pub fn is_kebab(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value.split('-').all(|word| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+fn doc_target(target: &str) -> bool {
+    target.split_once('#').is_some_and(|(location, anchor)| {
+        !anchor.is_empty()
+            && !anchor.contains('#')
+            && location
+                .split_once('/')
+                .is_some_and(|(repo, path)| !repo.is_empty() && !path.is_empty())
+    })
+}
+
+/// Parse a calendar day, `YYYY-MM-DD`.
+///
+/// # Errors
+///
+/// A message naming the text and the expected form.
+pub fn parse_day(text: &str) -> std::result::Result<Date, String> {
+    Date::parse(text, nullable_date::FORMAT)
+        .map_err(|_| format!("{text:?} is not a date in the form YYYY-MM-DD"))
+}
+
 /// Deserialize an `Option` whose key must be present: `null` is `None`, a
 /// missing key is an error. serde treats a missing `Option` field as `None`
 /// unless the field names its own deserializer, which this is; a record
@@ -738,59 +793,4 @@ where
     T: Deserialize<'de>,
 {
     Option::<T>::deserialize(deserializer)
-}
-
-/// `review_after` and other calendar dates: `YYYY-MM-DD`, `null` when
-/// absent, the key always present.
-pub mod nullable_date {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use time::Date;
-    use time::format_description::BorrowedFormatItem;
-    use time::macros::format_description;
-
-    pub(crate) const FORMAT: &[BorrowedFormatItem<'static>] =
-        format_description!("[year]-[month]-[day]");
-
-    /// Render a date as `YYYY-MM-DD`.
-    pub fn format(date: Date) -> String {
-        date.format(FORMAT).unwrap_or_else(|_| date.to_string())
-    }
-
-    /// Serialize an optional date as `YYYY-MM-DD` or `null`.
-    pub fn serialize<S: Serializer>(date: &Option<Date>, serializer: S) -> Result<S::Ok, S::Error> {
-        match date {
-            Some(date) => serializer.serialize_str(&format(*date)),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    /// Deserialize `YYYY-MM-DD` or `null` into an optional date.
-    ///
-    /// # Errors
-    ///
-    /// When the text is not a `YYYY-MM-DD` date.
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Date>, D::Error> {
-        Option::<String>::deserialize(deserializer)?
-            .map(|text| Date::parse(&text, FORMAT).map_err(serde::de::Error::custom))
-            .transpose()
-    }
-
-    /// A calendar date whose key must hold one: `YYYY-MM-DD`, never `null`.
-    pub mod required {
-        use serde::{Deserialize, Deserializer, Serializer};
-        use time::Date;
-
-        /// Write `date` as `YYYY-MM-DD`.
-        pub fn serialize<S: Serializer>(date: &Date, serializer: S) -> Result<S::Ok, S::Error> {
-            serializer.serialize_str(&super::format(*date))
-        }
-
-        /// Read a `YYYY-MM-DD` date.
-        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
-            let text = String::deserialize(deserializer)?;
-            Date::parse(&text, super::FORMAT).map_err(serde::de::Error::custom)
-        }
-    }
 }

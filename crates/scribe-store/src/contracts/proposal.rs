@@ -14,6 +14,20 @@ use std::num::NonZeroU64;
 use std::str::FromStr;
 use time::OffsetDateTime;
 
+/// The longest context paragraph a pass claim carries, in characters
+/// (2_design.md §15.3).
+pub const CONTEXT_CHARS: usize = 600;
+/// The fewest sentences a context paragraph has; a shorter one does not
+/// stand alone and opens nothing (2_design.md §15.3).
+pub const CONTEXT_SENTENCES: usize = 2;
+/// The longest subject a pass claim carries, in characters (2_design.md §11.1).
+pub const SUBJECT_CHARS: usize = 80;
+
+/// How the `said` of an entry approved on Daniel's instruction begins: the
+/// canonical `proposal settle` command, where a typed approval's begins
+/// `#scribe approve p-` (2_design.md §12.3).
+pub const INSTRUCTED_SAID_PREFIX: &str = "scribe proposal settle p-";
+
 /// Why a value was rejected as a proposal field.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProposalError {
@@ -223,15 +237,6 @@ pub struct Admitted {
     pub criteria: Option<String>,
 }
 
-/// The longest context paragraph a pass claim carries, in characters
-/// (2_design.md §15.3).
-pub const CONTEXT_CHARS: usize = 600;
-/// The fewest sentences a context paragraph has; a shorter one does not
-/// stand alone and opens nothing (2_design.md §15.3).
-pub const CONTEXT_SENTENCES: usize = 2;
-/// The longest subject a pass claim carries, in characters (2_design.md §11.1).
-pub const SUBJECT_CHARS: usize = 80;
-
 /// Checked words offered by a session pass: Daniel's unmarked statement, or
 /// an assistant turn's measured result or open item (format 10). Metadata
 /// is derived from the transcript and session, never supplied by the model.
@@ -317,8 +322,3 @@ impl EntryCandidate {
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
     }
 }
-
-/// How the `said` of an entry approved on Daniel's instruction begins: the
-/// canonical `proposal settle` command, where a typed approval's begins
-/// `#scribe approve p-` (2_design.md §12.3).
-pub const INSTRUCTED_SAID_PREFIX: &str = "scribe proposal settle p-";

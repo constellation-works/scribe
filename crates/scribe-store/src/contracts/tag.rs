@@ -27,6 +27,59 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use time::{Date, Duration};
 
+/// The longest `criteria` or `not` text, in characters.
+pub const CAPTURE_TEXT_CHARS: usize = 300;
+
+/// A catcher's open-claim cap when `max_open` is unset (2_design.md §15.2).
+pub const DEFAULT_MAX_OPEN: u32 = 10;
+
+/// The shipped capture rules: `(tag, route, triggers, criteria, not)`
+/// (2_design.md §15.2), every one reading the user's turns. Any other
+/// catcher, such as the `idea` and `issue` examples of specs/catchers.md,
+/// is config alone.
+const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
+    (
+        "preferences",
+        CaptureRoute::Propose,
+        &[
+            "always",
+            "never",
+            "should not",
+            "from now on",
+            "I prefer",
+            "by default",
+        ],
+        "A standing rule from {user} that applies beyond the work at hand.",
+        "A choice about one page or task; an acknowledgement; a one-off command.",
+    ),
+    (
+        "standard",
+        CaptureRoute::Propose,
+        &[
+            "as a standard",
+            "our standard",
+            "every repo",
+            "all repos",
+            "across repos",
+            "house style",
+            "convention",
+        ],
+        "A rule for how code or docs are written across {user}'s projects.",
+        "A rule for one repository or one change; a preference about how agents talk or work.",
+    ),
+];
+
+/// The action tags scribe ships: `(name, description, require_quote)`.
+pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 1] = [(
+    "standard",
+    "A rule for how code or docs are written across {user}'s projects, in {user}'s words.",
+    true,
+)];
+
+/// Historical name of the `finding` tag (no longer shipped by default; kept
+/// for approving stored format-10 assistant candidates).
+pub const FINDING_TAG: &str = "finding";
+
 /// Why a tag table was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TagError {
@@ -212,48 +265,6 @@ pub struct CaptureRules {
     pub max_open: Option<Rule<NonZeroU32>>,
 }
 
-/// The longest `criteria` or `not` text, in characters.
-pub const CAPTURE_TEXT_CHARS: usize = 300;
-
-/// A catcher's open-claim cap when `max_open` is unset (2_design.md §15.2).
-pub const DEFAULT_MAX_OPEN: u32 = 10;
-
-/// The shipped capture rules: `(tag, route, triggers, criteria, not)`
-/// (2_design.md §15.2), every one reading the user's turns. Any other
-/// catcher, such as the `idea` and `issue` examples of specs/catchers.md,
-/// is config alone.
-const SHIPPED_CAPTURE: [(&str, CaptureRoute, &[&str], &str, &str); 2] = [
-    (
-        "preferences",
-        CaptureRoute::Propose,
-        &[
-            "always",
-            "never",
-            "should not",
-            "from now on",
-            "I prefer",
-            "by default",
-        ],
-        "A standing rule from {user} that applies beyond the work at hand.",
-        "A choice about one page or task; an acknowledgement; a one-off command.",
-    ),
-    (
-        "standard",
-        CaptureRoute::Propose,
-        &[
-            "as a standard",
-            "our standard",
-            "every repo",
-            "all repos",
-            "across repos",
-            "house style",
-            "convention",
-        ],
-        "A rule for how code or docs are written across {user}'s projects.",
-        "A rule for one repository or one change; a preference about how agents talk or work.",
-    ),
-];
-
 impl CaptureRules {
     /// The rules scribe ships for the tag named `name`; empty for any other.
     #[must_use]
@@ -331,17 +342,6 @@ impl ActionTag {
         if self.ask_first { "ask-first" } else { "free" }
     }
 }
-
-/// The action tags scribe ships: `(name, description, require_quote)`.
-pub const SHIPPED_ACTION_TAGS: [(&str, &str, bool); 1] = [(
-    "standard",
-    "A rule for how code or docs are written across {user}'s projects, in {user}'s words.",
-    true,
-)];
-
-/// Historical name of the `finding` tag (no longer shipped by default; kept
-/// for approving stored format-10 assistant candidates).
-pub const FINDING_TAG: &str = "finding";
 
 impl TagDef {
     /// The `review_after` date for an entry created on `created`.

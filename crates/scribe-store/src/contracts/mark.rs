@@ -3,6 +3,13 @@
 //! §14.5). The marker scanning is the domain's `capture`; refusing a marker
 //! is the mark app's rule.
 
+/// The refusal code of a marker whose model calls all failed, before
+/// ORB-27911.
+pub const MODEL_FAILED: &str = "model_failed";
+
+/// The code of a marker handed to the agent to record (ORB-27911).
+pub const AGENT_HANDOFF: &str = "agent_handoff";
+
 /// The most model calls one marked turn got across `Stop`s, when scribe
 /// still called a model for markers: an older `pending` record holds fewer.
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -114,10 +121,3 @@ impl MarkRecord {
         self.outcome == MarkState::Pending || self.gave_up() || self.handed_off()
     }
 }
-
-/// The refusal code of a marker whose model calls all failed, before
-/// ORB-27911.
-pub const MODEL_FAILED: &str = "model_failed";
-
-/// The code of a marker handed to the agent to record (ORB-27911).
-pub const AGENT_HANDOFF: &str = "agent_handoff";
