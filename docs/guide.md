@@ -445,8 +445,8 @@ read as configured and are not listed.
 <!-- env-table:start -->
 | Variable | Meaning | Default | Flag |
 |---|---|---|---|
-| `SCRIBE_ROOT` | The data directory. | `$HOME/.<app>` | `--root` |
-| `SCRIBE_FORMAT` | The output format: `json` for one JSON document, `table` for a table, and `auto` for a table on a terminal and tab-separated lines otherwise. | `auto` | `--format` |
+| `SCRIBE_ROOT` | The data directory. | `$HOME/.scribe` | `--root` |
+| `SCRIBE_FORMAT` | The output format. | `auto` | `--format` |
 | `SCRIBE_LOG` | The log filter for stderr, in `tracing` syntax such as `debug`. | `warn` | — |
 | `NO_COLOR` | Any non-empty value turns color off. | — | — |
 | `CLICOLOR_FORCE` | Any non-empty value turns color on for a terminal, even a `dumb` one; `NO_COLOR` still wins. | — | — |
@@ -466,10 +466,19 @@ read as configured and are not listed.
 | `COMPUTERNAME` | The host name on Windows, which records carry as their host label. | — | — |
 <!-- env-table:end -->
 
-`auto` is a table on a terminal and tab-separated lines otherwise. Color is
-off in a pipe, when `NO_COLOR` is non-empty, and for `TERM=dumb`. A non-empty
-`CLICOLOR_FORCE` overrides `TERM=dumb` and never overrides `NO_COLOR` or a
-pipe.
+`SCRIBE_FORMAT` defaults to `auto`: it selects a table on terminal stdout and
+tab-separated lines otherwise. `--format auto|table|json` overrides that
+setting; `--json` is shorthand for `--format json`.
+
+`COLUMNS` sets the truncation width for table output only when stdout is a
+terminal. It accepts a trimmed positive integer. An unset, empty, zero or
+invalid value falls back to the measured terminal width; if no width is
+available, the table is not truncated. `COLUMNS` has no effect when stdout is
+not a terminal.
+
+Color is off in a pipe, when `NO_COLOR` is non-empty, and for `TERM=dumb`. A
+non-empty `CLICOLOR_FORCE` overrides `TERM=dumb` and never overrides
+`NO_COLOR` or a pipe.
 
 Exit status is 0 on success, 1 when a command fails and 2 on a usage error.
 `--json` is the contract in the
