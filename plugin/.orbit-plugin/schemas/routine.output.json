@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The routine tools' outputs: scribe.session-pass prints what `scribe session pass --json` does, scribe.consistency-scan what `scribe consistency scan --json` does, scribe.memory-refresh what `scribe memory refresh --json` does (docs/design/scribe/specs/output-contract.md).",
+  "description": "The routine tools' outputs: the session pass branch is the report `scribe session pass --json` prints, which no plugin tool returns (scribe.session-pass was removed; the session-pass steps answer their own payloads), scribe.consistency-scan what `scribe consistency scan --json` does, scribe.memory-refresh what `scribe memory refresh --json` does (docs/design/scribe/specs/output-contract.md).",
   "type": "object",
   "oneOf": [
     {
