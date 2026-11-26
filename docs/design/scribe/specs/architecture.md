@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: architecture — four crates (scribe, scribe-core, scribe-store, scribe-tools), apps with one exec each, runtime and composition in core, repositories per record, record shapes as store contracts, tools that keep each subject whole (transcript finding, reading and parsing), and the migration from the domain/store/core/CLI split"
-last_validated: 2026-11-25
+last_validated: 2026-11-26
 ---
 
 # Spec: Architecture

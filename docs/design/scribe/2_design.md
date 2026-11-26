@@ -6175,8 +6175,8 @@ so no kind is ever unreadable outside the binary.
   - On the file store (phases 1–2), `daniel` is still read, and the next
     write persists `user` (part of format step 23).
   - In `--json`, the change is recorded as a contract change in
-    `specs/output-contract.md`. Its only readers are the skill and the tmux
-    popup, which ship in the same package.
+    `specs/output-contract.md`. Its only reader is the skill, which ships in
+    the same package (the tmux popup was removed in ORB-27911).
   - Labels such as `CAPTURED_DANIEL` and `STATED_WHOSE` ("scribe's statement
     of Daniel's turn") become "the user's".
 - The design docs keep Daniel's words as provenance. They are the record of
