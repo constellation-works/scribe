@@ -251,7 +251,7 @@ testing.rs           test support (test-support)
   - `contracts/`:
     `audit < provider < record < session < entry < handoff < tag < action < group < mark < memory < message < proposal`
   - `repository/`:
-    `ids < memory < audit < entries < groups < marks < messages < pickups < proposals < sessions < tags`
+    `sealed < ids < memory < audit < entries < groups < marks < messages < pickups < proposals < sessions < tags`
 - **The app owns product rules.** The calling app evaluates a rule requiring
   atomicity inside the store's transaction. The store owns format and
   persistence checks such as these:
@@ -400,7 +400,10 @@ express. "Module" includes any file added later.
   re-exports while ignoring comments and string literals). Every layer with
   more than about ten units (`apps/`, `db/`, `contracts/`, `repository/`,
   `scribe-tools`, `commands/`) obeys its declared order above; an unlisted
-  module or upward import fails.
+  module or upward import fails. Inline modules count as units; root modules
+  containing only public re-exports are treated as compatibility facades
+  outside declared orders.
+  Test-only and test-support modules are excluded.
 - **App order:** every directory under `apps/` is in the order above; an app
   imports only lower apps, through their `mod.rs`; no common, shared
   or util app.

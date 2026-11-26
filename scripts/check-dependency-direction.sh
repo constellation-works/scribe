@@ -587,7 +587,7 @@ done
 # only strictly earlier units.
 DB_ORDER='archive files log scope codec locks memory messages groups sessions docs import write documents'
 CONTRACTS_ORDER='audit provider record session entry handoff tag action group mark memory message proposal'
-REPOSITORY_ORDER='ids memory audit entries groups marks messages pickups proposals sessions tags'
+REPOSITORY_ORDER='sealed ids memory audit entries groups marks messages pickups proposals sessions tags'
 TOOLS_ORDER='fs host origin text voice markers project payload transcript window group_close memory_refresh session_distill'
 COMMANDS_ORDER='instruction store brief consistency entry export group hook init mark memory proposal search session tag transcript plugin'
 
@@ -729,7 +729,7 @@ USE_STMT_RE = re.compile(
     re.M,
 )
 INLINE_PATH_RE = re.compile(r'(?<![\w:])((?:crate|super|self)(?:::\w+)+)')
-CFG_TEST_RE = re.compile(r'#\[\s*cfg\s*\(\s*test\s*\)\s*\]')
+CFG_TEST_RE = re.compile(r'#\[\s*cfg\s*\(\s*(?:test\s*\)|any\s*\(\s*test\s*,\s*feature\s*=\s*"test-support"\s*\)\s*\))\s*\]')
 
 def strip_comments_and_strings(src):
     """Replace Rust comments and string/char literals with spaces, preserving newlines."""
@@ -913,32 +913,66 @@ def file_mod_parts(src_dir, fp):
         return []
     return rel
 
+INLINE_MOD_RE = re.compile(
+    r'(?:^|(?<=[;{}]))[ \t\n]*((?:#\[[^\]]*\][ \t\n]*)*)'
+    r'(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*\{', re.M
+)
+
+def inline_modules(clean, raw, base):
+    """Return inline module bodies and paths, excluding test-only modules."""
+    declarations = {m.end() - 1: m for m in INLINE_MOD_RE.finditer(clean)}
+    stack = []
+    modules = []
+    for pos, ch in enumerate(clean):
+        if ch == "{":
+            m = declarations.get(pos)
+            # A module declaration is a unit only at module scope, not inside a function.
+            if m and all(item is not None for item in stack):
+                parent = stack[-1][0] if stack else tuple(base)
+                ignored = (stack and stack[-1][1]) or bool(CFG_TEST_RE.search(raw[m.start(1):m.end(1)]))
+                path = parent + (m.group(2),)
+                stack.append((path, ignored, pos))
+            else:
+                stack.append(None)
+        elif ch == "}" and stack:
+            item = stack.pop()
+            if item is not None:
+                modules.append((item[2], pos, item[0], item[1]))
+    return modules
+
 def extract_resolved_refs(fp, src_dir, aliases):
     raw = open(fp, encoding="utf-8").read()
     clean = strip_comments_and_strings(raw)
     mod_parts = file_mod_parts(src_dir, fp)
+    modules = inline_modules(clean, raw, mod_parts)
+    def module_at(pos):
+        containing = [(start, path) for start, end, path, ignored in modules
+                      if not ignored and start < pos < end]
+        return list(max(containing, default=(-1, tuple(mod_parts)))[1])
     refs = []
     # Strip spans of #[cfg(test)] use statements so inline test-only imports are skipped.
-    skip_spans = []
+    skip_spans = [(start, end) for start, end, _path, ignored in modules if ignored]
     for m in USE_STMT_RE.finditer(clean):
-        attrs = m.group(1) or ""
+        attrs = raw[m.start(1):m.end(1)]
+        if any(a < m.start(2) < b for a, b in skip_spans):
+            continue
         if CFG_TEST_RE.search(attrs):
             skip_spans.append((m.start(), m.end()))
             continue
         lineno = 1 + clean.count("\n", 0, m.start(2))
         for p, _binding in flatten_use_tree("", m.group(2)):
-            res = resolve_to_crate(p, mod_parts, aliases)
+            res = resolve_to_crate(p, module_at(m.start(2)), aliases)
             if res:
-                refs.append((res, lineno))
+                refs.append((module_at(m.start(2)), res, lineno))
     for m in INLINE_PATH_RE.finditer(clean):
         pos = m.start(1)
         if any(a <= pos < b for a, b in skip_spans):
             continue
         lineno = 1 + clean.count("\n", 0, pos)
-        res = resolve_to_crate(m.group(1), mod_parts, aliases)
+        res = resolve_to_crate(m.group(1), module_at(pos), aliases)
         if res:
-            refs.append((res, lineno))
-    return refs
+            refs.append((module_at(pos), res, lineno))
+    return refs, modules
 
 # Declared in-layer orders (STD-02 R39: layers with > ~10 units; apps/ is
 # enforced with its mod.rs-only reach-in check above).
@@ -974,12 +1008,26 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
 
     # Cache extracted refs per file once for all scopes in this crate.
     file_refs = {}
+    inline_units = collections.defaultdict(set)
     for r, dirs, files in os.walk(src_dir):
         dirs[:] = sorted(d for d in dirs if d not in ("tests", "bin"))
         for f in sorted(files):
             if f.endswith(".rs"):
                 fp = os.path.join(r, f)
-                file_refs[fp] = extract_resolved_refs(fp, src_dir, aliases)
+                file_refs[fp], modules = extract_resolved_refs(fp, src_dir, aliases)
+                clean = strip_comments_and_strings(open(fp, encoding="utf-8").read())
+                for start, end, path, ignored in modules:
+                    if ignored:
+                        continue
+                    # Root compatibility facades made solely of public re-exports
+                    # are aliases, not independent implementation units.
+                    body = clean[start + 1:end]
+                    facade = (len(path) == 1 and bool(USE_STMT_RE.search(body)) and
+                              not USE_STMT_RE.sub("", body).strip() and
+                              all(re.search(r"\bpub\s+use\b", m.group(0))
+                                  for m in USE_STMT_RE.finditer(body)))
+                    if not facade or (crate_name, ()) in DECLARED_ORDERS:
+                        inline_units[path[:-1]].add(path[-1])
 
     # Collect all scopes: () for top-level modules, plus every subdirectory.
     scopes = [()]
@@ -989,9 +1037,10 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
         if rel != ".":
             scopes.append(tuple(rel.split(os.sep)))
 
+    scopes = sorted(set(scopes) | set(inline_units))
     for prefix in scopes:
         base_dir = os.path.join(src_dir, *prefix) if prefix else src_dir
-        units = list_units(base_dir, is_crate_root=(len(prefix) == 0))
+        units = list_units(base_dir, is_crate_root=(len(prefix) == 0)) | inline_units[prefix]
         scope_label = crate_name + ("::" + "::".join(prefix) if prefix else "")
         order = DECLARED_ORDERS.get((crate_name, prefix))
 
@@ -1011,13 +1060,12 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
         order_violations = []
 
         for fp, refs in sorted(file_refs.items()):
-            mp = file_mod_parts(src_dir, fp)
-            if len(mp) <= len(prefix) or tuple(mp[: len(prefix)]) != prefix:
-                continue
-            src_u = mp[len(prefix)]
-            if src_u not in units:
-                continue
-            for res, lineno in refs:
+            for mp, res, lineno in refs:
+                if len(mp) <= len(prefix) or tuple(mp[: len(prefix)]) != prefix:
+                    continue
+                src_u = mp[len(prefix)]
+                if src_u not in units:
+                    continue
                 if len(res) <= len(prefix) or tuple(res[: len(prefix)]) != prefix:
                     continue
                 dst_u = res[len(prefix)]
