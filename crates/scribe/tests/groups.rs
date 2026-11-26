@@ -1532,6 +1532,40 @@ fn a_message_he_typed_mid_turn_opens_a_group() {
 }
 
 #[test]
+fn repeated_handoff_keeps_group_seat_newest() {
+    let f = Fixture::new();
+    transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+    open(&f);
+    join(&f, A, "g-1", &[], 0);
+    for text in ["First version.", "Second version."] {
+        invoke(
+            &f,
+            A,
+            &[
+                "entry",
+                "add",
+                &format!("{HANDOFF}\n{text}"),
+                "--tag",
+                "handoff",
+                "--author",
+                "aide",
+                "--related",
+                &format!("session:{A}"),
+                "--quote",
+                QUOTE,
+            ],
+            0,
+        );
+    }
+    let group = invoke(&f, A, &["group", "show", "g-1"], 0);
+    assert_eq!(group["seats"][0]["newest_handoff"], "handoff-2");
+    assert_eq!(
+        invoke(&f, A, &["entry", "show", "handoff-1"], 0)["superseded_by"],
+        "handoff-2"
+    );
+}
+
+#[test]
 fn seat_chains_replacement_handoffs_and_mistaken_joins() {
     let f = Fixture::new();
     for id in [A, B] {
