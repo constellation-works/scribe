@@ -6444,6 +6444,14 @@ session.
   marker capture excludes it from `annotation::request` and refuses it in
   `annotation::check` and `Store::record_marks` (`unknown_tag`), so a
   `#scribe` marker can never create a user-authored or unvalidated handoff.
+- **Supersession.** Adding a handoff supersedes every active handoff in the
+  same project that references the same verified session or an ancestor reached
+  by the new session's recorded `continues` links, including pending links.
+  The new entry and the older entries' `superseded_by` updates commit together.
+  Other tags, projects and unrelated session chains are untouched. A matching
+  seat label in separate groups does not establish a continuation. Superseded
+  entries remain readable by id and by filtering the entry list; omitting
+  `--status` lists all statuses. Existing entries are not migrated.
 - **Quote and session-reference checks.** Because `handoff` ships with
   `require_quote`, a quoted handoff still requires `--related session:<id>`
   and the existing verbatim check. A quote-less handoff requires `--mode`,

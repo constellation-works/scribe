@@ -391,7 +391,40 @@ impl EntryVerbs for Store {
                 format!("already covered by {}; nothing written", cover.id),
             ));
         }
+        // Follow only recorded continuation edges, never caller-chosen seat labels.
+        // Include pending links for sessions whose first catalog pass has not run.
+        let ancestors = if entry.tag.as_str() == crate::handoff::HANDOFF_TAG {
+            let loaded = tx.sessions().loaded()?;
+            let mut ancestors = std::collections::BTreeSet::new();
+            let mut pending = entry.session_ids();
+            while let Some(id) = pending.pop() {
+                if !ancestors.insert(id.clone()) {
+                    continue;
+                }
+                let record_links = loaded.records.iter().filter(|r| r.id == id).flat_map(|r| &r.links);
+                let pending_links = loaded.control.get(&id).into_iter().flat_map(|c| &c.pending_links);
+                pending.extend(record_links.chain(pending_links)
+                    .filter(|link| link.kind == crate::LinkType::Continues)
+                    .map(|link| link.session.clone()));
+            }
+            ancestors
+        } else {
+            std::collections::BTreeSet::new()
+        };
         tx.entries().put(&entry, true)?;
+        for mut older in entries.into_iter().filter(|older| {
+            older.status == EntryStatus::Active
+                && older.tag.as_str() == crate::handoff::HANDOFF_TAG
+                && older.project == entry.project
+                && matches!(older.session_ids().as_slice(), [id] if ancestors.contains(id))
+        }) {
+            older.status = EntryStatus::Superseded;
+            older.superseded_by = Some(entry.id.clone());
+            older.inactive_since = Some(now);
+            older.updated = now;
+            older.updated_by = Some(entry.author.clone());
+            tx.entries().put(&older, false)?;
+        }
         if let Some(older) = &mut replaced {
             older.status = EntryStatus::Superseded;
             older.superseded_by = Some(entry.id.clone());

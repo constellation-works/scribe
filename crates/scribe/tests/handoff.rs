@@ -543,13 +543,27 @@ fn session_show_brief_and_retire_handle_multiple_handoffs_on_recorded_and_off_se
     assert_eq!(shown_off["has_record"], false);
     assert_eq!(shown_off["on"], false);
     let off_handoffs = shown_off["handoffs"].as_array().unwrap();
-    assert_eq!(off_handoffs.len(), 2);
+    assert_eq!(off_handoffs.len(), 1);
     assert_eq!(off_handoffs[0]["id"], "handoff-2");
     assert_eq!(off_handoffs[0]["author"]["name"], "sonnet");
     assert_eq!(off_handoffs[0]["created"], "2026-11-01T11:00:00Z");
-    assert_eq!(off_handoffs[1]["id"], "handoff-1");
-    assert_eq!(off_handoffs[1]["author"]["name"], "opus");
-    assert_eq!(off_handoffs[1]["created"], "2026-11-01T10:00:00Z");
+    let old = json_of(&fx.ok(&["entry", "show", "handoff-1", "--json"]));
+    assert_eq!(old["status"], "superseded");
+    assert_eq!(old["superseded_by"], "handoff-2");
+    let superseded = json_of(&fx.ok(&[
+        "entry",
+        "list",
+        "--tag",
+        "handoff",
+        "--status",
+        "superseded",
+        "--json",
+    ]));
+    assert_eq!(superseded["total"], 1);
+    let active = json_of(&fx.ok(&[
+        "entry", "list", "--tag", "handoff", "--status", "active", "--json",
+    ]));
+    assert_eq!(active["total"], 1);
 
     let shown_prefix = json_of(&fx.ok(&["session", "show", &OFF_SESSION[..8], "--json"]));
     assert_eq!(shown_prefix["id"], OFF_SESSION);
@@ -559,9 +573,8 @@ fn session_show_brief_and_retire_handle_multiple_handoffs_on_recorded_and_off_se
         &fx.ok(&["session", "show", OFF_SESSION, "--format", "table"])
             .stdout,
     );
-    let pos2 = table_off.find("handoff-2").expect("handoff-2 in table");
-    let pos1 = table_off.find("handoff-1").expect("handoff-1 in table");
-    assert!(pos2 < pos1, "newest handoff first:\n{table_off}");
+    assert!(table_off.contains("handoff-2"));
+    assert!(!table_off.contains("handoff-1"));
     assert!(
         table_off.contains("sonnet") && table_off.contains("2026-11-01T11:00:00Z"),
         "{table_off}"
@@ -643,7 +656,7 @@ fn session_show_brief_and_retire_handle_multiple_handoffs_on_recorded_and_off_se
         .expect("off session in brief");
     assert_eq!(off["has_record"], false);
     assert_eq!(off["handoff"], "handoff-2");
-    assert_eq!(off["handoffs"], 2);
+    assert_eq!(off["handoffs"], 1);
 
     let brief_text = text(&fx.ok(&["brief", "--project", "scribe"]).stdout);
     assert!(brief_text.contains("[handoff: handoff-3]"), "{brief_text}");
@@ -670,20 +683,17 @@ fn session_show_brief_and_retire_handle_multiple_handoffs_on_recorded_and_off_se
             .contains("retired"),
         "{retire_reply}"
     );
-    let shown_after = json_of(&fx.ok(&["session", "show", OFF_SESSION, "--json"]));
-    let remaining = shown_after["handoffs"].as_array().unwrap();
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0]["id"], "handoff-1");
+    let (code, _) = refused(&fx, &["session", "show", OFF_SESSION]);
+    assert_eq!(code, "session_not_found");
 
     let brief_after = json_of(&fx.ok(&["brief", "--project", "scribe", "--json"]));
-    let off_after = brief_after["sessions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["id"] == OFF_SESSION)
-        .unwrap();
-    assert_eq!(off_after["handoff"], "handoff-1");
-    assert_eq!(off_after["handoffs"], 1);
+    assert!(
+        !brief_after["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == OFF_SESSION)
+    );
 }
 
 #[test]
@@ -1498,6 +1508,64 @@ fn refresh_continue_after_desktop_clear_inherits_switch_links_and_prepends_one_h
             );
         }
     }
+}
+
+#[test]
+fn handoffs_in_other_projects_do_not_supersede_each_other() {
+    let fx = Fixture::new();
+    let tr = Transcript::new(&fx, OFF_SESSION);
+    let request = "Please save this handoff.";
+    tr.write(&[("u", "user", request)]);
+    for (project, state) in [("one", "First state."), ("two", "Second state.")] {
+        fx.ok(&[
+            "entry",
+            "add",
+            "--tag",
+            "handoff",
+            "--author",
+            "opus",
+            "--project",
+            project,
+            "--related",
+            &format!("session:{OFF_SESSION}"),
+            "--quote",
+            request,
+            &valid_handoff(state, "Next."),
+            "--json",
+        ]);
+    }
+    assert_eq!(
+        json_of(&fx.ok(&["entry", "show", "handoff-1", "--json"]))["status"],
+        "active"
+    );
+}
+
+#[test]
+fn continuation_supersedes_only_its_chain() {
+    let fx = Fixture::new();
+    let parent = Transcript::new(&fx, OFF_SESSION);
+    refresh_handoff(
+        &fx,
+        &parent,
+        "continue",
+        &valid_handoff("Parent state.", "Next."),
+    );
+    let neighbor = Transcript::new(&fx, ON_SESSION);
+    refresh_handoff(
+        &fx,
+        &neighbor,
+        "continue",
+        &valid_handoff("Neighbor state.", "Next."),
+    );
+    let child = after_clear(&fx, &[OFF_SESSION]);
+    child.session_start(&fx);
+    let out = try_refresh(&fx, CHILD);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let old = json_of(&fx.ok(&["entry", "show", "handoff-1", "--json"]));
+    assert_eq!(old["status"], "superseded");
+    assert_eq!(old["superseded_by"], "handoff-3");
+    let other = json_of(&fx.ok(&["entry", "show", "handoff-2", "--json"]));
+    assert_eq!(other["status"], "active");
 }
 
 #[test]
