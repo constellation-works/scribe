@@ -13,7 +13,7 @@
 use crate::error::{Error, Result};
 use cw_fs::Cap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The most bytes the store reads from one record, document, stamp, memory
 /// file, config or spooled audit line. Far above anything the store writes;
@@ -64,17 +64,42 @@ pub(crate) fn list_root(root: &Path) -> Result<Vec<String>> {
 
 /// Remove the store file at `path`, which lies under the data directory
 /// `root`, and flush its directory. Only a link at `root` itself is
-/// resolved; every component below it goes to the kit as written, so a
-/// link in a directory inside the root is refused (`store_symlink`), never
-/// followed. A `path` outside `root` is not resolved at all.
+/// resolved. Every directory between the root and the file is checked
+/// before the kit acts: a link at any of them is refused (`store_symlink`),
+/// never followed, however high in the tree it sits, and a `..` is refused
+/// so the path cannot leave the root. A `path` outside `root` is not
+/// resolved at all.
 pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
     let Ok(rel) = path.strip_prefix(root) else {
         return cw_fs::remove(path).map_err(Error::from);
     };
-    match resolve_root(root)? {
-        Some(real) => cw_fs::remove(&real.join(rel)).map_err(Error::from),
-        None => Ok(()),
+    let Some(real) = resolve_root(root)? else {
+        return Ok(());
+    };
+    let mut target = real;
+    let mut names = rel.components().peekable();
+    while let Some(component) = names.next() {
+        let Component::Normal(name) = component else {
+            let refusal = io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the path leaves the data directory",
+            );
+            return Err(Error::io("remove", path, refusal));
+        };
+        target.push(name);
+        if names.peek().is_none() {
+            break;
+        }
+        match std::fs::symlink_metadata(&target) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::Symlink { path: target });
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(Error::io("inspect", &target, e)),
+        }
     }
+    cw_fs::remove(&target).map_err(Error::from)
 }
 
 /// Create `path` empty and owner-only unless it exists. An existing file is
