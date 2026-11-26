@@ -417,12 +417,12 @@ impl Store {
         self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
-            f(&GroupRows {
+            f(&GroupRows(ReadGroupRows {
                 conn: &conn,
                 path: &path,
                 action,
                 read: false,
-            })
+            }))
         })
     }
 
@@ -430,10 +430,10 @@ impl Store {
     /// store has groups.
     pub(crate) fn read_group_rows<T: Default>(
         &self,
-        f: impl Fn(&GroupRows<'_>) -> Result<T, RowError>,
+        f: impl Fn(&ReadGroupRows<'_>) -> Result<T, RowError>,
     ) -> Result<T> {
         self.read_groups(|conn, path| {
-            f(&GroupRows {
+            f(&ReadGroupRows {
                 conn,
                 path,
                 action: "read groups from",
@@ -448,13 +448,13 @@ impl Store {
     pub(crate) fn read_group_rows_in_tx<T: Default>(
         &self,
         action: &'static str,
-        f: impl Fn(&GroupRows<'_>) -> Result<T, RowError>,
+        f: impl Fn(&ReadGroupRows<'_>) -> Result<T, RowError>,
     ) -> Result<T> {
         self.read_groups(|conn, path| {
             let tx = conn
                 .unchecked_transaction()
                 .map_err(|e| Fallible::from_sqlite(action, path, e))?;
-            f(&GroupRows {
+            f(&ReadGroupRows {
                 conn: &tx,
                 path,
                 action,
@@ -660,12 +660,21 @@ fn newest_open_seat(
     .optional()
 }
 
-/// The group tables' rows over the one connection of a write step or a read
-/// ([`crate::repository::Groups::rows`], [`crate::repository::Groups::read_rows`]). Each
-/// method runs one statement, or the statements of one row change, and
-/// reports the rows as they are: what they mean, and whether a write is
-/// refused, is the caller's.
-pub struct GroupRows<'c> {
+/// Group rows in a write step ([`crate::repository::Groups::rows`]).
+/// Reads and mutations report the rows as they are; their meaning and any
+/// write refusal are the caller's responsibility.
+pub struct GroupRows<'c>(ReadGroupRows<'c>);
+
+impl<'c> std::ops::Deref for GroupRows<'c> {
+    type Target = ReadGroupRows<'c>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Read-only access to group rows, including inside a write transaction.
+pub struct ReadGroupRows<'c> {
     conn: &'c Connection,
     path: &'c Path,
     action: &'static str,
@@ -709,7 +718,7 @@ impl From<Error> for RowError {
 
 type Rows<T> = std::result::Result<T, RowError>;
 
-impl GroupRows<'_> {
+impl ReadGroupRows<'_> {
     fn fail(&self, e: rusqlite::Error) -> RowError {
         RowError(if self.read {
             Fallible::from_sqlite(self.action, self.path, e)

@@ -60,7 +60,7 @@ use time::format_description::well_known::Rfc3339;
 
 pub use groups::{
     CaptureState, ClaudeCapturePosition, ClaudeGroupCapture, ClaudeSeenIds, CloseHeader, GroupRows,
-    MemberWindow, RowError,
+    MemberWindow, ReadGroupRows, RowError,
 };
 
 /// The database's file name under the store root.

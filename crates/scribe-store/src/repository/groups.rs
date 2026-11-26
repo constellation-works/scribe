@@ -1,7 +1,7 @@
 //! The group repository: session groups, their seats and their rows.
 
 use super::{Access, ReadWrite};
-use super::{GroupRows, Groups, RowError};
+use super::{GroupRows, Groups, ReadGroupRows, RowError};
 use crate::LastGroup;
 use crate::error::Result;
 use crate::group::Group;
@@ -42,12 +42,20 @@ impl<A: Access> Groups<'_, A> {
     /// store has groups. `f` may run twice, the second time on a read-only
     /// copy of the database.
     ///
+    /// A snapshot's callback cannot mutate rows:
+    ///
+    /// ```compile_fail
+    /// # fn example(store: &scribe_store::Store, now: time::OffsetDateTime) {
+    /// let _ = store.read().groups().read_rows(|rows| rows.set_closed(1, now, None));
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// The store's read errors.
     pub fn read_rows<T: Default>(
         &self,
-        f: impl Fn(&GroupRows<'_>) -> std::result::Result<T, RowError>,
+        f: impl Fn(&ReadGroupRows<'_>) -> std::result::Result<T, RowError>,
     ) -> Result<T> {
         self.store.read_group_rows(f)
     }
@@ -56,13 +64,19 @@ impl<A: Access> Groups<'_, A> {
     /// one state: the read a group close takes its evidence from. `action`
     /// names the read in a database error.
     ///
+    /// ```compile_fail
+    /// # fn example(store: &scribe_store::Store, now: time::OffsetDateTime) {
+    /// let _ = store.read().groups().read_rows_in_tx("read", |rows| rows.set_closed(1, now, None));
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// The store's read errors.
     pub fn read_rows_in_tx<T: Default>(
         &self,
         action: &'static str,
-        f: impl Fn(&GroupRows<'_>) -> std::result::Result<T, RowError>,
+        f: impl Fn(&ReadGroupRows<'_>) -> std::result::Result<T, RowError>,
     ) -> Result<T> {
         self.store.read_group_rows_in_tx(action, f)
     }

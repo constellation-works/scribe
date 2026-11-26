@@ -2,7 +2,7 @@
 //! chain and the close itself. The close's flow and its refusals are the
 //! caller's (`scribe-core`'s group app).
 
-use super::{Fallible, GroupRows, HOLDS_SEAT, RowError, Rows, db_error, stamp};
+use super::{Fallible, GroupRows, HOLDS_SEAT, ReadGroupRows, RowError, Rows, db_error, stamp};
 use crate::{Error, Related};
 use rusqlite::{OptionalExtension, params};
 use time::OffsetDateTime;
@@ -20,7 +20,7 @@ pub struct CloseHeader {
     pub related: String,
 }
 
-impl GroupRows<'_> {
+impl ReadGroupRows<'_> {
     fn evidence_fail(&self, e: rusqlite::Error) -> RowError {
         RowError(Fallible::Failed(db_error(
             "read evidence for group close from",
@@ -113,7 +113,9 @@ impl GroupRows<'_> {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| self.evidence_fail(e))
     }
+}
 
+impl GroupRows<'_> {
     /// Close group `n` at `now` with `summary`.
     pub fn set_closed(&self, n: i64, now: OffsetDateTime, summary: Option<&str>) -> Rows<()> {
         self.conn

@@ -35,7 +35,9 @@ pub(crate) mod sessions;
 pub(crate) mod tags;
 
 use crate::Store;
-pub use crate::db::{CaptureState, ClaudeSeenIds, CloseHeader, GroupRows, MemberWindow, RowError};
+pub use crate::db::{
+    CaptureState, ClaudeSeenIds, CloseHeader, GroupRows, MemberWindow, ReadGroupRows, RowError,
+};
 pub use crate::db::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
 use crate::error::{Error, Result};
 pub use memory::{MemoryFiles, MemoryJournal, MemoryRows};
