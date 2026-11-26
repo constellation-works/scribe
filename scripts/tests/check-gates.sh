@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/tests/check-gates.sh — cases for the source-only gates
+# scripts/tests/check-gates.sh — cases for the repository gates and clippy boundaries
 # (STD-04 R2: each gate fix comes with a case that fails without it). Each
 # case builds a small fixture tree in a temporary directory and runs a gate
 # on it with the tree as its root: a broken tree must fail and its clean twin
@@ -10,6 +10,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 GATES="${GATES:-$here}"
+REPO_ROOT="${REPO_ROOT:-$(cd "$GATES/.." && pwd)}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -541,6 +542,160 @@ core=$(guard_tree guard-core-format)
 printf 'pub fn format_name() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
   >"$core/crates/scribe-core/src/format_name.rs"
 expect fail check-terminal-guard.sh "$core" "a core module naming SCRIBE_FORMAT"
+
+# --- clippy.toml: disallowed host operations in scribe-core (STD-02 R6) ----
+# Build a minimal workspace inheriting [workspace.lints] and clippy.toml so
+# every host operation banned in scribe-core fails regardless of path spelling
+# (qualified or imported by name), while a clean twin passes.
+if ! command -v cargo >/dev/null 2>&1 || ! cargo clippy --version >/dev/null 2>&1; then
+  echo "check-gates: FAIL: cargo clippy is required for clippy boundary cases" >&2
+  exit 2
+fi
+
+clippy_lints=$(awk '
+  /^\[workspace\.lints\.clippy\]$/ { on = 1 }
+  on { print }
+' "$REPO_ROOT/Cargo.toml")
+
+clippy_tree() {
+  local root="$work/$1"
+  mkdir -p "$root/crates/scribe-core/src"
+  cp "$REPO_ROOT/clippy.toml" "$root/clippy.toml"
+  cat >"$root/Cargo.toml" <<EOF
+[workspace]
+resolver = "3"
+members = ["crates/scribe-core"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.89"
+
+$clippy_lints
+EOF
+  cat >"$root/crates/scribe-core/Cargo.toml" <<'EOF'
+[package]
+name = "scribe-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+EOF
+  printf '//! Core fixture.\npub mod config;\n' >"$root/crates/scribe-core/src/lib.rs"
+  cat >"$root/crates/scribe-core/src/config.rs"
+  echo "$root"
+}
+
+expect_clippy() {
+  local want="$1" root="$2" lint="$3" what="$4" got=pass
+  n=$((n + 1))
+  (
+    cd "$root" &&
+      CARGO_TARGET_DIR="$root/target" CLIPPY_CONF_DIR="$root" \
+        cargo clippy --workspace --all-targets --offline -- -D warnings
+  ) >"$work/out" 2>&1 || got=fail
+  if [[ "$got" != "$want" ]]; then
+    echo "check-gates: FAIL: clippy.toml on $what: expected $want, got $got" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  elif [[ -n "$lint" ]] && ! grep -Fq "$lint" "$work/out"; then
+    echo "check-gates: FAIL: clippy.toml on $what: missing diagnostic $lint" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+}
+
+clippy_clean=$(clippy_tree clippy-clean <<'EOF'
+//! Clean core config fixture.
+
+/// Returns a constant without touching host I/O, environment or process exit.
+pub fn ok() -> usize {
+    1
+}
+EOF
+)
+expect_clippy pass "$clippy_clean" "" "a clean scribe-core config module"
+
+expect_clippy fail "$(clippy_tree clippy-dirbuilder-qualified <<'EOF'
+//! Core config fixture.
+
+/// Creates a directory directly via qualified std::fs::DirBuilder.
+pub fn make_dir(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::DirBuilder::new().create(path)
+}
+EOF
+)" "clippy::disallowed-types" "scribe-core calling std::fs::DirBuilder::new().create"
+
+expect_clippy fail "$(clippy_tree clippy-dirbuilder-named <<'EOF'
+//! Core config fixture.
+
+use std::fs::DirBuilder;
+
+/// Creates a directory directly via named DirBuilder import.
+pub fn make_dir(path: &std::path::Path) -> std::io::Result<()> {
+    DirBuilder::new().create(path)
+}
+EOF
+)" "clippy::disallowed-types" "scribe-core importing std::fs::DirBuilder by name"
+
+expect_clippy fail "$(clippy_tree clippy-dirbuilder-grouped <<'EOF'
+//! Core config fixture.
+
+use std::fs::{self, DirBuilder};
+
+/// Creates a directory directly via grouped DirBuilder import.
+pub fn make_dir(path: &std::path::Path) -> std::io::Result<()> {
+    let _ = fs::DirBuilder::new();
+    DirBuilder::new().create(path)
+}
+EOF
+)" "clippy::disallowed-types" "scribe-core importing std::fs::DirBuilder in a group"
+
+expect_clippy fail "$(clippy_tree clippy-temp-dir-qualified <<'EOF'
+//! Core config fixture.
+
+/// Discovers the host temp directory via qualified std::env::temp_dir.
+pub fn tmp() -> std::path::PathBuf {
+    std::env::temp_dir()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core calling std::env::temp_dir()"
+
+expect_clippy fail "$(clippy_tree clippy-temp-dir-named <<'EOF'
+//! Core config fixture.
+
+use std::env::temp_dir;
+
+/// Discovers the host temp directory via named temp_dir import.
+pub fn tmp() -> std::path::PathBuf {
+    temp_dir()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core importing std::env::temp_dir by name"
+
+expect_clippy fail "$(clippy_tree clippy-exit-qualified <<'EOF'
+//! Core config fixture.
+
+/// Terminates the process directly via qualified std::process::exit.
+pub fn bail() -> ! {
+    std::process::exit(1)
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core calling std::process::exit(1)"
+
+expect_clippy fail "$(clippy_tree clippy-exit-named <<'EOF'
+//! Core config fixture.
+
+use std::process::exit;
+
+/// Terminates the process directly via named exit import.
+pub fn bail() -> ! {
+    exit(1)
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core importing std::process::exit by name"
 
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"

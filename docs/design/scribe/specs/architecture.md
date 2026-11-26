@@ -475,13 +475,21 @@ denied workspace-wide in `Cargo.toml`) and
 spelling), with module-level `#![expect(..., reason = "...")]` only on the
 boundary owners:
 
-- `std::fs` types and methods (only `scribe-store/src/db/files.rs` beside
-  `cw-fs`, and `scribe-tools/src/fs.rs` for host files);
-- `std::env` reads, `current_dir`, `home_dir` and the process snapshot
+- `std::fs` I/O types (`File`, `OpenOptions`, `ReadDir`, `DirEntry`,
+  `DirBuilder`) and filesystem functions (`read`, `read_to_string`, `write`,
+  `remove_*`, `create_dir*`, `rename`, `copy`, `hard_link`, `soft_link`,
+  `metadata`, `symlink_metadata`, `set_permissions`, `read_dir`, `read_link`,
+  `canonicalize`, `exists`) — only `scribe-store/src/db/files.rs` beside
+  `cw-fs`, `scribe-tools/src/fs.rs` for host files, and
+  `scribe-core/src/composition.rs` for `PATH` metadata;
+- `std::env` reads and directory discovery (`var`, `var_os`, `vars`,
+  `vars_os`, `current_dir`, `home_dir`, `temp_dir`) and the process snapshot
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
   binary has no exemption);
 - `std::process::Command::{output,status,spawn}` and
   `std::sync::mpsc::channel` (only `scribe-core/src/providers/cli.rs`);
+- `std::process::exit` (banned with no production exemption so commands exit
+  through normal error handling and `ExitCode`);
 - `rusqlite::Connection::open` and its `open_with_flags` forms (banned with no
   production exemption since `scribe-store` opens `scribe.db` through
   `cw-sqlite`).
