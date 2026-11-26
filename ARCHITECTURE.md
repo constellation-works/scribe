@@ -381,11 +381,14 @@ express. "Module" includes any file added later.
   `scribe-tools/src/fs.rs` (host `std::fs` adapter),
   `scribe-core/src/composition.rs` (environment capture, the `cw-app`
   snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`
-  (supervised process spawn and drain channel). The binary has no exemption:
+  (supervised process spawn; its drain result travels on capacity-one
+  `std::sync::mpsc::sync_channel`, which is not a banned path). The binary
+  has no exemption:
   `main` and the output layer receive captured values.
   `std::process::exit` has no production exemption (commands return errors or
   `ExitCode` to `main`), and `rusqlite::Connection::open*` has no production
   exemption (`scribe-store` opens `scribe.db` only through `cw-sqlite`).
+  `std::sync::mpsc::channel` has no production exemption.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
 - **Import cycles and in-layer orders (STD-02 R6, R39):** the import graph
