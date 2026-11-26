@@ -17,8 +17,110 @@ use time::format_description::well_known::{Iso8601, Rfc3339};
 use time::{OffsetDateTime, UtcOffset};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// The full field list: `group show` labels and the tab-separated line.
+const GROUP_COLUMNS: [&str; 10] = [
+    "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS", "SUMMARY",
+];
+
+/// Where `REASON` sits in [`PROPOSAL_COLUMNS`].
+const PROPOSAL_REASON_COLUMN: usize = 6;
+
+/// The widest title a hit's table row shows, in display columns.
+const TITLE_CELL_COLUMNS: usize = 40;
+
 /// The kit's result of a write; the binary's error wraps its failure.
 type Result = cw_cli::Result<()>;
+
+/// A list's `--json` form: [`Envelope`] around its records.
+struct ListJson<'a> {
+    records: &'a Records,
+    total: usize,
+    warnings: &'a [WarningPayload],
+    message_matches: Option<usize>,
+}
+
+impl Serialize for ListJson<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let (total, warnings) = (self.total, self.warnings);
+        match self.records {
+            Records::Groups(items) => {
+                envelope("items", items, total, warnings).serialize(serializer)
+            }
+            Records::Entries(items) => {
+                envelope("entries", items, total, warnings).serialize(serializer)
+            }
+            Records::Sessions { items, .. } => {
+                envelope("sessions", items, total, warnings).serialize(serializer)
+            }
+            Records::SessionTree { rows, .. } => {
+                envelope("sessions", rows, total, warnings).serialize(serializer)
+            }
+            Records::Proposals(items) => {
+                envelope("proposals", items, total, warnings).serialize(serializer)
+            }
+            Records::Tags(items) => envelope("tags", items, total, warnings).serialize(serializer),
+            Records::Hits(items) => Envelope {
+                message_matches: self.message_matches,
+                ..envelope("hits", items, total, warnings)
+            }
+            .serialize(serializer),
+            Records::Transcripts(items) => {
+                envelope("transcripts", items, total, warnings).serialize(serializer)
+            }
+            Records::Marks(items) => {
+                envelope("marks", items, total, warnings).serialize(serializer)
+            }
+        }
+    }
+}
+
+/// The `--json` form of a list: always `{"<records>": [...], "total",
+/// "truncated", "warnings"}`, whatever the flags, so its shape never depends
+/// on them (STD-01 R34, R10). Only a search that hints at stored messages
+/// adds `message_matches` after them, so every other list is unchanged.
+struct Envelope<'a, T> {
+    key: &'static str,
+    items: &'a [T],
+    total: usize,
+    warnings: &'a [WarningPayload],
+    message_matches: Option<usize>,
+}
+
+impl<T: Serialize> Serialize for Envelope<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let len = if self.message_matches.is_some() { 5 } else { 4 };
+        let mut map = serializer.serialize_map(Some(len))?;
+        map.serialize_entry(self.key, self.items)?;
+        map.serialize_entry("total", &self.total)?;
+        map.serialize_entry("truncated", &(self.items.len() < self.total))?;
+        map.serialize_entry("warnings", self.warnings)?;
+        if let Some(count) = self.message_matches {
+            map.serialize_entry("message_matches", &count)?;
+        }
+        map.end()
+    }
+}
+
+/// One cell of a row as scribe builds it: its text, which the plain line and
+/// the detail view read back, and what its color means.
+#[derive(Clone, Debug)]
+pub(super) struct Cell {
+    /// The text; an absent value is `-`, never empty (STD-01 R14), except in a
+    /// continuation row.
+    pub(super) text: String,
+    /// Semantic color role.
+    pub(super) role: Role,
+}
+
+impl Cell {
+    /// A cell with no emphasis.
+    pub(super) fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            role: Role::Neutral,
+        }
+    }
+}
 
 fn left(header: &'static str) -> Column {
     Column::new(header)
@@ -154,76 +256,6 @@ fn hit_columns() -> Vec<Column> {
     ]
 }
 
-/// A list's `--json` form: [`Envelope`] around its records.
-struct ListJson<'a> {
-    records: &'a Records,
-    total: usize,
-    warnings: &'a [WarningPayload],
-    message_matches: Option<usize>,
-}
-
-impl Serialize for ListJson<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let (total, warnings) = (self.total, self.warnings);
-        match self.records {
-            Records::Groups(items) => {
-                envelope("items", items, total, warnings).serialize(serializer)
-            }
-            Records::Entries(items) => {
-                envelope("entries", items, total, warnings).serialize(serializer)
-            }
-            Records::Sessions { items, .. } => {
-                envelope("sessions", items, total, warnings).serialize(serializer)
-            }
-            Records::SessionTree { rows, .. } => {
-                envelope("sessions", rows, total, warnings).serialize(serializer)
-            }
-            Records::Proposals(items) => {
-                envelope("proposals", items, total, warnings).serialize(serializer)
-            }
-            Records::Tags(items) => envelope("tags", items, total, warnings).serialize(serializer),
-            Records::Hits(items) => Envelope {
-                message_matches: self.message_matches,
-                ..envelope("hits", items, total, warnings)
-            }
-            .serialize(serializer),
-            Records::Transcripts(items) => {
-                envelope("transcripts", items, total, warnings).serialize(serializer)
-            }
-            Records::Marks(items) => {
-                envelope("marks", items, total, warnings).serialize(serializer)
-            }
-        }
-    }
-}
-
-/// The `--json` form of a list: always `{"<records>": [...], "total",
-/// "truncated", "warnings"}`, whatever the flags, so its shape never depends
-/// on them (STD-01 R34, R10). Only a search that hints at stored messages
-/// adds `message_matches` after them, so every other list is unchanged.
-struct Envelope<'a, T> {
-    key: &'static str,
-    items: &'a [T],
-    total: usize,
-    warnings: &'a [WarningPayload],
-    message_matches: Option<usize>,
-}
-
-impl<T: Serialize> Serialize for Envelope<'_, T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let len = if self.message_matches.is_some() { 5 } else { 4 };
-        let mut map = serializer.serialize_map(Some(len))?;
-        map.serialize_entry(self.key, self.items)?;
-        map.serialize_entry("total", &self.total)?;
-        map.serialize_entry("truncated", &(self.items.len() < self.total))?;
-        map.serialize_entry("warnings", self.warnings)?;
-        if let Some(count) = self.message_matches {
-            map.serialize_entry("message_matches", &count)?;
-        }
-        map.end()
-    }
-}
-
 /// A list: table, tab-separated lines, or the JSON envelope. `total` is how
 /// many matched; `message_matches` is the count a search's hint gives.
 pub(crate) fn list<O: Write, E: Write>(
@@ -327,27 +359,6 @@ fn list_table(mode: Mode, shorts: &ShortIds, records: &Records) -> Table {
         ),
     };
     table(mode, columns, rows)
-}
-
-/// One cell of a row as scribe builds it: its text, which the plain line and
-/// the detail view read back, and what its color means.
-#[derive(Clone, Debug)]
-pub(super) struct Cell {
-    /// The text; an absent value is `-`, never empty (STD-01 R14), except in a
-    /// continuation row.
-    pub(super) text: String,
-    /// Semantic color role.
-    pub(super) role: Role,
-}
-
-impl Cell {
-    /// A cell with no emphasis.
-    pub(super) fn plain(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            role: Role::Neutral,
-        }
-    }
 }
 
 /// The kit table for `rows`. In a table an empty cell is an absent value and
@@ -488,11 +499,6 @@ fn group_list_columns() -> Vec<Column> {
         right("SEATS"),
     ]
 }
-
-/// The full field list: `group show` labels and the tab-separated line.
-const GROUP_COLUMNS: [&str; 10] = [
-    "ID", "TITLE", "KIND", "PROJECT", "OPENED", "CLOSED", "OPENER", "RELATED", "SEATS", "SUMMARY",
-];
 
 fn group_list_row(g: &scribe_core::group::Group) -> Vec<Cell> {
     [
@@ -910,9 +916,6 @@ fn proposal_rows(p: &ProposalPayload, mode: Mode, shorts: &ShortIds) -> Vec<Vec<
     rows
 }
 
-/// Where `REASON` sits in [`PROPOSAL_COLUMNS`].
-const PROPOSAL_REASON_COLUMN: usize = 6;
-
 /// `The user's words: "<quote>"` (or the assistant's) for a candidate
 /// carrying scribe's context or an older claim's statement.
 fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
@@ -1008,9 +1011,6 @@ fn hit_row(h: &HitPayload, mode: Mode, shorts: &ShortIds) -> Vec<Cell> {
         Cell::plain(one_line(&h.snippet)),
     ]
 }
-
-/// The widest title a hit's table row shows, in display columns.
-const TITLE_CELL_COLUMNS: usize = 40;
 
 /// A hit's title as its table row shows it: cut to [`TITLE_CELL_COLUMNS`]
 /// display columns, ending in one `…` when anything was cut. The cap is

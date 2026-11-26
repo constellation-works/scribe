@@ -17,6 +17,9 @@ use serde::{Serialize, Serializer};
 use std::fmt::{self, Write as _};
 use std::io::Write;
 
+/// The width of the detail view's label column.
+const LABEL_WIDTH: usize = 12;
+
 /// A detail view under construction: text in order, a span at a time, so a
 /// value can carry the role that colors it. The kit escapes each span.
 #[derive(Default)]
@@ -1033,9 +1036,6 @@ fn session_log(out: &mut Detail, s: &SessionPayload) -> fmt::Result {
     }
     Ok(())
 }
-
-/// The width of the detail view's label column.
-const LABEL_WIDTH: usize = 12;
 
 /// `label  value`, with continuation lines indented under the value. A label
 /// as long as the column or longer is followed by one space, never run into
