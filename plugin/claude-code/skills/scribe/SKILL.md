@@ -110,7 +110,7 @@ Don't act on an item unless the human asks.
 - Read [memory](references/memory.md) to use the profile, raise dated items or milestones, or handle a request to correct or forget memory.
 - Read [store maintenance](references/store-maintenance.md) to suggest entries, tags or stale-session deactivations, or record a spoken instruction.
 - Read [action tags](references/action-tags.md) before looking up or writing work items under an action tag.
-- Something waits for Daniel, or a decision outlives its task → [decisions](references/decisions.md).
+- Read [decisions](references/decisions.md) when managing open items or decisions that outlive their task.
 - Read [catchers and incidents](references/catchers.md) to inspect catchers or search for earlier incidents.
 - Read [project init](references/project-init.md) before scaffolding a requested project integration.
 - Read [capture controls](references/capture-controls.md) to explain cataloging, annotations, typed controls or hook status.
