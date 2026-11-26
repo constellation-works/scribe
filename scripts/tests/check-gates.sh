@@ -199,6 +199,8 @@ for shape in db/codec repository/audit; do
     $'use crate::db::{\n    docs,\n    files,\n};' \
     $'use crate::{\n    db::files,\n};' \
     'use super::super::db::{files, DB_FILE};' \
+    'use crate::db::{files, DB_FILE};' \
+    $'/*\nuse crate::db::{files, DB_FILE};\n*/\nuse crate::db::{files, DB_FILE};' \
     $'use crate::db::{\n    docs, // done; next\n    files,\n};' \
     $'use crate::db::{\n    docs, /* a; b */\n    files,\n};' \
     'pub(in crate::db) use crate::db::{files as private_files};' \
@@ -211,6 +213,10 @@ for shape in db/codec repository/audit; do
     'use crate::{db::docs, other::files};' $'use crate::db::{\n    docs,\n    files_extra,\n};' \
     'use super::super::db::{docs, DB_FILE};' 'pub(in crate::db) use crate::db::{docs as d};' \
     $'use crate::db::{\n    docs, // files; not an import\n};' \
+    $'/*\nuse crate::db::{files, DB_FILE};\n*/' \
+    '/* use crate::db::{files, DB_FILE}; */' \
+    $'/*\n/* nested */\nuse crate::db::{files, DB_FILE};\n*/' \
+    '// use crate::db::{files, DB_FILE};' \
     'struct Example { files: Vec<String> }' 'fn f(files: usize) { let files = files + 1; }'; do
     ok=$(store_tree "store-near-$n")
     printf '%s\n' "$clean_import" >"$ok/crates/scribe-store/src/${shape}.rs"

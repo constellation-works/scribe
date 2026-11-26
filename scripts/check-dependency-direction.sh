@@ -406,8 +406,9 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
       return @out;
     }
     # Blank comments first (keeping newlines, so line numbers hold): a
-    # semicolon inside one must not end a statement early.
-    s{/\*.*?\*/}{ (my $c = $&) =~ s/[^\n]//g; $c }gse;
+    # semicolon inside one must not end a statement early. Block comments
+    # nest in Rust, so strip from the innermost out.
+    1 while s{/\*(?:(?!/\*|\*/).)*\*/}{ (my $c = $&) =~ s/[^\n]//g; $c }gse;
     s{//[^\n]*}{}g;
     while (/^[ \t]*(?:pub(?:[ \t]*\([^)]*\))?[ \t]+)?use\s+([^;]+);/mg) {
       my ($tree, $at) = ($1, $-[0]);
