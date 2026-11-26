@@ -146,11 +146,19 @@ fn bad_capture_fields_are_refused_as_config_invalid() {
     for (toml, needle) in [
         (
             "[tags.preferences.capture]\nfrom = \"everyone\"\n",
-            "is not one of: user, assistant, both",
+            "line 2: tags.preferences.capture.from: 'everyone' is not one of: user, assistant, both",
+        ),
+        (
+            "[tags.preferences.capture]\nfrom = \"daniel\"\n",
+            "line 2: tags.preferences.capture.from: 'daniel' is not one of: user, assistant, both",
         ),
         (
             "[tags.preferences.capture]\nroute = \"file\"\n",
-            "is not one of: propose, write",
+            "line 2: tags.preferences.capture.route: 'file' is not one of: propose, write",
+        ),
+        (
+            "[tags.preferences.capture]\nroute = \"agent\"\n",
+            "line 2: tags.preferences.capture.route: 'agent' is not one of: propose, write",
         ),
         (
             "[tags.preferences.capture]\nmax_open = 0\n",
@@ -192,9 +200,11 @@ fn a_new_tag_takes_capture_rules_from_config_and_no_issue_tag_ships() {
     let fx = Fixture::new();
     config(
         &fx,
-        "[tags.rituals.capture]\nfrom = \"daniel\"\nroute = \"propose\"\ntriggers = [\"every morning\"]\n",
+        "[tags.rituals.capture]\nfrom = \"user\"\nroute = \"propose\"\ntriggers = [\"every morning\"]\n",
     );
     let rituals = show(&fx, "rituals");
+    assert_eq!(rituals["capture"]["from"], "user");
+    assert_eq!(rituals["capture"]["route"], "propose");
     assert_eq!(rituals["capture"]["triggers"], json!(["every morning"]));
     assert_eq!(rituals["capture"]["criteria"], Value::Null);
     assert_eq!(rituals["capture"]["origin"]["criteria"]["source"], "none");

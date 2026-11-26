@@ -81,7 +81,6 @@ pub(crate) enum EntryCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum EntryAuthorKind {
     // A #scribe line the user typed.
-    #[value(alias = "daniel")]
     User,
     // A CLI write verb.
     Agent,

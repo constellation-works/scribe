@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: catchers — the [tags.<tag>.capture] fields (from, route, triggers, criteria, not, max_open), how the session pass applies them, the shipped preferences and standard catchers, and example catchers (orbit, todo, issue, idea) that are config only"
-last_validated: 2026-11-23
+last_validated: 2026-11-26
 ---
 
 # Spec: Catchers
@@ -43,7 +43,7 @@ max_open = 10
 
 | Field | Values | Default | Meaning |
 |---|---|---|---|
-| `from` | `user`, `assistant`, `both` | the shipped value; none for a new tag | Whose turns the catcher reads. `daniel` still reads as `user`, with a warning, for the 30-day compatibility window. |
+| `from` | `user`, `assistant`, `both` | the shipped value; none for a new tag | Whose turns the catcher reads. |
 | `route` | `propose`, `write` | the shipped value; none for a new tag | `propose` opens a claim the user settles with `#scribe approve` or `#scribe reject`. `write` has the pass write the entry itself, authored by `scribe:session-pass`, with no claim: a **collector**. |
 | `triggers` | up to 32 phrases, each at most 120 characters, words separated by spaces; `*` stands for zero to four words between two words | the shipped list; none for a new tag | A turn reaches the model under the tag only when one occurs in it, matched on word boundaries, case-insensitive. The list replaces the shipped one whole. |
 | `criteria` | at most 300 characters | the shipped text; none | What qualifies, given to the model as the tag's definition. |
@@ -150,9 +150,9 @@ not = "A direction to act now; a preference; a question of fact."
 ## Removed in phase 2
 
 - `route = "agent"` and the prompt hook's root-cause line. A table that
-  still says `agent` (or a `[tags.issue.capture]` table with no route)
-  loads with a warning and catches nothing; set `route = "write"` as in
-  the `issue` example. It is refused after the 30-day window.
+  sets `route = "agent"` (or a `[tags.issue.capture]` table without `from` and
+  `route`) is refused as `config_invalid`; set `route = "write"` with `from`
+  and `triggers` as in the `issue` example.
 - The issue record kind and the `scribe issue` noun (`add`, `occur`,
   `update`, `move`, `search`, `show`, `list`, `stats`), `#scribe forget
   <issue-id>[#<n>]`, `scribe search --kind issue` and `ask`'s issue

@@ -67,14 +67,12 @@ struct RawCapture {
 }
 
 impl RawCapture {
-    /// `shipped` with each configured field in its place, checked. A
-    /// deprecated spelling loads and pushes its warning onto `warnings`.
+    /// `shipped` with each configured field in its place, checked.
     fn resolve(
         self,
         key: &str,
         text: &str,
         shipped: CaptureRules,
-        warnings: &mut Vec<String>,
     ) -> Result<CaptureRules, ConfigError> {
         let at = |span: std::ops::Range<usize>| Some(line_of(text, span.start));
         let origin = |span: std::ops::Range<usize>| RuleOrigin::Config { line: at(span) };
@@ -82,21 +80,6 @@ impl RawCapture {
             line: at(span),
             message,
         };
-        // Route `agent` served only the removed issue records (2_design.md
-        // §15.2): the prompt hook's root-cause line. A table that sets it,
-        // or an `issue` table that inherited it from the shipped rules, still
-        // loads for the 30-day compatibility window, catching nothing.
-        let agent = self
-            .route
-            .as_ref()
-            .is_some_and(|route| route.get_ref() == "agent")
-            || (key == "tags.issue.capture" && self.route.is_none() && shipped.route.is_none());
-        if agent {
-            warnings.push(format!(
-                "config table {key} uses route \"agent\", which is removed with the issue records: it catches nothing; set route = \"write\" with from and triggers to collect incidents (specs/catchers.md)"
-            ));
-            return Ok(CaptureRules::default());
-        }
         let mut rules = shipped;
         if let Some(from) = self.from {
             let span = from.span();
@@ -109,13 +92,6 @@ impl RawCapture {
                     ),
                 )
             })?;
-            // `daniel` is the pre-format-23 spelling, read as `user` for the
-            // 30-day compatibility window.
-            if from.get_ref() == "daniel" {
-                warnings.push(format!(
-                    "config key {key}.from = \"daniel\" is deprecated: write from = \"user\""
-                ));
-            }
             rules.from = Some(Rule {
                 value,
                 origin: origin(span),
@@ -230,8 +206,6 @@ impl RawCapture {
 struct DeclaredTag {
     def: TagDef,
     aliases_set: bool,
-    /// Deprecated spellings it loaded with.
-    warnings: Vec<String>,
 }
 
 impl RawTag {
@@ -290,15 +264,9 @@ impl RawTag {
         let shipped_capture = shipped
             .as_ref()
             .map_or_else(CaptureRules::default, |def| def.capture.clone());
-        let mut warnings = Vec::new();
         let capture = match self.capture {
             None => shipped_capture,
-            Some(raw) => raw.resolve(
-                &format!("{key}.capture"),
-                text,
-                shipped_capture,
-                &mut warnings,
-            )?,
+            Some(raw) => raw.resolve(&format!("{key}.capture"), text, shipped_capture)?,
         };
         let aliases_set = self.aliases.is_some();
         let aliases = match self.aliases {
@@ -325,7 +293,6 @@ impl RawTag {
                 capture,
             },
             aliases_set,
-            warnings,
         })
     }
 }
@@ -401,10 +368,7 @@ fn strip_claimed_aliases(
 /// did not set, minus aliases another of his entries claimed.
 fn merge_with_shipped(declared: Vec<DeclaredTag>) -> Result<(TagTable, Vec<String>), ConfigError> {
     refuse_config_collisions(&declared)?;
-    let mut warnings: Vec<String> = declared
-        .iter()
-        .flat_map(|tag| tag.warnings.iter().cloned())
-        .collect();
+    let mut warnings: Vec<String> = Vec::new();
     let mut tags = Vec::new();
     let by_name: BTreeMap<&str, &DeclaredTag> = declared
         .iter()

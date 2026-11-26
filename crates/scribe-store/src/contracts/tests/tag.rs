@@ -165,3 +165,19 @@ fn both_routes_give_the_pass_triggers_and_only_write_collects() {
         assert_eq!(rules.writes(), writes, "{route:?}");
     }
 }
+
+#[test]
+fn capture_from_and_route_accept_current_spellings_and_reject_retired_ones() {
+    use crate::tag::{CaptureFrom, CaptureRoute};
+    assert_eq!(CaptureFrom::parse("user"), Some(CaptureFrom::User));
+    assert_eq!(
+        CaptureFrom::parse("assistant"),
+        Some(CaptureFrom::Assistant)
+    );
+    assert_eq!(CaptureFrom::parse("both"), Some(CaptureFrom::Both));
+    assert_eq!(CaptureFrom::parse("daniel"), None);
+
+    assert_eq!(CaptureRoute::parse("propose"), Some(CaptureRoute::Propose));
+    assert_eq!(CaptureRoute::parse("write"), Some(CaptureRoute::Write));
+    assert_eq!(CaptureRoute::parse("agent"), None);
+}

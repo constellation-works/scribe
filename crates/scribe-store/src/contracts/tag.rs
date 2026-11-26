@@ -97,12 +97,11 @@ impl CaptureFrom {
         }
     }
 
-    /// Parse the config token; `daniel`, the pre-format-23 spelling, reads
-    /// as `user`.
+    /// Parse the config token.
     #[must_use]
     pub fn parse(token: &str) -> Option<Self> {
         match token {
-            "user" | "daniel" => Some(Self::User),
+            "user" => Some(Self::User),
             "assistant" => Some(Self::Assistant),
             "both" => Some(Self::Both),
             _ => None,
