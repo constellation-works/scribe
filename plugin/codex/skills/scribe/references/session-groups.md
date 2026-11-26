@@ -85,6 +85,7 @@ For open, join, leave and close in Codex, put `--provider codex` before
   closer drafted from evidence, not the human's words. Quote the human only from a
   stored-turn hit titled `(user)`, citing its `session:<id>`.
 - **Close.** When the human asks, run `scribe group evidence <id> --json` from the opening session or current holder of the opener's seat. Draft a summary from that evidence and use its returned canonical `id` in `scribe group close <id> --summary '<text>' --if-evidence <evidence_sha256>`. For headless work, run the Orbit job `scribe-group-close`. Use `--no-summary` to close explicitly without one.
+- The `scribe-group-close` job uses the configured `group_summary_crew`; if it is unset or blank, the prepare tool selects `haiku`.
 - **Close with a quote.** From any other session, include `--quote '<span>'` on both evidence and close. The span must be the human's own typed words in this session and contain the exact canonical group id (`g-<n>`), not a slug. This does not take a seat.
 - **Quote length.** The span may omit other words from that turn only when it
   still contains the complete id and has at least eight characters after the

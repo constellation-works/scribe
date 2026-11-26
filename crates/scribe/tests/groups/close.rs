@@ -1,4 +1,26 @@
 #[test]
+fn group_close_prepare_uses_haiku_for_unset_or_blank_crew_and_preserves_explicit_crew() {
+    for (crew, expected) in [
+        (None, "haiku"),
+        (Some(""), "haiku"),
+        (Some(" \t "), "haiku"),
+        (Some("sonnet"), "sonnet"),
+    ] {
+        let f = Fixture::new();
+        transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
+        open(&f);
+        let prepared = close_plugin_with_crew(
+            &f,
+            "group-close-prepare",
+            json!({"group":"g-1", "session":A, "provider":"claude-code"}),
+            crew,
+        );
+        assert_eq!(prepared["ok"], true, "{prepared}");
+        assert_eq!(prepared["output"]["crew"], expected, "{crew:?}: {prepared}");
+    }
+}
+
+#[test]
 fn opener_closes_with_one_bounded_summary_and_the_project_brief_shows_it() {
     let f = Fixture::new();
     transcript(&f, A, &[row(A, "u", "user", QUOTE)]);
