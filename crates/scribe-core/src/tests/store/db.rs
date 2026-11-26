@@ -20,6 +20,19 @@ use std::time::Duration;
 
 const SECRET: &str = "sk-live-0123456789abcdef";
 
+const CHILD_ROOT: &str = "SCRIBE_TEST_DB_CHILD_ROOT";
+const CHILD_ID: &str = "SCRIBE_TEST_DB_CHILD_ID";
+const WRITERS: usize = 6;
+const WINDOWS: usize = 10;
+
+#[derive(Debug, PartialEq)]
+struct ProjectGroupRows {
+    groups: Vec<Vec<rusqlite::types::Value>>,
+    members: Vec<Vec<rusqlite::types::Value>>,
+    messages: Vec<Vec<rusqlite::types::Value>>,
+    sessions: Vec<Vec<rusqlite::types::Value>>,
+}
+
 fn message(session: &str, id: &str, text: &str) -> NewMessage {
     NewMessage {
         session: session.parse().unwrap(),
@@ -46,14 +59,6 @@ fn rows(conn: &rusqlite::Connection, query: &str) -> Vec<Vec<rusqlite::types::Va
         .unwrap()
         .map(Result::unwrap)
         .collect()
-}
-
-#[derive(Debug, PartialEq)]
-struct ProjectGroupRows {
-    groups: Vec<Vec<rusqlite::types::Value>>,
-    members: Vec<Vec<rusqlite::types::Value>>,
-    messages: Vec<Vec<rusqlite::types::Value>>,
-    sessions: Vec<Vec<rusqlite::types::Value>>,
 }
 
 fn project_group_rows(path: &Path) -> ProjectGroupRows {
@@ -472,11 +477,6 @@ fn a_writer_held_past_the_lock_wait_is_locked() {
         .write_messages(&[message("s-1", "m-2", "more")], &Redactor::default())
         .unwrap();
 }
-
-const CHILD_ROOT: &str = "SCRIBE_TEST_DB_CHILD_ROOT";
-const CHILD_ID: &str = "SCRIBE_TEST_DB_CHILD_ID";
-const WRITERS: usize = 6;
-const WINDOWS: usize = 10;
 
 /// One writer of the harness below: a no-op unless it was started as a
 /// child with the root in its environment. Each window is its own

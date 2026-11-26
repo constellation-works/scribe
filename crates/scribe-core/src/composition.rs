@@ -34,43 +34,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
+/// Define an accessor of the context's state: public to the binary's tests
+/// (`test-support`), which read the store and the clock they run against,
+/// and crate-visible otherwise, so the binary holds the context opaquely
+/// (ORB-27921 step 3).
+macro_rules! state_accessor {
+    ($(#[$meta:meta])* fn $name:ident $($rest:tt)*) => {
+        $(#[$meta])*
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn $name $($rest)*
+        $(#[$meta])*
+        #[cfg(not(any(test, feature = "test-support")))]
+        pub(crate) fn $name $($rest)*
+    };
+}
+
 /// The program's name: the prefix of its own variables (`SCRIBE_ROOT`,
 /// `SCRIBE_FORMAT`, `SCRIBE_LOG`).
 pub const APP: &str = "scribe";
-
-/// The variable a provider sets to the calling session's id: what `group`
-/// reads to know who calls.
-pub(crate) const fn caller_env(provider: Provider) -> EnvVar {
-    match provider {
-        Provider::ClaudeCode => CLAUDE_CODE_SESSION_ID,
-        Provider::Codex => CODEX_THREAD_ID,
-    }
-}
-
-/// The running scribe executable, which `init`'s hooks point at.
-///
-/// # Errors
-///
-/// [`CommandError::Read`] when it cannot be resolved, and
-/// [`CommandError::Usage`] when its path is not UTF-8.
-pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
-    let binary = std::env::current_exe().map_err(|source| CommandError::Read {
-        what: String::from("installed scribe executable"),
-        source,
-    })?;
-    if binary.to_str().is_none() {
-        return Err(CommandError::Usage(String::from(
-            "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
-        )));
-    }
-    Ok(binary)
-}
-
-// Each variable scribe names is declared once as an `EnvVar` (its name,
-// meaning, default and the flag it overrides): here, in the provider module
-// that reads it (PATH, LANG, CODEX_HOME), or in the kit (`cw_app::env`, for
-// ROOT, HOME and the terminal variables). Reads go through `read` or
-// `EnvVar::name_for`, and [`ENV_VARS`] is the usage table's source.
 
 /// `SCRIBE_ROOT`: specialize the kit's shared declaration with Scribe's
 /// concrete default. The same declaration supplies the name used by reads
@@ -149,60 +130,11 @@ pub const ENV_VARS: &[EnvVar] = &[
     COMPUTERNAME,
 ];
 
-/// The usage table of [`ENV_VARS`] as Markdown: a header, then one row per
-/// variable with its name, meaning, default and overriding flag (`—` when
-/// there is none). A `|` in a cell is escaped. `docs/guide.md` carries this
-/// table, and `make goldens` fails when the two differ.
-#[must_use]
-pub fn env_table() -> String {
-    let header = "| Variable | Meaning | Default | Flag |\n|---|---|---|---|";
-    let rows = ENV_VARS.iter().map(|var| {
-        format!(
-            "| `{}` | {} | {} | {} |",
-            var.name_for(APP),
-            cell(var.meaning()),
-            var.default().map_or_else(|| "—".to_owned(), cell),
-            var.flag()
-                .map_or_else(|| "—".to_owned(), |flag| format!("`{}`", cell(flag))),
-        )
-    });
-    std::iter::once(header.to_owned())
-        .chain(rows)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// `text` safe inside a table cell: a `|` escaped.
-fn cell(text: &str) -> String {
-    text.replace('|', "\\|")
-}
-
-/// The value of `var` in the process environment, as set. An empty value is
-/// returned as set: each reader decides what empty means.
-fn read(var: &EnvVar) -> Option<OsString> {
-    std::env::var_os(var.name_for(APP))
-}
-
 /// The host label used when the host name cannot be read or is not a label.
 const UNKNOWN_HOST: &str = "unknown-host";
 
 /// Directory under `$HOME` used when nothing else names one.
 const DEFAULT_DIR: &str = ".scribe";
-
-/// Define an accessor of the context's state: public to the binary's tests
-/// (`test-support`), which read the store and the clock they run against,
-/// and crate-visible otherwise, so the binary holds the context opaquely
-/// (ORB-27921 step 3).
-macro_rules! state_accessor {
-    ($(#[$meta:meta])* fn $name:ident $($rest:tt)*) => {
-        $(#[$meta])*
-        #[cfg(any(test, feature = "test-support"))]
-        pub fn $name $($rest)*
-        $(#[$meta])*
-        #[cfg(not(any(test, feature = "test-support")))]
-        pub(crate) fn $name $($rest)*
-    };
-}
 
 /// Selected configuration and log values, plus the process snapshot the
 /// binary's terminal decision reads. The snapshot is a separate full-process
@@ -584,6 +516,74 @@ impl Context {
             now.replace_nanosecond(0).unwrap_or(now)
         }
     }
+}
+
+/// The variable a provider sets to the calling session's id: what `group`
+/// reads to know who calls.
+pub(crate) const fn caller_env(provider: Provider) -> EnvVar {
+    match provider {
+        Provider::ClaudeCode => CLAUDE_CODE_SESSION_ID,
+        Provider::Codex => CODEX_THREAD_ID,
+    }
+}
+
+/// The running scribe executable, which `init`'s hooks point at.
+///
+/// # Errors
+///
+/// [`CommandError::Read`] when it cannot be resolved, and
+/// [`CommandError::Usage`] when its path is not UTF-8.
+pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
+    let binary = std::env::current_exe().map_err(|source| CommandError::Read {
+        what: String::from("installed scribe executable"),
+        source,
+    })?;
+    if binary.to_str().is_none() {
+        return Err(CommandError::Usage(String::from(
+            "scribe executable path is not UTF-8; install it at a UTF-8 path before initializing hooks",
+        )));
+    }
+    Ok(binary)
+}
+
+// Each variable scribe names is declared once as an `EnvVar` (its name,
+// meaning, default and the flag it overrides): here, in the provider module
+// that reads it (PATH, LANG, CODEX_HOME), or in the kit (`cw_app::env`, for
+// ROOT, HOME and the terminal variables). Reads go through `read` or
+// `EnvVar::name_for`, and [`ENV_VARS`] is the usage table's source.
+
+/// The usage table of [`ENV_VARS`] as Markdown: a header, then one row per
+/// variable with its name, meaning, default and overriding flag (`—` when
+/// there is none). A `|` in a cell is escaped. `docs/guide.md` carries this
+/// table, and `make goldens` fails when the two differ.
+#[must_use]
+pub fn env_table() -> String {
+    let header = "| Variable | Meaning | Default | Flag |\n|---|---|---|---|";
+    let rows = ENV_VARS.iter().map(|var| {
+        format!(
+            "| `{}` | {} | {} | {} |",
+            var.name_for(APP),
+            cell(var.meaning()),
+            var.default().map_or_else(|| "—".to_owned(), cell),
+            var.flag()
+                .map_or_else(|| "—".to_owned(), |flag| format!("`{}`", cell(flag))),
+        )
+    });
+    std::iter::once(header.to_owned())
+        .chain(rows)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `text` safe inside a table cell: a `|` escaped.
+fn cell(text: &str) -> String {
+    text.replace('|', "\\|")
+}
+
+/// The value of `var` in the process environment, as set. An empty value is
+/// returned as set: each reader decides what empty means.
+fn read(var: &EnvVar) -> Option<OsString> {
+    std::env::var_os(var.name_for(APP))
 }
 
 /// The transcripts directory precedence, separated so tests can check it.

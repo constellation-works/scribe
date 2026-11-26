@@ -24,6 +24,21 @@ use time::{Date, Duration, OffsetDateTime};
 
 const TURN: &str = "My sister's wedding is on december 12 and I'm still on the seating.";
 
+const LEGACY: &str = "---\nformat: 24\nkind: memory\nid: m-1\nsection: now\nstatus: active\n\
+     statement: Said the release ships on 2026-12-01.\n\
+     occurrences: [{n: 1, session: 0b8ef4a6-0c6a-4d77-9c41-000000000001, quote: \"the release ships on december 1\"}]\n---\n";
+
+struct FixedClock(OffsetDateTime);
+
+impl Clock for FixedClock {
+    fn now(&self) -> OffsetDateTime {
+        self.0
+    }
+    fn now_precise(&self) -> OffsetDateTime {
+        self.0
+    }
+}
+
 fn id(n: u32) -> SessionId {
     format!("0b8ef4a6-0c6a-4d77-9c41-{n:012}").parse().unwrap()
 }
@@ -213,17 +228,6 @@ fn answer(profile: String) -> ProfileAnswer {
     ProfileAnswer {
         profile,
         milestones: Vec::new(),
-    }
-}
-
-struct FixedClock(OffsetDateTime);
-
-impl Clock for FixedClock {
-    fn now(&self) -> OffsetDateTime {
-        self.0
-    }
-    fn now_precise(&self) -> OffsetDateTime {
-        self.0
     }
 }
 
@@ -693,10 +697,6 @@ fn a_refresh_that_needs_orbit_keeps_its_format_twenty_four_archive() {
         .unwrap();
     assert_eq!(archived, 1);
 }
-
-const LEGACY: &str = "---\nformat: 24\nkind: memory\nid: m-1\nsection: now\nstatus: active\n\
-     statement: Said the release ships on 2026-12-01.\n\
-     occurrences: [{n: 1, session: 0b8ef4a6-0c6a-4d77-9c41-000000000001, quote: \"the release ships on december 1\"}]\n---\n";
 
 /// A format-24 `m-<n>` item is not read: a read counts it and writes
 /// nothing, and the next write archives it (2_design.md §15.9 phase 8),

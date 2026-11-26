@@ -35,16 +35,6 @@ pub use scribe_tools::session_distill::*;
 /// the removed `ask`, whose budget it was (ORB-27911 step 2 decides it).
 pub const ASK_BUDGET: Duration = Duration::from_secs(90);
 
-/// `text` cut to `max` characters, with [`CUT_MARK`] when it was cut.
-pub(crate) fn bounded(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    let mut cut: String = text.chars().take(max).collect();
-    cut.push_str(CUT_MARK);
-    cut
-}
-
 /// Rebuild `profile.md` from the sessions since the job's cursor
 /// (2_design.md §15.6). The answer is a [`ProfileAnswer`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,4 +138,14 @@ impl ProfileRequest {
         }
         out
     }
+}
+
+/// `text` cut to `max` characters, with [`CUT_MARK`] when it was cut.
+pub(crate) fn bounded(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max).collect();
+    cut.push_str(CUT_MARK);
+    cut
 }

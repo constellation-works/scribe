@@ -190,49 +190,6 @@ pub(crate) trait Audited {
     fn lines(&self) -> Vec<Line>;
 }
 
-/// Run `run` as an app's `exec` runs a command: inside the audit guard when
-/// `audit` names one, and for a command that is not stepwise as one store
-/// transaction with its lines (they commit together, and a refusal rolls
-/// back every write it made before refusing).
-///
-/// The guard exists before the command runs and records when it is dropped,
-/// so a command that returns early or panics is still logged, as a failure.
-pub(crate) fn guarded<O: Audited>(
-    ctx: &impl AuditHost,
-    audit: Option<Audit>,
-    run: impl FnOnce() -> Result<O, CommandError>,
-) -> Result<O, CommandError> {
-    let Some(Audit { meta, subject }) = audit else {
-        return run();
-    };
-    let mut guard = AuditGuard::start(ctx.audit_store(), meta, ctx.audit_now());
-    guard.set_committed_flag(ctx.audit_committed_flag());
-    subject.apply(&mut guard);
-    let finish = |guard: &mut AuditGuard<'_>, result: &Result<O, CommandError>| {
-        guard.mark_result(result);
-        subject.apply(guard);
-        guard.set_instruction(ctx.audit_instruction_note());
-    };
-    if meta.stepwise {
-        let result = run();
-        finish(&mut guard, &result);
-        return result;
-    }
-    let result = ctx.audit_store().transaction(|| {
-        let result = run();
-        finish(&mut guard, &result);
-        let outcome = result?;
-        guard.flush()?;
-        Ok(outcome)
-    });
-    if result.is_err() {
-        // The lines flushed inside rolled back with the transaction: the
-        // guard writes the failure after it.
-        finish(&mut guard, &result);
-    }
-    result
-}
-
 /// Records one command in the audit log when dropped.
 #[must_use = "the audit line is written when the guard is dropped"]
 #[derive(Debug)]
@@ -377,4 +334,47 @@ pub struct HookOutcome {
     pub target: Option<String>,
     /// The stable code of a refusal; `None` for a write.
     pub error_code: Option<&'static str>,
+}
+
+/// Run `run` as an app's `exec` runs a command: inside the audit guard when
+/// `audit` names one, and for a command that is not stepwise as one store
+/// transaction with its lines (they commit together, and a refusal rolls
+/// back every write it made before refusing).
+///
+/// The guard exists before the command runs and records when it is dropped,
+/// so a command that returns early or panics is still logged, as a failure.
+pub(crate) fn guarded<O: Audited>(
+    ctx: &impl AuditHost,
+    audit: Option<Audit>,
+    run: impl FnOnce() -> Result<O, CommandError>,
+) -> Result<O, CommandError> {
+    let Some(Audit { meta, subject }) = audit else {
+        return run();
+    };
+    let mut guard = AuditGuard::start(ctx.audit_store(), meta, ctx.audit_now());
+    guard.set_committed_flag(ctx.audit_committed_flag());
+    subject.apply(&mut guard);
+    let finish = |guard: &mut AuditGuard<'_>, result: &Result<O, CommandError>| {
+        guard.mark_result(result);
+        subject.apply(guard);
+        guard.set_instruction(ctx.audit_instruction_note());
+    };
+    if meta.stepwise {
+        let result = run();
+        finish(&mut guard, &result);
+        return result;
+    }
+    let result = ctx.audit_store().transaction(|| {
+        let result = run();
+        finish(&mut guard, &result);
+        let outcome = result?;
+        guard.flush()?;
+        Ok(outcome)
+    });
+    if result.is_err() {
+        // The lines flushed inside rolled back with the transaction: the
+        // guard writes the failure after it.
+        finish(&mut guard, &result);
+    }
+    result
 }

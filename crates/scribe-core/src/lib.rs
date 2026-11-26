@@ -53,7 +53,7 @@ pub mod action {
     pub use crate::apps::tag::rules::tag_counts;
     pub use crate::store::Pickup;
 }
-pub use apps::session::rules::activity;
+
 /// `annotation` at its old path: the marker scanning (the domain's
 /// `capture`, now `scribe_tools::markers`), the mark shapes (the store's contracts) and the refusal of a
 /// marker (`apps/mark`).
@@ -62,10 +62,11 @@ pub mod annotation {
     pub use scribe_store::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
     pub use scribe_tools::markers::{MAX_MARKS, Mark, MarkProblem, marks, turn_marks};
 }
+
 pub mod apps;
+
 pub mod composition;
-pub use apps::brief::rules as brief;
-pub use provider::Provider;
+
 /// `capture` at its old path: the marker scanning and the settling-line
 /// parser (`scribe_tools::markers`), a typed turn and its prompt hashes
 /// (`apps/hook`), and the origin guard and hashes it re-exported.
@@ -77,8 +78,9 @@ pub mod capture {
         OriginClaims, PromptClaims, agent_originated, present_value, prompt_agent_originated,
     };
 }
-pub(crate) use scribe_tools::text::claim;
+
 pub(crate) mod config;
+
 /// The consistency rules and the settling verbs, at the path they had in
 /// the domain: the stale step (`apps/consistency`), settling and approval
 /// (`apps/proposal`) and `forget` with the outcome every verb reports
@@ -88,6 +90,7 @@ pub mod consistency {
     pub use crate::apps::entry::rules::{SettleRefusal, Settled, forget};
     pub use crate::apps::proposal::rules::*;
 }
+
 /// `control` at its old path: the `/scribe` line's parser
 /// (`scribe_tools::markers::control`) and the switch transitions
 /// (`apps/session`).
@@ -95,8 +98,7 @@ pub mod control {
     pub use crate::apps::session::rules::control::*;
     pub use scribe_tools::markers::control::*;
 }
-pub(crate) use scribe_store::entry;
-pub(crate) use scribe_store::error;
+
 /// `group` at its old path: the group shapes (the store's contracts), the
 /// group app's requests, outcomes and consent (`apps/group`), and the
 /// membership of an entry (`apps/entry`).
@@ -109,18 +111,21 @@ pub mod group {
     pub use crate::models::CloseEvidence;
     pub use scribe_store::{Group, NewGroup, Seat, SeatHold};
 }
+
 /// `handoff` at its old path: the handoff record's shape (the store's
 /// contracts) and the checks a handoff write must pass (`apps/entry`).
 pub mod handoff {
     pub use crate::apps::entry::rules::handoff::*;
     pub use scribe_store::handoff::*;
 }
+
 /// `instruction` at its old path: the instruction check (`apps/entry`) and
 /// what a member's Claude capture has seen (the store's contracts).
 pub mod instruction {
     pub use crate::apps::entry::rules::instruction::*;
     pub use scribe_store::ClaudeSeen;
 }
+
 /// `memory` at its old path: the memory shapes (the store's contracts) and
 /// the memory app's checks, planning, block and profile (`apps/memory`).
 pub mod memory {
@@ -130,6 +135,7 @@ pub mod memory {
         Refusal, SLUG_CHARS, Stem, TEXT_CHARS, TITLE_CHARS,
     };
 }
+
 /// `message` at its old path: the message shapes (the store's contracts),
 /// which typed turns are kept (`apps/entry`) and a pass window's messages
 /// (`apps/session`).
@@ -138,6 +144,7 @@ pub mod message {
     pub use crate::apps::session::rules::message::window;
     pub use scribe_store::{MessageMatch, MessageSearch, NewMessage};
 }
+
 /// The model request and answer shapes (`providers/models.rs`), with the
 /// [`Models`] port and its [`ModelError`](providers::ModelError) from
 /// [`providers`] at their old paths.
@@ -145,7 +152,7 @@ pub mod models {
     pub use crate::providers::models::*;
     pub use crate::providers::{ModelError, Models};
 }
-pub use scribe_tools::origin;
+
 /// `pass` at its old path: the session pass (`apps/session`), its claim
 /// checks (`apps/proposal`, re-exported by the pass) and its window
 /// (`scribe_tools::window`).
@@ -153,6 +160,7 @@ pub mod pass {
     pub use crate::apps::session::rules::pass::*;
     pub use scribe_tools::window::*;
 }
+
 /// `proposal` at its old path: the proposal shapes (the store's contracts)
 /// and the proposal app's rules over them (`apps/proposal`).
 pub(crate) mod proposal {
@@ -162,19 +170,18 @@ pub(crate) mod proposal {
         ProposalError, ProposalId, ProposalKind, ProposalState, Quote, SUBJECT_CHARS,
     };
 }
-pub(crate) use scribe_store::provider;
+
 /// `record` at its old path: the shared record metadata (the store's
 /// contracts) and the list patch (`apps/tag`).
 pub(crate) mod record {
     pub use crate::apps::tag::rules::patch;
     pub use scribe_store::record::*;
 }
+
 pub mod providers;
+
 pub(crate) mod runtime;
-pub use apps::search::rules as search;
-pub use runtime::RunLimits;
-pub use runtime::audit::{Audit, AuditMeta, AuditSubject};
-pub use runtime::errors::CommandError;
+
 /// `session` at its old path: the session shapes and the store's log check
 /// (`scribe_store::session`), the cadence (`config`), and the session
 /// records' rules (`apps/session`).
@@ -183,22 +190,7 @@ pub(crate) mod session {
     pub use crate::config::Cadence;
     pub use scribe_store::session::*;
 }
-#[cfg(not(test))]
-pub(crate) use scribe_store as store;
-pub use transcript::codex;
-// The store tests that call the use cases live here (`tests/store/`), and
-// name the store internals they reach by the paths they had inside it; the
-// internals come from `scribe_store::testing`.
-#[cfg(test)]
-mod store {
-    pub(crate) use crate::tests::store as tests;
-    pub(crate) use scribe_store::testing::{audit, codec, db, memory, write};
-    pub use scribe_store::*;
-    // Use-case types that left the store (ORB-27921 step 4), at the paths
-    // the store tests name them by.
-    pub(crate) use crate::apps::mark::{MarkChange, MarkKey};
-    pub(crate) use crate::apps::session::PassWrite;
-}
+
 pub(crate) mod tag {
     pub use crate::apps::entry::rules::MAX_FINDINGS_PER_SESSION;
     pub use crate::apps::tag::rules::tags::*;
@@ -207,89 +199,20 @@ pub(crate) mod tag {
         RuleOrigin, StoreTag, TagDef, TagError, TagTable,
     };
 }
+
 /// `text` at its old path: the text primitives (`scribe_tools::text`) and
 /// the hashes (`scribe_store::digest`).
 pub mod text {
     pub use scribe_store::digest::{bytes_sha256, prompt_sha256};
     pub use scribe_tools::text::*;
 }
-pub use scribe_tools::text::trigger;
-pub use scribe_tools::text::verbatim;
-pub use scribe_tools::transcript;
+
 pub mod voice {
     //! Compat path: the prompt half is `config::voice`, the entry half
     //! `apps::entry::rules::voice`.
     pub use crate::apps::entry::rules::voice::*;
     pub use crate::config::voice::*;
 }
-
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::entry::EntryVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::entry::PickupVerbs;
-pub use apps::entry::rules::{
-    check_content, check_handoff_related, check_reason, check_unsettled_item,
-};
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::group::GroupVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::mark::MarkVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::memory::MemoryVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::proposal::ProposalVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::session::RebuildVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::session::SessionVerbs;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::session::{ClaimsWritten, PassVerbs};
-pub use apps::session::{SessionList, SessionView};
-pub use apps::tag::TagList;
-#[cfg(any(test, feature = "test-support"))]
-pub use apps::tag::TagVerbs;
-pub use apps::tag::rules::{check_agent_author, check_description};
-pub use config::{
-    Config, ConfigError, ModelIds, RedactorFromConfig, SessionsConfig, unresolved_redact_env,
-};
-pub use entry::{
-    AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
-    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, InvalidItemState, ItemAnswer,
-    ItemClosure, ItemState, NewEntry, OpenItem, Outcome, OutcomeState, Speaker, TagName, Window,
-    WindowTurn,
-};
-pub use error::{Error, Result, WriteRefusal};
-pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
-pub use models::Models;
-pub use proposal::{
-    Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
-    ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
-    SUBJECT_CHARS, close_retired_tag_candidates, context_stands_alone,
-};
-pub use record::{
-    Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
-    RelatedKind, Topic, Topics, parse_day,
-};
-pub use session::{
-    Cadence, Child, ControlState, HEADER_SECTIONS, LOG_SECTION, LinkError, LinkType, LogError,
-    SEGMENT_HEADING_CHARS, SHORT_ID_MIN, Segment, SegmentOrigin, SegmentState, SessionControl,
-    SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
-    SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
-};
-pub use store::repository;
-pub use store::{
-    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, ClaudeCapturePosition,
-    ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportCounts,
-    ExportFormat, ImportFacts, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
-    MILESTONES_DIR, MIN_SECRET_CHARS, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
-    PROFILE_FILE, PROPOSALS_FILE, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
-    SessionForget, SessionLock, SessionRow, Skipped, Snapshot, Store, Tx, resolve_prefix,
-};
-pub use tag::{
-    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
-    MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,
-    TagTable,
-};
 
 /// Test support: the store's ([`scribe_store::testing`]), and a shim for
 /// the reads whose view an app derives (ORB-27921 step 5), so the tests'
@@ -338,5 +261,147 @@ pub mod testing {
         }
     }
 }
+
+pub use apps::session::rules::activity;
+
+pub use apps::brief::rules as brief;
+
+pub use provider::Provider;
+
+pub(crate) use scribe_tools::text::claim;
+
+pub(crate) use scribe_store::entry;
+
+pub(crate) use scribe_store::error;
+
+pub use scribe_tools::origin;
+
+pub(crate) use scribe_store::provider;
+
+pub use apps::search::rules as search;
+
+pub use runtime::RunLimits;
+
+pub use runtime::audit::{Audit, AuditMeta, AuditSubject};
+
+pub use runtime::errors::CommandError;
+
+#[cfg(not(test))]
+pub(crate) use scribe_store as store;
+
+pub use transcript::codex;
+
+pub use scribe_tools::text::trigger;
+
+pub use scribe_tools::text::verbatim;
+
+pub use scribe_tools::transcript;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::entry::EntryVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::entry::PickupVerbs;
+
+pub use apps::entry::rules::{
+    check_content, check_handoff_related, check_reason, check_unsettled_item,
+};
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::group::GroupVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::mark::MarkVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::memory::MemoryVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::proposal::ProposalVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::session::RebuildVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::session::SessionVerbs;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::session::{ClaimsWritten, PassVerbs};
+
+pub use apps::session::{SessionList, SessionView};
+
+pub use apps::tag::TagList;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use apps::tag::TagVerbs;
+
+pub use apps::tag::rules::{check_agent_author, check_description};
+
+pub use config::{
+    Config, ConfigError, ModelIds, RedactorFromConfig, SessionsConfig, unresolved_redact_env,
+};
+
+pub use entry::{
+    AgentEntry, AnswerIn, Cite, ContentFrom, Decision, Entry, EntryError, EntryFilter, EntryId,
+    EntryPatch, EntryStatus, Instruction, InvalidAnswerIn, InvalidItemState, ItemAnswer,
+    ItemClosure, ItemState, NewEntry, OpenItem, Outcome, OutcomeState, Speaker, TagName, Window,
+    WindowTurn,
+};
+
+pub use error::{Error, Result, WriteRefusal};
+
+pub use handoff::{HANDOFF_TAG, HandoffError, HandoffSessionError};
+
+pub use models::Models;
+
+pub use proposal::{
+    Admitted, CONTEXT_CHARS, CONTEXT_SENTENCES, ClosedReason, EntryCandidate, Proposal,
+    ProposalChange, ProposalError, ProposalFilter, ProposalId, ProposalKind, ProposalState, Quote,
+    SUBJECT_CHARS, close_retired_tag_candidates, context_stands_alone,
+};
+
+pub use record::{
+    Author, AuthorKind, AuthorName, DateRange, Label, Listing, Project, RecordError, Related,
+    RelatedKind, Topic, Topics, parse_day,
+};
+
+pub use session::{
+    Cadence, Child, ControlState, HEADER_SECTIONS, LOG_SECTION, LinkError, LinkType, LogError,
+    SEGMENT_HEADING_CHARS, SHORT_ID_MIN, Segment, SegmentOrigin, SegmentState, SessionControl,
+    SessionError, SessionFilter, SessionId, SessionLink, SessionOrder, SessionRecord,
+    SessionStatus, ShortIds, Term, check_link, check_log, children, tree_order, tree_parent,
+};
+
+pub use store::repository;
+
+pub use store::{
+    AUDIT_FILE, AuditEvent, AuditStatus, CONFIG_FILE, CONTROL_FILE, ClaudeCapturePosition,
+    ClaudeGroupCapture, DB_FILE, DEFAULT_LOCK_WAIT, ENTRIES_DIR, EntryList, ExportCounts,
+    ExportFormat, ImportFacts, Imported, IssueAudit, LOCKS_DIR, MARKS_FILE, MEMORY_DIR,
+    MILESTONES_DIR, MIN_SECRET_CHARS, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
+    PROFILE_FILE, PROPOSALS_FILE, ProfileRevision, REDACTED_FIELDS, Redactor, SESSIONS_DIR,
+    SessionForget, SessionLock, SessionRow, Skipped, Snapshot, Store, Tx, resolve_prefix,
+};
+
+pub use tag::{
+    ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG,
+    MAX_FINDINGS_PER_SESSION, Rule, RuleOrigin, StoreTag, TagDef, TagError, TagPatch, TagSummary,
+    TagTable,
+};
+
+// The store tests that call the use cases live here (`tests/store/`), and
+// name the store internals they reach by the paths they had inside it; the
+// internals come from `scribe_store::testing`.
+#[cfg(test)]
+mod store {
+    pub(crate) use crate::tests::store as tests;
+    pub(crate) use scribe_store::testing::{audit, codec, db, memory, write};
+    pub use scribe_store::*;
+    // Use-case types that left the store (ORB-27921 step 4), at the paths
+    // the store tests name them by.
+    pub(crate) use crate::apps::mark::{MarkChange, MarkKey};
+    pub(crate) use crate::apps::session::PassWrite;
+}
+
 #[cfg(test)]
 mod tests;

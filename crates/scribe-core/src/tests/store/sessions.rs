@@ -25,6 +25,19 @@ use std::fs;
 use std::path::Path;
 use time::macros::date;
 
+const WEDDING: &str = "memory/now/2026-12-12-sister-s-wedding.md";
+
+/// Plaintext an older `session rebuild` could store on a forgotten session.
+const STALE_CHECKPOINT: &str = "forgotten-checkpoint-plaintext-9f3a";
+/// Plaintext of a checkpoint that belongs to a session that was not forgotten.
+const LIVE_CHECKPOINT: &str = "live-checkpoint-kept-4c1b";
+
+struct ForgottenPair {
+    dir: tempfile::TempDir,
+    store: Store,
+    forgotten: SessionRecord,
+}
+
 fn code(err: &Error) -> &'static str {
     err.code()
 }
@@ -333,8 +346,6 @@ fn memory(drafts: Vec<Draft>) -> PassMemory {
     }
 }
 
-const WEDDING: &str = "memory/now/2026-12-12-sister-s-wedding.md";
-
 #[test]
 fn a_pass_window_commits_its_record_and_memory_together_then_applies_the_journal() {
     let dir = private_tempdir();
@@ -508,17 +519,6 @@ fn session_forget_retires_single_source_memory_and_keeps_other_occurrences() {
         .unwrap();
     assert_eq!(count, 0);
     assert!(!on_disk(store.root(), sole));
-}
-
-/// Plaintext an older `session rebuild` could store on a forgotten session.
-const STALE_CHECKPOINT: &str = "forgotten-checkpoint-plaintext-9f3a";
-/// Plaintext of a checkpoint that belongs to a session that was not forgotten.
-const LIVE_CHECKPOINT: &str = "live-checkpoint-kept-4c1b";
-
-struct ForgottenPair {
-    dir: tempfile::TempDir,
-    store: Store,
-    forgotten: SessionRecord,
 }
 
 /// Two moved sessions: `s-1` forgotten, `s-2` with a real rebuild checkpoint.

@@ -70,17 +70,6 @@ pub(crate) const CODEX_HOME: EnvVar = EnvVar::global(
 /// applies to it.
 pub(crate) const BASELINE_ENV: [EnvVar; 3] = [PATH, HOME, LANG];
 
-/// The name a global variable is read under.
-fn global_name(var: &EnvVar) -> String {
-    var.name_for("")
-}
-
-/// Whether `name` is a baseline variable or the Codex home: values the
-/// redactor never masks (they are not secrets).
-fn non_secret(name: &str) -> bool {
-    BASELINE_ENV.iter().any(|var| global_name(var) == name) || global_name(&CODEX_HOME) == name
-}
-
 /// The prefix of scribe's own variables, which never reach a model child.
 const OWN_PREFIX: &str = "SCRIBE_";
 
@@ -98,63 +87,6 @@ const POLL: Duration = Duration::from_millis(20);
 /// How long the drained pipes may stay open after the group is swept (only a
 /// process that left the group can hold them).
 const DRAIN_WAIT: Duration = Duration::from_secs(2);
-
-/// The environment a model child gets: [`BASELINE_ENV`] then each name in
-/// `credentials`, each once, with the value `lookup` finds; a name with no
-/// value is left out, and a `SCRIBE_*` name is never passed even when
-/// configured (STD-05 R11).
-pub fn allowed_env(
-    credentials: &[String],
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Vec<(OsString, OsString)> {
-    let mut names: Vec<String> = BASELINE_ENV.iter().map(global_name).collect();
-    for name in credentials {
-        if !name.starts_with(OWN_PREFIX) && !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
-    names
-        .into_iter()
-        .filter_map(|name| {
-            lookup(name.as_str()).map(|value| (OsString::from(name.as_str()), value))
-        })
-        .collect()
-}
-
-/// The redactor a new adapter starts with: the values of the credential
-/// variables its child was given (STD-05 R14). The baseline variables and the
-/// Codex home path are not secrets, and stay readable in diagnostics.
-fn credential_redactor(env: &[(OsString, OsString)]) -> Redactor {
-    Redactor::new(
-        env.iter()
-            .filter(|(name, _)| !matches!(name.to_str(), Some(n) if non_secret(n)))
-            .map(|(name, value)| {
-                (
-                    name.to_string_lossy().into_owned(),
-                    value.to_string_lossy().into_owned(),
-                )
-            }),
-    )
-}
-
-/// The `claude` arguments for one call (the prompt goes on stdin).
-pub(crate) fn argv(model: &str, schema: &str) -> Vec<String> {
-    [
-        "-p",
-        "--safe-mode",
-        "--tools",
-        "",
-        "--model",
-        model,
-        "--output-format",
-        "json",
-        "--json-schema",
-        schema,
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
-}
 
 /// The `Models` port over the `claude` CLI.
 #[derive(Clone, Debug)]
@@ -177,11 +109,12 @@ impl ClaudeCliModels {
     /// mask the child's own credential values until
     /// [`ClaudeCliModels::with_redactor`] widens the set.
     pub fn new(env: Vec<(OsString, OsString)>) -> Self {
+        let redactor = credential_redactor(&env);
         Self {
             provider: Provider::ClaudeCode,
             program: OsString::from(PROGRAM),
-            redactor: credential_redactor(&env),
             env,
+            redactor,
             unset_credentials: Vec::new(),
         }
     }
@@ -328,77 +261,6 @@ impl Models for ClaudeCliModels {
     }
 }
 
-/// The structured answer in `claude --output-format json` output: the
-/// result object's `structured_output`, or its `result` text parsed as JSON.
-/// A result marked `is_error` is a failure, its text masked and bounded.
-fn structured(stdout: &Drained, redactor: &Redactor) -> Result<Value, ModelError> {
-    if stdout.truncated {
-        return Err(ModelError::Malformed(format!(
-            "more than {MAX_STDOUT} bytes of output"
-        )));
-    }
-    let value: Value = serde_json::from_slice(&stdout.bytes)
-        .map_err(|e| ModelError::Malformed(format!("{PROGRAM} output is not JSON: {e}")))?;
-    let text = value.get("result").and_then(Value::as_str);
-    if value.get("is_error").and_then(Value::as_bool) == Some(true) {
-        return Err(ModelError::Failed(text.map_or_else(
-            || String::from("an error result"),
-            |text| bounded(&redactor.mask(text)),
-        )));
-    }
-    if let Some(found) = value.get("structured_output").filter(|v| v.is_object()) {
-        return Ok(found.clone());
-    }
-    let text =
-        text.ok_or_else(|| ModelError::Malformed(String::from("no result in the output")))?;
-    let body = text.trim();
-    let body = body
-        .strip_prefix("```json")
-        .or_else(|| body.strip_prefix("```"))
-        .and_then(|b| b.strip_suffix("```"))
-        .unwrap_or(body);
-    serde_json::from_str(body.trim())
-        .map_err(|e| ModelError::Malformed(format!("the result is not JSON: {e}")))
-}
-
-/// The last non-empty line of a child's output, masked and bounded, for an
-/// error. The captured stream is masked as a whole before a line is chosen
-/// or cut, so the cut never splits a credential the mask would have matched.
-/// A stream cut at its limit ends mid-line; that partial line is left out,
-/// since it may hold only the start of a credential.
-fn detail(out: &Drained, redactor: &Redactor) -> Option<String> {
-    let lossy = String::from_utf8_lossy(&out.bytes);
-    let text: &str = &lossy;
-    let kept = if out.truncated && !text.ends_with('\n') {
-        &text[..text.rfind('\n').map_or(0, |at| at + 1)]
-    } else {
-        text
-    };
-    let masked = redactor.mask(kept);
-    masked
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(bounded)
-}
-
-/// A malformed-answer error with its parse error masked. serde names the
-/// value of a mistyped field, and that value is the answer's own text.
-fn malformed(redactor: &Redactor, what: &str, error: &serde_json::Error) -> ModelError {
-    ModelError::Malformed(redactor.mask(&format!("{what}: {error}")))
-}
-
-/// `text` cut to [`MAX_DETAIL_CHARS`], the cut marked (STD-03 R15).
-fn bounded(text: &str) -> String {
-    if text.chars().count() <= MAX_DETAIL_CHARS {
-        return text.to_owned();
-    }
-    let mut cut: String = text.chars().take(MAX_DETAIL_CHARS).collect();
-    cut.push('…');
-    cut
-}
-
 /// How a supervised child ended.
 #[derive(Debug)]
 pub(crate) enum Ended {
@@ -421,84 +283,6 @@ pub(crate) struct Ran {
     pub(crate) ended: Ended,
     pub(crate) stdout: Drained,
     pub(crate) stderr: Drained,
-}
-
-/// Run `cmd` (already set to lead its own group, with piped stdio), writing
-/// `input` to its stdin, within `budget`. The child is reaped and its group
-/// swept before this returns, on every path.
-pub(crate) fn supervise(
-    mut cmd: Command,
-    input: Vec<u8>,
-    budget: Duration,
-) -> Result<Ran, ModelError> {
-    let program = OsStr::new(cmd.get_program()).to_string_lossy().into_owned();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn)"
-    )]
-    let child = cmd
-        .spawn()
-        .map_err(|e| ModelError::Unavailable(format!("{program}: {e}")))?;
-    let mut guard = Group::new(child);
-    let child = guard.child_mut();
-    if let Some(mut stdin) = child.stdin.take() {
-        // A child that never reads gets EPIPE once it dies; the thread ends.
-        thread::spawn(move || {
-            let _ = stdin.write_all(&input);
-        });
-    }
-    let stdout = drain(child.stdout.take(), MAX_STDOUT);
-    let stderr = drain(child.stderr.take(), MAX_STDERR);
-
-    let deadline = Instant::now() + budget;
-    let timed_out = !guard.wait_until(deadline);
-    if timed_out {
-        guard.signal(Signal::Term);
-        guard.wait_until(Instant::now() + GRACE);
-    }
-    let status = guard.finish();
-    let collect = |rx: mpsc::Receiver<Drained>| rx.recv_timeout(DRAIN_WAIT).unwrap_or_default();
-    let (stdout, stderr) = (collect(stdout), collect(stderr));
-    let ended = match (timed_out, status) {
-        (true, _) => Ended::TimedOut,
-        (false, Some(status)) => Ended::Exited(status),
-        (false, None) => {
-            return Err(ModelError::Failed(format!(
-                "{program} could not be waited for"
-            )));
-        }
-    };
-    Ok(Ran {
-        ended,
-        stdout,
-        stderr,
-    })
-}
-
-/// Read `pipe` to its end on a thread, keeping at most `limit` bytes.
-fn drain<R: Read + Send + 'static>(pipe: Option<R>, limit: usize) -> mpsc::Receiver<Drained> {
-    // STD-03 §R2: capacity one for the single `Drained` the worker sends. A
-    // full buffer makes `send` wait (backpressure); the worker sends exactly
-    // once, so the slot is always free and completion stays nonblocking.
-    let (tx, rx) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let mut out = Drained::default();
-        if let Some(mut pipe) = pipe {
-            let mut buf = [0u8; 8192];
-            loop {
-                match pipe.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let room = limit.saturating_sub(out.bytes.len());
-                        out.bytes.extend_from_slice(&buf[..n.min(room)]);
-                        out.truncated |= n > room;
-                    }
-                }
-            }
-        }
-        let _ = tx.send(out);
-    });
-    rx
 }
 
 /// Which signal to send a group.
@@ -602,4 +386,221 @@ impl Drop for Group {
             let _ = self.finish();
         }
     }
+}
+
+/// The name a global variable is read under.
+fn global_name(var: &EnvVar) -> String {
+    var.name_for("")
+}
+
+/// Whether `name` is a baseline variable or the Codex home: values the
+/// redactor never masks (they are not secrets).
+fn non_secret(name: &str) -> bool {
+    BASELINE_ENV.iter().any(|var| global_name(var) == name) || global_name(&CODEX_HOME) == name
+}
+
+/// The environment a model child gets: [`BASELINE_ENV`] then each name in
+/// `credentials`, each once, with the value `lookup` finds; a name with no
+/// value is left out, and a `SCRIBE_*` name is never passed even when
+/// configured (STD-05 R11).
+pub fn allowed_env(
+    credentials: &[String],
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Vec<(OsString, OsString)> {
+    let mut names: Vec<String> = BASELINE_ENV.iter().map(global_name).collect();
+    for name in credentials {
+        if !name.starts_with(OWN_PREFIX) && !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            lookup(name.as_str()).map(|value| (OsString::from(name.as_str()), value))
+        })
+        .collect()
+}
+
+/// The redactor a new adapter starts with: the values of the credential
+/// variables its child was given (STD-05 R14). The baseline variables and the
+/// Codex home path are not secrets, and stay readable in diagnostics.
+fn credential_redactor(env: &[(OsString, OsString)]) -> Redactor {
+    Redactor::new(
+        env.iter()
+            .filter(|(name, _)| !matches!(name.to_str(), Some(n) if non_secret(n)))
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            }),
+    )
+}
+
+/// The `claude` arguments for one call (the prompt goes on stdin).
+pub(crate) fn argv(model: &str, schema: &str) -> Vec<String> {
+    [
+        "-p",
+        "--safe-mode",
+        "--tools",
+        "",
+        "--model",
+        model,
+        "--output-format",
+        "json",
+        "--json-schema",
+        schema,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+/// The structured answer in `claude --output-format json` output: the
+/// result object's `structured_output`, or its `result` text parsed as JSON.
+/// A result marked `is_error` is a failure, its text masked and bounded.
+fn structured(stdout: &Drained, redactor: &Redactor) -> Result<Value, ModelError> {
+    if stdout.truncated {
+        return Err(ModelError::Malformed(format!(
+            "more than {MAX_STDOUT} bytes of output"
+        )));
+    }
+    let value: Value = serde_json::from_slice(&stdout.bytes)
+        .map_err(|e| ModelError::Malformed(format!("{PROGRAM} output is not JSON: {e}")))?;
+    let text = value.get("result").and_then(Value::as_str);
+    if value.get("is_error").and_then(Value::as_bool) == Some(true) {
+        return Err(ModelError::Failed(text.map_or_else(
+            || String::from("an error result"),
+            |text| bounded(&redactor.mask(text)),
+        )));
+    }
+    if let Some(found) = value.get("structured_output").filter(|v| v.is_object()) {
+        return Ok(found.clone());
+    }
+    let text =
+        text.ok_or_else(|| ModelError::Malformed(String::from("no result in the output")))?;
+    let body = text.trim();
+    let body = body
+        .strip_prefix("```json")
+        .or_else(|| body.strip_prefix("```"))
+        .and_then(|b| b.strip_suffix("```"))
+        .unwrap_or(body);
+    serde_json::from_str(body.trim())
+        .map_err(|e| ModelError::Malformed(format!("the result is not JSON: {e}")))
+}
+
+/// The last non-empty line of a child's output, masked and bounded, for an
+/// error. The captured stream is masked as a whole before a line is chosen
+/// or cut, so the cut never splits a credential the mask would have matched.
+/// A stream cut at its limit ends mid-line; that partial line is left out,
+/// since it may hold only the start of a credential.
+fn detail(out: &Drained, redactor: &Redactor) -> Option<String> {
+    let lossy = String::from_utf8_lossy(&out.bytes);
+    let text: &str = &lossy;
+    let kept = if out.truncated && !text.ends_with('\n') {
+        &text[..text.rfind('\n').map_or(0, |at| at + 1)]
+    } else {
+        text
+    };
+    let masked = redactor.mask(kept);
+    masked
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(bounded)
+}
+
+/// A malformed-answer error with its parse error masked. serde names the
+/// value of a mistyped field, and that value is the answer's own text.
+fn malformed(redactor: &Redactor, what: &str, error: &serde_json::Error) -> ModelError {
+    ModelError::Malformed(redactor.mask(&format!("{what}: {error}")))
+}
+
+/// `text` cut to [`MAX_DETAIL_CHARS`], the cut marked (STD-03 R15).
+fn bounded(text: &str) -> String {
+    if text.chars().count() <= MAX_DETAIL_CHARS {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(MAX_DETAIL_CHARS).collect();
+    cut.push('…');
+    cut
+}
+
+/// Run `cmd` (already set to lead its own group, with piped stdio), writing
+/// `input` to its stdin, within `budget`. The child is reaped and its group
+/// swept before this returns, on every path.
+pub(crate) fn supervise(
+    mut cmd: Command,
+    input: Vec<u8>,
+    budget: Duration,
+) -> Result<Ran, ModelError> {
+    let program = OsStr::new(cmd.get_program()).to_string_lossy().into_owned();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn)"
+    )]
+    let child = cmd
+        .spawn()
+        .map_err(|e| ModelError::Unavailable(format!("{program}: {e}")))?;
+    let mut guard = Group::new(child);
+    let child = guard.child_mut();
+    if let Some(mut stdin) = child.stdin.take() {
+        // A child that never reads gets EPIPE once it dies; the thread ends.
+        thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
+    let stdout = drain(child.stdout.take(), MAX_STDOUT);
+    let stderr = drain(child.stderr.take(), MAX_STDERR);
+
+    let deadline = Instant::now() + budget;
+    let timed_out = !guard.wait_until(deadline);
+    if timed_out {
+        guard.signal(Signal::Term);
+        guard.wait_until(Instant::now() + GRACE);
+    }
+    let status = guard.finish();
+    let collect = |rx: mpsc::Receiver<Drained>| rx.recv_timeout(DRAIN_WAIT).unwrap_or_default();
+    let (stdout, stderr) = (collect(stdout), collect(stderr));
+    let ended = match (timed_out, status) {
+        (true, _) => Ended::TimedOut,
+        (false, Some(status)) => Ended::Exited(status),
+        (false, None) => {
+            return Err(ModelError::Failed(format!(
+                "{program} could not be waited for"
+            )));
+        }
+    };
+    Ok(Ran {
+        ended,
+        stdout,
+        stderr,
+    })
+}
+
+/// Read `pipe` to its end on a thread, keeping at most `limit` bytes.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>, limit: usize) -> mpsc::Receiver<Drained> {
+    // STD-03 §R2: capacity one for the single `Drained` the worker sends. A
+    // full buffer makes `send` wait (backpressure); the worker sends exactly
+    // once, so the slot is always free and completion stays nonblocking.
+    let (tx, rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut out = Drained::default();
+        if let Some(mut pipe) = pipe {
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let room = limit.saturating_sub(out.bytes.len());
+                        out.bytes.extend_from_slice(&buf[..n.min(room)]);
+                        out.truncated |= n > room;
+                    }
+                }
+            }
+        }
+        let _ = tx.send(out);
+    });
+    rx
 }

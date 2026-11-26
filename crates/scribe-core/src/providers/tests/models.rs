@@ -15,6 +15,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"title":"Merge policy","summary":"squash-merge agent PRs","goals":"g","next":["n"]}}'"#;
+
+/// A credential-shaped value for the child's environment; synthetic, never real.
+const SYNTHETIC_OAUTH: &str = "synthetic-oauth-value-42";
+
 /// A temporary `HOME` with a `bin/claude` script in it.
 struct FakeClaude {
     dir: tempfile::TempDir,
@@ -90,8 +95,6 @@ fn request(budget: Duration) -> SessionHeaderRequest {
         voice: scribe_core::voice::Voice::default(),
     }
 }
-
-const STRUCTURED: &str = r#"echo '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"title":"Merge policy","summary":"squash-merge agent PRs","goals":"g","next":["n"]}}'"#;
 
 /// The answer [`STRUCTURED`] holds.
 fn structured() -> SessionHeader {
@@ -371,9 +374,6 @@ fn no_claude_on_path_is_unavailable() {
         .unwrap_err();
     assert!(matches!(err, ModelError::Unavailable(_)), "{err:?}");
 }
-
-/// A credential-shaped value for the child's environment; synthetic, never real.
-const SYNTHETIC_OAUTH: &str = "synthetic-oauth-value-42";
 
 /// The adapter for one credential, `CLAUDE_CODE_OAUTH_TOKEN`, set to
 /// [`SYNTHETIC_OAUTH`] in the child's environment.

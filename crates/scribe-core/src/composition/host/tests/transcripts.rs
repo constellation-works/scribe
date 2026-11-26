@@ -10,6 +10,10 @@ use std::path::PathBuf;
 
 const ID: &str = "0a1b2c3d-0000-4000-8000-0000000000d1";
 
+/// Modes that another user can write: a group or an other write bit.
+const WRITABLE_BY_OTHERS: [u32; 4] = [0o664, 0o646, 0o622, 0o666];
+const WRITE_REFUSAL: &str = "writable by another user";
+
 struct Setup {
     dir: tempfile::TempDir,
     ctx: Context,
@@ -63,10 +67,6 @@ fn write_transcript(setup: &Setup, text: &str, mode: u32) -> PathBuf {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
     path
 }
-
-/// Modes that another user can write: a group or an other write bit.
-const WRITABLE_BY_OTHERS: [u32; 4] = [0o664, 0o646, 0o622, 0o666];
-const WRITE_REFUSAL: &str = "writable by another user";
 
 #[test]
 fn a_regular_transcript_is_read_and_a_missing_one_is_none() {
