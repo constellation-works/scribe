@@ -50,6 +50,33 @@ impl<A: Access> Groups<'_, A> {
     /// # }
     /// ```
     ///
+    /// ```compile_fail
+    /// # fn example(
+    /// #     store: &scribe_store::Store,
+    /// #     draft: &scribe_store::NewGroup,
+    /// #     opener: &scribe_store::session::SessionId,
+    /// #     now: time::OffsetDateTime,
+    /// # ) {
+    /// let _ = store.read().groups().read_rows(|rows| rows.insert_group(draft, opener, now));
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # fn example(store: &scribe_store::Store) {
+    /// let _ = store.read().groups().read_rows(|rows| rows.clear_summary(1));
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # fn example(
+    /// #     store: &scribe_store::Store,
+    /// #     session: &scribe_store::session::SessionId,
+    /// #     now: time::OffsetDateTime,
+    /// # ) {
+    /// let _ = store.read().groups().read_rows(|rows| rows.remove_member(session, now));
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// The store's read errors.
@@ -67,6 +94,33 @@ impl<A: Access> Groups<'_, A> {
     /// ```compile_fail
     /// # fn example(store: &scribe_store::Store, now: time::OffsetDateTime) {
     /// let _ = store.read().groups().read_rows_in_tx("read", |rows| rows.set_closed(1, now, None));
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # fn example(
+    /// #     store: &scribe_store::Store,
+    /// #     draft: &scribe_store::NewGroup,
+    /// #     opener: &scribe_store::session::SessionId,
+    /// #     now: time::OffsetDateTime,
+    /// # ) {
+    /// let _ = store.read().groups().read_rows_in_tx("read", |rows| rows.insert_group(draft, opener, now));
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # fn example(store: &scribe_store::Store) {
+    /// let _ = store.read().groups().read_rows_in_tx("read", |rows| rows.clear_summary(1));
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # fn example(
+    /// #     store: &scribe_store::Store,
+    /// #     session: &scribe_store::session::SessionId,
+    /// #     now: time::OffsetDateTime,
+    /// # ) {
+    /// let _ = store.read().groups().read_rows_in_tx("read", |rows| rows.remove_member(session, now));
     /// # }
     /// ```
     ///
@@ -108,6 +162,28 @@ impl Groups<'_, ReadWrite> {
     /// Run `f` over the group rows in one write step, `action` naming the
     /// write in a database error (`"join group in"`), part of the
     /// [`Tx`](super::Tx)'s write.
+    ///
+    /// The mutators compile on a [`Tx`](super::Tx):
+    ///
+    /// ```
+    /// # fn example(
+    /// #     store: &scribe_store::Store,
+    /// #     draft: &scribe_store::NewGroup,
+    /// #     opener: &scribe_store::session::SessionId,
+    /// #     session: &scribe_store::session::SessionId,
+    /// #     now: time::OffsetDateTime,
+    /// # ) {
+    /// let _ = store.write(|tx| {
+    ///     tx.groups().rows("write group in", |rows| {
+    ///         let n = rows.insert_group(draft, opener, now)?;
+    ///         rows.clear_summary(n)?;
+    ///         rows.remove_member(session, now)?;
+    ///         rows.set_closed(n, now, None)?;
+    ///         Ok(())
+    ///     })
+    /// });
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///

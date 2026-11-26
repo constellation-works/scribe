@@ -7,7 +7,7 @@ use crate::{Error, Related};
 use rusqlite::{OptionalExtension, params};
 use time::OffsetDateTime;
 
-/// A group's row as a close reads it ([`GroupRows::header`]).
+/// A group's row as a close reads it ([`ReadGroupRows::header`]).
 #[derive(Debug)]
 pub struct CloseHeader {
     /// The session that opened the group.

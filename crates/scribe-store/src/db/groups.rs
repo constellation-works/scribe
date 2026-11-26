@@ -506,7 +506,7 @@ fn write_captured_turns(
     Ok(inserted)
 }
 
-/// A member's capture row in an open group ([`GroupRows::capture_state`]).
+/// A member's capture row in an open group ([`ReadGroupRows::capture_state`]).
 #[derive(Debug, PartialEq, Eq)]
 pub struct CaptureState {
     /// The membership row's position.
@@ -681,7 +681,7 @@ pub struct ReadGroupRows<'c> {
     read: bool,
 }
 
-/// A membership row's group and capture window ([`GroupRows::member_window`]).
+/// A membership row's group and capture window ([`ReadGroupRows::member_window`]).
 #[derive(Debug)]
 pub struct MemberWindow {
     /// The group's number.
@@ -694,7 +694,7 @@ pub struct MemberWindow {
     pub holds_seat: bool,
 }
 
-/// A [`GroupRows`] call's failure. It converts into [`Error`]; a read keeps
+/// A [`ReadGroupRows`] or [`GroupRows`] call's failure. It converts into [`Error`]; a read keeps
 /// whether a read-only copy of the database could serve it.
 pub struct RowError(Fallible);
 
@@ -740,32 +740,6 @@ impl ReadGroupRows<'_> {
             .map_err(|e| self.fail(e))
     }
 
-    /// Insert the group `draft` opened by `opener`; returns its number.
-    pub fn insert_group(
-        &self,
-        draft: &NewGroup,
-        opener: &SessionId,
-        now: OffsetDateTime,
-    ) -> Rows<i64> {
-        let related =
-            serde_json::to_string(&draft.related).map_err(|e| Error::corrupt(self.path, e))?;
-        self.conn
-            .query_row(
-                "INSERT INTO groups(title,kind,project,opened,opener,related)
-                VALUES (?1,?2,?3,?4,?5,?6) RETURNING id",
-                params![
-                    draft.title,
-                    draft.kind,
-                    draft.project.as_str(),
-                    stamp(now),
-                    opener.as_str(),
-                    related
-                ],
-                |r| r.get(0),
-            )
-            .map_err(|e| self.fail(e))
-    }
-
     /// Whether `session` has a membership row, current or historical.
     pub fn has_membership(&self, session: &SessionId) -> Rows<bool> {
         has_membership(self.conn, session).map_err(|e| self.fail(e))
@@ -774,23 +748,6 @@ impl ReadGroupRows<'_> {
     /// Whether `session`'s catalog row is forgotten.
     pub fn session_forgotten(&self, session: &SessionId) -> Rows<bool> {
         super::sessions::is_forgotten(self.conn, session).map_err(|e| self.fail(e))
-    }
-
-    /// Store `turns` as `session`'s group turns, masked by `redactor`;
-    /// returns how many rows were inserted.
-    pub fn store_turns(
-        &self,
-        session: &SessionId,
-        turns: &[NewMessage],
-        redactor: &Redactor,
-    ) -> Rows<usize> {
-        Ok(write_captured_turns(
-            self.conn,
-            self.path,
-            session,
-            turns.iter().collect(),
-            redactor,
-        )?)
     }
 
     /// The group `session` is a member of, with its slug or else its id.
@@ -803,17 +760,6 @@ impl ReadGroupRows<'_> {
         open_project_group(self.conn, slug).map_err(|e| self.fail(e))
     }
 
-    /// Insert a project group `slug` opened by `opener`; returns its number.
-    pub fn insert_project(
-        &self,
-        slug: &str,
-        project: &Project,
-        now: OffsetDateTime,
-        opener: &SessionId,
-    ) -> Rows<i64> {
-        insert_project_group(self.conn, slug, project, now, opener).map_err(|e| self.fail(e))
-    }
-
     /// Whether group `n` has a seat named `name`.
     pub fn seat_exists(&self, n: i64, name: &str) -> Rows<bool> {
         self.conn
@@ -822,28 +768,6 @@ impl ReadGroupRows<'_> {
                 params![n, name],
                 |r| r.get(0),
             )
-            .map_err(|e| self.fail(e))
-    }
-
-    /// Seat `session` in group `n` under the new member seat `seat`.
-    pub fn seat_member(
-        &self,
-        n: i64,
-        session: &SessionId,
-        seat: &Label,
-        now: OffsetDateTime,
-    ) -> Rows<()> {
-        seat_member(self.conn, n, session, seat.as_str(), now).map_err(|e| self.fail(e))
-    }
-
-    /// Set `session`'s capture cursor to `message`.
-    pub fn set_cursor(&self, session: &SessionId, message: &str) -> Rows<()> {
-        self.conn
-            .execute(
-                "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
-                params![session.as_str(), message],
-            )
-            .map(drop)
             .map_err(|e| self.fail(e))
     }
 
@@ -881,6 +805,178 @@ impl ReadGroupRows<'_> {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// `session`'s membership row and whether it holds its seat.
+    pub fn member_window(&self, session: &SessionId) -> Rows<Option<MemberWindow>> {
+        self.conn
+            .query_row(
+                &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
+                [session.as_str()],
+                |r| {
+                    Ok(MemberWindow {
+                        group: r.get(0)?,
+                        joined: r.get(1)?,
+                        cursor: r.get(2)?,
+                        holds_seat: r.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Whether group `n` is open.
+    pub fn is_open(&self, n: i64) -> Rows<bool> {
+        self.conn
+            .query_row(
+                "SELECT closed IS NULL FROM groups WHERE id = ?1",
+                [n],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// How many members of group `n` hold their seats.
+    pub fn holder_count(&self, n: i64) -> Rows<i64> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM group_members m WHERE m.group_id = ?1 AND {HOLDS_SEAT}"
+                ),
+                [n],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Whether `session` holds a seat in group `n`, and if so the start of
+    /// its restarted consent window: `Some(None)` for a holder whose window
+    /// was never restarted.
+    pub fn holder_restart(
+        &self,
+        n: i64,
+        session: &SessionId,
+    ) -> Rows<Option<Option<OffsetDateTime>>> {
+        let window: Option<(String, bool)> = self
+            .conn
+            .query_row(
+                &format!("SELECT m.joined, m.restarted FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT}"),
+                params![n, session.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| self.fail(e))?;
+        let Some((joined, restarted)) = window else {
+            return Ok(None);
+        };
+        if !restarted {
+            return Ok(Some(None));
+        }
+        let at =
+            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(self.path, e))?;
+        Ok(Some(Some(at)))
+    }
+
+    /// `session`'s capture row in an open group, unless it is forgotten.
+    pub fn capture_state(&self, session: &SessionId) -> Rows<Option<CaptureState>> {
+        capture_state(self.conn, self.path, session).map_err(RowError)
+    }
+
+    /// The seat `session` holds now.
+    pub fn held_seat(&self, session: &SessionId) -> Rows<Option<SeatHold>> {
+        held_seat(self.conn, session).map_err(|e| self.fail(e))
+    }
+
+    /// Whether any group is open.
+    pub fn has_open_groups(&self) -> Rows<bool> {
+        has_open_groups(self.conn).map_err(|e| self.fail(e))
+    }
+
+    /// The open seat `session` holds now: group, seat, role and author.
+    pub fn newest_open_seat(
+        &self,
+        session: &SessionId,
+    ) -> Rows<Option<(i64, String, String, String)>> {
+        newest_open_seat(self.conn, session).map_err(|e| self.fail(e))
+    }
+}
+
+impl GroupRows<'_> {
+    /// Insert the group `draft` opened by `opener`; returns its number.
+    pub fn insert_group(
+        &self,
+        draft: &NewGroup,
+        opener: &SessionId,
+        now: OffsetDateTime,
+    ) -> Rows<i64> {
+        let related =
+            serde_json::to_string(&draft.related).map_err(|e| Error::corrupt(self.path, e))?;
+        self.conn
+            .query_row(
+                "INSERT INTO groups(title,kind,project,opened,opener,related)
+                VALUES (?1,?2,?3,?4,?5,?6) RETURNING id",
+                params![
+                    draft.title,
+                    draft.kind,
+                    draft.project.as_str(),
+                    stamp(now),
+                    opener.as_str(),
+                    related
+                ],
+                |r| r.get(0),
+            )
+            .map_err(|e| self.fail(e))
+    }
+
+    /// Store `turns` as `session`'s group turns, masked by `redactor`;
+    /// returns how many rows were inserted.
+    pub fn store_turns(
+        &self,
+        session: &SessionId,
+        turns: &[NewMessage],
+        redactor: &Redactor,
+    ) -> Rows<usize> {
+        Ok(write_captured_turns(
+            self.conn,
+            self.path,
+            session,
+            turns.iter().collect(),
+            redactor,
+        )?)
+    }
+
+    /// Insert a project group `slug` opened by `opener`; returns its number.
+    pub fn insert_project(
+        &self,
+        slug: &str,
+        project: &Project,
+        now: OffsetDateTime,
+        opener: &SessionId,
+    ) -> Rows<i64> {
+        insert_project_group(self.conn, slug, project, now, opener).map_err(|e| self.fail(e))
+    }
+
+    /// Seat `session` in group `n` under the new member seat `seat`.
+    pub fn seat_member(
+        &self,
+        n: i64,
+        session: &SessionId,
+        seat: &Label,
+        now: OffsetDateTime,
+    ) -> Rows<()> {
+        seat_member(self.conn, n, session, seat.as_str(), now).map_err(|e| self.fail(e))
+    }
+
+    /// Set `session`'s capture cursor to `message`.
+    pub fn set_cursor(&self, session: &SessionId, message: &str) -> Rows<()> {
+        self.conn
+            .execute(
+                "UPDATE group_members SET turn_cursor = ?2 WHERE session = ?1",
+                params![session.as_str(), message],
+            )
+            .map(drop)
             .map_err(|e| self.fail(e))
     }
 
@@ -966,25 +1062,6 @@ impl ReadGroupRows<'_> {
         )?)
     }
 
-    /// `session`'s membership row and whether it holds its seat.
-    pub fn member_window(&self, session: &SessionId) -> Rows<Option<MemberWindow>> {
-        self.conn
-            .query_row(
-                &format!("SELECT m.group_id, m.joined, m.turn_cursor, {HOLDS_SEAT} FROM group_members m WHERE m.session=?1"),
-                [session.as_str()],
-                |r| {
-                    Ok(MemberWindow {
-                        group: r.get(0)?,
-                        joined: r.get(1)?,
-                        cursor: r.get(2)?,
-                        holds_seat: r.get(3)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| self.fail(e))
-    }
-
     /// Set `session`'s joined time and capture cursor as stored.
     pub fn set_window(&self, session: &SessionId, joined: &str, cursor: Option<&str>) -> Rows<()> {
         self.conn
@@ -1025,58 +1102,6 @@ impl ReadGroupRows<'_> {
             .map_err(|e| self.fail(e))
     }
 
-    /// Whether group `n` is open.
-    pub fn is_open(&self, n: i64) -> Rows<bool> {
-        self.conn
-            .query_row(
-                "SELECT closed IS NULL FROM groups WHERE id = ?1",
-                [n],
-                |r| r.get(0),
-            )
-            .map_err(|e| self.fail(e))
-    }
-
-    /// How many members of group `n` hold their seats.
-    pub fn holder_count(&self, n: i64) -> Rows<i64> {
-        self.conn
-            .query_row(
-                &format!(
-                    "SELECT count(*) FROM group_members m WHERE m.group_id = ?1 AND {HOLDS_SEAT}"
-                ),
-                [n],
-                |r| r.get(0),
-            )
-            .map_err(|e| self.fail(e))
-    }
-
-    /// Whether `session` holds a seat in group `n`, and if so the start of
-    /// its restarted consent window: `Some(None)` for a holder whose window
-    /// was never restarted.
-    pub fn holder_restart(
-        &self,
-        n: i64,
-        session: &SessionId,
-    ) -> Rows<Option<Option<OffsetDateTime>>> {
-        let window: Option<(String, bool)> = self
-            .conn
-            .query_row(
-                &format!("SELECT m.joined, m.restarted FROM group_members m WHERE m.group_id = ?1 AND m.session = ?2 AND {HOLDS_SEAT}"),
-                params![n, session.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(|e| self.fail(e))?;
-        let Some((joined, restarted)) = window else {
-            return Ok(None);
-        };
-        if !restarted {
-            return Ok(Some(None));
-        }
-        let at =
-            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(self.path, e))?;
-        Ok(Some(Some(at)))
-    }
-
     /// Store the selected `turns` as `session`'s group turns, masked by
     /// `redactor`; returns how many rows were inserted.
     pub fn store_selected(
@@ -1088,11 +1113,6 @@ impl ReadGroupRows<'_> {
         Ok(write_captured_turns(
             self.conn, self.path, session, turns, redactor,
         )?)
-    }
-
-    /// `session`'s capture row in an open group, unless it is forgotten.
-    pub fn capture_state(&self, session: &SessionId) -> Rows<Option<CaptureState>> {
-        capture_state(self.conn, self.path, session).map_err(RowError)
     }
 
     /// Set the capture cursor of membership row `position` to `message`.
@@ -1109,24 +1129,6 @@ impl ReadGroupRows<'_> {
     /// Delete membership row `position`'s Claude transcript progress.
     pub fn clear_progress(&self, position: i64) -> Rows<()> {
         claude::clear_progress(self.conn, position).map_err(|e| self.fail(e))
-    }
-
-    /// The seat `session` holds now.
-    pub fn held_seat(&self, session: &SessionId) -> Rows<Option<SeatHold>> {
-        held_seat(self.conn, session).map_err(|e| self.fail(e))
-    }
-
-    /// Whether any group is open.
-    pub fn has_open_groups(&self) -> Rows<bool> {
-        has_open_groups(self.conn).map_err(|e| self.fail(e))
-    }
-
-    /// The open seat `session` holds now: group, seat, role and author.
-    pub fn newest_open_seat(
-        &self,
-        session: &SessionId,
-    ) -> Rows<Option<(i64, String, String, String)>> {
-        newest_open_seat(self.conn, session).map_err(|e| self.fail(e))
     }
 }
 
