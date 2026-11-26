@@ -116,7 +116,7 @@ function unquote(s) {
 }
 # The string value of `package = "x"` inside an inline table or a dotted line.
 function package_of(text,    s) {
-  if (!match(text, /(^|[{,. \t])package[ \t]*=[ \t]*("[^"]*"|\047[^\047]*\047)/)) return ""
+  if (!match(text, /(^|[{,. \t])(package|"package"|\047package\047)[ \t]*=[ \t]*("[^"]*"|\047[^\047]*\047)/)) return ""
   s = substr(text, RSTART, RLENGTH)
   sub(/^[^=]*=[ \t]*/, "", s)
   return unquote(s)
@@ -138,12 +138,29 @@ function note(key, where, pkg, ws,    id) {
 # Sets mode: "" (not a dependency table), "table" ([dependencies]) or "sub"
 # (a [dependencies.key] subtable, key in subkey). tbl names the table the
 # declarations of this section belong to: the header without a subtable key.
+# Normalize dotted header keys without touching dots inside quoted keys.
+function header_keys(h,    i, c, q, part, out) {
+  q = ""; part = ""; out = ""
+  for (i = 1; i <= length(h); i++) {
+    c = substr(h, i, 1)
+    if (q != "" && c == "\\" && q == "\"") {
+      part = part c; i++; part = part substr(h, i, 1); continue
+    }
+    if (q == "" && (c == "\"" || c == "\047")) q = c
+    else if (c == q) q = ""
+    if (q == "" && c == ".") {
+      out = out unquote(part) "."; part = ""
+    } else part = part c
+  }
+  return out unquote(part)
+}
 function classify(h,    root) {
   mode = ""; subkey = ""; tbl = ""
   root = (FILENAME == ARGV[1])
-  sub(/^\[[ \t]*/, "", h); sub(/[ \t]*\]$/, "", h)
+  sub(/^\[[ \t]*/, "", h); sub(/[ \t]*\]$/, "", h); h = header_keys(h)
   if (root) {
-    if (h == "workspace.dependencies") mode = "table"
+    if (h == "workspace") mode = "workspace"
+    else if (h == "workspace.dependencies") mode = "table"
     else if (h ~ /^workspace\.dependencies\./) {
       mode = "sub"; subkey = unquote(substr(h, length("workspace.dependencies.") + 1))
     }
@@ -159,23 +176,28 @@ FNR == 1 { mode = ""; subkey = ""; tbl = "" }
 /^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
 /^[ \t]*(#|$)/ { next }
 mode == "sub" {
-  if ($0 ~ /^[ \t]*package[ \t]*=/) note(subkey, FNR, package_of($0), 0)
-  else if ($0 ~ /^[ \t]*workspace[ \t]*=[ \t]*true/) note(subkey, FNR, "", 1)
+  if ($0 ~ /^[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(subkey, FNR, package_of($0), 0)
+  else if ($0 ~ /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(subkey, FNR, "", 1)
   next
 }
-mode == "table" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*(build-)?dependencies[ \t]*\./) {
+mode == "table" || mode == "workspace" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\./) {
   line = $0; sub(/^[ \t]+/, "", line)
+  if (mode == "workspace") {
+    if (line !~ /^(dependencies|"dependencies"|\047dependencies\047)[ \t]*\./) next
+    sub(/^(dependencies|"dependencies"|\047dependencies\047)[ \t]*\.[ \t]*/, "", line)
+  }
   if (mode == "") {
-    match(line, /^(build-)?dependencies/); tbl = substr(line, 1, RLENGTH)
-    sub(/^(build-)?dependencies[ \t]*\./, "", line)
+    match(line, /^((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)/)
+    tbl = unquote(substr(line, 1, RLENGTH))
+    sub(/^((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\.[ \t]*/, "", line)
   }
   if (!match(line, /^("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)/)) next
   key = unquote(substr(line, 1, RLENGTH)); rest = substr(line, RLENGTH + 1)
   sub(/^[ \t]+/, "", rest)
-  if (rest ~ /^\.[ \t]*package[ \t]*=/) note(key, FNR, package_of(rest), 0)
-  else if (rest ~ /^\.[ \t]*workspace[ \t]*=[ \t]*true/) note(key, FNR, "", 1)
+  if (rest ~ /^\.[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(key, FNR, package_of(rest), 0)
+  else if (rest ~ /^\.[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(key, FNR, "", 1)
   else if (rest ~ /^\.[ \t]*[A-Za-z0-9_-]+[ \t]*=/) note(key, FNR, "", 0)
-  else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*workspace[ \t]*=[ \t]*true/)
+  else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/)
   next
 }
 END {

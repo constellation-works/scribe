@@ -32,8 +32,8 @@ expect() {
 tree() {
   local root="$work/$1"
   mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src"
-  printf '[package]\nname = "scribe-core"\n' >"$root/crates/scribe-core/Cargo.toml"
-  printf '[package]\nname = "scribe"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
+  printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n' >"$root/crates/scribe-core/Cargo.toml"
+  printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
     >"$root/crates/scribe/Cargo.toml"
   printf '//! core\npub mod apps;\n' >"$root/crates/scribe-core/src/lib.rs"
   printf '//! config\nuse std::fmt;\n' >"$root/crates/scribe-core/src/config.rs"
@@ -274,7 +274,7 @@ for scribe_dep in \
   $'[dependencies]\nrenamed-core = { path = "../scribe-core", package = "scribe-core" }\n' \
   $'[dependencies]\nrenamed-core.path = "../scribe-core"\nrenamed-core.package = "scribe-core"\n' \
   $'[dependencies.renamed-core]\npath = "../scribe-core"\npackage = "scribe-core"\n' \
-  $'[dependencies]\nscribe-core.workspace = true\n'; do
+  $'[dependencies]\nrenamed-core.workspace = true\n'; do
   for core_dep in \
     $'[dependencies]\nback = { path = "../scribe", package = "scribe" }\n' \
     $'[dependencies]\nback.path = "../scribe"\nback.package = "scribe"\n' \
@@ -283,13 +283,57 @@ for scribe_dep in \
     $'[build-dependencies]\nscribe = { path = "../scribe" }\n'; do
     n_scribe=$((n_scribe + 1))
     mixed=$(tree "cycle-crate-mixed-$n_scribe")
-    printf '[package]\nname = "scribe"\n\n%s' "$scribe_dep" >"$mixed/crates/scribe/Cargo.toml"
-    printf '[package]\nname = "scribe-core"\n\n%s' "$core_dep" >"$mixed/crates/scribe-core/Cargo.toml"
+    printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nrenamed-core = { path = "crates/scribe-core", package = "scribe-core" }\n' >"$mixed/Cargo.toml"
+    printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n%s' "$scribe_dep" >"$mixed/crates/scribe/Cargo.toml"
+    printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n%s' "$core_dep" >"$mixed/crates/scribe-core/Cargo.toml"
     expect fail check-dependency-direction.sh "$mixed" "a crate cycle through mixed dependency forms ($n_scribe)"
     if ! grep -Fq "crate import cycle:" "$work/out"; then
       echo "check-gates: FAIL: missing crate import cycle diagnostic for mixed forms ($n_scribe)" >&2
       cat "$work/out" >&2
       fail=1
+    fi
+  done
+done
+
+# Quoted structural keys, whitespace in target headers and root workspace
+# dotted declarations resolve to the same package as their conventional forms.
+for form in quoted-inline quoted-dotted quoted-top-dotted quoted-subtable spaced-target workspace-dotted workspace-table; do
+  for package in rusqlite serde; do
+    fixture=$(tree "dependency-spelling-$form-$package")
+    case "$form" in
+      quoted-inline) decl="[dependencies]
+sql = { version = '1', 'package' = '$package' }" ;;
+      quoted-dotted) decl="[dependencies]
+sql.\"package\" = '$package'
+sql.version = '1'" ;;
+      quoted-top-dotted) decl="'dependencies' . sql = { version = '1', package = '$package' }" ;;
+      quoted-subtable) decl="[\"dependencies\" . sql]
+'package' = '$package'
+version = '1'" ;;
+      spaced-target) decl="[target . 'cfg(unix)' . \"dependencies\"]
+$package = '1'" ;;
+      workspace-dotted|workspace-table)
+        if [[ "$form" == workspace-dotted ]]; then
+          printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\ndependencies.sql = { version = "1", package = "%s" }\n' "$package" >"$fixture/Cargo.toml"
+        else
+          printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n[workspace.dependencies]\nsql = { version = "1", package = "%s" }\n' "$package" >"$fixture/Cargo.toml"
+        fi
+        decl="[dependencies]
+sql.'workspace' = true" ;;
+    esac
+    if [[ "$form" == quoted-top-dotted ]]; then
+      printf '%s\n\n[package]\nname = "scribe"\nversion = "0.1.0"\n' "$decl" >"$fixture/crates/scribe/Cargo.toml"
+    else
+      printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n%s\n' "$decl" >"$fixture/crates/scribe/Cargo.toml"
+    fi
+    if [[ "$package" == rusqlite ]]; then
+      expect fail check-dependency-direction.sh "$fixture" "$form resolves banned rusqlite"
+      if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+        echo "check-gates: FAIL: missing rusqlite diagnostic for $form" >&2
+        fail=1
+      fi
+    else
+      expect pass check-dependency-direction.sh "$fixture" "$form resolves allowed serde"
     fi
   done
 done
