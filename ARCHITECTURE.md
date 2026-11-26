@@ -57,8 +57,9 @@ second dependency.
 main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
-commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
-commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
+commands/<noun>.rs   a noun with three or fewer verbs: arguments -> apps::<app>::Command; Outcome -> payload
+commands/<noun>/     nouns with four or more verbs (entry, group, memory, proposal, session, tag): noun dispatch, per-verb arguments and shared rendering
+commands/hook/       maps the four hook event verbs to app events; sibling modules provide helpers
 output/              CLI output layer (STD-02 R48); the sink itself is the kit's `cw-cli`
   mod.rs             module wiring, re-exports and dispatch enums (`Output`, `Record`, `Records`)
   <command>.rs       one file per top-level command holding its payloads and rendering
