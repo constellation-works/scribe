@@ -229,6 +229,51 @@ fn rebuild_refusals_are_audited_and_leave_the_record_unchanged() {
 }
 
 #[test]
+fn rebuild_refusal_audit_targets_resolved_session_and_null_when_unresolved() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    setup.pass();
+    let calls = setup.prompts().len();
+    // A refusal against a resolved session names it.
+    let out = setup.run_any(&rebuild_args(false), b"");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stderr).unwrap()["code"],
+        "confirm_required"
+    );
+    // An id that resolves to no record refuses before admission, even with
+    // `--confirm`, and leaves the target null.
+    let out = setup.run_any(
+        &[
+            "session",
+            "rebuild",
+            UNKNOWN,
+            "--author",
+            "test-agent",
+            "--json",
+            "--confirm",
+        ],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["code"], "session_not_found", "{error}");
+    assert_eq!(setup.prompts().len(), calls, "refusals take no model call");
+    let rebuilds: Vec<Value> = support::audit_lines(&setup.fx.root())
+        .into_iter()
+        .filter(|l| l["command"] == "session rebuild")
+        .collect();
+    assert_eq!(rebuilds.len(), 2, "{rebuilds:?}");
+    for line in &rebuilds {
+        assert_eq!(line["status"], "failure", "{line}");
+    }
+    assert_eq!(rebuilds[0]["target"], format!("session:{ON}"));
+    assert_eq!(rebuilds[0]["error_code"], "confirm_required");
+    assert_eq!(rebuilds[1]["target"], Value::Null);
+    assert_eq!(rebuilds[1]["error_code"], "session_not_found");
+}
+
+#[test]
 fn a_rebuild_of_a_forgotten_session_is_refused_before_any_model_call_or_checkpoint() {
     let s = Setup::new();
     s.scribe("/scribe on");

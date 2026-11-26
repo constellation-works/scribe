@@ -957,8 +957,10 @@ keeps its private checkpoint after a failure, and resumes it on another job
 run; it does not change the control switch (see [design §19.3.4](../2_design.md#1934-session-rebuild-scribe-session-rebuild-job)).
 Missing `--confirm` refuses with `confirm_required`, naming the current
 segment and pass counts; `transcript_missing` and `session_busy` also refuse
-before model calls. The preflight writes one failure audit line naming
-`session:<id>` on refusal and no audit line on success. The
+before model calls. An id that resolves to no record refuses with
+`session_not_found` before admission. The preflight writes one failure
+audit line on refusal and no audit line on success: its `target` is
+`session:<id>` when the id resolves, and `null` when resolution fails. The
 `scribe-session-rebuild` job writes one success audit line from its `finish`
 step when the rebuilt record replaces the visible one. (Format 19) A
 pass also carries `memory_written` (format 25: `now` and milestone files
