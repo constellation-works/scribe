@@ -1,6 +1,6 @@
-Show the session-start page: memory, recent sessions, open claims
+Show the session-start page: memory, open items, sessions, claims
 
-Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
+Shows the session-start page the hook injects: the memory page, the open items across projects, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
 
 Usage: scribe brief [OPTIONS]
 

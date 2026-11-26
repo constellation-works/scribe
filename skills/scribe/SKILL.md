@@ -38,7 +38,11 @@ answer it first and do this right after.
    Read these parts:
    - the memory block;
    - `## Last group` when present: the selected project's most recently opened
-     group, which can be the only populated part outside the memory block;
+     group, which can be the only populated part outside the memory block
+     (as can `## Open items`);
+   - `## Open items`: the open and answered items across projects, open first
+     then oldest, each with its id, state, asker and question; it can alone
+     trigger the brief injection in `SessionStart`;
    - `## Recent sessions`: the last five, this project's first and without this
      session's own, each a dated title with its id;
    - `## Open claims`: every open claim, grouped by tag and dated with its id
@@ -56,7 +60,9 @@ Present the brief as a short message of its own:
 
 - If `## Last group` appears, give its id and title and its retained close
   summary; for an open group without a summary, say `Still open.` Include it
-  even when there are no recent sessions or open claims.
+  even when there are no open items, recent sessions or open claims.
+- Give each open item, open first then oldest, one line each with its id,
+  state and question. With none, say so in one line.
 - Give the date and subject of each recent session. With none, say so in
   one line.
 - For the latest session in this project, give its handoff's **State**,

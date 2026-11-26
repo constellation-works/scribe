@@ -105,9 +105,9 @@ pub(crate) enum Command {
     /// List tags and manage agent-created store tags
     #[command(subcommand, after_help = tag::TAG_EXAMPLES)]
     Tag(TagCommand),
-    /// Show the session-start page: memory, recent sessions, open claims
+    /// Show the session-start page: memory, open items, sessions, claims
     ///
-    /// Shows the session-start page the hook injects: the memory page, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
+    /// Shows the session-start page the hook injects: the memory page, the open items across projects, the last sessions (this project's first) and every open claim grouped by tag with the id that settles it; model-free, writing nothing.
     #[command(after_help = brief::EXAMPLES)]
     Brief(brief::BriefArgs),
     /// Run a provider hook for session and prompt events

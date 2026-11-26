@@ -1,6 +1,7 @@
 //! `scribe brief`: the session-start page (`scribe_core::brief`). The
 //! memory block (Profile, Now and Milestones, as `memory show` prints it),
-//! then the last sessions, this project's first, then every open claim,
+//! then the last group, then the open items across projects, then the last
+//! sessions, this project's first, then every open claim,
 //! grouped by tag with the id that settles it.
 //!
 //! Model-free and read-only: it reads the memory files, the session records
