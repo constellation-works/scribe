@@ -729,7 +729,14 @@ EOF
 
 # Compile the actual store file adapter with the pinned kit dependencies. The
 # bad twin appends a raw open to that same module; both run the real lint
-# configuration, without ever executing the open.
+# configuration, without ever executing the open. The fixture resolves offline
+# from the repository lock, so fetch that locked graph first: a cold cargo cache
+# (CI runs this gate before any build) cannot check out the git kit offline.
+if ! cargo fetch --locked --manifest-path "$REPO_ROOT/Cargo.toml" >"$work/fetch.out" 2>&1; then
+  echo "check-gates: FAIL: cannot fetch the locked kit dependencies" >&2
+  sed 's/^/  | /' "$work/fetch.out" >&2
+  exit 1
+fi
 store_clippy="$work/clippy-store-files"
 mkdir -p "$store_clippy/src/db"
 cp "$REPO_ROOT/clippy.toml" "$store_clippy/clippy.toml"
@@ -739,6 +746,7 @@ cp "$REPO_ROOT/crates/scribe-store/src/db/files.rs" "$store_clippy/src/db/files.
   grep -E '^cw-(fs|sqlite) = ' "$REPO_ROOT/Cargo.toml"
   printf '\n[lints]\nworkspace = true\n\n%s\n' "$clippy_lints"
 } >"$store_clippy/Cargo.toml"
+cp "$REPO_ROOT/Cargo.lock" "$store_clippy/Cargo.lock"
 cat >"$store_clippy/src/lib.rs" <<'EOF'
 //! Store file adapter fixture.
 #![allow(dead_code)]
