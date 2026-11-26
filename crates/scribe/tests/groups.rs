@@ -926,9 +926,11 @@ fn a_quoted_close_is_refused_unless_a_typed_span_of_this_session_names_the_group
         absent["error"],
         "the quote must contain g-1, the group it closes"
     );
-    // The quote holds g-1, but its span has it only inside a longer id
-    // (g-12, or a word such as xg-1 or g-1é), so the refusal says what names it.
-    let clipped_message = "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where it only appears inside a longer id, so quote a span where g-1 stands alone";
+    // The quote holds g-1, but where it matches the typed turn extends it
+    // into a longer id (g-12, or a word such as xg-1 or g-1é, including past
+    // the quote's edge as in "finish g-1" clipped out of "finish g-12 after
+    // the audit"), so the refusal says what names it.
+    let clipped_message = "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where the typed turn extends it into a longer id, so quote a span where g-1 stands alone";
     for quote in [
         "finish g-12 after the audit",
         "finish g-1",
@@ -965,7 +967,7 @@ fn a_quoted_close_whose_span_clips_the_id_is_refused_even_when_its_turn_names_it
     let clipped = assert_close_refused_with(&f, D, &["--quote", "finish g-1"], "group_membership");
     assert_eq!(
         clipped["error"],
-        "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where it only appears inside a longer id, so quote a span where g-1 stands alone"
+        "the quote must name g-1 as a whole id, the group it closes; g-1 is not standalone in the matched span, where the typed turn extends it into a longer id, so quote a span where g-1 stands alone"
     );
     // The standalone span of the same turn is what the close is authorized by.
     let out = close_with(&f, D, &["--quote", "close g-1"]);
