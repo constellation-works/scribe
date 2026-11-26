@@ -287,7 +287,7 @@ impl Store {
                         profile_sha = Some(sha256(content));
                     }
                 }
-                None => files::remove(&path)?,
+                None => files::remove(&self.root, &path)?,
             }
         }
         Ok(profile_sha)

@@ -116,7 +116,7 @@ mod private_state {
         fs::write(real.join("a.json"), b"{}").unwrap();
         fs::set_permissions(real.join("a.json"), Permissions::from_mode(0o600)).unwrap();
         assert_eq!(files::list_root(&root).unwrap(), ["a.json"]);
-        files::remove(&root.join("a.json")).unwrap();
+        files::remove(&root, &root.join("a.json")).unwrap();
         assert!(!real.join("a.json").exists());
 
         let elsewhere = dir.path().join("elsewhere");
@@ -129,6 +129,38 @@ mod private_state {
         symlink(&elsewhere, &sub).unwrap();
         let err: Error = cw_fs::inspect_dir(&sub).unwrap_err().into();
         assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn removal_through_a_linked_subdirectory_is_refused() {
+        let dir = crate::testing::private_tempdir();
+        let real = dir.path().join("real");
+        cw_fs::create_private_dir(&real).unwrap();
+        let root = dir.path().join("root");
+        symlink(&real, &root).unwrap();
+
+        // A directory outside the store, owner-only, holding a file the
+        // store must never remove.
+        let outside = dir.path().join("outside");
+        cw_fs::create_private_dir(&outside).unwrap();
+        let target = outside.join("keep.md");
+        fs::write(&target, b"precious").unwrap();
+        fs::set_permissions(&target, Permissions::from_mode(0o600)).unwrap();
+
+        // `memory/now` inside the store is a link to it.
+        let memory = real.join("memory");
+        cw_fs::create_private_dir(&memory).unwrap();
+        symlink(&outside, memory.join("now")).unwrap();
+
+        let err = files::remove(&root, &root.join("memory/now/keep.md")).unwrap_err();
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        assert_eq!(err.code(), "store_symlink");
+        assert_eq!(fs::read(&target).unwrap(), b"precious");
+
+        // The same with a root that is not a link.
+        let err = files::remove(&real, &real.join("memory/now/keep.md")).unwrap_err();
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"precious");
     }
 
     #[test]

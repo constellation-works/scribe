@@ -223,7 +223,7 @@ impl Store {
     pub(crate) fn remove_archive(&self, path: &Path) -> Result<()> {
         if !is_dir(path)? {
             return if cw_fs::inspect_file(path)? {
-                files::remove(path)
+                files::remove(&self.root, path)
             } else {
                 Ok(())
             };
