@@ -1,6 +1,11 @@
 //! Binary-level Codex integration using synthetic, provenance-tagged rollouts.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/codex.rs"]
 mod subject;

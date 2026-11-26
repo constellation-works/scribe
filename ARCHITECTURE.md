@@ -330,20 +330,34 @@ script. The Makefile formats these files alongside Cargo's module tree.
 
 ## Guards
 
-Checked over non-test sources by `scripts/check-dependency-direction.sh`
-(and, for the terminal, `scripts/check-terminal-guard.sh`): what a crate edge
-cannot express. "Module" includes any file added later.
+Checked across the workspace by `clippy.toml` (`clippy::disallowed_types` and
+`clippy::disallowed_methods`, denied workspace-wide in `Cargo.toml`, with
+module-level `#![expect(..., reason = "...")]` on the boundary owners),
+`scripts/check-dependency-direction.sh`, and (for the terminal)
+`scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
+express. "Module" includes any file added later.
 
+- **Clippy disallowed paths (`clippy.toml`):** bans `std::fs` types and
+  methods, `std::env` reads (`var`, `var_os`, `vars`, `vars_os`,
+  `current_dir`, `home_dir`), `std::process::Command::{output,status,spawn}`,
+  `std::sync::mpsc::channel`, and `rusqlite::Connection::open` (including its
+  `open_with_flags` forms) regardless of how a path is imported or aliased.
+  Production exemptions are confined to the boundary owners:
+  `scribe-store/src/db/files.rs` (`std::fs` beside `cw-fs`),
+  `scribe-tools/src/fs.rs` (host `std::fs` adapter),
+  `scribe-core/src/composition.rs` (environment capture and `PATH` metadata),
+  `scribe-core/src/providers/cli.rs` (supervised process spawn and drain
+  channel), and `scribe/src/output/mod.rs` (`SCRIBE_LOG` read in
+  `init_logging`). `rusqlite::Connection::open*` has no production exemption:
+  `scribe-store` opens `scribe.db` only through `cw-sqlite`.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
 - **App order:** every directory under `apps/` is in the order above; an app
   imports only lower apps, through their `mod.rs`; no common, shared
   or util app.
-- **The environment and the host, in the core:** only `composition.rs`
-  reads the environment or discovers a path (`std::env::`, `home_dir`,
-  `current_dir()`), and it imports no app. Only `composition.rs` and
-  `providers/` name `std::fs`; only `providers/` names `std::process`,
-  `rustix` and `tempfile`; nothing opens a socket.
+- **The host and sockets, in the core:** `composition.rs` imports no app;
+  only `providers/` names `rustix` and `tempfile`; nothing opens a socket
+  (`std::net`).
 - **The model callers:** the dependency guard allows only
   `apps/memory/refresh.rs`, `apps/group/close.rs`, their apps' `mod.rs` files,
   and `runtime/errors.rs` to name `providers`, `Models`, `ModelError`,
@@ -351,23 +365,21 @@ cannot express. "Module" includes any file added later.
   model; the remaining `ModelError` references are in `apps/group/mod.rs` and
   `runtime/errors.rs`. `providers/` imports no app and no runtime, and the
   model shapes import none of their callers.
-- **The store:** reads no environment variable and discovers no path; only
-  `db/` names `cw_sqlite` or `rusqlite` (through `cw_sqlite::rusqlite`), and
-  no scribe source sets journal mode, `synchronous`, `busy_timeout`,
-  `user_version`, `secure_delete`, `PersistWal` or `wal_checkpoint` itself;
-  `db/files.rs` names nothing of the store but its error; no module of the
-  store re-implements a file mechanism: `cw-fs` is the file layer, and only
-  the store and `apps/init/install.rs` name it; `db/codec.rs` and
-  `repository/audit.rs` do no file I/O; `contracts/` imports no `db` or
-  `repository`, has no `check_*` function and reads no clock.
-- **The tools:** only `fs.rs` names `std::fs`; nothing names `scribe_core`,
-  `std::env`, `std::net` or `std::process`, discovers a path, calls
+- **The store:** only `db/` names `cw_sqlite` or `rusqlite` (through
+  `cw_sqlite::rusqlite`), and no scribe source sets journal mode,
+  `synchronous`, `busy_timeout`, `user_version`, `secure_delete`,
+  `PersistWal` or `wal_checkpoint` itself; `db/files.rs` names nothing of the
+  store but its error; no module of the store re-implements a file mechanism:
+  `cw-fs` is the file layer, and only the store and `apps/init/install.rs`
+  name it; `db/codec.rs` and `repository/audit.rs` do no file I/O (neither
+  names `db/files.rs`, `cw-fs` or `cw-sqlite`); `contracts/` imports no `db`
+  or `repository`, has no `check_*` function and reads no clock.
+- **The tools:** nothing names `scribe_core` or `std::net`, calls
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
-  `scribe_core::runtime` path and spawns no process; `commands/` writes no
-  file; `output/` imports no `app`, `cli` or `commands`; only `output/`
-  touches stdout or stderr, asks whether a stream is a terminal, or reads the
-  color and format variables.
+  `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
+  `commands`; only `output/` touches stdout or stderr, asks whether a stream
+  is a terminal, or reads the color and format variables.
 - **History:** a persisted timestamp never defaults to the current time
   (R16), and the deleted paths (`scribe-domain`, cases, the binary's moved
   files, the core's retired module names) stay deleted (R17).

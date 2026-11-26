@@ -1,5 +1,10 @@
 //! Session group contracts exercised through the installed command surface.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/groups.rs"]
 mod subject;

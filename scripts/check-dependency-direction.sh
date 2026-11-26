@@ -12,10 +12,12 @@
 #      external crates in its banlist. Dev-dependencies are exempt. A crate
 #      without a policy fails the check, so a new member forces a decision.
 #   2. Module edges inside a crate: grep bans over non-test sources for
-#      what a crate edge cannot express (std I/O, the environment, one
+#      what a crate edge and clippy.toml cannot express (`std::net`, one
 #      module's mechanism inside a crate, the app order, the core's root
-#      places). A `super::` path counts as the `crate::` path it names, so a
-#      relative import meets the same rules (resolve, ban_crate).
+#      places). `std::fs`, `std::env`, `std::process`, `mpsc::channel` and
+#      `rusqlite::Connection::open*` are enforced by clippy.toml (STD-02 R6).
+#      A `super::` path counts as the `crate::` path it names, so a relative
+#      import meets the same rules (resolve, ban_crate).
 #
 # The crates, the app order and these guards are written down in
 # ARCHITECTURE.md, from the architecture spec's Guards section
@@ -186,21 +188,9 @@ CLI=crates/scribe/src
 clock='(^|[^[:alnum:]_])(now_utc|now_local)\(|(OffsetDateTime|SystemTime|Instant|Utc|Local)::now([^[:alnum:]_]|$)'
 
 # The crate edges keep the use cases out of scribe-store, and rusqlite out
-# of every crate but the store. What they cannot keep out is std:
-# scribe-core does no file, network or process I/O of its own (R4, R5),
-# with two exceptions:
-# composition.rs resolves the host (it may name std::fs), and providers/
-# spawns the model processes (std::fs and std::process).
-for path in "$CORE"/*; do
-  case "$(basename "$path")" in tests) continue ;; providers)
-    ban_std "$path" 'net' "${path#crates/}: the model adapters open no socket"
-    continue ;;
-  composition.rs)
-    ban_std "$path" 'net|process' "${path#crates/}: composition resolves the host; providers/ spawns the model processes"
-    continue ;;
-  esac
-  ban_std "$path" 'fs|net|process' "${path#crates/}: file and process access belong in scribe-store"
-done
+# of every crate but the store. std::fs, std::env and std::process are
+# enforced by clippy.toml; only std::net stays as a source grep (STD-02 R6).
+ban_std "$CORE" 'net' "scribe-core opens no socket"
 
 # scribe-core's apps (ORB-27921 step 2; ARCHITECTURE.md, the architecture
 # spec §Apps): every directory under apps/ is in the order below, and an app
@@ -340,15 +330,10 @@ done < <(find "$CORE/apps" "$CORE/runtime" -name '*.rs' -not -path '*/tests/*' |
 # The providers know nothing of the apps or the runtime that call them.
 ban_crate "$CORE/providers" 'crate::(apps|runtime)(::|[^[:alnum:]_]|$)' "providers must not import the apps or the runtime"
 
-# scribe-tools: only fs.rs names std::fs; nothing reads the environment,
-# discovers a path, spawns a process, names the core or writes the store.
+# scribe-tools: std::fs, std::env and std::process are enforced by clippy.toml;
+# nothing opens a socket, names the core or writes the store.
 TOOLS=crates/scribe-tools/src
-for path in "$TOOLS"/*; do
-  case "$(basename "$path")" in tests | fs.rs) continue ;; esac
-  ban_std "$path" 'fs|net|process' "${path#crates/}: only scribe-tools/src/fs.rs names std::fs, and the tools spawn nothing"
-done
-ban_std "$TOOLS/fs.rs" 'net|process' "scribe-tools/src/fs.rs: the tools spawn nothing and open no socket"
-ban "$TOOLS" 'std::env::|home_dir|current_dir\(\)' "scribe-tools must not read the environment or discover paths"
+ban_std "$TOOLS" 'net' "scribe-tools opens no socket"
 ban "$TOOLS" 'scribe_core(::|[^[:alnum:]_]|$)' "scribe-tools must not name scribe_core: the core calls the tools"
 ban "$TOOLS" 'Store::write|\.write\([[:space:]]*\|' "scribe-tools must not write the store"
 # No clock and no randomness: a tool that needs the time takes it as an
@@ -376,11 +361,11 @@ fi
 # Inside scribe-store: the codec converts bytes and the audit repository
 # writes rows through db/; neither does file I/O of its own (R4, R5). The
 # file layer is db/files.rs, the cw-fs adapter held below to naming nothing
-# of the store but its error: neither shape names it, cw-fs or std::fs.
+# of the store but its error: neither shape names it, cw-fs or cw-sqlite
+# (std::fs is banned workspace-wide by clippy.toml).
 for shape in db/codec:"converts bytes" repository/audit:"writes its rows through db/"; do
   file="$STORE/${shape%%:*}.rs"
   [[ -d "$STORE" && ! -f "$file" ]] && err "${file#crates/} is missing: update this guard with the file"
-  ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   ban "$file" '(^|[^[:alnum:]_])(super|db)::files([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   # Flatten grouped use trees before checking their paths. This catches nested
   # and multiline groups without banning unrelated variables named `files`.
@@ -451,14 +436,6 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
   ban "$file" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   ban "$file" '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not open SQLite"
 done
-# The core and the store receive resolved roots and configuration (R3).
-# A child's working directory (`Command::current_dir(path)`, providers/) is
-# set, not discovered: only the no-argument `current_dir()` is a discovery.
-# In the core only composition.rs reads the environment or discovers a path.
-for path in "$CORE"/*; do
-  case "$(basename "$path")" in tests | composition.rs) continue ;; esac
-  ban "$path" 'std::env::|home_dir|current_dir\(\)' "${path#crates/}: only composition.rs reads the environment or discovers paths"
-done
 # rustix and tempfile serve the model processes: only providers/ names them.
 for path in "$CORE"/*; do
   case "$(basename "$path")" in tests | providers) continue ;; esac
@@ -466,7 +443,6 @@ for path in "$CORE"/*; do
 done
 # Composition builds the context the apps run against; it imports no app.
 ban_crate "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
-ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
 # ORB-27921 step 4 and ORB-28614: db/ holds the storage mechanism. SQLite is
 # opened, configured and migrated through the kit's cw-sqlite (2_design.md
 # §15.7): only db/ names cw_sqlite or rusqlite (through cw_sqlite::rusqlite),
@@ -518,12 +494,6 @@ ban "$STORE/contracts" '(^|[^[:alnum:]_])fn[[:space:]]+check_' \
   "scribe-store/src/contracts: a contract decides nothing (no check_* function)"
 # A contract reads no clock: a time is a field, or an argument.
 ban "$STORE/contracts" "$clock" "scribe-store/src/contracts: a contract reads no clock"
-# Composition does not know about parsing, dispatch or rendering (R2).
-# The model adapters spawn supervised processes through providers/cli.rs's
-# supervisor in scribe-core, so process-group supervision, the cleared
-# environment and the budget live in one place (STD-03 R11-R15, STD-05 R10).
-ban "$CLI" 'process::(Command|Child)|Command::new' "the binary spawns no process: scribe-core's providers/ reaches a model"
-
 # Rendering is derived from payloads only; it never reaches back up (R1).
 ban "$CLI/output"    'crate::(app|cli|commands)'    "output must not import app, cli or commands"
 # The binary reaches the core through its public surface only: the
@@ -532,11 +502,6 @@ ban "$CLI/output"    'crate::(app|cli|commands)'    "output must not import app,
 # exec (ORB-27921 step 3).
 ban "$CLI" '(^|[^[:alnum:]_])scribe_(domain|store|tools)::' "the binary must not name scribe_domain, scribe_store or scribe_tools: it reaches them through scribe_core"
 ban "$CLI" 'scribe_core::runtime(::|[^[:alnum:]_]|$)' "the binary must not name scribe_core::runtime: the runtime is internal to the core"
-
-# Commands may read files the host owns (a hook's transcript, git config), but
-# every write goes through the store's atomic writer under its lock (R4).
-ban "$CLI/commands"  'std::fs::(write|remove|rename|create|copy|set_permissions)|OpenOptions' \
-                                                                 "commands must not write files: store writes go through scribe-core's store"
 
 # Persisted shapes never fabricate a timestamp on read (R16).
 ban crates 'serde\(default *= *"[A-Za-z_:]*(now|now_utc)"'    "a persisted timestamp must not default to the current time"

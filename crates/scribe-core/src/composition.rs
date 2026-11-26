@@ -3,12 +3,16 @@
 //! data directory, constructs the store, and hands the apps resolved values
 //! (STD-02 R3); it composes the model adapter
 //! ([`ClaudeCliModels`](crate::providers::ClaudeCliModels)) and knows nothing
-//! about argument parsing or rendering. Outside this module and
-//! `providers/`, nothing in the core reads an environment variable or
-//! touches a file (`scripts/check-dependency-direction.sh`).
+//! about argument parsing or rendering. Outside this module, nothing in the
+//! core reads an environment variable or uses `std::fs` (`clippy.toml`).
 //!
 //! [`Context`]'s ports and its own failures report a
 //! [`CommandError`](crate::runtime::errors::CommandError).
+
+#![expect(
+    clippy::disallowed_methods,
+    reason = "composition.rs is scribe-core's host composition root (STD-02 R3); it captures the environment and checks executable metadata on PATH"
+)]
 
 use crate::config::RedactorFromConfig;
 use crate::providers::{ClaudeCliModels, allowed_env};

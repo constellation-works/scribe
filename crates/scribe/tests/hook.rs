@@ -10,6 +10,11 @@
 //! `.claude/projects/` holds the fixture transcript; nothing touches the
 //! real home.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/hook.rs"]
 mod subject;

@@ -183,20 +183,15 @@ const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
 /// filesystem. It is one of the store's documented exceptions to holding
 /// no rule (ARCHITECTURE.md).
 fn prepare_target(target: &Path) -> Result<()> {
-    match std::fs::symlink_metadata(target) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    match db::files::symlink_metadata(target)? {
+        None => {
             if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
-                std::fs::create_dir_all(parent).map_err(|e| Error::io("create", parent, e))?;
+                db::files::create_dir_all(parent)?;
             }
             Ok(cw_fs::create_private_dir(target)?)
         }
-        Err(e) => Err(Error::io("inspect", target, e)),
-        Ok(meta) if meta.is_dir() => {
-            if std::fs::read_dir(target)
-                .map_err(|e| Error::io("list", target, e))?
-                .next()
-                .is_some()
-            {
+        Some(meta) if meta.is_dir() => {
+            if db::files::dir_is_non_empty(target)? {
                 return Err(refusal(
                     WriteRefusal::ExportTargetExists,
                     format!(
@@ -207,7 +202,7 @@ fn prepare_target(target: &Path) -> Result<()> {
             }
             Ok(())
         }
-        Ok(_) => Err(refusal(
+        Some(_) => Err(refusal(
             WriteRefusal::ExportTargetExists,
             format!("{} exists and is not a directory", target.display()),
         )),

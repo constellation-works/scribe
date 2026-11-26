@@ -1,6 +1,11 @@
 //! Distribution scaffolding through the installed binary surface, on temp projects.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 #[path = "support/init.rs"]
 mod subject;
 mod support;

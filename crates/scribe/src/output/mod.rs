@@ -7,6 +7,11 @@
 //! decided (STD-01 R13). The renderers here only build what the sink writes:
 //! a table, a detail view, or the payload's JSON.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "output::init_logging reads SCRIBE_LOG at the CLI surface to configure tracing"
+)]
+
 mod color;
 mod payload;
 mod printable;

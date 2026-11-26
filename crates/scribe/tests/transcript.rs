@@ -2,6 +2,11 @@
 //! (2_design.md §5.8): a read-only store, and `session catalog` refusing
 //! a transcript that is not there.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/transcript.rs"]
 mod subject;

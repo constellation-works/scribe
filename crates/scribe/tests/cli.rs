@@ -2,6 +2,11 @@
 //! pipe behaviour, inputs, and store safety (STD-01 R7–R34, STD-02 R20,
 //! STD-05 R7–R9). Most run against a copy of `tests/fixtures/store`.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/cli.rs"]
 mod subject;

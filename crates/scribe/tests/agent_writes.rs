@@ -1,5 +1,10 @@
 //! Direct agent writes through the built binary, isolated from host state.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 #[path = "agent_writes/records.rs"]
 mod records;
 #[path = "support/agent_writes.rs"]

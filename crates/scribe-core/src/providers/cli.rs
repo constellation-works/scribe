@@ -26,6 +26,11 @@
 //! The adapter spawns processes, so it lives under `providers/`, the one
 //! place in the core that names `std::process` (ARCHITECTURE.md).
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn and single-item drain channel)"
+)]
+
 mod codex;
 
 use super::Models;

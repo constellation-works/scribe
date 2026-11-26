@@ -15,7 +15,7 @@
 //!
 //! The crate names no `scribe_core`, never calls `Store::write`, and reads
 //! no environment variable and spawns no process: the caller passes the
-//! resolved roots (scripts/check-dependency-direction.sh).
+//! resolved roots (`clippy.toml` and `scripts/check-dependency-direction.sh`).
 
 // Library code never prints; diagnostics go through `tracing` (STD-02 R15).
 #![deny(clippy::print_stderr, clippy::print_stdout)]
