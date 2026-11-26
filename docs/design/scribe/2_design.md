@@ -7388,7 +7388,7 @@ This boundary preserves every security and correctness guarantee of the current 
 
 Accordingly, `plugin/.orbit-plugin/` defines two shared `agent_loop` activities:
 
-- `scribe_session_distill`: takes one prepared `SessionWindowInput` (bounded `previous` header + open segment + sealed table of contents, `linked` summaries, `messages` up to 40 turns / 15,000 chars, `topics`, `terms`, optional `candidate_turns`/`candidate_rules`/exclusions, optional `memory_now`/`memory_pending`, `budgets`, `final_pass`, `user_noun`, and optional `correction`), with `output_schema_json` set to the `SessionAnswer` schema (making `memory` and `signal` empty/optional when `memory` is `false`).
+- `scribe_session_distill`: takes one prepared `SessionWindowInput` (bounded `previous` header + open segment + sealed table of contents, `linked` summaries, `messages` up to the configured `[catalog] window_messages` (default 40) messages / `[catalog] window_chars` (default 15,000) characters, `topics`, `terms`, optional `candidate_turns`/`candidate_rules`/exclusions, optional `memory_now`/`memory_pending`, `budgets`, `final_pass`, `user_noun`, and optional `correction`), with `output_schema_json` set to the `SessionAnswer` schema (making `memory` and `signal` empty/optional when `memory` is `false`).
 - `scribe_session_header_compress`: takes `SessionHeaderRequest` (`title`, `summary`, `goals`, `next`, `budgets`, `correction`) and returns `SessionHeader` (`SESSION_HEADER_SCHEMA`) when the only defect is a header budget overrun.
 
 Why window-by-window in a job `loop:`: window $k + 1$ reads the `previous` record, `scribed_through` cursor, open segment, `memory_pending` candidates, and remaining `candidate_slots` / `write_slots` committed by window $k$.
