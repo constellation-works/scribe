@@ -1,0 +1,2 @@
+open-item-1	entry	0.940	2026-11-10T01:00:00Z	open-item-1 (open-item, open)	Which API should the release use?
+decision-1	entry	0.869	2026-11-10T01:00:00Z	decision-1 (decision, by 0-chief)	Keep the stable API for this release series.

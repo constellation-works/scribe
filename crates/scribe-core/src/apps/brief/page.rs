@@ -85,6 +85,12 @@ fn build<E>(
         exclude,
         sessions,
     );
+    let items = ctx.store.read().entries().list(&EntryFilter {
+        tag: crate::entry::OPEN_ITEM_TAG.parse().ok(),
+        status: Some(EntryStatus::Active),
+        ..EntryFilter::default()
+    })?;
+    brief.open_items = brief::open_items(&items.listing.items);
     brief.memory = memory;
     if let Some(project) = project {
         brief.last_group = ctx.store.read().groups().last(project)?;
@@ -159,7 +165,8 @@ pub(crate) fn at_start<E: PortError>(
             if brief.memory.is_none()
                 && brief.last_group.is_none()
                 && brief.sessions.is_empty()
-                && brief.claims.is_empty() =>
+                && brief.claims.is_empty()
+                && brief.open_items.is_empty() =>
         {
             None
         }

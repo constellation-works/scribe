@@ -1,0 +1,30 @@
+{
+  "memory": {
+    "profile": null,
+    "now": [],
+    "milestones": []
+  },
+  "warnings": [],
+  "project": "scribe",
+  "sessions": [],
+  "claim_count": 0,
+  "open_items": [
+    {
+      "id": "open-item-1",
+      "state": "open",
+      "asked_by": "orbit-0-capt",
+      "task": "ORB-42",
+      "answer_in": "any",
+      "question": "Which API should the release use?"
+    },
+    {
+      "id": "open-item-2",
+      "state": "open",
+      "asked_by": "0-chief",
+      "task": "ORB-42",
+      "answer_in": "hand",
+      "question": "Restart the dashboard"
+    }
+  ],
+  "claims": []
+}

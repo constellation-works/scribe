@@ -29,6 +29,7 @@
     }
   ],
   "claim_count": 1,
+  "open_items": [],
   "claims": [
     {
       "tag": "preferences",

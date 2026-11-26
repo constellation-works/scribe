@@ -281,3 +281,33 @@ fn tokens_drop_stopwords_and_short_words_and_strip_suffixes() {
         vec!["releas", "releas", "releas", "releas", "class", "class"]
     );
 }
+
+#[test]
+fn labels_decisions_and_open_items() {
+    use crate::entry::{Decision, ItemState};
+    let mut decision = noted("decision-1", "release policy");
+    decision.decision = Some(Decision {
+        decided_by: "user".parse().unwrap(),
+        rationale: None,
+        reason_quote: None,
+        options: vec![],
+        recommended: None,
+        supersedes: None,
+        settles: None,
+    });
+    let item = noted("open-item-1", "release policy question");
+    assert_eq!(ItemState::of(&item), Some(ItemState::Open));
+    let found = run(&query("release policy"), &[decision, item], &[]);
+    assert!(
+        found
+            .hits
+            .iter()
+            .any(|h| h.title == "decision-1 (decision, by the user)")
+    );
+    assert!(
+        found
+            .hits
+            .iter()
+            .any(|h| h.title == "open-item-1 (open-item, open)")
+    );
+}

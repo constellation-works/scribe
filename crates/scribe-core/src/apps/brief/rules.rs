@@ -49,8 +49,65 @@ pub struct Brief {
     pub last_group: Option<LastGroup>,
     /// The last sessions: the project's first, each part newest first.
     pub sessions: Vec<BriefSession>,
+    /// Open and answered items, ordered by state and age.
+    pub open_items: Vec<OpenItem>,
     /// The open claims, grouped by tag in tag order; claims by id within a tag.
     pub claims: Vec<ClaimGroup>,
+}
+
+/// An item awaiting the user or its asker.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct OpenItem {
+    /// Entry identifier.
+    pub id: String,
+    /// Open or answered.
+    pub state: &'static str,
+    /// The asking session, if recorded.
+    pub asked_by: String,
+    /// First related task, if any.
+    pub task: Option<String>,
+    /// Where the answer is needed.
+    pub answer_in: String,
+    /// The question or action.
+    pub question: String,
+}
+
+/// Select open items from all projects, including legacy trial records.
+#[must_use]
+pub fn open_items(entries: &[Entry]) -> Vec<OpenItem> {
+    use crate::entry::ItemState;
+    let mut items: Vec<_> = entries
+        .iter()
+        .filter_map(|e| {
+            let state = ItemState::of(e)?;
+            if state.is_settled() {
+                return None;
+            }
+            Some((state, e.created, &e.id, e))
+        })
+        .collect();
+    items.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    items
+        .into_iter()
+        .map(|(state, _, _, e)| OpenItem {
+            id: e.id.to_string(),
+            state: state.as_str(),
+            asked_by: e
+                .item
+                .as_ref()
+                .map_or_else(|| e.author.name.to_string(), |i| i.asked_by.to_string()),
+            task: e
+                .related
+                .iter()
+                .find(|r| r.kind() == crate::record::RelatedKind::Task)
+                .map(|r| r.target().to_owned()),
+            answer_in: e
+                .item
+                .as_ref()
+                .map_or_else(|| "any".to_owned(), |i| i.answer_in.to_string()),
+            question: e.content.clone(),
+        })
+        .collect()
 }
 
 /// One session in the brief.
@@ -151,7 +208,35 @@ impl Brief {
             }
             out.push('\n');
         }
-        out.push_str("## Recent sessions\n");
+        out.push_str("## Open items\n");
+        if self.open_items.is_empty() {
+            out.push_str("(none)\n");
+        }
+        for item in self.open_items.iter().take(10) {
+            let question = one_line(&item.question);
+            let question = if question.chars().count() > 120 {
+                format!("{}…", question.chars().take(119).collect::<String>())
+            } else {
+                question
+            };
+            let task = item.task.as_deref().unwrap_or("-");
+            let answer = if item.answer_in == "any" {
+                String::new()
+            } else {
+                format!("{} · ", item.answer_in)
+            };
+            out.push_str(&format!(
+                "- {} · {} · {} · {} · {}{}\n",
+                item.id, item.state, item.asked_by, task, answer, question
+            ));
+        }
+        if self.open_items.len() > 10 {
+            out.push_str(&format!(
+                "(+{} more: scribe entry list --tag open-item --state open --state answered)\n",
+                self.open_items.len() - 10
+            ));
+        }
+        out.push_str("\n## Recent sessions\n");
         if self.sessions.is_empty() {
             out.push_str("(none)\n");
         }
@@ -308,6 +393,7 @@ pub fn build(
         memory: None,
         project: project.cloned(),
         last_group: None,
+        open_items: Vec::new(),
         sessions: recent,
         claims,
     }

@@ -80,6 +80,8 @@ proposal's quote line).
 | `memory show <id>` (format 25) | `<id>\t<kind>\t<date or ->\t<title or ->` (`kind` `profile`, `now` or `milestone`), then one `text\t<line>` line per line of its text; the table prints the item's fields one per line (`id kind date now_kind title text sources updated raised`, `-` when empty). `memory show` with no id prints the memory block (below), not rows |
 | `transcript list` *(S14)* | `session project user_turns bytes started ended first_prompt` |
 
+Decision hit titles identify the decider (`decision, by the user` or `decision, by <agent>`); legacy decisions without a decider say `decision, decider unknown`. Open-item titles include their state (`open-item, <state>`). Hidden records retain the existing visibility rules.
+
 Search hits are best first; on a tie entries come before sessions, then
 the newest first; transcripts newest first by
 `started`. Entries are oldest first (by `created`, then `started`, ties by
@@ -1089,7 +1091,12 @@ Plain and table print the same text, which the `SessionStart` hook also
 injects: `# scribe brief`; the memory block (as `memory show` prints it);
 `## Last group` with the most recently opened group in the current project,
 `g-<n> · <title>`, followed by its retained close summary when present or
-`Still open.` when the group is open without a summary; `## Recent sessions`
+`Still open.` when the group is open without a summary; `## Open items`
+lists up to ten open and answered items across projects, open first then
+oldest, with id, state, asker, first task, answer location when restricted,
+and question cut to 120 characters. A remainder line gives the count and
+list command; an empty section says `(none)`. `SessionStart` reports the
+number of open and answered items to the user when nonzero. `## Recent sessions`
 with one `- <id> · <YYYY-MM-DD HH:MMZ> · <project> · <title>` line
 per session, `<p>`'s first, each part newest first (or
 `(none)`): a recorded session with an active handoff ends in
@@ -1108,6 +1115,7 @@ characters, ending in `…`. JSON:
  "last_group": {"id", "title", "closed", "summary"} or omitted,
  "sessions": [{"id", "project", "title", "at", "has_record", "handoff", "handoffs", "handoff_mode"}],
  "claim_count": 1,
+ "open_items": [{"id", "state", "asked_by", "task", "answer_in", "question"}],
  "claims": [{"tag": "<tag>", "claims": [{"id": "p-<n>", "kind": "candidate|supersedes|stale",
    "quote", "statement", "subject", "older", "newer", "opened_at"}]}]}
 ```

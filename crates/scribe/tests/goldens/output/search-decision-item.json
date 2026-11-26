@@ -1,0 +1,49 @@
+{
+  "hits": [
+    {
+      "kind": "entry",
+      "cite": "open-item-1",
+      "id": "open-item-1",
+      "segment": null,
+      "message": null,
+      "score": 0.94,
+      "title": "open-item-1 (open-item, open)",
+      "snippet": "Which API should the release use?",
+      "project": "scribe",
+      "topics": [],
+      "author": {
+        "kind": "agent",
+        "name": "opus"
+      },
+      "active": null,
+      "updated": "2026-11-10T01:00:00Z",
+      "status": "active",
+      "evidence": null,
+      "as_of": null
+    },
+    {
+      "kind": "entry",
+      "cite": "decision-1",
+      "id": "decision-1",
+      "segment": null,
+      "message": null,
+      "score": 0.869,
+      "title": "decision-1 (decision, by 0-chief)",
+      "snippet": "Keep the stable API for this release series.",
+      "project": "scribe",
+      "topics": [],
+      "author": {
+        "kind": "agent",
+        "name": "opus"
+      },
+      "active": null,
+      "updated": "2026-11-10T01:00:00Z",
+      "status": "active",
+      "evidence": null,
+      "as_of": null
+    }
+  ],
+  "total": 2,
+  "truncated": false,
+  "warnings": []
+}
