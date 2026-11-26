@@ -3,9 +3,11 @@
 //! (docs/design/scribe/2_design.md §5.8, §19.3.3).
 //!
 //! A session that already has a record or a `/scribe on` switch is refused
-//! `session_cataloged`; one `#scribe forget` erased is refused
-//! `session_forgotten` first. A catalog that failed stays due, and running
-//! the job again resumes it without resetting `since` or `cataloged_by`.
+//! `session_cataloged`, unless its catalog switch is still on and due; that
+//! catalog resumes even when a partial record exists. One `#scribe forget`
+//! erased is refused `session_forgotten` first. A catalog that failed stays
+//! due, and running the job again resumes it without resetting `since` or
+//! `cataloged_by`.
 //! The transcript's age is its last message, not the file's mtime: a day
 //! old, the last window marks the record final and the switch off; newer,
 //! the switch stays on and due. No entries are written.
@@ -38,10 +40,11 @@ pub(in crate::commands) use scribe_core::apps::session::Begun;
 pub(super) const EXAMPLES: &str = "\
 Switches one past session on with cataloged_by and prints the Orbit job
 command that runs every window, with no deadline. Refuses a session that
-already has a record or a /scribe on switch. A transcript whose last message
-is at least a day old is marked final and switched off; a newer one stays on
-and due. A failed catalog stays due; run the job again to resume, or let the
-next session pass finish it. Writes no entries.
+already has a record or a /scribe on switch, unless its catalog switch is
+still on and due; that run resumes even with a partial record. A transcript
+whose last message is at least a day old is marked final and switched off;
+a newer one stays on and due. A failed catalog stays due; run the job again
+to resume, or let the next session pass finish it. Writes no entries.
 
 A new catalog is recorded as kind agent under --author; the reserved names
 user, scribe and consistency are refused. The user catalogs as themselves by

@@ -7532,7 +7532,7 @@ The `scribe-session-pass` routine (`*/5 * * * *`, seeded `enabled: false`, `poli
 #### 19.3.3 `session catalog` (`scribe-session-catalog` job and CLI switch)
 
 - **CLI `scribe session catalog <id> --author <name> [--project <slug>] [--provider ...]`** runs only `catalog::begin` deterministically:
-  1. Resolves the transcript on this host, refuses forgotten sessions and already-cataloged sessions (`session_cataloged`), and runs the transcript provenance check.
+  1. Resolves the transcript on this host, refuses forgotten sessions, and refuses already-cataloged sessions (`session_cataloged`) unless their catalog switch is still on and due; that switch resumes even when a partial record exists. It then runs the transcript provenance check.
   2. Writes the control switch (`cataloged_by: {at, by: agent(<name>)}`, `on: true`, `due: true`, `provider`, optional `project` override) and audits the switch write.
   3. Prints the switch result and instructs the caller to run `orbit job run scribe-session-catalog --input '{"session":"<id>","author":"<name>"}'` (or let the `scribe-session-pass` routine pick it up on its next run, since `switch.cataloged_by.is_some()` already runs in catalog mode). `/scribe catalog <id>` in `UserPromptSubmit` already behaves this way.
 - **Orbit job `scribe-session-catalog` (`input: {session, author, project?, provider?}`, `max_active_runs: 1`)**:
