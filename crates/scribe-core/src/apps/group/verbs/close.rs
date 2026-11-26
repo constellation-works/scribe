@@ -8,6 +8,8 @@ use time::OffsetDateTime;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Snapshot {
+    /// Canonical group id binding the evidence to its source.
+    pub id: String,
     /// Bounded handoffs and typed turns.
     pub evidence: CloseEvidence,
     /// Related references.
@@ -15,7 +17,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Digest of the exact evidence and related references used by a close.
+    /// Digest of the group id, exact evidence and related references used by a close.
     pub fn digest(&self) -> String {
         crate::text::bytes_sha256(serde_json::json!(self).to_string().as_bytes())
     }
@@ -181,6 +183,7 @@ fn snapshot(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<Opt
     let handoffs = rows.member_handoffs(n)?;
     let turns = rows.member_turns(n)?;
     Ok(Some(Snapshot {
+        id: format!("g-{n}"),
         evidence: CloseEvidence {
             title: header.title,
             handoffs,
