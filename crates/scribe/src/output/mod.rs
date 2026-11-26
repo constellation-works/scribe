@@ -3,9 +3,10 @@
 //! The sink is the kit's (`cw-cli`): stdout carries the payload and nothing
 //! else, in a table, tab-separated lines or JSON; notices, warnings and errors
 //! go to stderr in every mode (STD-01 R12). A closed stdout latches the sink
-//! shut and the command runs to its end, so [`finish`] exits as the command
-//! decided (STD-01 R13). The renderers here only build what the sink writes:
-//! a table, a detail view, or the payload's JSON.
+//! shut and the command runs to its end. After EPIPE, [`finish`] exits
+//! silently with 0, including when a session pass report failed (STD-01 R13).
+//! The renderers here only build what the sink writes: a table, a detail view,
+//! or the payload's JSON.
 //!
 //! The process environment is captured by composition and passed in; this
 //! module reads none of it (STD-02 R3, R7).
@@ -149,8 +150,11 @@ pub(crate) fn finish(console: &Console, outcome: Result<(Output, ShortIds), CliE
         let mut sink = console.sink(&output);
         emit(&mut sink, &shorts, &output).map_err(|e| CliError::Output(io_error(e)))?;
         // A closed stdout is success; any other failed write is reported now
-        // that the command is done.
+        // that the command is done. EPIPE also suppresses a later pass error.
         sink.finish().map_err(|e| CliError::Output(io_error(e)))?;
+        if sink.is_closed() {
+            return Ok(());
+        }
         match &output {
             Output::Pass(report) => report.failure().map_or(Ok(()), Err),
             Output::Init(_)

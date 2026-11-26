@@ -563,7 +563,7 @@ breaking change and shows up as a golden diff.
 
 | Exit | Meaning | stderr |
 |------|---------|--------|
-| 0 | success, including an empty result and a closed stdout | warnings and at most one notice |
+| 0 | success, including an empty result and closed stdout; EPIPE ends silently even after a failed session pass report | warnings and at most one notice, never an EPIPE error |
 | 1 | the command failed | `error: <message>` or `{"error": "...", "code": "..."}` |
 | 2 | usage error, including an invalid or too-short id, tag, topic, project or status | clap's rendering, or `{"error": "...", "code": "usage_error"}`; with `--json` the message keeps clap's detail (the argument name) on one line |
 

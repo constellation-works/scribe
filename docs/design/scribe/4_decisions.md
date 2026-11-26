@@ -5530,11 +5530,10 @@ sink writes: a `Table`, a detail view of `TextSpan`s, or the payload's JSON.
 Differences a user can see:
 
 - **A closed stdout latches shut and the command runs to its end.** Output stops at
-  the first failed write and the process exits as the command decided: 0, or 1 with
-  `error:` on stderr when a session pass failed. Before, the first failed write ended
-  the command at once with exit 0, so a failed session pass behind a closed pipe
-  exited 0 and reported nothing. Any other failed write is reported after the
-  command, as before.
+  the first failed write. After EPIPE, the process exits silently with 0, even when
+  a session pass report failed (STD-01@4 §R13). A failed session pass on writable
+  stdout still prints its report and exits 1 with `error:` on stderr (STD-01@4
+  §R20). Any other failed write is reported after the command, as before.
 - **Control characters are visible escapes, not U+FFFD**, in every human output and
   stderr notice: `\u{1b}`, `\r`, `\n`, `\t`, and C1 controls as `\u{85}`. A tab or
   line break inside a table or plain cell is escaped too (the cells are flattened to
