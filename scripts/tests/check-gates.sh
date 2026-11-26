@@ -479,6 +479,77 @@ if grep -Eq "module '(decoy|tests|support)' has no place" "$work/out"; then
   fail=1
 fi
 
+# --- test cfg attributes are read as attributes (ORB-28901) ------------------
+# A test-only cfg is read from the attribute itself. Text that only looks like
+# one (a doc string, a comment) is not a cfg, a comment inside a cfg is ignored,
+# and any(test, feature = "test-support") counts in either operand order.
+# commands_tree <name>: a scribe::commands fixture whose brief.rs store imports.
+commands_tree() {
+  local root
+  root=$(tree "$1")
+  mkdir -p "$root/crates/scribe/src/commands"
+  printf '//! brief\n' >"$root/crates/scribe/src/commands/brief.rs"
+  echo "$root"
+}
+
+# Production: store imports the later sibling brief, and no cfg excuses it.
+doc_bad=$(commands_tree cfg-doc-upward)
+printf '//! store\n#[doc = "#[cfg(test)]"]\nuse super::brief::Brief;\n' >"$doc_bad/crates/scribe/src/commands/store.rs"
+expect fail check-dependency-direction.sh "$doc_bad" "upward import under a doc attribute that says #[cfg(test)]"
+if ! grep -Fq "scribe::commands: store imports brief, which is not lower" "$work/out"; then
+  echo "check-gates: FAIL: missing upward-import diagnostic under a doc attribute" >&2
+  fail=1
+fi
+comment_bad=$(commands_tree cfg-comment-upward)
+printf '//! store\n#[doc = "x"]\n// #[cfg(test)]\nuse super::brief::Brief;\n' >"$comment_bad/crates/scribe/src/commands/store.rs"
+expect fail check-dependency-direction.sh "$comment_bad" "upward import after a line comment that says #[cfg(test)]"
+
+# Test-only controls: a comment inside the cfg is ignored, so the import is test-only.
+comment_ok=$(commands_tree cfg-comment-test-only)
+printf '//! store\n#[cfg(test /* fixture */)]\nuse super::brief::Brief;\n' >"$comment_ok/crates/scribe/src/commands/store.rs"
+expect pass check-dependency-direction.sh "$comment_ok" "test-only upward import with a comment inside its cfg"
+
+# A string with a line continuation keeps the raw offsets, so the cfg after it
+# is still read at its own place (the attribute ends at the use, no space).
+cont_ok=$(commands_tree cfg-string-continuation)
+printf '//! store\nconst S: &str = "a\\\nb";\n#[cfg(test)]use super::brief::Brief;\n' >"$cont_ok/crates/scribe/src/commands/store.rs"
+expect pass check-dependency-direction.sh "$cont_ok" "test-only import after a string with a line continuation"
+
+# Inline test-support modules are test-only in either operand order. Without
+# the cfg, the same module is a production unit with no place in the order.
+support_fwd=$(store_tree cfg-support-forward)
+printf '#[cfg(any(test, feature = "test-support"))]\nmod support { use super::codec; }\n' >"$support_fwd/crates/scribe-store/src/db/mod.rs"
+expect pass check-dependency-direction.sh "$support_fwd" "test-support module under any(test, feature = ...)"
+support_rev=$(store_tree cfg-support-reversed)
+printf '#[cfg(any(feature = "test-support", test))]\nmod support { use super::codec; }\n' >"$support_rev/crates/scribe-store/src/db/mod.rs"
+expect pass check-dependency-direction.sh "$support_rev" "test-support module under any(feature = ..., test)"
+support_plain=$(store_tree cfg-support-plain)
+printf 'mod support { use super::codec; }\n' >"$support_plain/crates/scribe-store/src/db/mod.rs"
+expect fail check-dependency-direction.sh "$support_plain" "the same module without a test cfg is a production unit"
+
+# lib.rs reads its root modules' cfgs the same way: a comment inside the cfg is
+# ignored, and a doc string or a comment that says #[cfg(test)] is not one.
+root_test=$(tree cfg-root-comment-test-only)
+printf '//! core\npub mod apps;\n#[cfg(test /* fixture */)]\nmod extra;\n' >"$root_test/crates/scribe-core/src/lib.rs"
+printf 'fn extra() {}\n' >"$root_test/crates/scribe-core/src/extra.rs"
+expect pass check-dependency-direction.sh "$root_test" "root test module with a comment inside its cfg"
+root_any=$(tree cfg-root-any)
+printf '//! core\npub mod apps;\n#[cfg(any(feature = "test-support", test))]\nmod extra;\n' >"$root_any/crates/scribe-core/src/lib.rs"
+printf 'fn extra() {}\n' >"$root_any/crates/scribe-core/src/extra.rs"
+expect pass check-dependency-direction.sh "$root_any" "root test-support module under any(feature = ..., test)"
+root_doc=$(tree cfg-root-doc)
+printf '//! core\npub mod apps;\n#[doc = "#[cfg(test)]"]\nmod extra;\n' >"$root_doc/crates/scribe-core/src/lib.rs"
+printf 'fn extra() {}\n' >"$root_doc/crates/scribe-core/src/extra.rs"
+expect fail check-dependency-direction.sh "$root_doc" "root module under a doc attribute that says #[cfg(test)]"
+if ! grep -Fq "lib.rs declares the root module extra" "$work/out"; then
+  echo "check-gates: FAIL: missing root-module diagnostic under a doc attribute" >&2
+  fail=1
+fi
+root_comment=$(tree cfg-root-comment)
+printf '//! core\npub mod apps;\n// #[cfg(test)]\nmod extra;\n' >"$root_comment/crates/scribe-core/src/lib.rs"
+printf 'fn extra() {}\n' >"$root_comment/crates/scribe-core/src/extra.rs"
+expect fail check-dependency-direction.sh "$root_comment" "root module after a line comment that says #[cfg(test)]"
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.

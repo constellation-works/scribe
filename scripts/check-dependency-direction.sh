@@ -367,19 +367,9 @@ fi
 # The core's root modules are its places (ARCHITECTURE.md). lib.rs declares a
 # file module (`mod x;`, any visibility, not test-only) only for one of them,
 # so a new root module fails until it is given a place here and in the docs.
-# The inline re-export modules lib.rs declares name no file and are not read.
+# The python block (3d) reads lib.rs with the same cfg reader as the import
+# checks. The inline re-export modules lib.rs declares name no file and are not read.
 ROOT_PLACES="apps composition config providers runtime"
-undeclared=$(ROOT_PLACES="$ROOT_PLACES" perl -0777 -ne '
-  my %place = map { $_ => 1 } split " ", $ENV{ROOT_PLACES};
-  while (/^[ \t]*((?:#\[cfg\(test\)\][ \t]*\n[ \t]*)?)(?:pub(?:\([a-z]+\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/mg) {
-    next if $1 ne "" || $place{$2};
-    my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
-    print "$ARGV:$line: lib.rs declares the root module $2, which is not one of the places\n";
-  }' "$CORE/lib.rs" 2>/dev/null || true)
-if [[ -n "$undeclared" ]]; then
-  printf '%s\n' "$undeclared" >&2
-  err "scribe-core's root modules: a new root module needs a place (ROOT_PLACES here, ARCHITECTURE.md)"
-fi
 # ORB-27921 step 2 moved every use case into apps/ and deleted cases/
 # (listed with the retired paths below). Nothing names it again: not the
 # core, and not the binary, which reaches the core through each app's
@@ -670,6 +660,7 @@ elif ! DECLARED_DEPS_AWK="$DECLARED_DEPS_AWK" \
   REPOSITORY_ORDER="$REPOSITORY_ORDER" \
   TOOLS_ORDER="$TOOLS_ORDER" \
   COMMANDS_ORDER="$COMMANDS_ORDER" \
+  ROOT_PLACES="$ROOT_PLACES" \
   python3 -I - <<'PY'
 import collections
 import glob
@@ -798,7 +789,75 @@ USE_STMT_RE = re.compile(
     re.M,
 )
 INLINE_PATH_RE = re.compile(r'(?<![\w:])((?:crate|super|self)(?:::\w+)+)')
-CFG_TEST_RE = re.compile(r'#\[\s*cfg\s*\(\s*(?:test\s*\)|any\s*\(\s*test\s*,\s*feature\s*=\s*"test-support"\s*\)\s*\))\s*\]')
+# A test-only cfg is read from the attribute's tokens, never from its text:
+# comments drop out and string literals stay whole, so cfg-like text in a doc
+# string or a comment is no cfg, a comment inside a cfg is ignored, and
+# any(...) takes its two operands in either order (ORB-28901).
+TEST_CFG_FORMS = {
+    'cfg ( test )',
+    'cfg ( any ( test , feature = "test-support" ) )',
+    'cfg ( any ( feature = "test-support" , test ) )',
+}
+ATTR_STR_RE = re.compile(r'"(?:\\.|[^"\\])*"', re.S)
+ATTR_WORD_RE = re.compile(r'\w+')
+
+def attr_tokens(text):
+    """Tokens of an attribute run: comments dropped, each string literal whole."""
+    toks = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif text.startswith("/*", i):
+            depth = 0
+            while i < n:
+                if text.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                    if depth == 0:
+                        break
+                else:
+                    i += 1
+        elif text[i].isspace():
+            i += 1
+        elif text[i] == '"' and (m := ATTR_STR_RE.match(text, i)):
+            toks.append(m.group(0))
+            i = m.end()
+        elif (m := ATTR_WORD_RE.match(text, i)):
+            toks.append(m.group(0))
+            i = m.end()
+        else:
+            toks.append(text[i])
+            i += 1
+    return toks
+
+def has_test_cfg(attrs):
+    """True when an attribute run holds a test-only cfg (TEST_CFG_FORMS)."""
+    toks = attr_tokens(attrs)
+    i = 0
+    while i + 1 < len(toks):
+        if toks[i] != "#" or toks[i + 1] != "[":
+            i += 1
+            continue
+        depth, j, body = 0, i + 1, []
+        while j < len(toks):
+            if toks[j] == "[":
+                depth += 1
+            elif toks[j] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            if j > i + 1:
+                body.append(toks[j])
+            j += 1
+        if " ".join(body) in TEST_CFG_FORMS:
+            return True
+        i = j + 1
+    return False
 
 def strip_comments_and_strings(src):
     """Replace Rust comments and string/char literals with spaces, preserving newlines."""
@@ -841,7 +900,8 @@ def strip_comments_and_strings(src):
             i += 1
             while i < n:
                 if src[i] == "\\" and i + 1 < n:
-                    out.append("\n" if src[i + 1] == "\n" else "  ")
+                    # Two source characters stay two, so offsets match the raw text.
+                    out.append(" \n" if src[i + 1] == "\n" else "  ")
                     i += 2
                 elif src[i] == '"':
                     out.append(" ")
@@ -928,11 +988,11 @@ def collect_root_aliases(src_dir, top_units):
         fp = os.path.join(src_dir, root_file)
         if not os.path.isfile(fp):
             continue
-        clean = strip_comments_and_strings(open(fp, encoding="utf-8").read())
+        raw = open(fp, encoding="utf-8").read()
+        clean = strip_comments_and_strings(raw)
         # Ignore #[cfg(test)] mod ... { ... } blocks and #[cfg(test)] use statements.
         for m in USE_STMT_RE.finditer(clean):
-            attrs = m.group(1) or ""
-            if CFG_TEST_RE.search(attrs):
+            if has_test_cfg(raw[m.start(1):m.end(1)]):
                 continue
             tree = m.group(2)
             # Only top-level use statements (not indented inside an inline mod { ... }).
@@ -998,7 +1058,7 @@ def inline_modules(clean, raw, base):
             # A module declaration is a unit only at module scope, not inside a function.
             if m and all(item is not None for item in stack):
                 parent = stack[-1][0] if stack else tuple(base)
-                ignored = (stack and stack[-1][1]) or bool(CFG_TEST_RE.search(raw[m.start(1):m.end(1)]))
+                ignored = (stack and stack[-1][1]) or has_test_cfg(raw[m.start(1):m.end(1)])
                 path = parent + (m.group(2),)
                 stack.append((path, ignored, pos))
             else:
@@ -1025,7 +1085,7 @@ def extract_resolved_refs(fp, src_dir, aliases):
         attrs = raw[m.start(1):m.end(1)]
         if any(a < m.start(2) < b for a, b in skip_spans):
             continue
-        if CFG_TEST_RE.search(attrs):
+        if has_test_cfg(attrs):
             skip_spans.append((m.start(), m.end()))
             continue
         lineno = 1 + clean.count("\n", 0, m.start(2))
@@ -1164,6 +1224,27 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
             err(
                 f"{fp}:{lineno}: {scope_label}: {src_u} imports {dst_u}, which is not lower in the declared order (ARCHITECTURE.md)"
             )
+
+# --- 3d. scribe-core's root modules (ROOT_PLACES, ARCHITECTURE.md) ------------
+# A root `mod x;` is read with the attribute run before it (comments and doc
+# strings are not cfgs). A test-only module is exempt, as is one of the places.
+ROOT_MOD_RE = re.compile(
+    r'^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;', re.M
+)
+lib_rs = "crates/scribe-core/src/lib.rs"
+if os.path.isfile(lib_rs):
+    raw = open(lib_rs, encoding="utf-8").read()
+    clean = strip_comments_and_strings(raw)
+    places = set(os.environ["ROOT_PLACES"].split())
+    undeclared = False
+    for m in ROOT_MOD_RE.finditer(clean):
+        if m.group(2) in places or has_test_cfg(raw[m.start(1):m.end(1)]):
+            continue
+        undeclared = True
+        line = 1 + clean.count("\n", 0, m.start(2))
+        err(f"{lib_rs}:{line}: lib.rs declares the root module {m.group(2)}, which is not one of the places")
+    if undeclared:
+        err("scribe-core's root modules: a new root module needs a place (ROOT_PLACES here, ARCHITECTURE.md)")
 
 if errors:
     for msg in errors:
