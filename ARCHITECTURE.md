@@ -377,7 +377,7 @@ express. "Module" includes any file added later.
   `std::sync::mpsc::channel`, and `rusqlite::Connection::open` (including its
   `open_with_flags` forms) regardless of how a path is imported or aliased.
   Production exemptions are confined to the boundary owners:
-  `scribe-store/src/db/files.rs` (`std::fs` beside `cw-fs`),
+  `scribe-store/src/db/files.rs` (individual `std::fs` operations beside `cw-fs`),
   `scribe-tools/src/fs.rs` (host `std::fs` adapter),
   `scribe-core/src/composition.rs` (environment capture, the `cw-app`
   snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`

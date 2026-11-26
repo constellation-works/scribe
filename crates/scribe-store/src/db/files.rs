@@ -10,11 +10,6 @@
 //! the kit checks the directory it points to. Nothing inside the root is ever
 //! followed through a link.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "db/files.rs is scribe-store's file adapter beside cw-fs; every other store module goes through it"
-)]
-
 use crate::error::{Error, Result};
 use cw_fs::Cap;
 use std::io;
@@ -44,7 +39,9 @@ pub(crate) fn read_archived(path: &Path) -> Result<Vec<u8>> {
 /// what is checked is the directory it names. `None` when there is nothing
 /// there yet.
 fn resolve_root(root: &Path) -> Result<Option<PathBuf>> {
-    match std::fs::canonicalize(root) {
+    #[expect(clippy::disallowed_methods, reason = "resolve the permitted root link")]
+    let resolved = std::fs::canonicalize(root);
+    match resolved {
         Ok(real) => Ok(Some(real)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(Error::io("inspect", root, e)),
@@ -95,7 +92,9 @@ pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
         if names.peek().is_none() {
             break;
         }
-        match std::fs::symlink_metadata(&target) {
+        #[expect(clippy::disallowed_methods, reason = "refuse links inside the root")]
+        let metadata = std::fs::symlink_metadata(&target);
+        match metadata {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(Error::Symlink { path: target });
             }
@@ -109,7 +108,9 @@ pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
 
 /// Metadata of `path` without following a link, or `None` when missing.
 pub(crate) fn symlink_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
-    match std::fs::symlink_metadata(path) {
+    #[expect(clippy::disallowed_methods, reason = "inspect without following links")]
+    let metadata = std::fs::symlink_metadata(path);
+    match metadata {
         Ok(meta) => Ok(Some(meta)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(Error::io("inspect", path, e)),
@@ -118,17 +119,26 @@ pub(crate) fn symlink_metadata(path: &Path) -> Result<Option<std::fs::Metadata>>
 
 /// Remove an empty directory.
 pub(crate) fn remove_empty_dir(path: &Path) -> Result<()> {
-    std::fs::remove_dir(path).map_err(|e| Error::io("remove", path, e))
+    #[expect(clippy::disallowed_methods, reason = "remove an empty store directory")]
+    let result = std::fs::remove_dir(path);
+    result.map_err(|e| Error::io("remove", path, e))
 }
 
 /// Create `path` and any missing parent directories.
 pub(crate) fn create_dir_all(path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path).map_err(|e| Error::io("create", path, e))
+    #[expect(clippy::disallowed_methods, reason = "create store directory parents")]
+    let result = std::fs::create_dir_all(path);
+    result.map_err(|e| Error::io("create", path, e))
 }
 
 /// Whether `dir` contains at least one entry.
 pub(crate) fn dir_is_non_empty(dir: &Path) -> Result<bool> {
-    Ok(std::fs::read_dir(dir)
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "inspect store directory contents"
+    )]
+    let entries = std::fs::read_dir(dir);
+    Ok(entries
         .map_err(|e| Error::io("list", dir, e))?
         .next()
         .is_some())

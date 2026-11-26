@@ -479,8 +479,9 @@ denied workspace-wide in `Cargo.toml`) and
 (STD-02 R6). The ring map for `scribe-domain` was removed with the crate.
 
 `clippy.toml` holds the path boundaries (resolved regardless of import
-spelling), with module-level `#![expect(..., reason = "...")]` only on the
-boundary owners:
+spelling), with lint expectations only on boundary owners. The store file adapter scopes
+its expectations to individual filesystem statements; other owners use
+module-level `#![expect(..., reason = "...")]`:
 
 - `std::fs` I/O types (`File`, `OpenOptions`, `ReadDir`, `DirEntry`,
   `DirBuilder`) and filesystem functions (`read`, `read_to_string`, `write`,
