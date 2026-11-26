@@ -300,13 +300,6 @@ impl EntryCandidate {
         self.context.as_deref().or(self.statement.as_deref())
     }
 
-    /// Whether it is an older claim: a one-line statement and no context
-    /// (2_design.md §15.3), shown labelled `older claim`.
-    #[must_use]
-    pub fn is_older_claim(&self) -> bool {
-        self.context.is_none() && self.statement.is_some()
-    }
-
     /// Provenance fields a pass derives from the host transcript.
     pub fn has_valid_provenance(&self) -> bool {
         self.cite
