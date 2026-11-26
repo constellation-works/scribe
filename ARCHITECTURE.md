@@ -57,8 +57,8 @@ second dependency.
 main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
-commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
-commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
+commands/<noun>.rs   (three verbs or fewer) arguments -> apps::<app>::Command; Outcome -> payload
+commands/<noun>/      a noun with four or more verbs (entry, group, memory, proposal, tag): noun dispatch, per-verb arguments and shared rendering
 output/              payloads (including session and memory shapes), rendering (including record detail); the sink itself is the kit's `cw-cli`
 error.rs             app errors -> one-line message and exit code
 tests/               the binary's own tests (cfg(test))
