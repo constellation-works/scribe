@@ -11,6 +11,26 @@ use subject::install;
 use support::{Fixture, text};
 
 #[test]
+fn bundled_skills_use_generic_user_references() {
+    let skill_files = [
+        include_str!("../../../skills/scribe/SKILL.md"),
+        include_str!("../../../skills/scribe/references/decisions.md"),
+    ];
+    for contents in skill_files {
+        let lowercase = contents.to_ascii_lowercase();
+        let words = lowercase
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .collect::<Vec<_>>();
+        for forbidden in ["daniel", "chief", "captain", "he", "him", "his", "himself"] {
+            assert!(
+                !words.contains(&forbidden),
+                "bundled skill contains forbidden term {forbidden:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
     for provider in ["codex", "claude-code"] {
         let f = Fixture::new();

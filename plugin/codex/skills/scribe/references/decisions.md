@@ -1,27 +1,27 @@
 # Decisions and open items
 
-- [Ask Daniel](#ask-daniel)
+- [Ask the user](#ask-the-user)
 - [Answer and close an item](#answer-and-close-an-item)
 - [Record a lasting decision](#record-a-lasting-decision)
 - [Boundaries](#boundaries)
 
 Use these records for different jobs: a **decision** is a lasting reference; an
-**open item** is something waiting for Daniel. Keep a choice about one piece of
-work on its Orbit task, with Daniel's words quoted. Keep a repository design
+**open item** is something waiting for the user. Keep a choice about one piece of
+work on its Orbit task, with the user's words quoted. Keep a repository design
 decision in that repository's `4_decisions.md`; Scribe may hold a short pointer
 to it so shared search can find it. Use the `decision` tag (aliases `decisions`,
 `dec`) or the `open-item` tag (aliases `open-items`, `item`).
 
 Do not copy an Orbit decision request into an open item. It is already in
-Daniel's queue there. Do not mine chat or session transcripts for missed
+the user's queue there. Do not mine chat or session transcripts for missed
 decisions: the session pass, routines and Orbit jobs do not write either
 record.
 
-## Ask Daniel
+## Ask the user
 
-The chief or a captain writes an item when a question or action is waiting on
-Daniel. A choice has two to six full options, a recommended option and why it
-is preferred. An action for Daniel has no options. Say what is blocked while
+An agent records an item when a question or action is waiting for the user. A
+choice has two to six full options, a recommended option and why it is
+preferred. An action for the user has no options. Say what is blocked while
 waiting; use `nothing` when nothing is blocked.
 
 ```sh
@@ -30,18 +30,18 @@ scribe entry add --tag open-item --author <model> --project <project> \
   [--option '<option in full>' ... --recommended <n> --why '<why>'] \
   [--answer-in any|session:<id>|hand] \
   --related session:<id> --related task:<record> \
-  '<the question, or the action that is his>'
+  '<the question, or the action for the user>'
 ```
 
 Use `--answer-in any` (the default) unless only one session can carry the
-answer in its auto mode (`session:<id>`), or Daniel must take the action
-himself (`hand`), such as changing permissions or providing credentials. An
+answer in its auto mode (`session:<id>`), or the user must take the action
+themselves (`hand`), such as changing permissions or providing credentials. An
 answer recorded in Scribe does not authorize another session's auto mode to do
-what it refused. For `session:<id>`, Daniel must type his answer in that
+what it refused. For `session:<id>`, the user must type their answer in that
 session before it can carry out the action.
 
-Tell Daniel the outcome and the one-line `open-item-<n>` id; do not repeat the
-options in the message. He can check items with:
+Tell the user the outcome and the one-line `open-item-<n>` id; do not repeat the
+options in the message. They can check items with:
 
 ```sh
 scribe entry list --tag open-item --state open --state answered
@@ -49,12 +49,12 @@ scribe entry list --tag open-item --state open --state answered
 
 ## Answer and close an item
 
-The session where Daniel answers records his exact words and the session where
-he typed them. Scribe checks the quote against that host's transcript.
+The session where the user answers records their exact words and the session where
+they typed them. Scribe checks the quote against that host's transcript.
 
 ```sh
 scribe entry answer open-item-<n> --author <model> \
-  --quote '<his words>' --related session:<where he typed>
+  --quote '<their words>' --related session:<where they typed>
 ```
 
 A quote shorter than eight characters is accepted only when it is a whole
@@ -93,14 +93,14 @@ decision with no other home belongs here. For a repository design, keep the
 full reasoning and alternatives in `4_decisions.md` and record only a short
 Scribe pointer with `--related doc:<repo>/<path>#<anchor>`.
 
-When Daniel decided, record his exact words and only a reason he actually
+When the user decided, record their exact words and only a reason they actually
 gave:
 
 ```sh
 scribe entry add --tag decision --author <model> --project <project> \
-  --decided-by user --quote '<his words>' \
-  --related session:<where he typed> --related task:<record> \
-  [--option '<option>' ... --recommended <n>] [--reason-quote '<his reason>'] \
+  --decided-by user --quote '<their words>' \
+  --related session:<where they typed> --related task:<record> \
+  [--option '<option>' ... --recommended <n>] [--reason-quote '<their reason>'] \
   [--supersedes decision-<n>] [--settles open-item-<n>] \
   '<what was decided, and its scope>'
 ```
@@ -116,15 +116,15 @@ scribe entry add --tag decision --author <model> --project <project> \
   '<what was decided, and its scope>'
 ```
 
-Use `--decided-by user` only for Daniel's decision. His quote must be a verbatim
-span of one of his typed turns in a related session on this host; a quote under
+Use `--decided-by user` only for the user's decision. Their quote must be a verbatim
+span of one of their typed turns in a related session on this host; a quote under
 eight characters must be the whole turn. Include at least one `task:`, `pr:` or
 `repo:` reference for the record.
 
-For a user decision, also include the `session:` where Daniel typed it. If
-Scribe cannot find his quote, record the decision on its task instead. Do not
-supply `--rationale` for a user decision. Add `--reason-quote` only when Daniel
-stated a reason, using his exact words.
+For a user decision, also include the `session:` where the user typed it. If
+Scribe cannot find their quote, record the decision on its task instead. Do not
+supply `--rationale` for a user decision. Add `--reason-quote` only when the user
+stated a reason, using their exact words.
 
 An agent decision requires a rationale. Options are optional; when shown,
 record each option in full and give the 1-based recommended option. Decisions
@@ -132,8 +132,8 @@ are limited to 3,000 characters across the content, options, rationale and
 quotes.
 
 To reverse a decision, write a new one with `--supersedes decision-<n>` for
-the active decision it replaces. Reversing a decision Daniel made, or a trial
-decision with no typed decider, requires `--decided-by user` and his quote.
+the active decision it replaces. Reversing a decision the user made, or a trial
+decision with no typed decider, requires `--decided-by user` and their quote.
 
 The old entry stays readable with `entry show`, but is marked superseded and
 is no longer current. `entry update` can correct content, options and an
