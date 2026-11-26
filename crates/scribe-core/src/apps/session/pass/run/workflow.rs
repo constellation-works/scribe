@@ -74,6 +74,10 @@ pub struct Cursor {
     /// Unix time.
     #[serde(default)]
     start_by: Option<i64>,
+    /// The catalog job's selection, bound for the whole run: a continuation
+    /// carries the one `select` validated, never one the caller supplies.
+    #[serde(default)]
+    catalog: Option<CatalogSelection>,
     #[serde(default)]
     seal: String,
 }
@@ -86,6 +90,9 @@ struct CursorFields<'a> {
     tally: &'a Tally,
     remaining: usize,
     start_by: Option<i64>,
+    // Omitted when absent, so a normal pass's seal is the one it always had.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog: &'a Option<CatalogSelection>,
 }
 
 impl Serialize for Cursor {
@@ -122,6 +129,7 @@ impl Cursor {
             tally: &self.tally,
             remaining: self.remaining,
             start_by: self.start_by,
+            catalog: &self.catalog,
         }
     }
 
@@ -498,15 +506,47 @@ fn admit_max(input: &SessionPassInput, named: &[SessionId]) -> usize {
     }
 }
 
+/// Refuse a catalog selection a catalog run could not use: a reserved
+/// author, anything but exactly one named session, or a session whose switch
+/// is not a catalog switch. Run when the run is selected and again on every
+/// continuation.
+fn check_catalog<E: PortError>(
+    catalog: &CatalogSelection,
+    named: &[SessionId],
+    state: &crate::ControlState,
+) -> Result<(), PassRunError<E>> {
+    crate::check_agent_author(&catalog.author)?;
+    let [id] = named else {
+        return Err(PassRunError::Input(
+            "a catalog run names exactly one session",
+        ));
+    };
+    if state
+        .get(id)
+        .is_some_and(|switch| switch.cataloged_by.is_none())
+    {
+        return Err(PassRunError::Input(
+            "a catalog run needs the session's catalog switch",
+        ));
+    }
+    Ok(())
+}
+
 /// Refuse a continuation the selection could not have produced: more
-/// sessions than the run admits, a repeated or unnamed session, or a
-/// position past its end. The seal covers the rest.
+/// sessions than the run admits, a repeated or unnamed session, a position
+/// past its end, or a catalog selection other than the one the run began
+/// with. The seal covers the rest.
 fn check_progress<E: PortError>(
     ctx: &Ctx<'_, E>,
     input: &SessionPassInput,
     cursor: Cursor,
 ) -> Result<Cursor, PassRunError<E>> {
     let cursor = cursor.checked()?;
+    if input.catalog != cursor.catalog {
+        return Err(PassRunError::Input(
+            "the catalog selection does not match the pass cursor",
+        ));
+    }
     let named = named(ctx, input)?;
     let unique: std::collections::BTreeSet<&SessionId> = cursor.sessions.iter().collect();
     if cursor.next > cursor.sessions.len()
@@ -517,6 +557,9 @@ fn check_progress<E: PortError>(
         return Err(PassRunError::Input(
             "the pass cursor does not match the session selection",
         ));
+    }
+    if let Some(catalog) = &cursor.catalog {
+        check_catalog(catalog, &named, &ctx.store.read().sessions().control()?)?;
     }
     Ok(cursor)
 }
@@ -531,20 +574,7 @@ fn select<E: PortError>(
     }
     let state = ctx.store.read().sessions().control()?;
     if let Some(catalog) = &input.catalog {
-        crate::check_agent_author(&catalog.author)?;
-        let [id] = named.as_slice() else {
-            return Err(PassRunError::Input(
-                "a catalog run names exactly one session",
-            ));
-        };
-        if state
-            .get(id)
-            .is_some_and(|switch| switch.cataloged_by.is_none())
-        {
-            return Err(PassRunError::Input(
-                "a catalog run needs the session's catalog switch",
-            ));
-        }
+        check_catalog(catalog, &named, &state)?;
     }
     let selected = if named.is_empty() {
         control::due(&state)
@@ -553,7 +583,10 @@ fn select<E: PortError>(
     };
     let max = admit_max(input, &named);
     let now = ctx.clock.now();
-    let mut cursor = Cursor::default();
+    let mut cursor = Cursor {
+        catalog: input.catalog.clone(),
+        ..Cursor::default()
+    };
     for (id, switch) in selected {
         let ready = !named.is_empty() || switch.retry_after.is_none_or(|at| now >= at);
         if ready && cursor.sessions.len() < max {
