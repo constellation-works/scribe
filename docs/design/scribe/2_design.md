@@ -6327,9 +6327,14 @@ here.
   lines still say it. Those are doc comments and legacy `daniel` reads (serde
   and CLI aliases, origin values). The prompts and skills name no one. So the
   proof "a grep of shipped text finds no name" does not yet hold.
-- **Phase 3: partly built.** Claims carry `context`, at most 600 characters in
-  two sentences (`crates/scribe-store/src/contracts/proposal.rs:228–259`). No
-  collected entry or annotation contract has the field.
+- **Phase 3: partly built.** Claims carry `context`, at most 600 characters and
+  at least two sentences, prompted as two to four sentences
+  (`crates/scribe-store/src/contracts/proposal.rs:228–259`,
+  `crates/scribe-core/src/apps/proposal/rules/proposals.rs:29–39`). Collected
+  entries under a `write` route write `draft.context` as `Entry.content` via
+  `pass_entry` (`crates/scribe-core/src/apps/proposal/rules.rs:396–444`); the
+  annotation model call was removed in [ORB-27911], so `#scribe` markers go to
+  the agent (`crates/scribe-core/src/apps/hook/annotation.rs:1–3`).
 - **Phase 4: built.** `scribe.db` holds `messages` with `messages_fts` and the
   memory support tables (`crates/scribe-store/src/db/mod.rs`, migration 1), and
   `scribe search --kind message` exists
