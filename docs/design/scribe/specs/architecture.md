@@ -237,11 +237,12 @@ sees it.
   `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT` and `SCRIBE_LOG` individually for
   configuration and logging. It also captures the full process environment
   once as `cw_app::Env` for the binary's terminal decision (color, width,
-  format); this snapshot can include and reread those same variables. `main.rs`
-  passes both the selected values and snapshot down, and the core does not
-  consult the terminal snapshot. Tests build an `Env` by hand. Redaction
-  variables are not captured in `Env`: `Context::redactor` reads the configured
-  `[redact] env` values live from the process environment when it builds a
+  format); this snapshot can include and reread those same variables, as well
+  as configured redaction variables present in the process when captured.
+  `main.rs` passes both the selected values and snapshot down, and the core does
+  not consult the terminal snapshot. Tests build an `Env` by hand. Redactor
+  construction uses a separate source: `Context::redactor` reads the configured
+  `[redact] env` names live from the process environment when it builds a
   redactor.
 - Composition picks the data directory, reads `config.toml`, opens the
   `Store`, and resolves host paths into one `Context` (`Context::resolve`, or
