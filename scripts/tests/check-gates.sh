@@ -189,6 +189,28 @@ for shape in db/codec repository/audit; do
   done
 done
 
+# Exercise direct, relative and grouped paths in both guarded shapes, plus
+# nearby names and unrelated identifiers that must remain legal.
+for shape in db/codec repository/audit; do
+  for import in 'db::files::read();' 'use super::super::db::files;' \
+    'use super::{log, files};' 'use crate::db::{self, docs, files};' \
+    'use crate::{db::files};' 'use crate::{db::{docs, files::read}};' \
+    $'use super::{\n    log,\n    files,\n};' \
+    $'use crate::db::{\n    docs,\n    files,\n};' \
+    $'use crate::{\n    db::files,\n};'; do
+    bad=$(store_tree "store-path-$n")
+    printf '%s\n' "$import" >"$bad/crates/scribe-store/src/${shape}.rs"
+    expect fail check-dependency-direction.sh "$bad" "a store $shape referencing files: $import"
+  done
+  for clean_import in 'use super::{log, files_extra};' 'use crate::db::{docs, files_extra};' \
+    'use crate::{db::docs, other::files};' $'use crate::db::{\n    docs,\n    files_extra,\n};' \
+    'struct Example { files: Vec<String> }' 'fn f(files: usize) { let files = files + 1; }'; do
+    ok=$(store_tree "store-near-$n")
+    printf '%s\n' "$clean_import" >"$ok/crates/scribe-store/src/${shape}.rs"
+    expect pass check-dependency-direction.sh "$ok" "a store $shape with unrelated files: $clean_import"
+  done
+done
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.
