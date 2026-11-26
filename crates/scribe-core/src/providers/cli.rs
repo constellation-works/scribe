@@ -28,7 +28,7 @@
 
 #![expect(
     clippy::disallowed_methods,
-    reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn and single-item drain channel)"
+    reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn; the drain result travels on a capacity-one sync_channel)"
 )]
 
 mod codex;
@@ -478,7 +478,10 @@ pub(crate) fn supervise(
 
 /// Read `pipe` to its end on a thread, keeping at most `limit` bytes.
 fn drain<R: Read + Send + 'static>(pipe: Option<R>, limit: usize) -> mpsc::Receiver<Drained> {
-    let (tx, rx) = mpsc::channel();
+    // STD-03 §R2: capacity one for the single `Drained` the worker sends. A
+    // full buffer makes `send` wait (backpressure); the worker sends exactly
+    // once, so the slot is always free and completion stays nonblocking.
+    let (tx, rx) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut out = Drained::default();
         if let Some(mut pipe) = pipe {
