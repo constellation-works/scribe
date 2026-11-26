@@ -481,18 +481,29 @@ const CAPTURED: &str =
 /// His words parking it.
 const PARKED: &str = "let's park it until the drains are quiet";
 
+struct IdeaEntry<'a> {
+    id: &'a str,
+    author: &'a str,
+    said: &'a str,
+    content_from: &'a str,
+    quote: &'a str,
+    stated_by: &'a str,
+    outcome: &'a str,
+    body: &'a str,
+}
+
 /// One idea entry as a complete Markdown record, with its `outcome` line.
-#[allow(clippy::too_many_arguments)]
-fn idea_entry(
-    id: &str,
-    author: &str,
-    said: &str,
-    content_from: &str,
-    quote: &str,
-    stated_by: &str,
-    outcome: &str,
-    body: &str,
-) -> String {
+fn idea_entry(entry: IdeaEntry<'_>) -> String {
+    let IdeaEntry {
+        id,
+        author,
+        said,
+        content_from,
+        quote,
+        stated_by,
+        outcome,
+        body,
+    } = entry;
     let sha = "0".repeat(64);
     format!(
         "---
@@ -542,26 +553,26 @@ pub(super) fn captured_fixture() -> Fixture {
     let seeded = std::fs::read_to_string(&config).unwrap_or_default();
     fx.config(&format!("{seeded}\n{}", support::IDEA_CATCHER));
     let pass = "{kind: scribe, name: session-pass}";
-    let captured = idea_entry(
-        "idea-1",
-        pass,
-        "",
-        "{kind: message, role: user, message: user-idea, at: 2026-11-15T00:00:00Z}",
-        &format!("\"{CAPTURED_QUOTE}\""),
-        pass,
-        &format!("{{state: parked, reason: \"{PARKED}\", task: null}}"),
-        CAPTURED,
-    );
-    let typed = idea_entry(
-        "idea-2",
-        "{kind: user, name: user}",
-        "#scribe idea: a dry-run flag for the session pass",
-        "{kind: instruction}",
-        "null",
-        "null",
-        "null",
-        "a dry-run flag for the session pass",
-    );
+    let captured = idea_entry(IdeaEntry {
+        id: "idea-1",
+        author: pass,
+        said: "",
+        content_from: "{kind: message, role: user, message: user-idea, at: 2026-11-15T00:00:00Z}",
+        quote: &format!("\"{CAPTURED_QUOTE}\""),
+        stated_by: pass,
+        outcome: &format!("{{state: parked, reason: \"{PARKED}\", task: null}}"),
+        body: CAPTURED,
+    });
+    let typed = idea_entry(IdeaEntry {
+        id: "idea-2",
+        author: "{kind: user, name: user}",
+        said: "#scribe idea: a dry-run flag for the session pass",
+        content_from: "{kind: instruction}",
+        quote: "null",
+        stated_by: "null",
+        outcome: "null",
+        body: "a dry-run flag for the session pass",
+    });
     support::seed_records(&fx.root(), &[&captured, &typed]);
     fx
 }

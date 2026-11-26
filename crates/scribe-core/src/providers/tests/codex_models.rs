@@ -75,19 +75,19 @@ fn codex_validates_port_schemas_with_null_populated_and_omitted_open() {
             value["open"] = open;
         }
         let fake = Fake::new(&answer(value));
-        let mut req = pass::request(
-            "gpt-6-luna",
-            None,
-            Vec::new(),
-            pass::Window {
+        let mut req = pass::request(pass::RequestInput {
+            model: "gpt-6-luna",
+            previous: None,
+            linked: Vec::new(),
+            window: pass::Window {
                 messages: Vec::new(),
                 dropped: 0,
             },
-            Vec::new(),
-            Vec::new(),
-            false,
-            scribe_core::voice::Voice::default(),
-        );
+            topics: Vec::new(),
+            terms: Vec::new(),
+            final_pass: false,
+            voice: scribe_core::voice::Voice::default(),
+        });
         req.budget = Duration::from_secs(5);
         assert!(fake.model().session(&req).is_ok());
     }

@@ -88,24 +88,39 @@ pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<L
         .collect()
 }
 
-/// The session-model request for one pass. `linked` is the context of the
-/// sessions this one links to ([`linked_context`]); `voice` names the user
-/// and carries `[instructions] session`.
+/// Inputs for the session model's request for one window.
+pub struct RequestInput<'a> {
+    /// The configured session model.
+    pub model: &'a str,
+    /// The session's record before this window.
+    pub previous: Option<&'a SessionRecord>,
+    /// Context from linked sessions, built by [`linked_context`].
+    pub linked: Vec<LinkedRecord>,
+    /// Messages in the current window.
+    pub window: Window,
+    /// Existing topics offered for reuse.
+    pub topics: Vec<String>,
+    /// Existing terms offered for reuse.
+    pub terms: Vec<String>,
+    /// Whether this window closes the session.
+    pub final_pass: bool,
+    /// The user's name and `[instructions] session`.
+    pub voice: crate::voice::Voice,
+}
+
+/// Build the session-model request for one pass window.
 #[must_use]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each pass input is a separate argument named at the call site; a struct would only move them"
-)]
-pub fn request(
-    model: &str,
-    previous: Option<&SessionRecord>,
-    linked: Vec<LinkedRecord>,
-    window: Window,
-    topics: Vec<String>,
-    terms: Vec<String>,
-    final_pass: bool,
-    voice: crate::voice::Voice,
-) -> SessionRequest {
+pub fn request(input: RequestInput<'_>) -> SessionRequest {
+    let RequestInput {
+        model,
+        previous,
+        linked,
+        window,
+        topics,
+        terms,
+        final_pass,
+        voice,
+    } = input;
     SessionRequest {
         voice,
         model: model.to_owned(),

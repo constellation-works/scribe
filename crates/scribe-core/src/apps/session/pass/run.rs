@@ -392,16 +392,16 @@ impl<E: PortError> Job<'_, E> {
             topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
             terms.extend(record.terms.iter().map(|t| t.term.clone()));
         }
-        let mut request = pass::request(
-            &self.config.models.session,
+        let mut request = pass::request(pass::RequestInput {
+            model: &self.config.models.session,
             previous,
             linked,
             window,
-            topics.into_iter().take(MAX_LISTED).collect(),
-            terms.into_iter().take(MAX_LISTED).collect(),
+            topics: topics.into_iter().take(MAX_LISTED).collect(),
+            terms: terms.into_iter().take(MAX_LISTED).collect(),
             final_pass,
-            self.config.voice(crate::voice::ModelUse::Session),
-        );
+            voice: self.config.voice(crate::voice::ModelUse::Session),
+        });
         // The trigger gate (2_design.md §11.2): no Daniel turn in the
         // window fires a capture tag's trigger, no claim is requested.
         let (turns, rules) = pass::capture_request(&self.config.tags, &request.messages);
@@ -623,9 +623,11 @@ impl<E: PortError> Job<'_, E> {
             record,
             expected,
             mode,
-            &candidates,
-            Some(&pass_memory),
-            &kept,
+            super::PassWindow {
+                candidates: &candidates,
+                memory: Some(&pass_memory),
+                messages: &kept,
+            },
             self.redactor,
             self.check_switch.then_some(self.switch),
         ) {

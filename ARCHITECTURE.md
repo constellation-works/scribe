@@ -407,6 +407,9 @@ express. "Module" includes any file added later.
   `main` (commands return errors or `ExitCode` instead). `rusqlite::Connection::open*` has no production
   exemption (`scribe-store` opens `scribe.db` only through `cw-sqlite`).
   `std::sync::mpsc::channel` has no production exemption.
+- **Parameter count (STD-02 R51):** `clippy.toml` sets a seven-parameter
+  limit, including the receiver. The Clippy gate used by `make ci-lint` and
+  `make ci` fails on parameter-count warnings across workspace targets.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
 - **Import cycles and in-layer orders (STD-02 R6, R39):** the import graph

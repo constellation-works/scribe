@@ -93,6 +93,8 @@ print_stdout = "warn"
 unwrap_used = "warn"
 
 # Adoptable additions beyond the baseline (STD-02 "Adoptable additions").
+# STD-02 R51: at most seven parameters, including the receiver.
+too_many_arguments = "warn"
 # STD-02 R27: no wildcard arm on an enum match; a foreign enum that needs one
 # gets a scoped #[allow] with its reason.
 wildcard_enum_match_arm = "warn"

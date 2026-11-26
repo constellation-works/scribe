@@ -101,15 +101,12 @@ pub trait PassVerbs {
     /// counted, duplicates and each claim's trigger (a trigger of its tag
     /// fires in its turn, under the config read under the lock) are checked
     /// here.
-    #[allow(clippy::too_many_arguments)]
     fn write_pass_window(
         &self,
         record: SessionRecord,
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
-        candidates: &[crate::pass::PassClaim],
-        memory: Option<&WindowMemory>,
-        messages: &[crate::message::NewMessage],
+        window: PassWindow<'_>,
         redactor: &Redactor,
     ) -> Result<PassWritten>;
 
@@ -205,20 +202,15 @@ impl PassVerbs for Store {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn write_pass_window(
         &self,
         record: SessionRecord,
         expected: Option<time::OffsetDateTime>,
         kind: PassWrite,
-        candidates: &[crate::pass::PassClaim],
-        memory: Option<&WindowMemory>,
-        messages: &[crate::message::NewMessage],
+        window: PassWindow<'_>,
         redactor: &Redactor,
     ) -> Result<PassWritten> {
-        write_window(
-            self, record, expected, kind, candidates, memory, messages, redactor, None,
-        )
+        write_window(self, record, expected, kind, window, redactor, None)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -232,15 +224,12 @@ impl PassVerbs for Store {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn write_window(
     store: &Store,
     record: SessionRecord,
     expected: Option<time::OffsetDateTime>,
     kind: PassWrite,
-    candidates: &[crate::pass::PassClaim],
-    memory: Option<&WindowMemory>,
-    messages: &[crate::message::NewMessage],
+    window: PassWindow<'_>,
     redactor: &Redactor,
     expected_switch: Option<&crate::SessionControl>,
 ) -> Result<PassWritten> {
@@ -252,26 +241,26 @@ fn write_window(
         kind,
         expected,
         PassParts {
-            candidates,
-            memory,
-            messages,
-            run_candidates: true,
+            window: Some(window),
             expected_switch,
         },
         redactor,
     )
 }
 
-/// The parts of a pass window besides its record.
-struct PassParts<'a> {
+/// The contents committed alongside a pass window's record.
+pub struct PassWindow<'a> {
     /// Claims to open.
-    candidates: &'a [crate::pass::PassClaim],
+    pub candidates: &'a [crate::pass::PassClaim],
     /// The window's memory, planned and committed with the record.
-    memory: Option<&'a WindowMemory>,
+    pub memory: Option<&'a WindowMemory>,
     /// The window's messages, upserted with the record.
-    messages: &'a [crate::message::NewMessage],
-    /// Whether to open `candidates` (and close retired-tag ones).
-    run_candidates: bool,
+    pub messages: &'a [crate::message::NewMessage],
+}
+
+struct PassParts<'a> {
+    /// A window write also opens candidates and closes retired-tag ones.
+    window: Option<PassWindow<'a>>,
     expected_switch: Option<&'a crate::SessionControl>,
 }
 
@@ -291,10 +280,7 @@ fn write_pass(
         kind,
         expected,
         PassParts {
-            candidates: &[],
-            memory: None,
-            messages: &[],
-            run_candidates: false,
+            window: None,
             expected_switch,
         },
         redactor,
@@ -302,10 +288,6 @@ fn write_pass(
     .record)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the pass window's parts at the use-case boundary"
-)]
 fn write_pass_candidates(
     store: &Store,
     session: &SessionId,
@@ -370,8 +352,8 @@ fn write_pass_candidates(
                     }
                 }
             }
-            if parts.run_candidates {
-                claims = open_candidates(tx, record, parts.candidates, redactor)?;
+            if let Some(window) = &parts.window {
+                claims = open_candidates(tx, record, window.candidates, redactor)?;
             }
         }
         // The closures, written entries, record, messages, memory rows and
@@ -380,7 +362,8 @@ fn write_pass_candidates(
         let wrote_record = record.is_some();
         // A draft holding text redaction would change is refused before the
         // store plans the rest; its refusals come first in what it reports.
-        let checked = parts.memory.map(|memory| {
+        let window = parts.window.as_ref();
+        let checked = window.and_then(|window| window.memory).map(|memory| {
             let (drafts, sensitive) = check_sensitive_drafts(&memory.drafts, redactor);
             (
                 WindowMemory {
@@ -392,7 +375,7 @@ fn write_pass_candidates(
         });
         let memory = tx.sessions().commit_window(
             record.as_ref(),
-            parts.messages,
+            window.map_or(&[][..], |window| window.messages),
             plan_window(
                 checked.as_ref().map(|(memory, _)| memory),
                 checked.as_ref().map_or(&[][..], |(_, sensitive)| sensitive),

@@ -15,7 +15,6 @@ mod tests;
 mod update;
 mod verbs;
 
-pub use add::ProposalAddInput;
 pub use list::ListInput;
 pub use rules::candidates;
 pub use rules::candidates::{
@@ -24,8 +23,9 @@ pub use rules::candidates::{
 };
 pub use rules::{checked_outcome, has_context_and_subject, open_under, pass_entry, written_from};
 pub use settle::ProposalSettleInput;
+pub use verbs::ProposalAddInput;
 #[cfg(any(test, feature = "test-support"))]
-pub use verbs::{ProposalVerbs, SessionForgetOutcome};
+pub use verbs::{ProposalChangeInput, ProposalVerbs, SessionForgetOutcome};
 
 use crate::composition::Context;
 use crate::consistency::{Draft, ReapplyReport, Settle, Settled};

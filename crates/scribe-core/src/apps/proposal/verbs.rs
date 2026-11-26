@@ -20,6 +20,34 @@ use crate::{SessionForget, SessionId};
 use std::num::NonZeroU64;
 use time::OffsetDateTime;
 
+/// Inputs for opening an agent proposal.
+pub struct ProposalAddInput<'i> {
+    /// `stale` or `supersedes`.
+    pub kind: ProposalKind,
+    /// The entry it is about.
+    pub older: &'i str,
+    /// The entry that replaces it (`supersedes` only).
+    pub newer: Option<&'i str>,
+    /// Why.
+    pub reason: &'i str,
+    /// The agent.
+    pub author: AuthorName,
+}
+
+/// Inputs for updating or settling an agent proposal.
+pub struct ProposalChangeInput<'i> {
+    /// The proposal id or unique prefix.
+    pub id: &'i str,
+    /// The requested change.
+    pub change: crate::ProposalChange,
+    /// A replacement reason, when supplied.
+    pub reason: Option<&'i str>,
+    /// The user's checked instruction, when supplied.
+    pub instruction: Option<&'i crate::instruction::Instructed>,
+    /// The acting agent.
+    pub author: AuthorName,
+}
+
 /// The proposal verbs, implemented for [`Store`].
 pub trait ProposalVerbs {
     /// Resolve an exact proposal id or a unique prefix of at least four
@@ -27,17 +55,9 @@ pub trait ProposalVerbs {
     fn resolve_proposal(&self, input: &str) -> Result<Proposal>;
 
     /// Open an agent proposal against either author's active entry.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit proposal inputs at the store boundary"
-    )]
     fn add_agent_proposal(
         &self,
-        kind: ProposalKind,
-        older: &str,
-        newer: Option<&str>,
-        reason: &str,
-        author: AuthorName,
+        input: ProposalAddInput<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)>;
@@ -47,17 +67,9 @@ pub trait ProposalVerbs {
     /// §12.3), an approve or reject also settles a session-pass candidate
     /// (`settle_candidate_on_instruction`); nothing else widens: a
     /// proposal about his entry is still his to settle.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit settlement inputs at the store boundary"
-    )]
     fn change_agent_proposal(
         &self,
-        id: &str,
-        change: crate::ProposalChange,
-        reason: Option<&str>,
-        instruction: Option<&crate::instruction::Instructed>,
-        author: AuthorName,
+        input: ProposalChangeInput<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)>;
@@ -106,20 +118,19 @@ impl ProposalVerbs for Store {
         self.read().proposals().resolve(input)
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit proposal inputs at the store boundary"
-    )]
     fn add_agent_proposal(
         &self,
-        kind: ProposalKind,
-        older: &str,
-        newer: Option<&str>,
-        reason: &str,
-        author: AuthorName,
+        input: ProposalAddInput<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)> {
+        let ProposalAddInput {
+            kind,
+            older,
+            newer,
+            reason,
+            author,
+        } = input;
         check_agent_author(&author)?;
         required_reason(reason)?;
         self.write(|tx| {
@@ -201,20 +212,19 @@ impl ProposalVerbs for Store {
             })
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit settlement inputs at the store boundary"
-    )]
     fn change_agent_proposal(
         &self,
-        id: &str,
-        change: crate::ProposalChange,
-        reason: Option<&str>,
-        instruction: Option<&crate::instruction::Instructed>,
-        author: AuthorName,
+        input: ProposalChangeInput<'_>,
         now: OffsetDateTime,
         redactor: &Redactor,
     ) -> Result<(Proposal, bool)> {
+        let ProposalChangeInput {
+            id,
+            change,
+            reason,
+            instruction,
+            author,
+        } = input;
         check_agent_author(&author)?;
         if let Some(reason) = reason {
             required_reason(reason)?;
@@ -238,8 +248,18 @@ impl ProposalVerbs for Store {
                 ));
             };
             let approve = change == crate::ProposalChange::Approve;
-            return settle_candidate_on_instruction(tx,
-                proposals, i, approve, reason, instructed, author, now, redactor,
+            return settle_candidate_on_instruction(
+                tx,
+                proposals,
+                i,
+                CandidateSettlement {
+                    approve,
+                    reason,
+                    instructed,
+                },
+                author,
+                now,
+                redactor,
             );
         }
         let before = p.clone();
@@ -492,6 +512,12 @@ impl ProposalVerbs for Store {
     }
 }
 
+struct CandidateSettlement<'a> {
+    approve: bool,
+    reason: Option<&'a str>,
+    instructed: &'a crate::instruction::Instructed,
+}
+
 /// Settle candidate `proposals[i]` on Daniel's checked `instructed`
 /// (2_design.md §12.3). The caller holds the lock. The candidate must be
 /// open; the same instruction again changes nothing. An approval writes
@@ -504,21 +530,20 @@ impl ProposalVerbs for Store {
 /// `instruction` with its quote redacted. `proposals.json` is written
 /// before the entry, so a crash between them leaves an approved proposal
 /// the next scan re-applies with the same attribution.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "explicit settlement inputs at the store boundary"
-)]
 fn settle_candidate_on_instruction(
     tx: &Tx<'_>,
     mut proposals: Vec<Proposal>,
     i: usize,
-    approve: bool,
-    reason: Option<&str>,
-    instructed: &crate::instruction::Instructed,
+    settlement: CandidateSettlement<'_>,
     author: AuthorName,
     now: OffsetDateTime,
     redactor: &Redactor,
 ) -> Result<(Proposal, bool)> {
+    let CandidateSettlement {
+        approve,
+        reason,
+        instructed,
+    } = settlement;
     let p = &mut proposals[i];
     // A candidate's reason is scribe's: an agent never replaces it.
     if reason.is_some_and(|r| redactor.mask(r) != p.reason) {

@@ -1,26 +1,12 @@
 //! `scribe proposal add` (ORB-27707 step 3d): an agent's proposal.
 //! Arguments are refused before an unset `[redact]` env name is reported.
 
-use super::verbs::ProposalVerbs;
+use super::verbs::{ProposalAddInput, ProposalVerbs};
 use crate::apps::entry::{self};
 use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
 use crate::runtime::errors::WriteError;
-use crate::{AuthorName, Proposal, ProposalKind, WriteRefusal};
-
-/// What `proposal add` runs.
-pub struct ProposalAddInput<'i> {
-    /// `stale` or `supersedes`.
-    pub kind: ProposalKind,
-    /// The entry it is about.
-    pub older: &'i str,
-    /// The entry that replaces it (`supersedes` only).
-    pub newer: Option<&'i str>,
-    /// Why.
-    pub reason: &'i str,
-    /// The agent.
-    pub author: AuthorName,
-}
+use crate::{Proposal, ProposalKind, WriteRefusal};
 
 /// `proposal add`. The proposal, and whether this wrote it.
 ///
@@ -45,13 +31,7 @@ pub fn add<E>(
         entry::resolve_entry(ctx.store, newer)?;
     }
     let redactor = redactor(ctx)?;
-    Ok(ctx.store.add_agent_proposal(
-        input.kind,
-        input.older,
-        input.newer,
-        input.reason,
-        input.author,
-        ctx.clock.now(),
-        &redactor,
-    )?)
+    Ok(ctx
+        .store
+        .add_agent_proposal(input, ctx.clock.now(), &redactor)?)
 }
