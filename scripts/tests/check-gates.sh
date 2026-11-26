@@ -718,6 +718,111 @@ TMPDIR="$work" expect pass check-terminal-guard.sh "$guard_clean" \
 TMPDIR="$work" expect fail check-terminal-guard.sh "$guard_violation" \
   "a terminal violation with a usable TMPDIR still fails"
 
+# A root whose only Rust sources sit under excluded `tests/` directories scans
+# zero eligible files, so it must fail closed with an actionable diagnostic
+# (STD-04 R10) rather than reporting ok. Adding an eligible non-test source
+# lets the same root pass.
+tests_only="$work/guard-tests-only"
+mkdir -p "$tests_only/crates/scribe/tests"
+printf '#[test]\nfn example() { println!("ok in test"); }\n' \
+  >"$tests_only/crates/scribe/tests/example.rs"
+expect fail check-terminal-guard.sh "$tests_only" \
+  "a root containing only crates/scribe/tests/*.rs (excluded from scan)"
+if ! grep -Fq "terminal-guard: cannot scan" "$work/out" || \
+  ! grep -Fq "tests" "$work/out" || \
+  grep -Fq "terminal-guard: ok" "$work/out"; then
+  echo "check-gates: FAIL: $tests_only did not report an actionable cannot-scan diagnostic mentioning tests/" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+nested_tests_only="$work/guard-nested-tests-only"
+mkdir -p "$nested_tests_only/crates/scribe/src/output/tests"
+printf '#[test]\nfn render() { println!("ok in test"); }\n' \
+  >"$nested_tests_only/crates/scribe/src/output/tests/render.rs"
+expect fail check-terminal-guard.sh "$nested_tests_only" \
+  "a root containing only nested src/.../tests/*.rs (excluded from scan)"
+if ! grep -Fq "terminal-guard: cannot scan" "$work/out" || grep -Fq "terminal-guard: ok" "$work/out"; then
+  echo "check-gates: FAIL: $nested_tests_only did not report cannot-scan without ok" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+mkdir -p "$tests_only/crates/scribe/src"
+printf 'pub fn eligible() {}\n' >"$tests_only/crates/scribe/src/lib.rs"
+expect pass check-terminal-guard.sh "$tests_only" \
+  "the same root passes once an eligible non-test Rust source exists"
+
+# A deterministic grep wrapper returning 2 for any of the three filtering calls
+# (comment filter in scan(), terminal allowlist filter, env allowlist filter)
+# must fail nonzero rather than masking the error behind `|| true` and passing a
+# tree with a violation or a clean eligible tree (STD-04 R10).
+real_grep=$(command -v grep)
+grep_wrap_dir="$work/grep-wrapper"
+mkdir -p "$grep_wrap_dir"
+cat >"$grep_wrap_dir/grep" <<EOF
+#!/usr/bin/env bash
+case "\${FAIL_FILTER_KIND:-}" in
+  comment)
+    for arg in "\$@"; do
+      if [[ "\$arg" == "-vE" ]]; then
+        echo "grep: simulated comment filter failure" >&2
+        exit 2
+      fi
+    done
+    ;;
+  terminal-allow)
+    for arg in "\$@"; do
+      if [[ "\$arg" == "^crates/scribe/src/output/" ]]; then
+        echo "grep: simulated terminal allowlist filter failure" >&2
+        exit 2
+      fi
+    done
+    ;;
+  env-allow)
+    for arg in "\$@"; do
+      if [[ "\$arg" == "^crates/scribe-core/src/composition.rs:" ]]; then
+        echo "grep: simulated env allowlist filter failure" >&2
+        exit 2
+      fi
+    done
+    ;;
+esac
+exec "$real_grep" "\$@"
+EOF
+chmod +x "$grep_wrap_dir/grep"
+
+guard_env_violation=$(guard_tree guard-env-violation-filter)
+printf 'pub(crate) fn f() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
+  >>"$guard_env_violation/crates/scribe/src/commands/entry.rs"
+
+for kind in comment terminal-allow env-allow; do
+  case "$kind" in
+    comment|terminal-allow) bad_tree="$guard_violation" ;;
+    env-allow) bad_tree="$guard_env_violation" ;;
+  esac
+  for target_tree in "$bad_tree" "$guard_clean"; do
+    FAIL_FILTER_KIND="$kind" PATH="$grep_wrap_dir:$PATH" \
+      expect fail check-terminal-guard.sh "$target_tree" \
+      "filter failure ($kind) on $target_tree must exit nonzero"
+    if grep -Fq "terminal-guard: ok" "$work/out"; then
+      echo "check-gates: FAIL: filter failure ($kind) printed terminal-guard: ok" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+    if ! grep -Fq "terminal-guard: scan failed" "$work/out"; then
+      echo "check-gates: FAIL: filter failure ($kind) missing scan-failed diagnostic" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+  done
+done
+
+expect pass check-terminal-guard.sh "$guard_clean" \
+  "ordinary filter no-match on a clean eligible tree still passes"
+expect fail check-terminal-guard.sh "$guard_env_violation" \
+  "an env violation with ordinary grep still fails"
+
 # --- clippy.toml: disallowed host operations in scribe-core (STD-02 R6) ----
 # Build a minimal workspace inheriting [workspace.lints] and clippy.toml so
 # every host operation banned in scribe-core fails regardless of path spelling
