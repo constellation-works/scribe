@@ -33,11 +33,12 @@
 //!   write drains into the table. So a command refused for a locked store
 //!   waits once, and its line is kept.
 
+use crate::db::files;
 use crate::db::{self, Conn as Connection, DB_FILE, docs, scope};
 use crate::error::{Error, Result};
 use crate::repository::audit::{self, AuditEvent};
 use crate::session::{ControlState, SessionId};
-use crate::{Imported, Store, fsio};
+use crate::{Imported, Store};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -463,7 +464,7 @@ impl Store {
             self.stamp_format()?;
         }
         for spooled in &after.spooled {
-            fsio::remove_private(spooled)?;
+            files::remove(spooled)?;
         }
         if after.journals {
             self.apply_open_journals()?;
@@ -508,17 +509,18 @@ impl Store {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        fsio::create_new_private(&dir.join(name), &line)
+        cw_fs::create_new(&dir.join(name), &line)?;
+        Ok(())
     }
 
     /// The spooled audit lines, by file name, with how many did not parse.
     /// Reads only.
     pub(crate) fn spooled_audit(&self) -> Result<(Vec<Spooled>, usize)> {
         let dir = self.root.join(AUDIT_SPOOL_DIR);
-        if !fsio::inspect_subdir(&dir)? {
+        if !cw_fs::inspect_dir(&dir)? {
             return Ok((Vec::new(), 0));
         }
-        let mut names: Vec<String> = fsio::list_dir(&dir)?
+        let mut names: Vec<String> = cw_fs::list(&dir)?
             .into_iter()
             .filter(|n| !n.starts_with('.') && n.ends_with(".json"))
             .collect();
@@ -527,10 +529,10 @@ impl Store {
         let mut torn = 0;
         for name in names {
             let path = dir.join(&name);
-            if !fsio::inspect_file(&path)? {
+            if !cw_fs::inspect_file(&path)? {
                 continue;
             }
-            let (mut lines, skipped) = audit::decode_formatted(&path, &fsio::read(&path)?)?;
+            let (mut lines, skipped) = audit::decode_formatted(&path, &files::read(&path)?)?;
             torn += skipped;
             if let Some((format, event)) = lines.pop() {
                 out.push((name, format, event));

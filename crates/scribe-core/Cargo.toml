@@ -21,6 +21,7 @@ path = "src/lib.rs"
 test-support = ["scribe-store/test-support"]
 
 [dependencies]
+cw-fs = { workspace = true }
 scribe-store = { workspace = true }
 scribe-tools = { workspace = true }
 serde = { workspace = true }

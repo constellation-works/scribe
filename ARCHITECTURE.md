@@ -29,8 +29,8 @@ scribe  ->  scribe-core  ->  scribe-store
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
 | `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite` |
-| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
-| `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. | — | `clap`, `tracing-subscriber`, any terminal crate |
+| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/admin/init.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite` |
+| `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `tempfile` |
 
 The banned crates are normal dependencies only. Dev-dependencies are exempt:
@@ -197,7 +197,8 @@ so the guard holds each to the same order.
 ```
 lib.rs               Store::open, read() -> Snapshot, write(|tx| …); the public contract modules
 db/                  the connection, schema and migrations, row access per table;
-                     fsio, locks, atomic writes, the codec, the archive import, the log check (log.rs)
+                     files.rs (the store's use of the kit's cw-fs: read caps, the root link), locks,
+                     the codec, the archive import, the log check (log.rs)
 repository/          one per record: entries, sessions, messages, proposals, tags,
                      groups, memory, marks, pickups, audit, and id resolution (ids.rs)
 contracts/           record shapes
@@ -251,7 +252,7 @@ What the core and the tools import from `scribe_store`:
   the memory, message, proposal and tag shapes.
 - **The store:** `Store`, `Snapshot`, `Tx`, the repositories (`repository`),
   `SessionLock`, `ImportFacts`, `Imported`, `ClaudeCapturePosition`,
-  `ClaudeGroupCapture`, `DB_FILE`, `fsio`, `digest`, `Redactor`,
+  `ClaudeGroupCapture`, `DB_FILE`, `digest`, `Redactor`,
   `REDACTED_FIELDS`, `MIN_SECRET_CHARS`.
 - **Errors and refusals:** `error`, `Error`, `Result`, `WriteRefusal`,
   `refusal`, `forgotten_refusal`.
@@ -322,8 +323,10 @@ cannot express. "Module" includes any file added later.
   or `ModelsEach`. `providers/` imports no app and no runtime, and the model
   shapes import none of their callers.
 - **The store:** reads no environment variable and discovers no path; only
-  `db/` names `rusqlite` (and `testing.rs`); `db/fsio.rs` names nothing of the
-  store but its error; `db/codec.rs` and `repository/audit.rs` do no file
+  `db/` names `rusqlite` (and `testing.rs`); `db/files.rs` names nothing of the
+  store but its error; no module of the store re-implements a file mechanism:
+  `cw-fs` is the file layer, and only the store and `apps/admin/init.rs` name
+  it; `db/codec.rs` and `repository/audit.rs` do no file
   I/O; `contracts/` imports no `db` or `repository`, has no `check_*`
   function and reads no clock.
 - **The tools:** only `fs.rs` names `std::fs`; nothing names `scribe_core`,

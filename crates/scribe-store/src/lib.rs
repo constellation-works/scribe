@@ -21,7 +21,7 @@
 //!     import, and audit lines that never wait;
 //!   - `db/locks`: the session and Codex-ingestion locks and rebuild
 //!     checkpoints;
-//!   - `db/fsio`: durable writes, locking and private-state checks,
+//!   - `db/files`: the store's use of `cw-fs` (caps, the root link),
 //!     mechanism only;
 //!   - `db/documents`: the documents as a whole: whether they moved in, the
 //!     format stamps, the first write's import and their part of `scribe
@@ -82,7 +82,6 @@ pub mod digest;
 pub mod error;
 mod redact;
 pub use db::documents::Imported;
-pub use db::fsio;
 pub use db::locks::SessionLock;
 pub use db::write::ImportFacts;
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
@@ -134,6 +133,7 @@ use repository::audit;
 // The domain at the paths this code had as scribe-core's `store` module.
 #[cfg(test)]
 use crate as store;
+use crate::db::files;
 use crate::entry::{ContentFrom, EntryStatus, Instruction, Speaker};
 use crate::entry::{Entry, EntryFilter, EntryId};
 use crate::record::{Author, AuthorKind, Label, Project, Related, RelatedKind};
@@ -224,21 +224,21 @@ impl Store {
     }
 
     fn prepare_dir(&self, dir: &Path) -> Result<()> {
-        if !fsio::inspect_dir(dir)? {
-            fsio::create_private_dir(dir)?;
+        if !files::inspect_root(dir)? {
+            cw_fs::create_private_dir(dir)?;
         }
         Ok(())
     }
 
     fn prepare_subdir(&self, dir: &Path) -> Result<()> {
-        if !fsio::inspect_subdir(dir)? {
-            fsio::create_private_dir(dir)?;
+        if !cw_fs::inspect_dir(dir)? {
+            cw_fs::create_private_dir(dir)?;
         }
         Ok(())
     }
 
     fn root_exists(&self) -> Result<bool> {
-        fsio::inspect_dir(&self.root)
+        files::inspect_root(&self.root)
     }
 }
 

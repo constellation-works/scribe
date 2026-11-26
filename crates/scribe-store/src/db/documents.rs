@@ -16,6 +16,7 @@
 //!   and `pickups.json` are empty documents at the current format, so an
 //!   older build refuses the store.
 
+use crate::db::files;
 use crate::db::import::is_empty;
 use crate::db::write::{ImportCheck, ImportFacts, Move};
 use crate::db::{self, Conn as Connection, DB_FILE, codec, docs};
@@ -25,7 +26,7 @@ use crate::repository::tags::TAGS_FILE;
 use crate::session::ControlState;
 use crate::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Store, fsio,
+    SESSIONS_DIR, Store,
 };
 use std::path::Path;
 use time::OffsetDateTime;
@@ -168,11 +169,11 @@ impl Store {
             return Ok(items);
         }
         for dir in [SESSIONS_DIR, ENTRIES_DIR, crate::ISSUES_DIR] {
-            if fsio::inspect_subdir(&self.root.join(dir))? {
+            if cw_fs::inspect_dir(&self.root.join(dir))? {
                 items.push(dir.to_owned());
             }
         }
-        if fsio::inspect_file(&self.root.join(AUDIT_FILE))? {
+        if cw_fs::inspect_file(&self.root.join(AUDIT_FILE))? {
             items.push(AUDIT_FILE.to_owned());
         }
         for name in [
@@ -187,16 +188,16 @@ impl Store {
             }
         }
         items.extend(
-            fsio::list_dir(&self.root)?
+            files::list_root(&self.root)?
                 .into_iter()
                 .filter(|n| n.starts_with(".codex-") && n.ends_with(".lock")),
         );
         let memory = self.root.join(crate::MEMORY_DIR);
-        if fsio::inspect_subdir(&memory)? {
-            for name in fsio::list_dir(&memory)? {
+        if cw_fs::inspect_dir(&memory)? {
+            for name in cw_fs::list(&memory)? {
                 if name.starts_with(LEGACY_MEMORY_PREFIX)
                     && name.ends_with(RECORD_EXT)
-                    && fsio::inspect_file(&memory.join(&name))?
+                    && cw_fs::inspect_file(&memory.join(&name))?
                 {
                     items.push(format!("{}/{name}", crate::MEMORY_DIR));
                 }
@@ -229,10 +230,10 @@ impl Store {
     /// Whether a JSON document holds anything: an empty one is a stamp.
     fn document_has_content(&self, name: &str) -> Result<bool> {
         let path = self.root.join(name);
-        if !fsio::inspect_file(&path)? {
+        if !cw_fs::inspect_file(&path)? {
             return Ok(false);
         }
-        let bytes = fsio::read(&path)?;
+        let bytes = files::read(&path)?;
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|e| Error::corrupt(&path, e))?;
         Ok(value
@@ -254,18 +255,19 @@ impl Store {
     /// reads it refuse the store (STD-03 R10).
     fn write_stamps(&self) -> Result<()> {
         let control = self.root.join(CONTROL_FILE);
-        fsio::write_atomic(
+        cw_fs::write_atomic(
             &control,
             &codec::encode_control(&control, &ControlState::default())?,
         )?;
         let proposals = self.root.join(PROPOSALS_FILE);
-        fsio::write_atomic(&proposals, &codec::encode_proposals(&proposals, &[])?)?;
+        cw_fs::write_atomic(&proposals, &codec::encode_proposals(&proposals, &[])?)?;
         let tags = self.root.join(TAGS_FILE);
-        fsio::write_atomic(&tags, &codec::encode_tags(&tags, &[])?)?;
+        cw_fs::write_atomic(&tags, &codec::encode_tags(&tags, &[])?)?;
         let marks = self.root.join(MARKS_FILE);
-        fsio::write_atomic(&marks, &codec::encode_marks(&marks, &[])?)?;
+        cw_fs::write_atomic(&marks, &codec::encode_marks(&marks, &[])?)?;
         let pickups = self.root.join(PICKUPS_FILE);
-        fsio::write_atomic(&pickups, &codec::encode_pickups(&pickups, &[])?)
+        cw_fs::write_atomic(&pickups, &codec::encode_pickups(&pickups, &[])?)?;
+        Ok(())
     }
 
     /// `scribe export --as markdown` of the documents: one file per entry,

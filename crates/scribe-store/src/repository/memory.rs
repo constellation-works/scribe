@@ -18,12 +18,13 @@
 
 use super::Memory;
 use super::{Access, ReadWrite};
+use crate::db::files;
 use crate::db::{self, FileOp, HistoryRow, Journal, MemoryCommit, Revision, Writer, codec};
 use crate::error::refusal;
 use crate::error::{Error, Result};
 use crate::{MemoryContext, PendingContext};
 use crate::{Milestone, NowItem, Pending, ProfileView, Refusal, Stem};
-use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal, fsio};
+use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
@@ -281,12 +282,12 @@ impl Store {
                     if let Some(parent) = path.parent() {
                         self.prepare_subdir(parent)?;
                     }
-                    fsio::write_atomic(&path, content.as_bytes())?;
+                    cw_fs::write_atomic(&path, content.as_bytes())?;
                     if op.path == PROFILE_FILE {
                         profile_sha = Some(sha256(content));
                     }
                 }
-                None => fsio::remove_private(&path)?,
+                None => files::remove(&path)?,
             }
         }
         Ok(profile_sha)
@@ -380,20 +381,20 @@ impl Store {
         let mut items = Vec::new();
         let mut skipped = Vec::new();
         let dir = self.memory_dir().join(sub);
-        if !fsio::inspect_subdir(&self.memory_dir())? || !fsio::inspect_subdir(&dir)? {
+        if !cw_fs::inspect_dir(&self.memory_dir())? || !cw_fs::inspect_dir(&dir)? {
             return Ok((items, skipped));
         }
-        let mut names: Vec<String> = crate::visible(fsio::list_dir(&dir)?).collect();
+        let mut names: Vec<String> = crate::visible(cw_fs::list(&dir)?).collect();
         names.sort();
         for name in names {
             let Some(stem) = name.strip_suffix(RECORD_EXT) else {
                 continue;
             };
             let path = dir.join(&name);
-            if !fsio::inspect_file(&path)? {
+            if !cw_fs::inspect_file(&path)? {
                 continue;
             }
-            match decode(&path, &fsio::read(&path)?, stem) {
+            match decode(&path, &files::read(&path)?, stem) {
                 Ok(item) => items.push(item),
                 Err(error @ Error::Corrupt { .. }) => skipped.push(Skipped { path, error }),
                 Err(other) => return Err(other),
@@ -406,10 +407,10 @@ impl Store {
     /// archives. Reads only.
     fn legacy_count(&self) -> Result<usize> {
         let dir = self.memory_dir();
-        if !fsio::inspect_subdir(&dir)? {
+        if !cw_fs::inspect_dir(&dir)? {
             return Ok(0);
         }
-        Ok(crate::visible(fsio::list_dir(&dir)?)
+        Ok(crate::visible(cw_fs::list(&dir)?)
             .filter(|name| {
                 name.strip_suffix(RECORD_EXT)
                     .is_some_and(|stem| stem.starts_with("m-"))
@@ -419,10 +420,10 @@ impl Store {
 
     fn profile_text(&self) -> Result<Option<String>> {
         let path = self.memory_dir().join(PROFILE_FILE);
-        if !fsio::inspect_subdir(&self.memory_dir())? || !fsio::inspect_file(&path)? {
+        if !cw_fs::inspect_dir(&self.memory_dir())? || !cw_fs::inspect_file(&path)? {
             return Ok(None);
         }
-        String::from_utf8(fsio::read(&path)?)
+        String::from_utf8(files::read(&path)?)
             .map(Some)
             .map_err(|e| Error::corrupt(&path, e))
     }

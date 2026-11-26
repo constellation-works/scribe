@@ -2,8 +2,8 @@
 //! preserve unrelated hook groups and configuration, and reconcile only artifacts
 //! whose content still matches the previous installation receipt.
 
-use crate::store::fsio::{self, Owned};
 use crate::{Error, Provider, Result, capture::prompt_sha256};
+use scribe_tools::fs::{self as host_fs, Owned};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -110,7 +110,8 @@ pub fn init_project_with_skill_files(
     skill_files: &[(&str, &str)],
 ) -> Result<InitReport> {
     check_path(target, true)?;
-    let target = fsio::canonicalize(target).map_err(|e| Error::io("resolve project", target, e))?;
+    let target =
+        host_fs::canonicalize(target).map_err(|e| Error::io("resolve project", target, e))?;
     let config_dir = target.join(match provider {
         Provider::Codex => ".codex",
         Provider::ClaudeCode => ".claude",
@@ -130,7 +131,7 @@ pub fn init_project_with_skill_files(
     }
     // The project lock is independent of the personal store lock, and held over
     // read/merge/write. The kernel releases it after interruption.
-    let _lock = fsio::LockGuard::acquire(
+    let _lock = cw_fs::Lock::acquire(
         &target.join(".scribe-init.lock"),
         "scribe init",
         Duration::from_secs(10),
@@ -239,7 +240,7 @@ pub fn init_project_with_skill_files(
         } else {
             make_parents(&target, &path)?;
             check_descendants(&target, &path)?;
-            fsio::write_atomic(&path, &bytes)?;
+            cw_fs::write_atomic(&path, &bytes)?;
             changed = true;
             if before.is_some() {
                 "updated"
@@ -301,11 +302,14 @@ fn read_owned_skill(
 }
 
 fn read_optional(root: &Path, path: &Path) -> Result<Option<Vec<u8>>> {
-    fsio::read_bounded_beneath(root, path, 1024 * 1024)
+    host_fs::read_bounded_beneath(root, path, 1024 * 1024)
+        .map_err(|e| Error::io("read scaffold", path, e))
 }
 
 fn check_path(path: &Path, directory: bool) -> Result<()> {
-    match fsio::inspect_owned(path, directory)? {
+    match host_fs::inspect_owned(path, directory)
+        .map_err(|e| Error::io("inspect scaffold", path, e))?
+    {
         Owned::Missing | Owned::Fits => Ok(()),
         Owned::WrongType => Err(conflict(path, "path is a link or has the wrong type")),
         Owned::Foreign => Err(conflict(
@@ -341,7 +345,7 @@ fn make_parents(root: &Path, path: &Path) -> Result<()> {
     for part in relative.components() {
         current.push(part);
         if !current.exists() {
-            fsio::create_private_dir(&current)?;
+            cw_fs::create_private_dir(&current)?;
         }
         check_path(&current, true)?;
     }
