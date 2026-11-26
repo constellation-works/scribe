@@ -7,12 +7,11 @@ db-path = "$CARGO_HOME/advisory-dbs"
 # A yanked crate can change under the locked graph without anyone editing code.
 yanked = "deny"
 ignore = [
-    # { id = "RUSTSEC-YYYY-NNNN", reason = "<why it does not apply>. Re-review YYYY-MM-DD." },
 ]
 
 [licenses]
-# Only what the tree needs today; add a license with a comment naming the
-# crate that brought it.
+# Keep only licenses used by the dependency tree; explain additions by
+# naming the crate that needs each one.
 allow = [
     # MIT / Apache-2.0: clap, serde, serde_json, thiserror, time, tracing,
     # tempfile, rustix and their transitive dependencies.
