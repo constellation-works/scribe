@@ -34,11 +34,10 @@
 //!   waits once, and its line is kept.
 
 use crate::db::files;
-use crate::db::{self, Conn as Connection, DB_FILE, docs, scope};
+use crate::db::{self, Conn as Connection, DB_FILE, codec, docs, scope};
 use crate::error::{Error, Result};
-use crate::repository::audit::{self, AuditEvent};
 use crate::session::{ControlState, SessionId};
-use crate::{Imported, Store};
+use crate::{AuditEvent, Store};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -47,6 +46,42 @@ use time::OffsetDateTime;
 
 /// A spooled audit line: its file name, its format and the event.
 pub(crate) type Spooled = (String, u32, AuditEvent);
+
+/// What `scribe store migrate`, or a write's own import, did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Imported {
+    /// Session records imported (always 0 since phase 8: only archives are
+    /// imported).
+    pub sessions: usize,
+    /// Switches imported (always 0 since phase 8).
+    pub switches: usize,
+    /// Codex cursors imported (always 0 since phase 8).
+    pub cursors: usize,
+    /// Rebuild checkpoints imported (always 0 since phase 8).
+    pub checkpoints: usize,
+    /// Entries imported (always 0 since phase 8).
+    pub entries: usize,
+    /// Claims imported (always 0 since phase 8).
+    pub claims: usize,
+    /// Store tags imported (always 0 since phase 8).
+    pub tags: usize,
+    /// Annotation marks imported (always 0 since phase 8).
+    pub marks: usize,
+    /// Pickups imported (always 0 since phase 8).
+    pub pickups: usize,
+    /// Spooled audit lines drained into the table.
+    pub audit_lines: usize,
+    /// Audit lines that did not parse (always 0 since phase 8).
+    pub audit_torn: usize,
+    /// Where files went (always `None` since phase 8: archives are
+    /// imported, then removed).
+    pub moved_to: Option<String>,
+    /// `pre-sqlite-*` and `pre-issue-*` directories imported into the
+    /// archive tables.
+    pub archives: usize,
+    /// Archived records imported.
+    pub archived: usize,
+}
 
 /// Spooled audit lines, one file each, under the root.
 pub const AUDIT_SPOOL_DIR: &str = "audit-spool";
@@ -471,27 +506,13 @@ impl Store {
         Ok(())
     }
 
-    /// Record one audit line: the command's audit guard's write
-    /// ([`Audit::record`](crate::repository::Audit::record)). Inside the
-    /// command's write it commits with that write; outside one it is its
-    /// own insert, which waits for no lock. The one audit write a caller
-    /// makes without a [`Tx`](crate::Tx): a [`Snapshot`](crate::Snapshot)'s
-    /// audit repository only reads.
-    ///
-    /// # Errors
-    ///
-    /// As [`Audit::record`](crate::repository::Audit::record).
-    pub fn record_audit(&self, event: &AuditEvent) -> Result<()> {
-        crate::repository::Audit::<crate::repository::ReadWrite>::over(self).record(event)
-    }
-
     /// Insert `event` in a transaction of its own that waits for no other
     /// writer.
     pub(crate) fn audit_without_waiting(&self, event: &AuditEvent) -> Result<()> {
         let path = self.root.join(DB_FILE);
         let conn = db::open_new_writer(&self.root, Duration::ZERO)?;
         let tx = scope::Tx::begin(&conn, &path, "audit to")?;
-        docs::put_audit(&tx, &path, audit::AUDIT_FORMAT, event, None, |e| tx.fail(e))?;
+        docs::put_audit(&tx, &path, codec::AUDIT_FORMAT, event, None, |e| tx.fail(e))?;
         tx.commit()
     }
 
@@ -500,7 +521,7 @@ impl Store {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = self.root.join(AUDIT_SPOOL_DIR);
         self.prepare_subdir(&dir)?;
-        let line = audit::encode_line(audit::AUDIT_FORMAT, event)
+        let line = codec::encode_line(codec::AUDIT_FORMAT, event)
             .map_err(|e| Error::corrupt(&dir, format!("an audit line does not encode: {e}")))?;
         let name = format!(
             "{:020}-{}-{}.json",
@@ -531,7 +552,7 @@ impl Store {
             if !cw_fs::inspect_file(&path)? {
                 continue;
             }
-            let (mut lines, skipped) = audit::decode_formatted(&path, &files::read(&path)?)?;
+            let (mut lines, skipped) = codec::decode_formatted(&path, &files::read(&path)?)?;
             torn += skipped;
             if let Some((format, event)) = lines.pop() {
                 out.push((name, format, event));

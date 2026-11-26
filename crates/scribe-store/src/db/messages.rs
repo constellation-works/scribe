@@ -2,8 +2,8 @@
 
 use super::scope::Tx;
 use super::{
-    DB_FILE, database, db_error, from_sqlite_error, memory, open_writer, scope, sessions, stamp,
-    truncate_wal, write_error,
+    DB_FILE, database, db_error, from_sqlite_error, is_forgotten, memory, open_writer, scope,
+    stamp, truncate_wal, write_error,
 };
 use crate::Redactor;
 use crate::entry::Speaker;
@@ -126,10 +126,9 @@ fn write_messages<'a>(
     let mut checked = std::collections::BTreeSet::new();
     for m in messages {
         if checked.insert(&m.session)
-            && sessions::is_forgotten(conn, &m.session)
-                .map_err(|e| db_error("write messages to", path, e))?
+            && is_forgotten(conn, &m.session).map_err(|e| db_error("write messages to", path, e))?
         {
-            return Err(sessions::forgotten_refusal(
+            return Err(crate::forgotten_refusal(
                 &m.session,
                 "nothing is written to it",
             ));

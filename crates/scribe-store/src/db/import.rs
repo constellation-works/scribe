@@ -262,7 +262,7 @@ fn classify(rel: &str, issue: bool) -> &'static str {
     for (base, kind) in [
         (PROPOSALS_FILE, "claims"),
         (CONTROL_FILE, "control"),
-        (crate::repository::tags::TAGS_FILE, "tags"),
+        (crate::TAGS_FILE, "tags"),
         (MARKS_FILE, "marks"),
         (PICKUPS_FILE, "pickups"),
         (AUDIT_FILE, "audit"),

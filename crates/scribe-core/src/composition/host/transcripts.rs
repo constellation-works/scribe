@@ -3,8 +3,8 @@
 //! `scribe_tools::transcript`, scoped to the context, with a listing failure
 //! as a [`CommandError`].
 
+use super::super::Context;
 use crate::SessionId;
-use crate::composition::Context;
 use crate::runtime::errors::CommandError;
 #[cfg(unix)]
 use scribe_tools::transcript::ClaudeRead;

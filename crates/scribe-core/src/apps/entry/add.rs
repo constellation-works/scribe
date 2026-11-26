@@ -4,8 +4,9 @@
 use super::verbs::EntryVerbs;
 use super::verify as entry_verify;
 use super::written::{EntryWritten, written};
+use crate::apps::tag::redactor;
 use crate::handoff::Mode as HandoffMode;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError, resolve};
 use crate::{
     AgentEntry, AnswerIn, AuthorName, Decision, EntryId, Label, OpenItem, Project, Provider,

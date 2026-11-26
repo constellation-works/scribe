@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# scripts/check-dependency-direction.sh [root] — STD-02 R1–R6, R16, R17 for this workspace.
+# scripts/check-dependency-direction.sh [root] — STD-02 R1–R6, R16, R17, R39 for this workspace.
 #
 # `root` defaults to the repository; scripts/tests/check-gates.sh points it at
 # fixture trees.
 #
-# Two layers of checks, both from source files alone (no build, no network,
+# Three layers of checks, all from source files alone (no build, no network,
 # no jq), so the gate runs in `make ci-fast`:
 #
 #   1. Crate edges. Every workspace crate needs a policy below. A crate may
@@ -18,8 +18,13 @@
 #      `rusqlite::Connection::open*` are enforced by clippy.toml (STD-02 R6).
 #      A `super::` path counts as the `crate::` path it names, so a relative
 #      import meets the same rules (resolve, ban_crate).
+#   3. Unit import cycles and declared in-layer orders (STD-02 R6, R39): the
+#      import graph between workspace crates, between the top-level modules of
+#      each crate, and between the modules of each layer/directory must be
+#      acyclic, and every layer with more than about ten units obeys its
+#      declared order in ARCHITECTURE.md.
 #
-# The crates, the app order and these guards are written down in
+# The crates, the declared layer orders and these guards are written down in
 # ARCHITECTURE.md, from the architecture spec's Guards section
 # (docs/design/scribe/specs/architecture.md); change them and this script in
 # the same commit (STD-02 R6).
@@ -572,6 +577,482 @@ for module in action activity annotation ask brief capture checks claim consiste
     [[ -e "$retired" ]] && err "retired path exists again: $retired (now in scribe-store, scribe-tools or an app)"
   done
 done
+
+# --- 3. unit import cycles and declared in-layer orders (STD-02 R6, R39) -----
+# Every level of units must have an acyclic import graph: workspace crates,
+# top-level modules of each crate, and sibling modules within each layer or
+# module directory. Layers with more than about ten units declare a bottom-up
+# order in ARCHITECTURE.md and below (apps/ is already ordered by APP_ORDER
+# above); every unit in a declared layer must appear in its order and import
+# only strictly earlier units.
+DB_ORDER='archive files log scope codec locks memory messages groups sessions docs import write documents'
+CONTRACTS_ORDER='audit provider record session entry handoff tag action group mark memory message proposal'
+REPOSITORY_ORDER='ids memory audit entries groups marks messages pickups proposals sessions tags'
+TOOLS_ORDER='fs host origin text voice markers project payload transcript window group_close memory_refresh session_distill'
+COMMANDS_ORDER='instruction store brief consistency entry export group hook init mark memory proposal search session tag transcript plugin'
+
+if ! command -v python3 >/dev/null 2>&1; then
+  err "python3 is required for the import-cycle and in-layer order check"
+elif ! DB_ORDER="$DB_ORDER" \
+  CONTRACTS_ORDER="$CONTRACTS_ORDER" \
+  REPOSITORY_ORDER="$REPOSITORY_ORDER" \
+  TOOLS_ORDER="$TOOLS_ORDER" \
+  COMMANDS_ORDER="$COMMANDS_ORDER" \
+  python3 -I - <<'PY'
+import collections
+import glob
+import os
+import re
+import sys
+
+errors = []
+
+def err(msg):
+    errors.append(msg)
+
+# --- 3a. Workspace crate dependency graph (non-dev dependencies) ------------
+crate_edges = collections.defaultdict(set)
+crate_manifests = {}
+for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
+    name = None
+    in_deps = False
+    deps = []
+    with open(manifest, encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            stripped = line.strip()
+            if name is None:
+                m = re.match(r'^name\s*=\s*"([^"]+)"', stripped)
+                if m:
+                    name = m.group(1)
+            if stripped.startswith("["):
+                in_deps = re.match(r'^\[(target\..*\.)?(build-)?dependencies\]$', stripped) is not None
+                continue
+            if in_deps:
+                m = re.match(r'^([A-Za-z0-9_-]+)(?:\.workspace)?\s*=', stripped)
+                if m:
+                    deps.append((m.group(1), lineno))
+    if name:
+        crate_manifests[name] = (manifest, deps)
+
+workspace_crates = set(crate_manifests)
+crate_edge_loc = {}
+for crate, (manifest, deps) in sorted(crate_manifests.items()):
+    for dep, lineno in deps:
+        if dep in workspace_crates:
+            crate_edges[crate].add(dep)
+            crate_edge_loc.setdefault((crate, dep), f"{manifest}:{lineno}")
+
+def find_cycles(nodes, edges):
+    """Return deterministic elementary cycle paths for every SCC with a cycle."""
+    index = {}
+    lowlink = {}
+    stack = []
+    on_stack = set()
+    sccs = []
+    counter = [0]
+
+    def strongconnect(v):
+        index[v] = lowlink[v] = counter[0]
+        counter[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in sorted(edges.get(v, ())):
+            if w not in index:
+                strongconnect(w)
+                lowlink[v] = min(lowlink[v], lowlink[w])
+            elif w in on_stack:
+                lowlink[v] = min(lowlink[v], index[w])
+        if lowlink[v] == index[v]:
+            scc = []
+            while True:
+                w = stack.pop()
+                on_stack.remove(w)
+                scc.append(w)
+                if w == v:
+                    break
+            if len(scc) > 1 or (len(scc) == 1 and v in edges.get(v, ())):
+                sccs.append(sorted(scc))
+
+    for v in sorted(nodes):
+        if v not in index:
+            strongconnect(v)
+
+    cycles = []
+    for scc in sorted(sccs):
+        scc_set = set(scc)
+        start = scc[0]
+        # BFS from start's neighbors in the SCC to find a shortest cycle back to start.
+        queue = collections.deque()
+        parent = {}
+        found = None
+        for nxt in sorted(edges.get(start, ())):
+            if nxt == start:
+                found = [start, start]
+                break
+            if nxt in scc_set and nxt not in parent:
+                parent[nxt] = start
+                queue.append(nxt)
+        while found is None and queue:
+            cur = queue.popleft()
+            for nxt in sorted(edges.get(cur, ())):
+                if nxt == start:
+                    path = [start]
+                    node = cur
+                    rev = []
+                    while node != start:
+                        rev.append(node)
+                        node = parent[node]
+                    path.extend(reversed(rev))
+                    path.append(start)
+                    found = path
+                    break
+                if nxt in scc_set and nxt not in parent:
+                    parent[nxt] = cur
+                    queue.append(nxt)
+        if found:
+            cycles.append(found)
+    return cycles
+
+for cyc in find_cycles(workspace_crates, crate_edges):
+    locs = ", ".join(
+        crate_edge_loc.get((cyc[i], cyc[i + 1]), "")
+        for i in range(len(cyc) - 1)
+    )
+    err(f"crate import cycle: {' -> '.join(cyc)} ({locs})")
+
+# --- 3b. Rust lexer and import resolver -------------------------------------
+RAW_STR_RE = re.compile(r'(?:br|cr|r)(#*)"')
+CHAR_LIT_RE = re.compile(r"b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^'\\\n])'")
+USE_STMT_RE = re.compile(
+    r'(?:^|[;{}])[ \t\n]*((?:#\[[^\]]*\][ \t\n]*)*)'
+    r'(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);',
+    re.M,
+)
+INLINE_PATH_RE = re.compile(r'(?<![\w:])((?:crate|super|self)(?:::\w+)+)')
+CFG_TEST_RE = re.compile(r'#\[\s*cfg\s*\(\s*test\s*\)\s*\]')
+
+def strip_comments_and_strings(src):
+    """Replace Rust comments and string/char literals with spaces, preserving newlines."""
+    out = []
+    i = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                out.append(" ")
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            depth = 1
+            out.append("  ")
+            i += 2
+            while i < n and depth > 0:
+                if src[i] == "/" and i + 1 < n and src[i + 1] == "*":
+                    depth += 1
+                    out.append("  ")
+                    i += 2
+                elif src[i] == "*" and i + 1 < n and src[i + 1] == "/":
+                    depth -= 1
+                    out.append("  ")
+                    i += 2
+                else:
+                    out.append("\n" if src[i] == "\n" else " ")
+                    i += 1
+        elif c in ("r", "b", "c") and (m := RAW_STR_RE.match(src, i)):
+            end_pat = '"' + m.group(1)
+            end_pos = src.find(end_pat, m.end())
+            end_pos = n if end_pos < 0 else end_pos + len(end_pat)
+            out.extend("\n" if ch == "\n" else " " for ch in src[i:end_pos])
+            i = end_pos
+        elif c == '"' or (c in ("b", "c") and i + 1 < n and src[i + 1] == '"'):
+            if c != '"':
+                out.append(" ")
+                i += 1
+            out.append(" ")
+            i += 1
+            while i < n:
+                if src[i] == "\\" and i + 1 < n:
+                    out.append("\n" if src[i + 1] == "\n" else "  ")
+                    i += 2
+                elif src[i] == '"':
+                    out.append(" ")
+                    i += 1
+                    break
+                else:
+                    out.append("\n" if src[i] == "\n" else " ")
+                    i += 1
+        elif c == "'" or (c == "b" and i + 1 < n and src[i + 1] == "'"):
+            m = CHAR_LIT_RE.match(src, i)
+            if m:
+                out.append(" " * (m.end() - i))
+                i = m.end()
+            else:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+def flatten_use_tree(prefix, tree):
+    """Flatten a possibly nested, multiline Rust use tree into full paths."""
+    items = []
+    depth = 0
+    cur = []
+    for ch in tree:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            items.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    items.append("".join(cur))
+    out = []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        m = re.match(r"^(.*?)\{(.*)\}$", item, re.S)
+        if m:
+            p = re.sub(r"\s+", "", m.group(1))
+            out.extend(flatten_use_tree(prefix + p, m.group(2)))
+        else:
+            item = re.sub(r"\s+as\s+\w+$", "", item)
+            item = re.sub(r"\s+", "", item)
+            if item == "self":
+                out.append(prefix.rstrip(":"))
+            else:
+                out.append(prefix + item)
+    return out
+
+def resolve_to_crate(path_str, mod_parts, aliases):
+    segs = [s for s in path_str.lstrip(":").split("::") if s]
+    if not segs:
+        return None
+    if segs[0] == "crate":
+        res = segs[1:]
+    elif segs[0] == "super":
+        up = 0
+        while up < len(segs) and segs[up] == "super":
+            up += 1
+        if up > len(mod_parts):
+            return None
+        res = mod_parts[: len(mod_parts) - up] + segs[up:]
+    elif segs[0] == "self":
+        res = mod_parts + segs[1:]
+    else:
+        return None
+    if res and res[0] in aliases:
+        res = aliases[res[0]] + res[1:]
+    return res
+
+def collect_root_aliases(src_dir, top_units):
+    """Collect unambiguous root-level re-exports in lib.rs / main.rs."""
+    candidates = collections.defaultdict(set)
+    for root_file in ("lib.rs", "main.rs"):
+        fp = os.path.join(src_dir, root_file)
+        if not os.path.isfile(fp):
+            continue
+        clean = strip_comments_and_strings(open(fp, encoding="utf-8").read())
+        # Ignore #[cfg(test)] mod ... { ... } blocks and #[cfg(test)] use statements.
+        for m in USE_STMT_RE.finditer(clean):
+            attrs = m.group(1) or ""
+            if CFG_TEST_RE.search(attrs):
+                continue
+            tree = m.group(2)
+            # Only top-level use statements (not indented inside an inline mod { ... }).
+            stmt_start = clean.rfind("\n", 0, m.start(2)) + 1
+            if clean[stmt_start : m.start(2)].startswith((" ", "\t")):
+                continue
+            for raw in flatten_use_tree("", tree):
+                segs = [s for s in raw.lstrip(":").split("::") if s]
+                if segs and segs[0] == "crate":
+                    segs = segs[1:]
+                if len(segs) >= 2 and segs[0] in top_units and segs[-1] != "*":
+                    alias = segs[-1]
+                    if alias not in top_units:
+                        candidates[alias].add(tuple(segs))
+    # Keep only aliases that map unambiguously to a single internal path.
+    return {k: list(next(iter(v))) for k, v in candidates.items() if len(v) == 1}
+
+def has_non_test_rs(directory):
+    for r, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d != "tests"]
+        if any(f.endswith(".rs") for f in files):
+            return True
+    return False
+
+def list_units(directory, is_crate_root):
+    units = set()
+    if not os.path.isdir(directory):
+        return units
+    skip_files = {"lib.rs", "main.rs"} if is_crate_root else {"mod.rs"}
+    skip_dirs = {"tests", "bin"} if is_crate_root else {"tests"}
+    for entry in os.listdir(directory):
+        if entry.startswith("."):
+            continue
+        full = os.path.join(directory, entry)
+        if os.path.isdir(full):
+            if entry not in skip_dirs and has_non_test_rs(full):
+                units.add(entry)
+        elif entry.endswith(".rs") and entry not in skip_files:
+            units.add(entry[:-3])
+    return units
+
+def file_mod_parts(src_dir, fp):
+    rel = os.path.relpath(fp, src_dir)[:-3].split(os.sep)
+    if rel[-1] == "mod":
+        return rel[:-1]
+    if len(rel) == 1 and rel[0] in ("lib", "main"):
+        return []
+    return rel
+
+def extract_resolved_refs(fp, src_dir, aliases):
+    raw = open(fp, encoding="utf-8").read()
+    clean = strip_comments_and_strings(raw)
+    mod_parts = file_mod_parts(src_dir, fp)
+    refs = []
+    # Strip spans of #[cfg(test)] use statements so inline test-only imports are skipped.
+    skip_spans = []
+    for m in USE_STMT_RE.finditer(clean):
+        attrs = m.group(1) or ""
+        if CFG_TEST_RE.search(attrs):
+            skip_spans.append((m.start(), m.end()))
+            continue
+        lineno = 1 + clean.count("\n", 0, m.start(2))
+        for p in flatten_use_tree("", m.group(2)):
+            res = resolve_to_crate(p, mod_parts, aliases)
+            if res:
+                refs.append((res, lineno))
+    for m in INLINE_PATH_RE.finditer(clean):
+        pos = m.start(1)
+        if any(a <= pos < b for a, b in skip_spans):
+            continue
+        lineno = 1 + clean.count("\n", 0, pos)
+        res = resolve_to_crate(m.group(1), mod_parts, aliases)
+        if res:
+            refs.append((res, lineno))
+    return refs
+
+# Declared in-layer orders (STD-02 R39: layers with > ~10 units; apps/ is
+# enforced with its mod.rs-only reach-in check above).
+DECLARED_ORDERS = {
+    ("scribe-store", ("db",)): os.environ["DB_ORDER"].split(),
+    ("scribe-store", ("contracts",)): os.environ["CONTRACTS_ORDER"].split(),
+    ("scribe-store", ("repository",)): os.environ["REPOSITORY_ORDER"].split(),
+    ("scribe-tools", ()): os.environ["TOOLS_ORDER"].split(),
+    ("scribe", ("commands",)): os.environ["COMMANDS_ORDER"].split(),
+}
+
+# --- 3c. Walk every crate and every module directory ------------------------
+for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
+    crate_dir = os.path.dirname(manifest)
+    crate_name = os.path.basename(crate_dir)
+    with open(manifest, encoding="utf-8") as fh:
+        for line in fh:
+            m = re.match(r'^name\s*=\s*"([^"]+)"', line.strip())
+            if m:
+                crate_name = m.group(1)
+                break
+    src_dir = os.path.join(crate_dir, "src")
+    if not os.path.isdir(src_dir):
+        continue
+
+    top_units = list_units(src_dir, is_crate_root=True)
+    aliases = collect_root_aliases(src_dir, top_units)
+    # Also map `crate::session::*` in scribe-store to `contracts::session` for
+    # intra-contracts references (lib.rs re-exports contracts::session in an
+    # inline `pub mod session`).
+    if crate_name == "scribe-store" and "contracts" in top_units and "session" not in aliases:
+        aliases["session"] = ["contracts", "session"]
+
+    # Cache extracted refs per file once for all scopes in this crate.
+    file_refs = {}
+    for r, dirs, files in os.walk(src_dir):
+        dirs[:] = sorted(d for d in dirs if d not in ("tests", "bin"))
+        for f in sorted(files):
+            if f.endswith(".rs"):
+                fp = os.path.join(r, f)
+                file_refs[fp] = extract_resolved_refs(fp, src_dir, aliases)
+
+    # Collect all scopes: () for top-level modules, plus every subdirectory.
+    scopes = [()]
+    for r, dirs, _files in os.walk(src_dir):
+        dirs[:] = sorted(d for d in dirs if d not in ("tests", "bin"))
+        rel = os.path.relpath(r, src_dir)
+        if rel != ".":
+            scopes.append(tuple(rel.split(os.sep)))
+
+    for prefix in scopes:
+        base_dir = os.path.join(src_dir, *prefix) if prefix else src_dir
+        units = list_units(base_dir, is_crate_root=(len(prefix) == 0))
+        scope_label = crate_name + ("::" + "::".join(prefix) if prefix else "")
+        order = DECLARED_ORDERS.get((crate_name, prefix))
+
+        if order is not None:
+            rank = {u: i for i, u in enumerate(order)}
+            for u in sorted(units):
+                if u not in rank:
+                    err(
+                        f"{scope_label}: module '{u}' has no place in the declared order (ARCHITECTURE.md)"
+                    )
+
+        if len(units) < 2 and order is None:
+            continue
+
+        edges = collections.defaultdict(set)
+        edge_loc = {}
+        order_violations = []
+
+        for fp, refs in sorted(file_refs.items()):
+            mp = file_mod_parts(src_dir, fp)
+            if len(mp) <= len(prefix) or tuple(mp[: len(prefix)]) != prefix:
+                continue
+            src_u = mp[len(prefix)]
+            if src_u not in units:
+                continue
+            for res, lineno in refs:
+                if len(res) <= len(prefix) or tuple(res[: len(prefix)]) != prefix:
+                    continue
+                dst_u = res[len(prefix)]
+                if dst_u in units and dst_u != src_u:
+                    edges[src_u].add(dst_u)
+                    loc = f"{fp}:{lineno}"
+                    edge_loc.setdefault((src_u, dst_u), loc)
+                    if order is not None and src_u in rank and dst_u in rank:
+                        if rank[dst_u] >= rank[src_u]:
+                            order_violations.append(
+                                (fp, lineno, src_u, dst_u)
+                            )
+
+        for cyc in find_cycles(units, edges):
+            locs = ", ".join(
+                edge_loc.get((cyc[i], cyc[i + 1]), "")
+                for i in range(len(cyc) - 1)
+            )
+            err(f"{scope_label} import cycle: {' -> '.join(cyc)} ({locs})")
+
+        seen_ord = set()
+        for fp, lineno, src_u, dst_u in order_violations:
+            key = (fp, lineno, src_u, dst_u)
+            if key in seen_ord:
+                continue
+            seen_ord.add(key)
+            err(
+                f"{fp}:{lineno}: {scope_label}: {src_u} imports {dst_u}, which is not lower in the declared order (ARCHITECTURE.md)"
+            )
+
+if errors:
+    for msg in errors:
+        print(f"dependency-direction: {msg}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  fail=1
+fi
 
 if [[ "$fail" -eq 0 ]]; then
   echo "dependency-direction: ok"

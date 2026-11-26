@@ -1,16 +1,23 @@
-use super::list::ListArgs;
-use crate::commands::{ListNotice, list_output};
+use crate::commands::{DateArgs, ListNotice, list_output};
 use crate::output::{EntryPayload, Output, Record, Records};
-use scribe_core::EntryFilter;
 use scribe_core::apps::entry::{self, Outcome};
 use scribe_core::composition::Context;
+use scribe_core::{EntryFilter, Related};
+
+/// The `entry list` flags echoed as empty-list criteria and window display.
+pub(super) struct ListDisplay<'a> {
+    pub(super) related: &'a [Related],
+    pub(super) dates: &'a DateArgs,
+    pub(super) after: Option<time::OffsetDateTime>,
+    pub(super) window: bool,
+}
 
 /// The output of `outcome`: `window` is `show --window`, and a list
 /// echoes `args` as criteria.
 pub(super) fn output(
     outcome: Outcome,
     window: bool,
-    args: Option<&ListArgs>,
+    args: Option<ListDisplay<'_>>,
     ctx: &Context,
 ) -> Output {
     match outcome {
@@ -34,19 +41,19 @@ pub(super) fn output(
                 )),
             }
         }
-        Outcome::Listed(listed) => list(*listed, args, ctx),
+        Outcome::Listed(listed) => list(*listed, args.as_ref(), ctx),
     }
 }
 
 /// `entry list`'s output, echoing `args` as criteria.
-fn list(listed: entry::Listed, args: Option<&ListArgs>, ctx: &Context) -> Output {
+fn list(listed: entry::Listed, args: Option<&ListDisplay<'_>>, ctx: &Context) -> Output {
     let (filter, group, found) = (listed.filter, listed.group, listed.found);
     let empty = format!(
         "no entries in {}; they are recorded by a #scribe line in a Claude Code session",
         ctx.root().display()
     );
     let mut criteria =
-        criteria_with_related(&filter, args.map_or(&filter.related, |args| &args.related));
+        criteria_with_related(&filter, args.map_or(&filter.related, |args| args.related));
     if let Some(group) = group {
         criteria.push(format!("--group {}", group.id));
     }

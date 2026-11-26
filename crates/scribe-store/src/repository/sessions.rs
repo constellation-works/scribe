@@ -14,8 +14,6 @@
 
 mod export;
 
-pub use export::{ExportCounts, ExportFormat};
-
 use super::Sessions;
 use super::ids::resolve;
 use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
@@ -34,7 +32,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use time::OffsetDateTime;
 
 impl<A: Access> Sessions<'_, A> {
@@ -978,11 +976,6 @@ impl Store {
     pub(crate) fn session_numbers(&self) -> Result<BTreeMap<SessionId, NonZeroU64>> {
         Ok(self.load_sessions()?.numbers)
     }
-}
-
-/// The checkpoint's file text at the current format, as a row holds it.
-pub(crate) fn encode_checkpoint(path: &Path, record: &SessionRecord) -> Result<String> {
-    String::from_utf8(codec::encode_session(path, record)?).map_err(|e| Error::corrupt(path, e))
 }
 
 /// The existing session-show shape, populated solely from a tombstone.

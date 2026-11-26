@@ -35,11 +35,7 @@ pub const RECENT_TURNS: usize = 3;
 /// How old the instruction turn may be when the command runs (§12.2 check 3).
 pub const FRESH_FOR: time::Duration = time::Duration::minutes(30);
 
-/// Claude Code `entrypoint` values of a session Daniel types into: the
-/// terminal (`cli`) and the desktop app (`claude-desktop`). `sdk-cli` is
-/// `claude -p` and the Agent SDK, which every Orbit run, routine and drain
-/// uses; it and every other value are refused (§12.5).
-pub const INTERACTIVE_ENTRYPOINTS: &[&str] = &["cli", "claude-desktop"];
+pub use crate::config::INTERACTIVE_ENTRYPOINTS;
 
 /// Codex `session_meta.payload.source` values of a session Daniel types
 /// into: the terminal UI (`cli`) and the IDE or desktop app (`vscode`).

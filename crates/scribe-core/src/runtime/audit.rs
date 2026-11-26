@@ -51,13 +51,36 @@
 //! cannot be written never fails the command that already ran, and is reported
 //! as a warning on stderr.
 
-use crate::composition::{Context, InstructionNote};
 use crate::runtime::errors::CommandError;
 use crate::{AuditEvent, AuditStatus, Store};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use time::OffsetDateTime;
+
+/// The ids of the user's instruction a write ran on (2_design.md §12.4): the
+/// session from `--session`, and the turn's message once the check found it.
+/// Ids only; the instruction's words never reach the audit log.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InstructionNote {
+    /// The `--session` the instruction was looked for in.
+    pub session: Option<String>,
+    /// The uuid of the turn that backs it, once the check passed.
+    pub message: Option<String>,
+}
+
+/// Host state [`guarded`] needs to run and record an audited command
+/// (implemented by composition's `Context`, STD-02 R42).
+pub(crate) trait AuditHost {
+    /// The store that holds the transaction and receives audit rows.
+    fn audit_store(&self) -> &Store;
+    /// When the command started.
+    fn audit_now(&self) -> OffsetDateTime;
+    /// Flag indicating a stepwise write already committed its audit row.
+    fn audit_committed_flag(&self) -> Arc<AtomicBool>;
+    /// The instruction ids noted while the command ran.
+    fn audit_instruction_note(&self) -> InstructionNote;
+}
 
 /// How a command appears in the audit log, and how it commits. Declared by
 /// each app's `Command::audit` for the commands that write: the hooks,
@@ -175,27 +198,27 @@ pub(crate) trait Audited {
 /// The guard exists before the command runs and records when it is dropped,
 /// so a command that returns early or panics is still logged, as a failure.
 pub(crate) fn guarded<O: Audited>(
-    ctx: &Context,
+    ctx: &impl AuditHost,
     audit: Option<Audit>,
     run: impl FnOnce() -> Result<O, CommandError>,
 ) -> Result<O, CommandError> {
     let Some(Audit { meta, subject }) = audit else {
         return run();
     };
-    let mut guard = AuditGuard::start(ctx.store(), meta, ctx.now());
+    let mut guard = AuditGuard::start(ctx.audit_store(), meta, ctx.audit_now());
     guard.set_committed_flag(ctx.audit_committed_flag());
     subject.apply(&mut guard);
     let finish = |guard: &mut AuditGuard<'_>, result: &Result<O, CommandError>| {
         guard.mark_result(result);
         subject.apply(guard);
-        guard.set_instruction(ctx.instruction_note());
+        guard.set_instruction(ctx.audit_instruction_note());
     };
     if meta.stepwise {
         let result = run();
         finish(&mut guard, &result);
         return result;
     }
-    let result = ctx.store().transaction(|| {
+    let result = ctx.audit_store().transaction(|| {
         let result = run();
         finish(&mut guard, &result);
         let outcome = result?;

@@ -17,8 +17,7 @@
 //! blocked as a `/scribe` line always is. Audit outcomes carry session ids and
 //! error codes only.
 
-use super::reply::{HookPortError, HookReply};
-use super::user_prompt_submit::EVENT;
+use super::reply::{HookPortError, HookReply, USER_PROMPT_SUBMIT_EVENT as EVENT};
 use crate::apps::group as group_app;
 use crate::apps::group::HookError;
 use crate::apps::tag::ConfigReads;

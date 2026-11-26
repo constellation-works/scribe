@@ -82,9 +82,9 @@ mod db;
 pub mod digest;
 pub mod error;
 mod redact;
-pub use db::documents::Imported;
+pub use db::documents::{ExportCounts, ExportFormat};
 pub use db::locks::SessionLock;
-pub use db::write::ImportFacts;
+pub use db::write::{ImportFacts, Imported};
 pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub mod repository;
 pub use contracts::action::Pickup;
@@ -101,6 +101,8 @@ pub use contracts::proposal::{
     Quote, SUBJECT_CHARS,
 };
 // The proposal shapes at the path the store's code names them by.
+pub use contracts::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
+pub use contracts::group::number as group_number;
 use contracts::proposal;
 use contracts::tag;
 pub use contracts::tag::{
@@ -108,17 +110,14 @@ pub use contracts::tag::{
     RuleOrigin, StoreTag, TagDef, TagError, TagTable,
 };
 pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
-pub use repository::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
 pub use repository::entries::EntryList;
-pub use repository::ids::{number as group_number, resolve_prefix};
 pub use repository::memory::{
-    MEMORY_DIR, MILESTONES_DIR, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR,
-    PROFILE_FILE, ProfileRevision,
+    MILESTONES_DIR, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
+    ProfileRevision,
 };
 pub use repository::memory::{bare, not_found};
 pub use repository::sessions::{
-    ExportCounts, ExportFormat, LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget,
-    SessionRow,
+    LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget, SessionRow,
 };
 pub use repository::{Snapshot, Tx};
 #[cfg(any(test, feature = "test-support"))]
@@ -163,10 +162,14 @@ pub const CONFIG_FILE: &str = "config.toml";
 pub const ENTRIES_DIR: &str = "entries";
 /// The session records directory's name under the data directory.
 pub const SESSIONS_DIR: &str = "sessions";
+/// The memory directory's name under the data directory.
+pub const MEMORY_DIR: &str = "memory";
 /// The control document's name under the data directory.
 pub const CONTROL_FILE: &str = "control.json";
 /// The proposals document's name under the data directory.
 pub const PROPOSALS_FILE: &str = "proposals.json";
+/// The store tags' stamp file.
+pub(crate) const TAGS_FILE: &str = "tags.json";
 /// Consumers' pickups of action entries, from format 8.
 pub const PICKUPS_FILE: &str = "pickups.json";
 /// Each `#scribe` annotation marker's outcome, from format 22
@@ -248,6 +251,78 @@ impl Store {
 /// same way; neither is a record.
 fn visible(names: Vec<String>) -> impl Iterator<Item = String> {
     names.into_iter().filter(|n| !n.starts_with('.'))
+}
+
+/// The shortest prefix accepted for id resolution, in characters.
+pub(crate) const MIN_PREFIX: usize = crate::session::MIN_ID_PREFIX;
+
+/// The most candidates an `id_ambiguous` refusal names.
+pub(crate) const MAX_CANDIDATES: usize = 10;
+
+/// The index in `ids` of `input`: the id equal to it, else the one id it is
+/// a prefix of (at least [`MIN_PREFIX`] characters). `None` means nothing
+/// matched; the caller builds its noun's not-found error, which names the id
+/// and the place searched (STD-02 R26).
+///
+/// # Errors
+///
+/// `usage_error` when `input` is not an id and is shorter than
+/// [`MIN_PREFIX`] characters; `id_ambiguous` listing the candidates when
+/// several ids match.
+pub(crate) fn resolve_id_index(input: &str, ids: &[String]) -> Result<Option<usize>> {
+    if let Some(i) = ids.iter().position(|id| id == input) {
+        return Ok(Some(i));
+    }
+    if input.chars().count() < MIN_PREFIX {
+        return Err(refusal(
+            WriteRefusal::InvalidId,
+            format!(
+                "'{input}' is not an id and too short to be a prefix; give an id or a unique prefix of at least four characters"
+            ),
+        ));
+    }
+    let matches: Vec<usize> = ids
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| id.starts_with(input))
+        .map(|(i, _)| i)
+        .collect();
+    match matches.as_slice() {
+        [i] => Ok(Some(*i)),
+        [] => Ok(None),
+        _ => Err(ambiguous_id(
+            input,
+            matches.iter().map(|i| ids[*i].as_str()),
+        )),
+    }
+}
+
+/// The id in `ids` that `input` names: exact, else a unique prefix of at
+/// least [`MIN_PREFIX`] characters. `None` when none does, so the caller can
+/// report its own noun's not-found with the place it searched.
+///
+/// # Errors
+///
+/// `usage_error` for an input shorter than [`MIN_PREFIX`] that is not an id;
+/// `id_ambiguous` when several ids match.
+pub fn resolve_prefix(input: &str, ids: &[String]) -> Result<Option<String>> {
+    Ok(resolve_id_index(input, ids)?.map(|i| ids[i].clone()))
+}
+
+fn ambiguous_id<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Error {
+    let mut candidates: Vec<&str> = candidates.collect();
+    candidates.sort_unstable();
+    let more = candidates.len().saturating_sub(MAX_CANDIDATES);
+    candidates.truncate(MAX_CANDIDATES);
+    let mut message = format!(
+        "id prefix '{input}' is ambiguous; candidates: {}",
+        candidates.join(", ")
+    );
+    if more > 0 {
+        message.push_str(&format!(" and {more} more"));
+    }
+    message.push_str("; give more characters of the id");
+    refusal(WriteRefusal::IdAmbiguous, message)
 }
 
 #[cfg(any(test, feature = "test-support"))]

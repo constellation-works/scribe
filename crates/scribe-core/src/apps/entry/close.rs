@@ -2,8 +2,9 @@
 
 use super::verbs::EntryVerbs;
 use super::written::{EntryWritten, written};
+use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::{AuthorName, EntryId};
 
 /// `entry close`: settle an open item with a decision or a note.

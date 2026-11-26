@@ -15,6 +15,7 @@ mod verbs;
 
 pub use add::TagAddInput;
 pub use config::ConfigReads;
+pub(crate) use config::redactor;
 pub use list::{TagList, list_tags};
 pub use rules::check_agent_author;
 pub use show::Shown;

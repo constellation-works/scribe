@@ -619,6 +619,12 @@ fn project_line(text: &str, slug: &str) -> Option<usize> {
         .find_map(|needle| text.find(needle).map(|at| line_of(text, at)))
 }
 
+/// Claude Code `entrypoint` values of a session Daniel types into: the
+/// terminal (`cli`) and the desktop app (`claude-desktop`). `sdk-cli` is
+/// `claude -p` and the Agent SDK, which every Orbit run, routine and drain
+/// uses; it and every other value are refused (§12.5).
+pub const INTERACTIVE_ENTRYPOINTS: &[&str] = &["cli", "claude-desktop"];
+
 /// The configuration `config.toml`'s text (`Tags::config_text`) holds, or the
 /// defaults when there is none. A bad key or value is refused, naming it.
 pub(crate) fn load(text: Option<(std::path::PathBuf, String)>) -> crate::Result<Config> {

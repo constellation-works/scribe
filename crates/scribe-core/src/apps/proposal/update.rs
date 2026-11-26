@@ -3,8 +3,9 @@
 //! reported.
 
 use super::verbs::ProposalVerbs;
+use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::{AuthorName, Proposal, ProposalChange};
 
 /// `proposal update`: change the reason of the proposal `id`.

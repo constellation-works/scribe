@@ -9,10 +9,10 @@ pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture, ClaudeSeenIds};
 pub use rows::CloseHeader;
 
 use super::{DB_FILE, db_error, memory::read, open_writer, optimize_fts, stamp};
+use crate::contracts::group::number;
 use crate::error::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
-use crate::repository::ids::number;
 use crate::{Error, Label, Project, Redactor, Result, SessionId, Store, WriteRefusal};
 use cw_sqlite::Writer as SqliteWriter;
 use cw_sqlite::rusqlite::{self, Connection, OptionalExtension, params};
@@ -734,7 +734,7 @@ impl ReadGroupRows<'_> {
 
     /// Whether `session`'s catalog row is forgotten.
     pub fn session_forgotten(&self, session: &SessionId) -> Rows<bool> {
-        super::sessions::is_forgotten(self.conn, session).map_err(|e| self.fail(e))
+        super::is_forgotten(self.conn, session).map_err(|e| self.fail(e))
     }
 
     /// The group `session` is a member of, with its slug or else its id.

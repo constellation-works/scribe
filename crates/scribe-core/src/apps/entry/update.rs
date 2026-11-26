@@ -2,7 +2,8 @@
 
 use super::verbs::EntryVerbs;
 use super::written::{EntryWritten, written};
-use crate::runtime::errors::{WriteError, redactor};
+use crate::apps::tag::redactor;
+use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError, resolve};
 use crate::{AuthorName, EntryPatch, Provider};
 

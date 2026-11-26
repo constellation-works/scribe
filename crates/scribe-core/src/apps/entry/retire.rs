@@ -4,8 +4,9 @@ use super::instruction::{self as instruction_check, Instruction};
 use super::verbs::EntryVerbs;
 use super::written::{EntryWritten, written};
 use crate::AuthorName;
+use crate::apps::tag::redactor;
 use crate::instruction::{Act, Target};
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError};
 
 /// `entry retire` on the agent's reason, and on the user's instruction when

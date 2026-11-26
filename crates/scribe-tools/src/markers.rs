@@ -510,15 +510,58 @@ pub fn marks(text: &str) -> Vec<Mark> {
     found
 }
 
+/// Built-in settings commands whose args are a value Claude Code writes into a
+/// setting (`/model claude-haiku-5-5`), not words Daniel says. Their args are
+/// never his turn: a typed `/model` and one the desktop app writes when another
+/// session changes the model leave the same line, so origin cannot tell them
+/// apart.
+const SETTINGS_COMMANDS: &[&str] = &[
+    "/config",
+    "/effort",
+    "/fast",
+    "/model",
+    "/output-style",
+    "/permissions",
+];
+
+/// The args of a slash command Daniel typed, when `text` is one: the text
+/// inside its `<command-args>` tag, trimmed. Claude Code writes the command's
+/// name and args as tags, but the args are his own words. `/clear` and
+/// `/compact`, a settings command ([`SETTINGS_COMMANDS`]), a command with no
+/// args and a `/scribe` control line give none.
+#[must_use]
+pub fn slash_command_args(text: &str) -> Option<&str> {
+    let start = text.trim_start();
+    if !(start.starts_with("<command-name>") || start.starts_with("<command-message>")) {
+        return None;
+    }
+    let name = between(text, "<command-name>", "</command-name>")?.trim();
+    if matches!(name, "/clear" | "/compact") || SETTINGS_COMMANDS.contains(&name) {
+        return None;
+    }
+    let args = between(text, "<command-args>", "</command-args>")?.trim();
+    if args.is_empty() || control::parse(&format!("{name} {args}")).is_some() {
+        return None;
+    }
+    Some(args)
+}
+
+/// The text between the first `open` and the `close` after it.
+fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let from = text.find(open)? + open.len();
+    let to = text[from..].find(close)? + from;
+    Some(&text[from..to])
+}
+
 /// The markers of a typed turn as the transcript holds it (§14.1): [`marks`]
 /// of its text, or, for a slash command Daniel typed, of the command's args,
-/// which are his words (`transcript::slash_command_args`, §4.1). An args
+/// which are his words ([`slash_command_args`], §4.1). An args
 /// marker keeps the line number of the turn's whole text, so its cite and the
 /// lines an older store recorded verbatim agree with the prompt the line is
 /// in.
 #[must_use]
 pub fn turn_marks(text: &str) -> Vec<Mark> {
-    let Some(args) = crate::transcript::slash_command_args(text) else {
+    let Some(args) = slash_command_args(text) else {
         return marks(text);
     };
     // `args` is a slice of `text`; its first line is the line it starts on.
