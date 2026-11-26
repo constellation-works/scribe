@@ -6310,10 +6310,11 @@ goldens. Each line gives what the phase does, then what it proves.
      keeps unrelated archived records and the legacy audit fields. A store
      migrated in phases 6–7 still loads and exports unchanged.
 
-**Status at `20d36fc` (2026-11-26).** Checked against the code, the commit
+**Status at `20d36fc` (2026-11-26), with the STD-14@1 removals below.** Checked against the code, the commit
 log and `make goldens`, which passes. The other proof points in each phase's
 "Proves" line (replay fixtures, redaction, ownership checks) were not checked
-here.
+here. Phase 2 and Phase 5 incorporate the STD-14@1 removals (ORB-28930,
+ORB-28931) that landed after `20d36fc`.
 
 - **Phase 1: built.** The memory check refuses a `working` item
   (`crates/scribe-core/src/apps/memory/tests/rules.rs`,
@@ -6345,9 +6346,11 @@ here.
   (`crates/scribe-core/src/apps/search/rules.rs`).
 - **Phase 5: built.** `memory/profile.md`, `now/` and `milestones/`
   (`crates/scribe-store/src/repository/memory.rs`), `scribe memory refresh`,
-  and the weekly job (`plugin/.orbit-plugin/jobs/memory_refresh.yaml`). The
-  `[memory]` keys load with a deprecation warning, and memory consolidation is
-  removed (`crates/scribe-core/src/config.rs:295–304`). The `m-<n>` migration
+  and the weekly job (`plugin/.orbit-plugin/jobs/memory_refresh.yaml`). Any
+  `[memory]` key is refused as `config_invalid` (STD-14@1)
+  (`crates/scribe-core/src/config.rs` `RawConfig` with
+  `deny_unknown_fields`); the `config_deprecated` warning window was removed
+  under STD-14@1 (ORB-28930), so no warning remains. The `m-<n>` migration
   was not checked.
 - **Phase 6: built.** Sessions, segments, links, terms, codex cursors and
   rebuild checkpoints are rows of `scribe.db` (`crates/scribe-store/src/db/mod.rs`,
