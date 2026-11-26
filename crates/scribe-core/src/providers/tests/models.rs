@@ -170,7 +170,10 @@ fn the_child_gets_only_the_allowlisted_environment() {
         !fake.read("argv").contains("oauth-value"),
         "the credential is never in argv"
     );
-    assert_eq!(BASELINE_ENV, ["PATH", "HOME", "LANG"]);
+    assert_eq!(
+        BASELINE_ENV.map(|var| var.name_for("")),
+        ["PATH", "HOME", "LANG"]
+    );
 }
 
 #[test]

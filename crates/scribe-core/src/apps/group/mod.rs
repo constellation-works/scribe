@@ -274,7 +274,7 @@ pub(crate) fn calling<E>(
     session.ok_or_else(|| {
         Error::Usage(format!(
             "run this command in the calling session with a valid {}",
-            crate::composition::caller_env(provider)
+            crate::composition::caller_env(provider).name_for(crate::composition::APP)
         ))
     })
 }

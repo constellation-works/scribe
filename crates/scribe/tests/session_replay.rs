@@ -35,9 +35,15 @@ use support::replay::{
 };
 use support::{Fixture, copy_private};
 
+/// Harness controls these tests read. They steer the test run, not the shipped
+/// program, so the usage table does not list them.
+const REPLAY_UPDATE_ENV: &str = "SCRIBE_REPLAY_UPDATE";
+const REDACT_FROM_ENV: &str = "SCRIBE_REDACT_FROM";
+const REDACT_TO_ENV: &str = "SCRIBE_REDACT_TO";
+
 #[test]
 fn every_checked_in_recording_rebuilds_from_its_replayed_model_answers() {
-    let update = std::env::var_os("SCRIBE_REPLAY_UPDATE").is_some_and(|v| v == "1");
+    let update = std::env::var_os(REPLAY_UPDATE_ENV).is_some_and(|v| v == "1");
     let all = recordings();
     assert!(all.contains(&synthetic()), "{all:?}");
     for recording in all {
@@ -192,9 +198,9 @@ fn an_exhausted_recording_fails_the_replay() {
 #[test]
 fn redact_a_recording() {
     let fx = Fixture::new();
-    let named = std::env::var_os("SCRIBE_REDACT_FROM").map(PathBuf::from);
+    let named = std::env::var_os(REDACT_FROM_ENV).map(PathBuf::from);
     if let Some(from) = named {
-        let to = std::env::var_os("SCRIBE_REDACT_TO").expect("SCRIBE_REDACT_TO");
+        let to = std::env::var_os(REDACT_TO_ENV).expect(REDACT_TO_ENV);
         let key = redaction_key_from_stdin();
         assert!(!key.is_empty(), "the redaction key on stdin is empty");
         redact_recording(&from, Path::new(&to), &Key::new(&key))

@@ -39,6 +39,7 @@ use crate::models::{
     SessionAnswer, SessionHeader, SessionHeaderRequest, SessionRequest,
 };
 use crate::{Provider, Redactor};
+use cw_app::env::{EnvVar, HOME};
 use serde::Deserialize;
 use serde_json::Value;
 use std::ffi::{OsStr, OsString};
@@ -51,9 +52,39 @@ use std::time::{Duration, Instant};
 /// The program run, found on the child's `PATH`.
 pub(crate) const PROGRAM: &str = "claude";
 
+/// `PATH`: the directories the runtime is searched for on. `init` refuses a
+/// runtime that is not executable on it, and a model call gets it.
+pub(crate) const PATH: EnvVar = EnvVar::global(
+    "PATH",
+    "The directories searched for the `claude` or `codex` program. `init` refuses a runtime that is not executable on them.",
+);
+
+/// `LANG`: the locale a model call runs under.
+pub(crate) const LANG: EnvVar = EnvVar::global("LANG", "The locale a model call runs under.");
+
+/// `CODEX_HOME`: Codex's state directory, which Codex transcripts are read
+/// from. A Codex model call gets it; it is not a secret.
+pub(crate) const CODEX_HOME: EnvVar = EnvVar::global(
+    "CODEX_HOME",
+    "Codex's state directory. Codex transcripts are read from its `sessions` and `archived_sessions`.",
+)
+.with_default("`$HOME/.codex`");
+
 /// The variables every model call gets besides the configured credentials:
-/// none of them carries a secret.
-pub(crate) const BASELINE_ENV: [&str; 3] = ["PATH", "HOME", "LANG"];
+/// none of them carries a secret. Each is a global name, so no program prefix
+/// applies to it.
+pub(crate) const BASELINE_ENV: [EnvVar; 3] = [PATH, HOME, LANG];
+
+/// The name a global variable is read under.
+fn global_name(var: &EnvVar) -> String {
+    var.name_for("")
+}
+
+/// Whether `name` is a baseline variable or the Codex home: values the
+/// redactor never masks (they are not secrets).
+fn non_secret(name: &str) -> bool {
+    BASELINE_ENV.iter().any(|var| global_name(var) == name) || global_name(&CODEX_HOME) == name
+}
 
 /// The prefix of scribe's own variables, which never reach a model child.
 const OWN_PREFIX: &str = "SCRIBE_";
@@ -81,15 +112,17 @@ pub fn allowed_env(
     credentials: &[String],
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Vec<(OsString, OsString)> {
-    let mut names: Vec<&str> = BASELINE_ENV.to_vec();
+    let mut names: Vec<String> = BASELINE_ENV.iter().map(global_name).collect();
     for name in credentials {
-        if !name.starts_with(OWN_PREFIX) && !names.contains(&name.as_str()) {
-            names.push(name);
+        if !name.starts_with(OWN_PREFIX) && !names.contains(name) {
+            names.push(name.clone());
         }
     }
     names
         .into_iter()
-        .filter_map(|name| lookup(name).map(|value| (OsString::from(name), value)))
+        .filter_map(|name| {
+            lookup(name.as_str()).map(|value| (OsString::from(name.as_str()), value))
+        })
         .collect()
 }
 
@@ -99,9 +132,7 @@ pub fn allowed_env(
 fn credential_redactor(env: &[(OsString, OsString)]) -> Redactor {
     Redactor::new(
         env.iter()
-            .filter(|(name, _)| {
-                !matches!(name.to_str(), Some(n) if BASELINE_ENV.contains(&n) || n == "CODEX_HOME")
-            })
+            .filter(|(name, _)| !matches!(name.to_str(), Some(n) if non_secret(n)))
             .map(|(name, value)| {
                 (
                     name.to_string_lossy().into_owned(),

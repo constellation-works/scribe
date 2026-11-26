@@ -4,6 +4,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// The search path the stub `cargo` is prepended to. A harness read, not a
+/// variable the shipped program reads.
+const PATH_ENV: &str = "PATH";
+
 /// Records argv, stdin and whether the key is in its environment, then
 /// succeeds.
 const STUB_CARGO: &str = r#"#!/bin/sh
@@ -29,7 +33,7 @@ pub(crate) fn check(args: &[&Path], stdin: &str, exit: i32) -> tempfile::TempDir
     let path = format!(
         "{}:{}",
         bin.display(),
-        std::env::var("PATH").unwrap_or_default()
+        std::env::var(PATH_ENV).unwrap_or_default()
     );
     let mut child = Command::new("bash")
         .arg(script())

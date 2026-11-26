@@ -84,10 +84,32 @@ use crate::record::{Label, Project, is_kebab};
 use crate::tag::TagTable;
 use tags::RawTag;
 
+use cw_app::env::EnvVar;
 pub use scribe_tools::window::{WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
+
+/// `CLAUDE_CODE_OAUTH_TOKEN`: the Claude Code sign-in token, the first default
+/// model credential. A model call gets it in its environment, never in argv.
+pub(crate) const CLAUDE_CODE_OAUTH_TOKEN: EnvVar = EnvVar::global(
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "The Claude Code sign-in token, the first default model credential: a Claude model call gets it in its environment.",
+);
+
+/// `ANTHROPIC_API_KEY`: the Anthropic API key, the second default model
+/// credential for Claude.
+pub(crate) const ANTHROPIC_API_KEY: EnvVar = EnvVar::global(
+    "ANTHROPIC_API_KEY",
+    "An Anthropic API key, the second default model credential for Claude. A model call gets it in its environment.",
+);
+
+/// `OPENAI_API_KEY`: the OpenAI API key, the default model credential for
+/// Codex.
+pub(crate) const OPENAI_API_KEY: EnvVar = EnvVar::global(
+    "OPENAI_API_KEY",
+    "The OpenAI API key, the default model credential for Codex. A Codex model call gets it in its environment.",
+);
 
 /// How often an opted-in session gets a pass: `[catalog]` in `config.toml`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,7 +165,7 @@ impl ModelIds {
             ask: String::from("gpt-6-luna"),
             session: String::from("gpt-6-luna"),
             profile: String::from("gpt-6-luna"),
-            credentials: vec![String::from("OPENAI_API_KEY")],
+            credentials: vec![OPENAI_API_KEY.name_for("")],
         }
     }
 }
@@ -156,8 +178,8 @@ impl Default for ModelIds {
             session: String::from("claude-haiku-5-5"),
             profile: String::from("claude-sonnet-5-5"),
             credentials: vec![
-                String::from("CLAUDE_CODE_OAUTH_TOKEN"),
-                String::from("ANTHROPIC_API_KEY"),
+                CLAUDE_CODE_OAUTH_TOKEN.name_for(""),
+                ANTHROPIC_API_KEY.name_for(""),
             ],
         }
     }

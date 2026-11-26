@@ -436,12 +436,35 @@ for sessions on the machine where the data directory lives.
 
 ## Settings
 
-| Setting | Flag | Environment | Default |
+Each variable scribe reads by name is listed here, generated from its
+declaration in `scribe_core::composition` (`make goldens` fails when this copy
+drifts). The default model credentials are listed. Other names that
+`config.toml` sets, such as further model credentials and `[redact] env`, are
+read as configured and are not listed.
+
+<!-- env-table:start -->
+| Variable | Meaning | Default | Flag |
 |---|---|---|---|
-| Data directory | `--root <DIR>` | `SCRIBE_ROOT` | `~/.scribe` |
-| Output format | `--format auto\|table\|json`, `--json` | `SCRIBE_FORMAT` | `auto` |
-| Color | — | `NO_COLOR`, `CLICOLOR_FORCE`, `TERM` | on for a terminal |
-| Log level (stderr) | — | `SCRIBE_LOG` (for example `debug`) | `warn` |
+| `SCRIBE_ROOT` | The data directory. | `$HOME/.<app>` | `--root` |
+| `SCRIBE_FORMAT` | The output format: `json` for one JSON document, `table` for a table, and `auto` for a table on a terminal and tab-separated lines otherwise. | `auto` | `--format` |
+| `SCRIBE_LOG` | The log filter for stderr, in `tracing` syntax such as `debug`. | `warn` | — |
+| `NO_COLOR` | Any non-empty value turns color off. | — | — |
+| `CLICOLOR_FORCE` | Any non-empty value turns color on for a terminal, even a `dumb` one; `NO_COLOR` still wins. | — | — |
+| `TERM` | The terminal type, such as `dumb`. | — | — |
+| `COLUMNS` | The width in columns that a table must fit, when it is a positive number. | — | — |
+| `HOME` | The home directory; the default data directory is under it. | — | — |
+| `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its state, and so its transcripts under `projects`. | `$HOME/.claude` | — |
+| `CODEX_HOME` | Codex's state directory. Codex transcripts are read from its `sessions` and `archived_sessions`. | `$HOME/.codex` | — |
+| `CLAUDE_CODE_ENTRYPOINT` | Set by Claude Code on its hooks: `cli` in an interactive session, `sdk-cli` for `claude -p`. Only `cli` and `claude-desktop` get the memory page at session start. | — | — |
+| `CLAUDE_CODE_SESSION_ID` | The Claude Code session a command runs in. `group` names it as the caller, and `entry add` reads it for a quote-less refresh. | — | — |
+| `CODEX_THREAD_ID` | The Codex session a command runs in, which `group` names as the caller for Codex. | — | — |
+| `PATH` | The directories searched for the `claude` or `codex` program. `init` refuses a runtime that is not executable on them. | — | — |
+| `LANG` | The locale a model call runs under. | — | — |
+| `CLAUDE_CODE_OAUTH_TOKEN` | The Claude Code sign-in token, the first default model credential: a Claude model call gets it in its environment. | — | — |
+| `ANTHROPIC_API_KEY` | An Anthropic API key, the second default model credential for Claude. A model call gets it in its environment. | — | — |
+| `OPENAI_API_KEY` | The OpenAI API key, the default model credential for Codex. A Codex model call gets it in its environment. | — | — |
+| `COMPUTERNAME` | The host name on Windows, which records carry as their host label. | — | — |
+<!-- env-table:end -->
 
 `auto` is a table on a terminal and tab-separated lines otherwise. Color is
 off in a pipe, when `NO_COLOR` is non-empty, and for `TERM=dumb`. A non-empty
