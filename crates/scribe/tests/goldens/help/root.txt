@@ -14,7 +14,7 @@ Records:
   tag          List tags and manage agent-created store tags
 
 Find:
-  brief        Show the session-start page: memory, recent sessions, open claims
+  brief        Show the session-start page: memory, open items, sessions, claims
   search       Search every stored record by words, with no model call
   transcript   List uncataloged provider transcripts and show one, writing nothing
 

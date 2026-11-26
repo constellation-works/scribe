@@ -350,9 +350,11 @@ Packaging: [Build plugins](https://developers.openai.com/plugins/build/plugins#b
 `PATH`, and the `/scribe` command.
 
 - `SessionStart` runs `scribe hook session-start`. It tells you how many
-  proposals are open and, in an interactive session, gives the agent the brief
+  proposals are open and how many open items wait for you (when nonzero)
+  and, in an interactive session, gives the agent the brief
   (`scribe brief`: memory, the selected project's most recently opened group
-  when one exists, the last sessions, and every open claim by tag). Plain
+  when one exists, `## Open items` across projects, the last sessions, and
+  every open claim by tag; JSON adds `open_items`). Plain
   output omits the `Last group` section and JSON omits `last_group` when that
   project has no group.
 - `UserPromptSubmit` runs `scribe hook user-prompt-submit`. It echoes each

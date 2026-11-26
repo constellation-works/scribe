@@ -89,7 +89,7 @@ Examples:
 
 const SESSION_START_EXAMPLES: &str = "\
 Reads SessionStart JSON on stdin; `source` may be omitted.
-Reports open proposals, unpicked actions and possible recorded predecessors.
+Reports open proposals, open items, unpicked actions and possible recorded predecessors.
 Interactive Claude sessions receive the brief. On interactive Claude Code
 starts with source `startup`, `clear`, or omitted, a single clear predecessor's
 continue handoff may be prepended and linked. If that predecessor holds an open
@@ -117,7 +117,7 @@ Examples:
 pub(crate) enum HookCommand {
     /// Handle the SessionStart hook JSON from stdin
     ///
-    /// Tells the user how many proposals are open, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
+    /// Tells the user how many proposals are open, how many open items wait for them, which action entries are unpicked, and when this session may continue a recorded one, from the SessionStart hook's JSON on stdin.
     #[command(after_help = SESSION_START_EXAMPLES)]
     SessionStart(HookArgs),
     /// Handle the UserPromptSubmit hook JSON from stdin

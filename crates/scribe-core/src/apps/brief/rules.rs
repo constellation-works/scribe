@@ -1,12 +1,16 @@
 //! The session-start page (`scribe brief`, and what the `SessionStart` hook
-//! injects): a memory block, then `## Recent sessions`, then `## Open
-//! claims`. Every line carries its date, and the caps are fixed because the
-//! page goes into every interactive session.
+//! injects): a memory block, then `## Last group`, then `## Open items`,
+//! then `## Recent sessions`, then `## Open claims`. Every line carries its
+//! date, and the caps are fixed because the page goes into every interactive
+//! session.
 //!
 //! - The memory block is opaque text the caller supplies: today the memory
 //!   page (`scribe memory show --page`). It is its own top block, so the
 //!   design's Profile, Now and Milestones replace it without touching the
 //!   sections below.
+//! - Open items: the open and answered items across projects, open first
+//!   then oldest, capped at ten lines, each with the id `scribe entry show`
+//!   takes.
 //! - Recent sessions: the last five active records, the session's own
 //!   project first, titles only, each with the id `scribe session show`
 //!   takes.
