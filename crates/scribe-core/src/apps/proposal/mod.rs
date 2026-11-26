@@ -117,6 +117,20 @@ pub enum Outcome {
     Written(Box<Proposal>, bool),
 }
 
+/// A write names its proposal when it changed it, and writes no line when it
+/// did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(proposal, changed) => {
+                Line::written(Some(proposal.id.to_string()), *changed)
+            }
+            Self::Shown(proposal) => vec![Line::success(Some(proposal.id.to_string()))],
+            Self::Listed { .. } => vec![Line::success(None)],
+        }
+    }
+}
+
 /// Why a `proposal` command did not run.
 #[derive(Debug)]
 pub enum Error<E> {
@@ -141,6 +155,16 @@ impl<E> From<WriteError<E>> for Error<E> {
 impl<E> From<crate::Error> for Error<E> {
     fn from(err: crate::Error) -> Self {
         Self::Read(ReadError::Core(err))
+    }
+}
+
+/// `scribe proposal`'s errors, each the variant it was before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
     }
 }
 
@@ -244,28 +268,4 @@ pub(crate) fn close_retired_candidates(
     now: time::OffsetDateTime,
 ) -> crate::Result<Vec<Proposal>> {
     verbs::ProposalVerbs::close_retired_candidates(store, now)
-}
-
-/// `scribe proposal`'s errors, each the variant it was before the app moved.
-impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
-    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-        }
-    }
-}
-
-/// A write names its proposal when it changed it, and writes no line when it
-/// did not.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Written(proposal, changed) => {
-                Line::written(Some(proposal.id.to_string()), *changed)
-            }
-            Self::Shown(proposal) => vec![Line::success(Some(proposal.id.to_string()))],
-            Self::Listed { .. } => vec![Line::success(None)],
-        }
-    }
 }

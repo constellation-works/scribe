@@ -23,6 +23,36 @@ impl Snapshot {
     }
 }
 
+/// Whether a group close committed and how its post-commit cleanup ended.
+#[derive(Debug)]
+pub enum CloseGroupOutcome {
+    /// The group was already closed when this attempt ran.
+    AlreadyClosed {
+        /// The resolved group id.
+        id: String,
+    },
+    /// The close and its success audit committed.
+    Closed {
+        /// The resolved group id.
+        id: String,
+        /// The result of store cleanup after the commit.
+        cleanup: Result<()>,
+    },
+}
+
+impl CloseGroupOutcome {
+    /// Return the group id and whether it changed, propagating any cleanup error.
+    pub fn into_result(self) -> Result<(String, bool)> {
+        match self {
+            Self::AlreadyClosed { id } => Ok((id, false)),
+            Self::Closed { id, cleanup } => {
+                cleanup?;
+                Ok((id, true))
+            }
+        }
+    }
+}
+
 pub(in crate::apps::group) fn evidence(
     store: &Store,
     id: &str,
@@ -196,33 +226,4 @@ fn snapshot(rows: &ReadGroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result
         },
         related,
     }))
-}
-
-/// Whether a group close committed and how its post-commit cleanup ended.
-#[derive(Debug)]
-pub enum CloseGroupOutcome {
-    /// The group was already closed when this attempt ran.
-    AlreadyClosed {
-        /// The resolved group id.
-        id: String,
-    },
-    /// The close and its success audit committed.
-    Closed {
-        /// The resolved group id.
-        id: String,
-        /// The result of store cleanup after the commit.
-        cleanup: Result<()>,
-    },
-}
-impl CloseGroupOutcome {
-    /// Return the group id and whether it changed, propagating any cleanup error.
-    pub fn into_result(self) -> Result<(String, bool)> {
-        match self {
-            Self::AlreadyClosed { id } => Ok((id, false)),
-            Self::Closed { id, cleanup } => {
-                cleanup?;
-                Ok((id, true))
-            }
-        }
-    }
 }

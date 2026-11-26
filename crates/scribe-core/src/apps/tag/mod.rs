@@ -88,6 +88,19 @@ pub enum Outcome {
     Updated(Box<StoreTag>, bool),
 }
 
+/// A write names its tag when it changed it, and writes no line when it did
+/// not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Added(tag) => vec![Line::success(Some(tag.name.to_string()))],
+            Self::Updated(tag, changed) => Line::written(Some(tag.name.to_string()), *changed),
+            // Reads: never audited (STD-01 R31).
+            Self::List(_) | Self::Show(_) => vec![Line::success(None)],
+        }
+    }
+}
+
 /// Why a `tag` command did not run.
 pub type Error<E> = WriteError<E>;
 
@@ -117,17 +130,4 @@ pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Ou
             Outcome::Updated(Box::new(tag), changed)
         }
     })
-}
-
-/// A write names its tag when it changed it, and writes no line when it did
-/// not.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Added(tag) => vec![Line::success(Some(tag.name.to_string()))],
-            Self::Updated(tag, changed) => Line::written(Some(tag.name.to_string()), *changed),
-            // Reads: never audited (STD-01 R31).
-            Self::List(_) | Self::Show(_) => vec![Line::success(None)],
-        }
-    }
 }

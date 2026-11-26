@@ -107,12 +107,12 @@ impl Command<'_> {
     pub fn subject(&self, ctx: &Context) -> AuditSubject {
         match self {
             Self::Join(input) => AuditSubject {
-                author: Some(input.author.to_string()),
                 target: resolved_id(ctx, &input.id),
+                author: Some(input.author.to_string()),
             },
             Self::Close(GroupCloseInput { id, .. }) | Self::Backfill { id, .. } => AuditSubject {
-                author: None,
                 target: resolved_id(ctx, id),
+                author: None,
             },
             Self::Open(_)
             | Self::Leave { .. }
@@ -135,6 +135,23 @@ pub enum Outcome {
     Shown(Box<crate::group::Group>),
     /// Every group, newest first.
     Listed(Vec<crate::group::Group>),
+}
+
+/// A write names its group when it changed it; a backfill names it when it
+/// stored a turn.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(written) => {
+                Line::written(Some(written.group.id.clone()), written.changed)
+            }
+            Self::Backfilled(report) => {
+                Line::written(Some(report.group.clone()), report.stored != 0)
+            }
+            Self::Shown(group) => vec![Line::success(Some(group.id.clone()))],
+            Self::Listed(_) | Self::Evidence(_) => vec![Line::success(None)],
+        }
+    }
 }
 
 /// The group a write left, as read after it.
@@ -198,6 +215,20 @@ impl<E> From<HookError<E>> for Error<E> {
     }
 }
 
+/// `scribe group`'s errors, each the variant it was before the flow moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Core(e) => Self::Core(e),
+            Error::Port(e) => e,
+            Error::Read { what, source } => Self::Read { what, source },
+            Error::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            Error::Usage(message) => Self::Usage(message),
+            Error::Model(e) => Self::Model(e),
+        }
+    }
+}
+
 /// Why a hook use case failed: the error the turn capture returns, and the
 /// hooks above it.
 #[derive(Debug)]
@@ -227,6 +258,23 @@ pub enum HookError<E> {
 impl<E> From<crate::Error> for HookError<E> {
     fn from(err: crate::Error) -> Self {
         Self::Core(err)
+    }
+}
+
+/// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
+/// the prompt hook and `/scribe group add`), each the variant it was before
+/// the flow moved (ORB-27707 step 3b).
+impl From<HookError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: HookError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            HookError::Core(e) => Self::Core(e),
+            HookError::Port(e) => e,
+            HookError::Read { what, source } => Self::Read { what, source },
+            HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
+            HookError::Usage(message) => Self::Usage(message),
+        }
     }
 }
 
@@ -534,52 +582,4 @@ pub(crate) fn resolve_relateds<E: PortError>(
     related: &[Related],
 ) -> Result<Vec<Related>, GroupError<E>> {
     Ok(resolve::relateds(ctx, provider, related)?)
-}
-
-/// The hooks' errors (`hook stop`, the marker catalog, group turn capture,
-/// the prompt hook and `/scribe group add`), each the variant it was before
-/// the flow moved (ORB-27707 step 3b).
-impl From<HookError<crate::runtime::errors::CommandError>>
-    for crate::runtime::errors::CommandError
-{
-    fn from(err: HookError<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            HookError::Core(e) => Self::Core(e),
-            HookError::Port(e) => e,
-            HookError::Read { what, source } => Self::Read { what, source },
-            HookError::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
-            HookError::Usage(message) => Self::Usage(message),
-        }
-    }
-}
-
-/// `scribe group`'s errors, each the variant it was before the flow moved.
-impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
-    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            Error::Core(e) => Self::Core(e),
-            Error::Port(e) => e,
-            Error::Read { what, source } => Self::Read { what, source },
-            Error::TranscriptRefused { id, reason } => Self::TranscriptRefused { id, reason },
-            Error::Usage(message) => Self::Usage(message),
-            Error::Model(e) => Self::Model(e),
-        }
-    }
-}
-
-/// A write names its group when it changed it; a backfill names it when it
-/// stored a turn.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Written(written) => {
-                Line::written(Some(written.group.id.clone()), written.changed)
-            }
-            Self::Backfilled(report) => {
-                Line::written(Some(report.group.clone()), report.stored != 0)
-            }
-            Self::Shown(group) => vec![Line::success(Some(group.id.clone()))],
-            Self::Listed(_) | Self::Evidence(_) => vec![Line::success(None)],
-        }
-    }
 }

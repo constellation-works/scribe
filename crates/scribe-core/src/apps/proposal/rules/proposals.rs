@@ -13,58 +13,12 @@ use crate::record::{Author, AuthorKind, DateRange, Topics};
 use crate::tag::TagTable;
 use time::OffsetDateTime;
 
-/// Whether this settlement authorizes materializing a candidate entry.
-pub(in crate::apps::proposal) fn is_approved_candidate(proposal: &Proposal) -> bool {
-    proposal.kind == ProposalKind::Candidate && proposal.state == ProposalState::Approved
-}
-
 /// The entry an approved candidate becomes (`Proposal::candidate_entry`).
 pub trait CandidateEntry {
     /// Reconstruct an approved candidate's entry, including after an
     /// interrupted approval. The reserved id makes recovery idempotent.
     #[must_use]
     fn candidate_entry(&self, review_after: Option<time::Date>) -> Option<Entry>;
-}
-
-/// Whether `context` is a paragraph that can stand alone: non-empty, at
-/// most [`CONTEXT_CHARS`] characters and at least [`CONTEXT_SENTENCES`]
-/// sentences (2_design.md §15.3). Counted on the model's words, before
-/// redaction.
-#[must_use]
-pub fn context_stands_alone(context: &str) -> bool {
-    let context = context.trim();
-    !context.is_empty()
-        && context.chars().count() <= CONTEXT_CHARS
-        && sentences(context) >= CONTEXT_SENTENCES
-}
-
-/// How many sentences `text` has: runs of `.`, `!` or `?` (closing quotes
-/// and brackets after them allowed) that end the text or come before
-/// whitespace.
-fn sentences(text: &str) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut count = 0;
-    let mut i = 0;
-    while i < chars.len() {
-        if matches!(chars[i], '.' | '!' | '?') {
-            let mut end = i;
-            while end + 1 < chars.len()
-                && matches!(
-                    chars[end + 1],
-                    '.' | '!' | '?' | '"' | '\'' | ')' | '”' | '’'
-                )
-            {
-                end += 1;
-            }
-            if chars.get(end + 1).is_none_or(|c| c.is_whitespace()) {
-                count += 1;
-            }
-            i = end + 1;
-        } else {
-            i += 1;
-        }
-    }
-    count
 }
 
 impl CandidateEntry for Proposal {
@@ -142,6 +96,90 @@ impl CandidateEntry for Proposal {
     }
 }
 
+/// Direct proposal change requested by an agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposalChange {
+    /// Replace the reason of an open agent proposal.
+    Update,
+    /// Apply the proposal to an agent entry.
+    Approve,
+    /// Reject a proposal about an agent entry.
+    Reject,
+}
+
+/// Which proposals `proposal list` returns. Every field set must match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProposalFilter {
+    /// Only proposals in this state.
+    pub state: Option<ProposalState>,
+    /// Only proposals opened on a day in this range.
+    pub dates: DateRange,
+    /// Only proposals about this entry, as the older or the newer one.
+    pub entry: Option<EntryId>,
+    /// Only proposals opened through this channel.
+    pub author_kind: Option<AuthorKind>,
+}
+
+impl ProposalFilter {
+    /// Whether `proposal` passes every criterion.
+    #[must_use]
+    pub fn matches(&self, proposal: &Proposal) -> bool {
+        self.state.is_none_or(|s| proposal.state == s)
+            && self.dates.contains(proposal.opened_at)
+            && self
+                .entry
+                .as_ref()
+                .is_none_or(|e| &proposal.older == e || proposal.newer.as_ref() == Some(e))
+            && self.author_kind.is_none_or(|k| proposal.author.kind == k)
+    }
+}
+
+/// Whether this settlement authorizes materializing a candidate entry.
+pub(in crate::apps::proposal) fn is_approved_candidate(proposal: &Proposal) -> bool {
+    proposal.kind == ProposalKind::Candidate && proposal.state == ProposalState::Approved
+}
+
+/// Whether `context` is a paragraph that can stand alone: non-empty, at
+/// most [`CONTEXT_CHARS`] characters and at least [`CONTEXT_SENTENCES`]
+/// sentences (2_design.md §15.3). Counted on the model's words, before
+/// redaction.
+#[must_use]
+pub fn context_stands_alone(context: &str) -> bool {
+    let context = context.trim();
+    !context.is_empty()
+        && context.chars().count() <= CONTEXT_CHARS
+        && sentences(context) >= CONTEXT_SENTENCES
+}
+
+/// How many sentences `text` has: runs of `.`, `!` or `?` (closing quotes
+/// and brackets after them allowed) that end the text or come before
+/// whitespace.
+fn sentences(text: &str) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut count = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        if matches!(chars[i], '.' | '!' | '?') {
+            let mut end = i;
+            while end + 1 < chars.len()
+                && matches!(
+                    chars[end + 1],
+                    '.' | '!' | '?' | '"' | '\'' | ')' | '”' | '’'
+                )
+            {
+                end += 1;
+            }
+            if chars.get(end + 1).is_none_or(|c| c.is_whitespace()) {
+                count += 1;
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    count
+}
+
 /// The canonical command an agent ran to approve `id` on `instruction`:
 /// `scribe proposal settle <id> --approve --author <name> --session <id>
 /// --instruction '<his words>'`, the words shell-quoted as stored (redacted),
@@ -157,17 +195,6 @@ fn instructed_said(id: ProposalId, agent: &Author, instruction: &Instruction) ->
         said.push('\'');
     }
     said
-}
-
-/// Direct proposal change requested by an agent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProposalChange {
-    /// Replace the reason of an open agent proposal.
-    Update,
-    /// Apply the proposal to an agent entry.
-    Approve,
-    /// Reject a proposal about an agent entry.
-    Reject,
 }
 
 /// Close every open candidate proposal whose tag is absent from `tags`
@@ -201,31 +228,4 @@ pub fn close_retired_tag_candidates(
         closed.push(proposal.clone());
     }
     closed
-}
-
-/// Which proposals `proposal list` returns. Every field set must match.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProposalFilter {
-    /// Only proposals in this state.
-    pub state: Option<ProposalState>,
-    /// Only proposals opened on a day in this range.
-    pub dates: DateRange,
-    /// Only proposals about this entry, as the older or the newer one.
-    pub entry: Option<EntryId>,
-    /// Only proposals opened through this channel.
-    pub author_kind: Option<AuthorKind>,
-}
-
-impl ProposalFilter {
-    /// Whether `proposal` passes every criterion.
-    #[must_use]
-    pub fn matches(&self, proposal: &Proposal) -> bool {
-        self.state.is_none_or(|s| proposal.state == s)
-            && self.dates.contains(proposal.opened_at)
-            && self
-                .entry
-                .as_ref()
-                .is_none_or(|e| &proposal.older == e || proposal.newer.as_ref() == Some(e))
-            && self.author_kind.is_none_or(|k| proposal.author.kind == k)
-    }
 }

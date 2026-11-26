@@ -14,119 +14,6 @@ use crate::store::refusal;
 use crate::store::{NewGroup, SeatHold};
 use crate::{Error, Provider, Redactor, RelatedKind, Result, SessionId, WriteRefusal, instruction};
 
-/// A project group slug: lowercase letters, digits and interior hyphens, not a
-/// group id, and free of configured sensitive text.
-pub fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
-    if slug.is_empty()
-        || slug.len() > 64
-        || !slug
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        || slug.starts_with('-')
-        || slug.ends_with('-')
-        || number(slug).is_some()
-    {
-        return Err(refusal(
-            WriteRefusal::InvalidText,
-            "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
-        ));
-    }
-    if redactor.mask(slug) != slug {
-        return Err(refusal(
-            WriteRefusal::InvalidText,
-            "group slug contains sensitive text",
-        ));
-    }
-    Ok(())
-}
-
-/// A backfill takes only the named session's own user turns.
-pub fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
-    if turns
-        .iter()
-        .any(|m| &m.session != session || m.role != crate::Speaker::User)
-    {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "group backfill takes only the member's own user turns",
-        ));
-    }
-    Ok(())
-}
-
-/// A group opens on consent given for opening one, with the opener's own
-/// user turns, a title and kind as content, and no session among its
-/// references.
-pub fn check_new_group(
-    draft: &NewGroup,
-    consent: &GroupConsent,
-    earlier_turns: &[NewMessage],
-) -> Result<()> {
-    if !consent.authorizes_open() {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "the quoted consent was given for another operation, not opening a group",
-        ));
-    }
-    check_own_user_turns(consent.session(), earlier_turns)?;
-    check_content(&draft.title)?;
-    check_content(&draft.kind)?;
-    if draft
-        .related
-        .iter()
-        .any(|r| r.kind() == RelatedKind::Session)
-    {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "group references accept task:, pr: and repo:; use group join for a session",
-        ));
-    }
-    Ok(())
-}
-
-/// A project-group backfill takes only each named session's user turns.
-pub fn check_additions(additions: &[GroupAddition]) -> Result<()> {
-    if additions.iter().any(|addition| {
-        addition.turns.as_ref().is_some_and(|turns| {
-            turns
-                .iter()
-                .any(|turn| turn.session != addition.session || turn.role != crate::Speaker::User)
-        })
-    }) {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "project group backfill takes only the named session's user turns",
-        ));
-    }
-    Ok(())
-}
-
-/// A join names an agent author that is not reserved, a role that is
-/// content, and the member's own user turns.
-pub fn check_join(join: &JoinGroup<'_>) -> Result<()> {
-    check_agent_author(join.author)?;
-    if let Some(role) = join.role {
-        check_content(role)?;
-    }
-    check_own_user_turns(join.session, join.earlier_turns)
-}
-
-/// A capture takes only the member's own verified user turns.
-pub fn check_capture_turns(session: &SessionId, messages: &[NewMessage]) -> Result<()> {
-    if messages
-        .iter()
-        .any(|m| &m.session != session || m.role != crate::Speaker::User)
-    {
-        return Err(refusal(
-            WriteRefusal::GroupMembership,
-            "group capture takes only the member's verified user turns",
-        ));
-    }
-    Ok(())
-}
-
-// --- group requests and outcomes ---
-
 /// The result of opening a group.
 pub struct OpenedGroup {
     /// The new group's id.
@@ -140,15 +27,6 @@ pub struct GroupConsent {
     session: SessionId,
     message: String,
     scope: ConsentScope,
-}
-
-/// The one operation a verified quote authorizes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ConsentScope {
-    /// Opening a group; names no group.
-    Open,
-    /// Closing exactly this group, its `g-<n>` id.
-    Close(String),
 }
 
 impl GroupConsent {
@@ -271,23 +149,13 @@ impl GroupConsent {
     }
 }
 
-/// Whether a matched quote names the group at boundaries in the typed turn.
-fn names_group(source: &str, quote: &str, group: &str) -> bool {
-    let source = crate::verbatim::normalize(source);
-    let quote = crate::verbatim::normalize(quote);
-    let quote = quote.trim_matches(' ');
-    source
-        .char_indices()
-        .filter(|(start, _)| source[*start..].starts_with(quote))
-        .any(|(start, _)| {
-            quote.match_indices(group).any(|(offset, _)| {
-                let at = start + offset;
-                let before = source[..at].chars().next_back();
-                let after = source[at + group.len()..].chars().next();
-                !before.is_some_and(char::is_alphanumeric)
-                    && !after.is_some_and(char::is_alphanumeric)
-            })
-        })
+/// The one operation a verified quote authorizes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ConsentScope {
+    /// Opening a group; names no group.
+    Open,
+    /// Closing exactly this group, its `g-<n>` id.
+    Close(String),
 }
 
 /// Who asks to close a group: a session that the store judges against the
@@ -320,38 +188,6 @@ pub enum SeatStart {
     },
     /// Open groups exist and the session holds no seat.
     Unjoined,
-}
-
-/// The automatic seat name for `session` when it joins without naming one: its
-/// eight-character prefix, its full id, then the first available numbered
-/// candidate. A numbered candidate uses the first `Label::MAX_CHARS - 12`
-/// characters of the id followed by `-2`, `-3`, and so on; shorter ids use
-/// their whole id as the stem. `taken` must say true for every seat already in
-/// the group, so a join never displaces anyone.
-///
-/// # Errors
-///
-/// Returns the first error reported by `taken` without probing further
-/// candidates.
-pub fn automatic_seat<E>(
-    session: &SessionId,
-    mut taken: impl FnMut(&str) -> std::result::Result<bool, E>,
-) -> std::result::Result<crate::Label, E> {
-    use crate::Label;
-    let id = session.as_str();
-    let short: String = id.chars().take(8).collect();
-    let stem: String = id.chars().take(Label::MAX_CHARS - 12).collect();
-    let mut name = short;
-    let mut next = [id.to_owned()]
-        .into_iter()
-        .chain((2u64..).map(|n| format!("{stem}-{n}")));
-    loop {
-        let label = Label::sanitized(&name, "member");
-        if !taken(label.as_str())? {
-            return Ok(label);
-        }
-        name = next.next().unwrap_or_default();
-    }
 }
 
 /// One session named by a typed `/scribe group add` line: its id, and its typed
@@ -415,4 +251,166 @@ pub struct JoinGroup<'a> {
     /// stored no earlier turn (and so has no cursor) still keeps a typed turn
     /// appended after the snapshot but before the membership committed.
     pub snapshot_at: time::OffsetDateTime,
+}
+
+/// A project group slug: lowercase letters, digits and interior hyphens, not a
+/// group id, and free of configured sensitive text.
+pub fn check_project_slug(slug: &str, redactor: &Redactor) -> Result<()> {
+    if slug.is_empty()
+        || slug.len() > 64
+        || !slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || slug.starts_with('-')
+        || slug.ends_with('-')
+        || number(slug).is_some()
+    {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "group slug must be lowercase letters, digits and interior hyphens, and not a group id",
+        ));
+    }
+    if redactor.mask(slug) != slug {
+        return Err(refusal(
+            WriteRefusal::InvalidText,
+            "group slug contains sensitive text",
+        ));
+    }
+    Ok(())
+}
+
+/// A backfill takes only the named session's own user turns.
+pub fn check_own_user_turns(session: &SessionId, turns: &[NewMessage]) -> Result<()> {
+    if turns
+        .iter()
+        .any(|m| &m.session != session || m.role != crate::Speaker::User)
+    {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "group backfill takes only the member's own user turns",
+        ));
+    }
+    Ok(())
+}
+
+/// A group opens on consent given for opening one, with the opener's own
+/// user turns, a title and kind as content, and no session among its
+/// references.
+pub fn check_new_group(
+    draft: &NewGroup,
+    consent: &GroupConsent,
+    earlier_turns: &[NewMessage],
+) -> Result<()> {
+    if !consent.authorizes_open() {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "the quoted consent was given for another operation, not opening a group",
+        ));
+    }
+    check_own_user_turns(consent.session(), earlier_turns)?;
+    check_content(&draft.title)?;
+    check_content(&draft.kind)?;
+    if draft
+        .related
+        .iter()
+        .any(|r| r.kind() == RelatedKind::Session)
+    {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "group references accept task:, pr: and repo:; use group join for a session",
+        ));
+    }
+    Ok(())
+}
+
+/// A project-group backfill takes only each named session's user turns.
+pub fn check_additions(additions: &[GroupAddition]) -> Result<()> {
+    if additions.iter().any(|addition| {
+        addition.turns.as_ref().is_some_and(|turns| {
+            turns
+                .iter()
+                .any(|turn| turn.session != addition.session || turn.role != crate::Speaker::User)
+        })
+    }) {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "project group backfill takes only the named session's user turns",
+        ));
+    }
+    Ok(())
+}
+
+/// A join names an agent author that is not reserved, a role that is
+/// content, and the member's own user turns.
+pub fn check_join(join: &JoinGroup<'_>) -> Result<()> {
+    check_agent_author(join.author)?;
+    if let Some(role) = join.role {
+        check_content(role)?;
+    }
+    check_own_user_turns(join.session, join.earlier_turns)
+}
+
+/// A capture takes only the member's own verified user turns.
+pub fn check_capture_turns(session: &SessionId, messages: &[NewMessage]) -> Result<()> {
+    if messages
+        .iter()
+        .any(|m| &m.session != session || m.role != crate::Speaker::User)
+    {
+        return Err(refusal(
+            WriteRefusal::GroupMembership,
+            "group capture takes only the member's verified user turns",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a matched quote names the group at boundaries in the typed turn.
+fn names_group(source: &str, quote: &str, group: &str) -> bool {
+    let source = crate::verbatim::normalize(source);
+    let quote = crate::verbatim::normalize(quote);
+    let quote = quote.trim_matches(' ');
+    source
+        .char_indices()
+        .filter(|(start, _)| source[*start..].starts_with(quote))
+        .any(|(start, _)| {
+            quote.match_indices(group).any(|(offset, _)| {
+                let at = start + offset;
+                let before = source[..at].chars().next_back();
+                let after = source[at + group.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            })
+        })
+}
+
+/// The automatic seat name for `session` when it joins without naming one: its
+/// eight-character prefix, its full id, then the first available numbered
+/// candidate. A numbered candidate uses the first `Label::MAX_CHARS - 12`
+/// characters of the id followed by `-2`, `-3`, and so on; shorter ids use
+/// their whole id as the stem. `taken` must say true for every seat already in
+/// the group, so a join never displaces anyone.
+///
+/// # Errors
+///
+/// Returns the first error reported by `taken` without probing further
+/// candidates.
+pub fn automatic_seat<E>(
+    session: &SessionId,
+    mut taken: impl FnMut(&str) -> std::result::Result<bool, E>,
+) -> std::result::Result<crate::Label, E> {
+    use crate::Label;
+    let id = session.as_str();
+    let short: String = id.chars().take(8).collect();
+    let stem: String = id.chars().take(Label::MAX_CHARS - 12).collect();
+    let mut name = short;
+    let mut next = [id.to_owned()]
+        .into_iter()
+        .chain((2u64..).map(|n| format!("{stem}-{n}")));
+    loop {
+        let label = Label::sanitized(&name, "member");
+        if !taken(label.as_str())? {
+            return Ok(label);
+        }
+        name = next.next().unwrap_or_default();
+    }
 }

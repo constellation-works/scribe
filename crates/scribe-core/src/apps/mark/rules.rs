@@ -4,14 +4,6 @@
 use crate::capture::Mark;
 use crate::tag::TagTable;
 
-/// Refuse a marker explicitly naming a typed record before handing it over.
-#[must_use]
-pub fn record_tag_refusal(mark: &Mark, tags: &TagTable) -> Option<CheckRefusal> {
-    mark.hint(tags)
-        .filter(|tag| tag.is_decision_or_item())
-        .map(|_| CheckRefusal::RecordTag)
-}
-
 /// Why a marker is refused before it is handed over (§14.3). It is recorded
 /// `refused` with its code.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,4 +28,12 @@ impl CheckRefusal {
             Self::RecordTag => "record decisions and open items through scribe entry add",
         }
     }
+}
+
+/// Refuse a marker explicitly naming a typed record before handing it over.
+#[must_use]
+pub fn record_tag_refusal(mark: &Mark, tags: &TagTable) -> Option<CheckRefusal> {
+    mark.hint(tags)
+        .filter(|tag| tag.is_decision_or_item())
+        .map(|_| CheckRefusal::RecordTag)
 }

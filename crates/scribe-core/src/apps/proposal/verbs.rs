@@ -518,6 +518,36 @@ struct CandidateSettlement<'a> {
     instructed: &'a crate::instruction::Instructed,
 }
 
+/// What [`write_candidate_entry`] did with a reserved candidate entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CandidateWrite {
+    /// The reserved entry file was created.
+    Created,
+    /// The reserved entry file was already present.
+    Present,
+    /// An active entry of the same tag and project already covers the
+    /// statement, so no file was written.
+    Covered {
+        /// That entry.
+        by: EntryId,
+    },
+}
+
+/// Result of forgetting a session, including cleanup on a replay.
+pub enum SessionForgetOutcome {
+    /// The session was forgotten now.
+    Forgotten(SessionForget),
+    /// The session was already forgotten.
+    Already {
+        /// The session's id.
+        id: SessionId,
+        /// Its number, while the store still holds one.
+        number: Option<NonZeroU64>,
+        /// Whether this replay cleaned up what the first forget left.
+        cleaned: bool,
+    },
+}
+
 /// Settle candidate `proposals[i]` on Daniel's checked `instructed`
 /// (2_design.md §12.3). The caller holds the lock. The candidate must be
 /// open; the same instruction again changes nothing. An approval writes
@@ -713,21 +743,6 @@ fn reapply_candidates(store: &Store) -> Result<ReapplyReport> {
     })
 }
 
-/// What [`write_candidate_entry`] did with a reserved candidate entry.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CandidateWrite {
-    /// The reserved entry file was created.
-    Created,
-    /// The reserved entry file was already present.
-    Present,
-    /// An active entry of the same tag and project already covers the
-    /// statement, so no file was written.
-    Covered {
-        /// That entry.
-        by: EntryId,
-    },
-}
-
 /// Erase session data and detach dependent records in the write under way
 /// ([`ProposalVerbs::settle`]). The tombstone also drives replay of
 /// filesystem cleanup after commit.
@@ -774,19 +789,4 @@ fn forget_session(
             was_on: erased.was_on,
         })
     })
-}
-
-/// Result of forgetting a session, including cleanup on a replay.
-pub enum SessionForgetOutcome {
-    /// The session was forgotten now.
-    Forgotten(SessionForget),
-    /// The session was already forgotten.
-    Already {
-        /// The session's id.
-        id: SessionId,
-        /// Its number, while the store still holds one.
-        number: Option<NonZeroU64>,
-        /// Whether this replay cleaned up what the first forget left.
-        cleaned: bool,
-    },
 }

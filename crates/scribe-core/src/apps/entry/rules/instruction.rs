@@ -17,6 +17,7 @@
 //! understand meaning.
 
 use crate::capture;
+pub use crate::config::INTERACTIVE_ENTRYPOINTS;
 use crate::entry::Speaker;
 use crate::error::{Error, WriteRefusal};
 use crate::session::SessionId;
@@ -35,13 +36,19 @@ pub const RECENT_TURNS: usize = 3;
 /// How old the instruction turn may be when the command runs (§12.2 check 3).
 pub const FRESH_FOR: time::Duration = time::Duration::minutes(30);
 
-pub use crate::config::INTERACTIVE_ENTRYPOINTS;
-
 /// Codex `session_meta.payload.source` values of a session Daniel types
 /// into: the terminal UI (`cli`) and the IDE or desktop app (`vscode`).
 /// `exec` (`codex exec`, the non-interactive route) and a subagent's source
 /// are refused (§12.5).
 pub const CODEX_INTERACTIVE_SOURCES: &[&str] = &["cli", "vscode"];
+
+/// Bare affirmatives: they approve only when the reply he answered asks to
+/// approve or accept the target, and they never reject, retire or forget.
+pub const AFFIRMATIVES: &[&str] = &["yes", "ok", "okay", "go ahead", "do it"];
+
+/// Words of the answered reply that make a bare affirmative an approval,
+/// when they sit on the same line as the target's id.
+pub const APPROVE_IN_REPLY: &[&str] = &["approve", "accept"];
 
 /// The act a write performs on Daniel's word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,14 +94,6 @@ impl fmt::Display for Act {
         f.write_str(self.as_str())
     }
 }
-
-/// Bare affirmatives: they approve only when the reply he answered asks to
-/// approve or accept the target, and they never reject, retire or forget.
-pub const AFFIRMATIVES: &[&str] = &["yes", "ok", "okay", "go ahead", "do it"];
-
-/// Words of the answered reply that make a bare affirmative an approval,
-/// when they sit on the same line as the target's id.
-pub const APPROVE_IN_REPLY: &[&str] = &["approve", "accept"];
 
 /// One message of the session, as the check reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -196,6 +195,114 @@ impl Instructed {
             quote: Some(mask(&self.quote)),
         }
     }
+}
+
+struct Claims {
+    origin_blocked: bool,
+    entrypoint: Option<String>,
+}
+
+/// Parsed Claude transcript lines for group capture. A batch can be the
+/// whole transcript or a suffix starting at a JSONL record boundary.
+pub struct ClaudeGroupTurns {
+    session: SessionId,
+    messages: Vec<Message>,
+    /// Ids of refused typed forms in this batch, first copies only.
+    refused: Vec<String>,
+    claims: BTreeMap<String, bool>,
+}
+
+impl ClaudeGroupTurns {
+    /// Apply the session filter and parse this batch before taking a store lock.
+    #[must_use]
+    pub fn parse(bytes: &[u8], session: &SessionId) -> Self {
+        let local = claude_session_lines(bytes, session);
+        let (messages, refused) = transcript::parse_claude(&local);
+        Self {
+            session: session.clone(),
+            messages,
+            refused,
+            claims: claude_claims(&local)
+                .into_iter()
+                .map(|(uuid, claim)| {
+                    let interactive = claim
+                        .entrypoint
+                        .as_deref()
+                        .is_none_or(|e| INTERACTIVE_ENTRYPOINTS.contains(&e));
+                    (uuid, interactive && !claim.origin_blocked)
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether there are messages for which the caller may need its redactor.
+    #[must_use]
+    pub fn has_user_messages(&self) -> bool {
+        self.messages.iter().any(|m| m.role == Speaker::User)
+    }
+
+    /// The session the batch belongs to.
+    pub fn session(&self) -> &SessionId {
+        &self.session
+    }
+
+    /// Keep first-copy semantics across batches, including ids whose first
+    /// copy was rejected. The index only receives hashed ids and flags.
+    pub fn resolve<E>(
+        mut self,
+        mut lookup: impl FnMut(&str) -> Result<ClaudeSeen, E>,
+    ) -> Result<ResolvedClaudeTurns, E> {
+        let mut turns = Vec::new();
+        let mut seen = Vec::new();
+        for message in self.messages {
+            let id = capture::prompt_sha256(&message.uuid);
+            let previous = lookup(&id)?;
+            let permitted = previous.permitted.or(self.claims.remove(&message.uuid));
+            let current = ClaudeSeen {
+                permitted,
+                message: true,
+            };
+            if current != previous {
+                seen.push((id, current));
+            }
+            if !previous.message
+                && let Some(words) = verified_words(&message, permitted == Some(true))
+                && let Some(turn) = crate::message::typed_turn(&self.session, &message, &words)
+            {
+                turns.push(turn);
+            }
+        }
+        // A refused typed form is no turn, but its first copy has been seen:
+        // a later copy with the same uuid stays refused, as a full replay does.
+        for uuid in self.refused {
+            let id = capture::prompt_sha256(&uuid);
+            let previous = lookup(&id)?;
+            let current = ClaudeSeen {
+                permitted: previous.permitted.or(self.claims.remove(&uuid)),
+                message: true,
+            };
+            if current != previous {
+                seen.push((id, current));
+            }
+        }
+        for (uuid, permitted) in self.claims {
+            let id = capture::prompt_sha256(&uuid);
+            let mut previous = lookup(&id)?;
+            if previous.permitted.is_none() {
+                previous.permitted = Some(permitted);
+                seen.push((id, previous));
+            }
+        }
+        Ok(ResolvedClaudeTurns { turns, seen })
+    }
+}
+
+/// A batch of Claude typed turns resolved against the origin claims already stored.
+pub struct ResolvedClaudeTurns {
+    /// The typed turns to store.
+    pub turns: Vec<crate::message::NewMessage>,
+    /// The ids whose first claim this batch settled, with what was seen.
+    pub seen: Vec<(String, ClaudeSeen)>,
 }
 
 /// The line of `text`, from 1, that the whole of `quote` starts on: the
@@ -454,11 +561,6 @@ pub fn own_words(text: &str) -> String {
         .join("\n")
 }
 
-struct Claims {
-    origin_blocked: bool,
-    entrypoint: Option<String>,
-}
-
 fn string(value: Option<&serde_json::Value>) -> Option<String> {
     value.and_then(serde_json::Value::as_str).map(str::to_owned)
 }
@@ -579,109 +681,6 @@ fn claude_claims(bytes: &[u8]) -> BTreeMap<String, Claims> {
         }
     }
     claims
-}
-
-/// Parsed Claude transcript lines for group capture. A batch can be the
-/// whole transcript or a suffix starting at a JSONL record boundary.
-pub struct ClaudeGroupTurns {
-    session: SessionId,
-    messages: Vec<Message>,
-    /// Ids of refused typed forms in this batch, first copies only.
-    refused: Vec<String>,
-    claims: BTreeMap<String, bool>,
-}
-
-impl ClaudeGroupTurns {
-    /// Apply the session filter and parse this batch before taking a store lock.
-    #[must_use]
-    pub fn parse(bytes: &[u8], session: &SessionId) -> Self {
-        let local = claude_session_lines(bytes, session);
-        let (messages, refused) = transcript::parse_claude(&local);
-        Self {
-            session: session.clone(),
-            messages,
-            refused,
-            claims: claude_claims(&local)
-                .into_iter()
-                .map(|(uuid, claim)| {
-                    let interactive = claim
-                        .entrypoint
-                        .as_deref()
-                        .is_none_or(|e| INTERACTIVE_ENTRYPOINTS.contains(&e));
-                    (uuid, interactive && !claim.origin_blocked)
-                })
-                .collect(),
-        }
-    }
-
-    /// Whether there are messages for which the caller may need its redactor.
-    #[must_use]
-    pub fn has_user_messages(&self) -> bool {
-        self.messages.iter().any(|m| m.role == Speaker::User)
-    }
-
-    /// The session the batch belongs to.
-    pub fn session(&self) -> &SessionId {
-        &self.session
-    }
-
-    /// Keep first-copy semantics across batches, including ids whose first
-    /// copy was rejected. The index only receives hashed ids and flags.
-    pub fn resolve<E>(
-        mut self,
-        mut lookup: impl FnMut(&str) -> Result<ClaudeSeen, E>,
-    ) -> Result<ResolvedClaudeTurns, E> {
-        let mut turns = Vec::new();
-        let mut seen = Vec::new();
-        for message in self.messages {
-            let id = capture::prompt_sha256(&message.uuid);
-            let previous = lookup(&id)?;
-            let permitted = previous.permitted.or(self.claims.remove(&message.uuid));
-            let current = ClaudeSeen {
-                permitted,
-                message: true,
-            };
-            if current != previous {
-                seen.push((id, current));
-            }
-            if !previous.message
-                && let Some(words) = verified_words(&message, permitted == Some(true))
-                && let Some(turn) = crate::message::typed_turn(&self.session, &message, &words)
-            {
-                turns.push(turn);
-            }
-        }
-        // A refused typed form is no turn, but its first copy has been seen:
-        // a later copy with the same uuid stays refused, as a full replay does.
-        for uuid in self.refused {
-            let id = capture::prompt_sha256(&uuid);
-            let previous = lookup(&id)?;
-            let current = ClaudeSeen {
-                permitted: previous.permitted.or(self.claims.remove(&uuid)),
-                message: true,
-            };
-            if current != previous {
-                seen.push((id, current));
-            }
-        }
-        for (uuid, permitted) in self.claims {
-            let id = capture::prompt_sha256(&uuid);
-            let mut previous = lookup(&id)?;
-            if previous.permitted.is_none() {
-                previous.permitted = Some(permitted);
-                seen.push((id, previous));
-            }
-        }
-        Ok(ResolvedClaudeTurns { turns, seen })
-    }
-}
-
-/// A batch of Claude typed turns resolved against the origin claims already stored.
-pub struct ResolvedClaudeTurns {
-    /// The typed turns to store.
-    pub turns: Vec<crate::message::NewMessage>,
-    /// The ids whose first claim this batch settled, with what was seen.
-    pub seen: Vec<(String, ClaudeSeen)>,
 }
 
 /// A Codex rollout as the check reads it. The session's interactivity is

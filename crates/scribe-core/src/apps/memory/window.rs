@@ -17,6 +17,45 @@ pub struct WindowMemory {
     pub final_pass: bool,
 }
 
+/// A pass window's memory written on its own, for tests: checked against
+/// the redactor and planned as the pass does, then committed through one
+/// journal. Only for tests.
+#[cfg(any(test, feature = "test-support"))]
+pub trait WindowMemoryTestWrites {
+    /// Write a pass's memory changes outside a session write.
+    ///
+    /// # Errors
+    ///
+    /// The store's write errors.
+    fn write_pass_memory(
+        &self,
+        pass: &WindowMemory,
+        redactor: &crate::Redactor,
+        record: &SessionRecord,
+    ) -> Result<MemoryWritten>;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl WindowMemoryTestWrites for crate::Store {
+    fn write_pass_memory(
+        &self,
+        pass: &WindowMemory,
+        redactor: &crate::Redactor,
+        record: &SessionRecord,
+    ) -> Result<MemoryWritten> {
+        use crate::testing::StoreTestInternals;
+        let (drafts, sensitive) = super::rules::check_sensitive_drafts(&pass.drafts, redactor);
+        let pass = WindowMemory {
+            drafts,
+            ..pass.clone()
+        };
+        self.write_window_memory(
+            plan_window(Some(&pass), &sensitive, Some(record)),
+            record.updated,
+        )
+    }
+}
+
 /// What the window's write does with `memory` for the session `record`
 /// (§15.5): nothing without both; with nothing to plan, only a journal a
 /// crash left open is applied; otherwise the drafts (already checked
@@ -107,44 +146,5 @@ fn link(commit: &mut MemoryCommit, item: &str, cites: &[(SessionId, String)]) {
         commit
             .links
             .push((item.to_owned(), session.to_string(), message.clone()));
-    }
-}
-
-/// A pass window's memory written on its own, for tests: checked against
-/// the redactor and planned as the pass does, then committed through one
-/// journal. Only for tests.
-#[cfg(any(test, feature = "test-support"))]
-pub trait WindowMemoryTestWrites {
-    /// Write a pass's memory changes outside a session write.
-    ///
-    /// # Errors
-    ///
-    /// The store's write errors.
-    fn write_pass_memory(
-        &self,
-        pass: &WindowMemory,
-        redactor: &crate::Redactor,
-        record: &SessionRecord,
-    ) -> Result<MemoryWritten>;
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl WindowMemoryTestWrites for crate::Store {
-    fn write_pass_memory(
-        &self,
-        pass: &WindowMemory,
-        redactor: &crate::Redactor,
-        record: &SessionRecord,
-    ) -> Result<MemoryWritten> {
-        use crate::testing::StoreTestInternals;
-        let (drafts, sensitive) = super::rules::check_sensitive_drafts(&pass.drafts, redactor);
-        let pass = WindowMemory {
-            drafts,
-            ..pass.clone()
-        };
-        self.write_window_memory(
-            plan_window(Some(&pass), &sensitive, Some(record)),
-            record.updated,
-        )
     }
 }

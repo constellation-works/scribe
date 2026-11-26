@@ -46,26 +46,6 @@ pub use crate::text::{
 use crate::transcript;
 use time::{Date, Duration, OffsetDateTime};
 
-/// Split a pass window's `drafts` into those the planner may use and a
-/// [`Refusal::Sensitive`] for each one whose title, text or quote redaction
-/// would change, in draft order. Pure: no store read.
-pub fn check_sensitive_drafts(drafts: &[Draft], redactor: &Redactor) -> (Vec<Draft>, Vec<Refusal>) {
-    let mut kept = Vec::new();
-    let mut refused = Vec::new();
-    for draft in drafts {
-        let e = &draft.checked;
-        if redactor.mask(&e.title) != e.title
-            || redactor.mask(&e.text) != e.text
-            || redactor.mask(&e.quote) != e.quote
-        {
-            refused.push(Refusal::Sensitive);
-        } else {
-            kept.push(draft.clone());
-        }
-    }
-    (kept, refused)
-}
-
 /// The most memory elements one pass invocation takes per session, across
 /// its windows; a refused element uses its slot (§15.5).
 pub const MAX_PER_PASS: usize = 3;
@@ -113,14 +93,6 @@ pub const MOOD_WORDS: &[&str] = &[
     "devastated",
 ];
 
-/// Whether `statement` names a mood that `quote` does not.
-#[must_use]
-pub fn inferred_mood(statement: &str, quote: &str) -> bool {
-    MOOD_WORDS
-        .iter()
-        .any(|word| has_phrase(statement, word) && !has_phrase(quote, word))
-}
-
 /// What kind of memory a pass element writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElementKind {
@@ -163,6 +135,71 @@ pub struct CheckReport {
     pub refused: Vec<Refusal>,
     /// The slots used: every element taken, written or refused.
     pub used: usize,
+}
+
+/// A checked element tied to its turn in the original transcript, ready for
+/// the store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Draft {
+    /// The element.
+    pub checked: Checked,
+    /// The date, kept only when real and within a year before and two years
+    /// after the turn.
+    pub date: Option<Date>,
+    /// The user's own words of the turn (pasted blocks left out), against
+    /// which the store repeats the verbatim check under its lock.
+    pub turn: String,
+    /// When the turn was sent.
+    pub at: OffsetDateTime,
+}
+
+/// One change a pass window's memory makes (§15.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PassChange {
+    /// Write a `now` file whole; the messages it cites (session, message
+    /// id), kept so a forget deletes them.
+    Now(NowItem, Vec<(SessionId, String)>),
+    /// Write a milestone file whole, and the messages it cites.
+    Milestone(Milestone, Vec<(SessionId, String)>),
+    /// Keep an undated candidate.
+    AddPending {
+        /// The turn.
+        message: String,
+        /// The title.
+        subject: String,
+        /// The prose.
+        text: String,
+    },
+    /// Drop a pending candidate a dated element completed.
+    DropPending(i64),
+}
+
+/// Split a pass window's `drafts` into those the planner may use and a
+/// [`Refusal::Sensitive`] for each one whose title, text or quote redaction
+/// would change, in draft order. Pure: no store read.
+pub fn check_sensitive_drafts(drafts: &[Draft], redactor: &Redactor) -> (Vec<Draft>, Vec<Refusal>) {
+    let mut kept = Vec::new();
+    let mut refused = Vec::new();
+    for draft in drafts {
+        let e = &draft.checked;
+        if redactor.mask(&e.title) != e.title
+            || redactor.mask(&e.text) != e.text
+            || redactor.mask(&e.quote) != e.quote
+        {
+            refused.push(Refusal::Sensitive);
+        } else {
+            kept.push(draft.clone());
+        }
+    }
+    (kept, refused)
+}
+
+/// Whether `statement` names a mood that `quote` does not.
+#[must_use]
+pub fn inferred_mood(statement: &str, quote: &str) -> bool {
+    MOOD_WORDS
+        .iter()
+        .any(|word| has_phrase(statement, word) && !has_phrase(quote, word))
 }
 
 fn one_line(text: &str) -> String {
@@ -287,22 +324,6 @@ fn check_one(
     })
 }
 
-/// A checked element tied to its turn in the original transcript, ready for
-/// the store.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Draft {
-    /// The element.
-    pub checked: Checked,
-    /// The date, kept only when real and within a year before and two years
-    /// after the turn.
-    pub date: Option<Date>,
-    /// The user's own words of the turn (pasted blocks left out), against
-    /// which the store repeats the verbatim check under its lock.
-    pub turn: String,
-    /// When the turn was sent.
-    pub at: OffsetDateTime,
-}
-
 /// Tie each checked element to its turn in the original transcript, never
 /// the model's metadata: only the user's turns, and only when the quote is
 /// their own span of that turn's original text. An element that fails here
@@ -355,27 +376,6 @@ pub fn user_says_milestone(turn: &str) -> bool {
     USER_SAYS
         .iter()
         .any(|phrase| crate::trigger::find(phrase, turn).is_some())
-}
-
-/// One change a pass window's memory makes (§15.5).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PassChange {
-    /// Write a `now` file whole; the messages it cites (session, message
-    /// id), kept so a forget deletes them.
-    Now(NowItem, Vec<(SessionId, String)>),
-    /// Write a milestone file whole, and the messages it cites.
-    Milestone(Milestone, Vec<(SessionId, String)>),
-    /// Keep an undated candidate.
-    AddPending {
-        /// The turn.
-        message: String,
-        /// The title.
-        subject: String,
-        /// The prose.
-        text: String,
-    },
-    /// Drop a pending candidate a dated element completed.
-    DropPending(i64),
 }
 
 /// The changes `drafts` make for `session` against the current `now` items,

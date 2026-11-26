@@ -29,6 +29,18 @@ impl<E> From<crate::Error> for ScanError<E> {
     }
 }
 
+/// `consistency scan`'s errors, each the variant it was before the flow moved.
+impl From<ScanError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: ScanError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            ScanError::Core(e) => Self::Core(e),
+            ScanError::Port(e) => e,
+        }
+    }
+}
+
 /// A session the scan deactivated.
 #[derive(Debug)]
 pub struct Deactivated {
@@ -175,16 +187,4 @@ fn deactivate_aged(
         }
     }
     Ok(())
-}
-
-/// `consistency scan`'s errors, each the variant it was before the flow moved.
-impl From<ScanError<crate::runtime::errors::CommandError>>
-    for crate::runtime::errors::CommandError
-{
-    fn from(err: ScanError<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            ScanError::Core(e) => Self::Core(e),
-            ScanError::Port(e) => e,
-        }
-    }
 }

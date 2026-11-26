@@ -50,27 +50,6 @@ pub enum Outcome {
     Scanned(Box<ScanOutcome>),
 }
 
-/// Why a `consistency` command did not run.
-pub type Error<E> = ScanError<E>;
-
-/// Run `command` against `ctx`, inside the audit guard when
-/// [`Command::audit`] declares one.
-///
-/// # Errors
-///
-/// [`ScanError`]: the config, the redactor, or a store error.
-pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError> {
-    let audit = Audit::declared(command.audit(), || command.subject(ctx));
-    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
-}
-
-/// Run `command` against `ctx`: dispatch only.
-pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
-    match command {
-        Command::Scan(input) => Ok(Outcome::Scanned(Box::new(scan::run(ctx, input)?))),
-    }
-}
-
 /// A scan writes one line per entry re-applied, per proposal opened, closed
 /// or covered, per session deactivated, and one failure line per
 /// deactivation that failed; none when it changed nothing.
@@ -114,5 +93,26 @@ impl Audited for Outcome {
                     .map(|f| Line::failure(Some(format!("session:{}", f.session)), f.error_code)),
             )
             .collect()
+    }
+}
+
+/// Why a `consistency` command did not run.
+pub type Error<E> = ScanError<E>;
+
+/// Run `command` against `ctx`, inside the audit guard when
+/// [`Command::audit`] declares one.
+///
+/// # Errors
+///
+/// [`ScanError`]: the config, the redactor, or a store error.
+pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError> {
+    let audit = Audit::declared(command.audit(), || command.subject(ctx));
+    guarded(ctx, audit, || Ok(run(&ctx.core(), command)?))
+}
+
+/// Run `command` against `ctx`: dispatch only.
+pub(crate) fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command) -> Result<Outcome, Error<E>> {
+    match command {
+        Command::Scan(input) => Ok(Outcome::Scanned(Box::new(scan::run(ctx, input)?))),
     }
 }

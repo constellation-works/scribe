@@ -40,13 +40,6 @@ pub struct RecordFields {
     pub why: Option<String>,
 }
 
-fn refusal<E>(kind: WriteRefusal, message: &str) -> WriteError<E> {
-    WriteError::Core(crate::Error::AgentWrite {
-        kind,
-        message: message.to_owned(),
-    })
-}
-
 impl RecordFields {
     /// The decision or open item these fields make under `tag`. A session
     /// given as a unique prefix in `--answer-in` is stored as the full id.
@@ -231,4 +224,11 @@ pub fn add<E: PortError>(ctx: &Ctx<'_, E>, input: AddInput) -> Result<EntryWritt
         .store
         .add_agent_entry(draft, input.author, ctx.clock.now(), &redactor)?;
     written(ctx, entry, true)
+}
+
+fn refusal<E>(kind: WriteRefusal, message: &str) -> WriteError<E> {
+    WriteError::Core(crate::Error::AgentWrite {
+        kind,
+        message: message.to_owned(),
+    })
 }

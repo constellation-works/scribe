@@ -67,6 +67,15 @@ pub enum Outcome {
     Transcript(Box<Surveyed>),
 }
 
+/// Reads: never audited (STD-01 R31).
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Transcripts(_) | Self::Transcript(_) => Vec::new(),
+        }
+    }
+}
+
 /// Why a `transcript` command did not run: a catalog-style read error.
 pub type Error<E> = CatalogError<E>;
 
@@ -93,13 +102,4 @@ fn run<E: PortError>(ctx: &Ctx<'_, E>, command: Command<'_>) -> Result<Outcome, 
             Outcome::Transcript(Box::new(read::show(ctx, provider, &id)?))
         }
     })
-}
-
-/// Reads: never audited (STD-01 R31).
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Transcripts(_) | Self::Transcript(_) => Vec::new(),
-        }
-    }
 }

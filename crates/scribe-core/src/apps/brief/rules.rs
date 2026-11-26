@@ -76,44 +76,6 @@ pub struct OpenItem {
     pub question: String,
 }
 
-/// Select open items from all projects, including legacy trial records.
-#[must_use]
-pub fn open_items(entries: &[Entry]) -> Vec<OpenItem> {
-    use crate::entry::ItemState;
-    let mut items: Vec<_> = entries
-        .iter()
-        .filter_map(|e| {
-            let state = ItemState::of(e)?;
-            if state.is_settled() {
-                return None;
-            }
-            Some((state, e.created, &e.id, e))
-        })
-        .collect();
-    items.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
-    items
-        .into_iter()
-        .map(|(state, _, _, e)| OpenItem {
-            id: e.id.to_string(),
-            state: state.as_str(),
-            asked_by: e
-                .item
-                .as_ref()
-                .map_or_else(|| e.author.name.to_string(), |i| i.asked_by.to_string()),
-            task: e
-                .related
-                .iter()
-                .find(|r| r.kind() == crate::record::RelatedKind::Task)
-                .map(|r| r.target().to_owned()),
-            answer_in: e
-                .item
-                .as_ref()
-                .map_or_else(|| "any".to_owned(), |i| i.answer_in.to_string()),
-            question: e.content.clone(),
-        })
-        .collect()
-}
-
 /// One session in the brief.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BriefSession {
@@ -305,6 +267,44 @@ impl Brief {
     }
 }
 
+/// Select open items from all projects, including legacy trial records.
+#[must_use]
+pub fn open_items(entries: &[Entry]) -> Vec<OpenItem> {
+    use crate::entry::ItemState;
+    let mut items: Vec<_> = entries
+        .iter()
+        .filter_map(|e| {
+            let state = ItemState::of(e)?;
+            if state.is_settled() {
+                return None;
+            }
+            Some((state, e.created, &e.id, e))
+        })
+        .collect();
+    items.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    items
+        .into_iter()
+        .map(|(state, _, _, e)| OpenItem {
+            id: e.id.to_string(),
+            state: state.as_str(),
+            asked_by: e
+                .item
+                .as_ref()
+                .map_or_else(|| e.author.name.to_string(), |i| i.asked_by.to_string()),
+            task: e
+                .related
+                .iter()
+                .find(|r| r.kind() == crate::record::RelatedKind::Task)
+                .map(|r| r.target().to_owned()),
+            answer_in: e
+                .item
+                .as_ref()
+                .map_or_else(|| "any".to_owned(), |i| i.answer_in.to_string()),
+            question: e.content.clone(),
+        })
+        .collect()
+}
+
 /// Build the brief from every session record, entry and proposal.
 ///
 /// Sessions: the active records other than `exclude` (the session being
@@ -399,8 +399,8 @@ pub fn build(
         memory: None,
         project: project.cloned(),
         last_group: None,
-        open_items: Vec::new(),
         sessions: recent,
+        open_items: Vec::new(),
         claims,
     }
 }
