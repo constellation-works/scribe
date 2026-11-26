@@ -5,9 +5,11 @@
 //! (STD-02 R24): today the audit declaration each app's `exec` audits under.
 //! Each noun lives in its own module with its subcommands, flags, help and
 //! handlers (`consistency.rs`, `brief.rs`, `store.rs`, `export.rs`,
-//! `plugin.rs`); a noun with four or more verbs is a directory,
-//! `<noun>/mod.rs` plus one file per verb, as `entry/`, `group/`, `memory/`,
-//! `proposal/` and `tag/` are, and `hook/` is (STD-02 R18, R49).
+//! `plugin.rs`). Nouns with four or more verbs use a directory with
+//! `<noun>/mod.rs` and one file per verb, as `entry/`, `group/`, `memory/`,
+//! `proposal/` and `tag/` do. `hook/` is different: `hook/mod.rs` declares
+//! and dispatches all four event verbs; its sibling files provide helpers
+//! rather than one file per verb (STD-02 R18, R49).
 
 pub(in crate::commands) mod brief;
 mod consistency;
