@@ -41,9 +41,13 @@ scribe entry add --tag handoff --author <name> --project <project> \
   3,000 characters (one screen). Write `(none)` under a heading that has
   nothing to report. Scribe refuses a missing heading, wrong order, extra
   heading or oversized body (`handoff_shape`, `handoff_too_long`).
-- **Multiple handoffs and removal.** Each handoff is a new entry (`handoff-<n>`),
-  and `scribe session show <id>` lists them newest first beside scribe's
-  header. After writing one, echo its id and how to drop it:
+- **Multiple handoffs.** Each is a new `handoff-<n>`. In the same project, a
+  new handoff supersedes earlier active handoffs for its session and any
+  ancestor reached through recorded `continues` links, including pending
+  links. Superseded handoffs are hidden from `scribe session show <id>` and
+  `brief`. Read them with `scribe entry show <id>` or `scribe entry list --tag
+  handoff --status superseded`; omitting `--status` also includes them.
+- **Removal.** After writing a handoff, echo its id and how to drop it:
   `scribe: wrote <id> (drop: #scribe retire <id>)`.
 - **Attribution.** A handoff is an agent note, never the human's words;
   `search` and `entry show` treat it as your account.
