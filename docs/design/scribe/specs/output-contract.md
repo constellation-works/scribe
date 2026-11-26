@@ -1300,16 +1300,23 @@ For `retry_header`, supply the original `answer` and the compressed
 report fields are null. Forward `[{"cursor": <cursor>}]` as `progress` to
 prepare the next window. The cursor and basis are sealed: forward them
 unchanged, or prepare and apply refuse them as `invalid_input`, as they do a
-`previous_status` the first answer does not recompute to. Prepare starts no
-session or window 50 s after the run's first prepare (or after an earlier
-`deadline_epoch_s`); the run's first window always starts. The CLI's
+`previous_status` the first answer does not recompute to. An ordinary prepare
+sets a 50-second start deadline on the run's first selection and starts no
+session or window once it (or an earlier `deadline_epoch_s`) has passed; the
+run's first window always starts, and catalog mode sets no automatic start
+deadline so only `deadline_epoch_s` can stop it starting. The CLI's
 `session pass-prepare` and `session pass-apply` exchange those JSON payloads
 directly. The failure tool receives the prepared `basis`, optional
-`error_code`, `reason` and the fan-in's `errors`, records backoff, and
-returns `{"pass": <pass or null>}` whose `error_code` is `model_timeout`,
-`model_unavailable`, `model_malformed` or `model_failed`. With `abort: true` it
-instead answers a plugin error with that model code, `retryable: false` and the
-session named in its message. Apply without an answer, or with an invalid
+`error_code`, `reason` and the fan-in's `errors`. It records backoff only when
+the basis still names a switched-on, unforgotten session whose record revision
+is unchanged; a null `basis` (no activity was pending) or a stale basis (the
+switch or record moved on) writes no backoff and returns `{"pass": null}`.
+Otherwise it returns `{"pass": <pass>}` whose `error_code` is `model_timeout`,
+`model_unavailable`, `model_malformed` or `model_failed`. With `abort: true`
+and a recorded pass it instead answers a plugin error with that model code,
+`retryable: false` and the session named in its message; with `abort: true`
+and no pass recorded it answers a plugin error with the generic message and
+`model_failed`, `retryable: false`. Apply without an answer, or with an invalid
 answer after its retry, then returns `status: "failed"` with the cursor moved to
 the next session; when apply recorded the failure, `pass` carries its
 `error_code` (such as `session_answer_invalid`). A store or transcript error in
