@@ -43,10 +43,12 @@ agents break silently when the machine form drifts.
 Precedence: flag > `SCRIBE_FORMAT` > auto. An unrecognized environment
 value means auto. Off a terminal there are no escapes and no truncation; on
 a terminal only the last free-text column is cut to the width, and `show`
-or `--json` has it whole. The width is `COLUMNS` when it holds a positive
-number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
-by the kit's terminal decision only, and with neither no table is cut. In plain and table
-rows, free text is flattened to one line (every whitespace run becomes one
+or `--json` has it whole. When stdout is a terminal, a trimmed positive
+integer in `COLUMNS` sets the width; an unset, empty, zero or invalid value
+falls back to the terminal's own size (`TIOCGWINSZ` on stdout). The kit's
+terminal decision reads both widths only, and with neither no table is cut.
+Off a terminal, `COLUMNS` has no effect. In plain and table rows, free text
+is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
 are RFC 3339, except in table mode, where every timestamp cell of a human list
 table shows the UTC date as `YYYY-MM-DD` when representable: `entry list`

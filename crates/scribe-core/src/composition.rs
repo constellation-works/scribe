@@ -25,7 +25,9 @@ use crate::runtime::audit::AuditHost;
 pub use crate::runtime::audit::InstructionNote;
 use crate::runtime::errors::CommandError;
 use crate::{Config, Label, Provider, Redactor, SessionId, Store, unresolved_redact_env};
-use cw_app::env::{CLICOLOR_FORCE, COLUMNS, EnvVar, HOME, NO_COLOR, ROOT, TERM};
+use cw_app::env::{
+    CLICOLOR_FORCE, COLUMNS, EnvVar, FORMAT as KIT_FORMAT, HOME, NO_COLOR, ROOT as KIT_ROOT, TERM,
+};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,15 +72,15 @@ pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
 // ROOT, HOME and the terminal variables). Reads go through `read` or
 // `EnvVar::name_for`, and [`ENV_VARS`] is the usage table's source.
 
-/// `SCRIBE_FORMAT`: the output format. The terminal decision reads it (in
-/// cw-cli, through the captured snapshot), not composition; it is declared
-/// here with the others so the usage table lists it.
-pub const FORMAT: EnvVar = EnvVar::app(
-    "FORMAT",
-    "The output format: `json` for one JSON document, `table` for a table, and `auto` for a table on a terminal and tab-separated lines otherwise.",
-)
-.with_default("`auto`")
-.with_flag("--format");
+/// `SCRIBE_ROOT`: specialize the kit's shared declaration with Scribe's
+/// concrete default. The same declaration supplies the name used by reads
+/// and the generated usage table.
+const SCRIBE_ROOT: EnvVar = KIT_ROOT.with_default("`$HOME/.scribe`");
+
+/// `SCRIBE_FORMAT`: the terminal decision reads the kit's `FORMAT` declaration
+/// through `AppEnv::format`; add Scribe's default and CLI override to that same
+/// declaration for the generated usage table.
+pub const FORMAT: EnvVar = KIT_FORMAT.with_default("`auto`").with_flag("--format");
 
 /// `SCRIBE_LOG`: the log filter the binary's tracing reads, on stderr. A
 /// filter that does not parse is reported, and logging uses `warn`.
@@ -126,7 +128,7 @@ pub const COMPUTERNAME: EnvVar = EnvVar::global(
 /// kit's declarations supply the rows for the root, color, width and home
 /// variables.
 pub const ENV_VARS: &[EnvVar] = &[
-    ROOT,
+    SCRIBE_ROOT,
     FORMAT,
     LOG,
     NO_COLOR,
@@ -234,7 +236,7 @@ impl Env {
     #[must_use]
     pub fn from_process() -> Self {
         Self {
-            root: read(&ROOT),
+            root: read(&SCRIBE_ROOT),
             home: read(&HOME),
             claude_config_dir: read(&CLAUDE_CONFIG_DIR),
             codex_home: read(&CODEX_HOME),
