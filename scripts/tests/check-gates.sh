@@ -697,7 +697,9 @@ fi
 # --- clippy.toml: disallowed host operations in scribe-core (STD-02 R6) ----
 # Build a minimal workspace inheriting [workspace.lints] and clippy.toml so
 # every host operation banned in scribe-core fails regardless of path spelling
-# (qualified or imported by name), while a clean twin passes.
+# (qualified or imported by name), while a clean twin passes. These cases compile
+# small fixture crates, so make ci-fast (through structure) needs clippy; a
+# missing clippy fails here rather than skipping (STD-04 R10).
 if ! command -v cargo >/dev/null 2>&1 || ! cargo clippy --version >/dev/null 2>&1; then
   echo "check-gates: FAIL: cargo clippy is required for clippy boundary cases" >&2
   exit 2
