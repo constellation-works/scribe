@@ -58,3 +58,18 @@ disallowed-methods = [
     { path = "rusqlite::Connection::open_with_flags", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
     { path = "rusqlite::Connection::open_with_flags_and_vfs", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
 ]
+
+# STD-12 §R20 and §R23: top-level item order in a Rust file and struct literal
+# field order. The lints stay at their default (allow) level until the
+# enforcement task sets them in the workspace lint table.
+source-item-ordering = ["module"]
+module-item-order-groupings = [
+    ["modules", ["extern_crate", "mod", "foreign_mod"]],
+    ["use", ["use"]],
+    ["macros", ["macro"]],
+    ["constants", ["static", "const"]],
+    ["types", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias", "impl"]],
+    ["functions", ["fn", "global_asm"]],
+]
+module-items-ordered-within-groupings = "none"
+check-inconsistent-struct-field-initializers = true
