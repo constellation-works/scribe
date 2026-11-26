@@ -110,6 +110,12 @@ fn short_ids<E: PortError>(ctx: &Ctx<'_, E>, provider: Provider, brief: &Brief) 
             .map(|(id, _)| id.to_string()),
     );
     ids.extend(brief.sessions.iter().map(|s| s.id.to_string()));
+    ids.extend(
+        brief
+            .open_items
+            .iter()
+            .filter_map(|item| item.answer_in.strip_prefix("session:").map(str::to_owned)),
+    );
     let mut shorts = ShortIds::new(ids);
     if let Ok(numbers) = ctx.store.read().sessions().numbers() {
         shorts.set_aliases(

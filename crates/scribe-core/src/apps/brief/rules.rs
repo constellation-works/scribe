@@ -222,6 +222,8 @@ impl Brief {
             let task = item.task.as_deref().unwrap_or("-");
             let answer = if item.answer_in == "any" {
                 String::new()
+            } else if let Some(id) = item.answer_in.strip_prefix("session:") {
+                format!("session:{} · ", ids.display(id))
             } else {
                 format!("{} · ", item.answer_in)
             };
