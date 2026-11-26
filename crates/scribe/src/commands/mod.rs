@@ -4,10 +4,10 @@
 //! [`run`] is where cross-cutting behaviour attaches, once, for every command
 //! (STD-02 R24): today the audit declaration each app's `exec` audits under.
 //! Each noun lives in its own module with its subcommands, flags, help and
-//! handlers (`entry.rs`, `session/`, `proposal.rs`, `record.rs`, `tag.rs`,
-//! `brief.rs`, `store.rs`, `export.rs`, `plugin.rs`); a noun that
-//! outgrows one file becomes a directory, `<noun>/mod.rs` plus one file per
-//! verb, as `hook/` is (STD-02 R18: split along responsibilities, not by length alone).
+//! handlers (`consistency.rs`, `brief.rs`, `store.rs`, `export.rs`,
+//! `plugin.rs`); a noun with four or more verbs is a directory,
+//! `<noun>/mod.rs` plus one file per verb, as `entry/`, `group/`, `memory/`,
+//! `proposal/` and `tag/` are, and `hook/` is (STD-02 R18, R49).
 
 pub(in crate::commands) mod brief;
 mod consistency;
@@ -38,7 +38,6 @@ use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
 pub(crate) use entry::EntryCommand;
-pub(crate) use group::GroupCommand;
 pub(crate) use hook::HookCommand;
 pub(crate) use memory::MemoryCommand;
 pub(crate) use plugin::PluginCommand;
