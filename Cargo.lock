@@ -477,6 +477,7 @@ dependencies = [
 name = "scribe-core"
 version = "0.3.0"
 dependencies = [
+ "cw-app",
  "cw-fs",
  "rusqlite",
  "rustix",

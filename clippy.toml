@@ -32,12 +32,14 @@ disallowed-methods = [
     { path = "std::fs::exists", reason = "check paths through cw-fs / scribe-store's db/files.rs or scribe_tools::fs" },
 
     # std::env — resolved inputs flow down from composition (STD-02 R3)
-    { path = "std::env::var", reason = "capture environment variables in scribe_core::composition (or output::init_logging for SCRIBE_LOG) and pass values down" },
+    { path = "std::env::var", reason = "capture environment variables in scribe_core::composition and pass values down" },
     { path = "std::env::var_os", reason = "capture environment variables in scribe_core::composition and pass values down" },
     { path = "std::env::vars", reason = "capture environment variables in scribe_core::composition and pass values down" },
     { path = "std::env::vars_os", reason = "capture environment variables in scribe_core::composition and pass values down" },
     { path = "std::env::current_dir", reason = "resolve the working directory in scribe_core::composition and pass it down" },
     { path = "std::env::home_dir", reason = "resolve the home directory in scribe_core::composition and pass it down" },
+    # the process environment as a snapshot (cw-app), captured once by composition; the CLI crate receives it
+    { path = "cw_app::env::Env::capture", reason = "capture the process environment once in scribe_core::composition::Env::from_process and pass it down" },
 
     # std::process — children run through the supervised process adapter in scribe_core::providers::cli (STD-03 R11-R15)
     { path = "std::process::Command::output", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },

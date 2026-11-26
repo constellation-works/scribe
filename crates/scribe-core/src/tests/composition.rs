@@ -9,6 +9,7 @@ fn env(root: Option<&str>, home: Option<&str>) -> AppEnv {
         claude_config_dir: None,
         codex_home: None,
         claude_entrypoint: None,
+        ..Default::default()
     }
 }
 

@@ -21,6 +21,9 @@ path = "src/lib.rs"
 test-support = ["scribe-store/test-support"]
 
 [dependencies]
+# The captured process environment (`composition::Env::terminal`), which the
+# binary's terminal decision reads. The core names `cw_app::Env` only to hold it.
+cw-app = { workspace = true }
 cw-fs = { workspace = true }
 scribe-store = { workspace = true }
 scribe-tools = { workspace = true }

@@ -28,8 +28,8 @@ scribe  ->  scribe-core  ->  scribe-store
 
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
-| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access, through the kit's `cw-cli` sink (`cw-app` is named for its `Env` only). It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
-| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
+| `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access, through the kit's `cw-cli` sink. It reads no environment variable: composition captures the environment and passes it in (`cw-app` is named for the captured `Env` type only). It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
+| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`, which captures the environment once, its `cw-app` `Env` type included), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock) and its SQLite open, configuration, migration and WAL-checkpoint layer is the kit's `cw-sqlite` (using `cw-sqlite`'s re-exported `rusqlite`); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile` |
 
@@ -54,7 +54,7 @@ second dependency.
 ## `scribe` (binary)
 
 ```
-main.rs              parse, decide the terminal once and resolve the Context from the process environment, run, render, map the result to an exit code
+main.rs              capture the environment once (composition), parse, decide the terminal once, resolve the Context, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
 commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
@@ -109,7 +109,7 @@ runtime/
   resolve.rs         id and session resolution
   errors.rs          CommandError, read and write error mapping
   audit.rs           the audit guard around a mutating command
-composition.rs       Env, Context: the captured environment, and the resolved roots, store, provider and audit state
+composition.rs       Env, Context: the captured environment (the variables scribe reads, `SCRIBE_LOG`, and the process snapshot the terminal decision reads), and the resolved roots, store, provider and audit state
 config.rs            config.toml shapes and parsing
 config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
@@ -339,16 +339,18 @@ express. "Module" includes any file added later.
 
 - **Clippy disallowed paths (`clippy.toml`):** bans `std::fs` types and
   methods, `std::env` reads (`var`, `var_os`, `vars`, `vars_os`,
-  `current_dir`, `home_dir`), `std::process::Command::{output,status,spawn}`,
+  `current_dir`, `home_dir`), the process snapshot `cw_app::env::Env::capture`,
+  `std::process::Command::{output,status,spawn}`,
   `std::sync::mpsc::channel`, and `rusqlite::Connection::open` (including its
   `open_with_flags` forms) regardless of how a path is imported or aliased.
   Production exemptions are confined to the boundary owners:
   `scribe-store/src/db/files.rs` (`std::fs` beside `cw-fs`),
   `scribe-tools/src/fs.rs` (host `std::fs` adapter),
-  `scribe-core/src/composition.rs` (environment capture and `PATH` metadata),
-  `scribe-core/src/providers/cli.rs` (supervised process spawn and drain
-  channel), and `scribe/src/output/mod.rs` (`SCRIBE_LOG` read in
-  `init_logging`). `rusqlite::Connection::open*` has no production exemption:
+  `scribe-core/src/composition.rs` (environment capture, the `cw-app`
+  snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`
+  (supervised process spawn and drain channel). The binary has no exemption:
+  `main` and the output layer receive captured values.
+  `rusqlite::Connection::open*` has no production exemption:
   `scribe-store` opens `scribe.db` only through `cw-sqlite`.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
@@ -378,8 +380,9 @@ express. "Module" includes any file added later.
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
-  `commands`; only `output/` touches stdout or stderr, asks whether a stream
-  is a terminal, or reads the color and format variables.
+  `commands`; only `output/` touches stdout or stderr and asks whether a stream
+  is a terminal, and only `composition.rs` names the color, width, format and
+  log variables (captured, then passed down; `scripts/check-terminal-guard.sh`).
 - **History:** a persisted timestamp never defaults to the current time
   (R16), and the deleted paths (`scribe-domain`, cases, the binary's moved
   files, the core's retired module names) stay deleted (R17).

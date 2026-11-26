@@ -67,12 +67,18 @@ pub(crate) struct GlobalArgs {
 impl Cli {
     /// Parse a command line, including the checks clap cannot express.
     ///
+    /// `help_width` is the width the root help wraps to, decided by the output
+    /// layer from the captured environment (`output::help_width`).
+    ///
     /// `conflicts_with` does not see a global flag given at a different
     /// subcommand level (`--json entry list --format table`), so the
     /// `--json`/`--format` conflict is checked here and reported as the same
     /// usage error (exit 2) clap would have produced.
-    pub(crate) fn parse_args(args: &[OsString]) -> Result<Self, clap::Error> {
-        let cmd = crate::help::install_root_help(Self::command(), crate::output::help_width());
+    pub(crate) fn parse_args(
+        args: &[OsString],
+        help_width: Option<usize>,
+    ) -> Result<Self, clap::Error> {
+        let cmd = crate::help::install_root_help(Self::command(), help_width);
         let matches = cmd.try_get_matches_from(args)?;
         let cli = Self::from_arg_matches(&matches)?;
         if cli.global.json && cli.global.format.is_some_and(|f| f != Format::Json) {
