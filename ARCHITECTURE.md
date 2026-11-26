@@ -197,12 +197,14 @@ so the guard holds each to the same order.
   `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT` and `SCRIBE_LOG` individually for
   configuration and logging. It also captures the full process environment
   once as `cw_app::Env` for the binary's terminal decision; that snapshot can
-  include and reread those same variables. Redaction variables are not part of
-  `Env`: `Context::redactor` reads the configured `[redact] env` values live
-  from the process environment when it builds a redactor. `Context::resolve`
-  picks the data directory, opens the `Store` and resolves the transcript
-  roots and provider. `config.rs` parses the config file, and `Context::models`
-  reads its allowed process values when building the model adapter.
+  include and reread those same variables, as well as configured redaction
+  variables present in the process when captured. Redactor construction uses a
+  separate source: `Context::redactor` reads the configured `[redact] env`
+  names live from the process environment when it builds a redactor.
+  `Context::resolve` picks the data directory, opens the `Store` and resolves
+  the transcript roots and provider. `config.rs` parses the config file, and
+  `Context::models` reads its allowed process values when building the model
+  adapter.
   `composition/host/` implements `runtime`'s ports on the `Context` (STD-02
   R42), so `runtime` never imports `composition`.
 - `providers/` is interim while ORB-27911 removes Scribe's own model calls.
