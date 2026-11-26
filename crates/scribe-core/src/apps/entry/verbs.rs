@@ -79,10 +79,6 @@ pub trait EntryVerbs {
     /// then records in `removal_instruction` with its quote redacted, apart
     /// from the `instruction` an agent approved it on. Retiring keeps the
     /// text.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit retirement inputs at the store boundary"
-    )]
     fn retire_agent_entry(
         &self,
         id: &str,
@@ -507,10 +503,6 @@ impl EntryVerbs for Store {
         })
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit retirement inputs at the store boundary"
-    )]
     fn retire_agent_entry(
         &self,
         id: &str,

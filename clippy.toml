@@ -3,6 +3,9 @@
 # Allowed boundary owners carry `#[expect(..., reason = "...")]` — statement-level
 # on scribe-store's db/files.rs, module-level `#![expect(...)]` elsewhere.
 
+# STD-02 §R51 counts the receiver as a parameter.
+too-many-arguments-threshold = 7
+
 disallowed-types = [
     { path = "std::fs::File", reason = "file I/O belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host files" },
     { path = "std::fs::OpenOptions", reason = "file I/O belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host files" },

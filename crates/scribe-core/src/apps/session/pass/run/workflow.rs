@@ -1166,7 +1166,6 @@ pub(crate) fn mask_value(value: Value, redactor: &Redactor) -> Value {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn new_job<'a, E>(
     ctx: &'a Ctx<'a, E>,
     host: &'a Label,

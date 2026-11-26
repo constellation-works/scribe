@@ -732,16 +732,16 @@ impl Admitted {
             topics.extend(record.topics.as_slice().iter().map(ToString::to_string));
             terms.extend(record.terms.iter().map(|t| t.term.clone()));
         }
-        let request = pass::request(
-            &self.config.models.session,
+        let request = pass::request(pass::RequestInput {
+            model: &self.config.models.session,
             previous,
             linked,
             window,
-            topics.into_iter().take(MAX_LISTED).collect(),
-            terms.into_iter().take(MAX_LISTED).collect(),
-            final_window,
-            self.config.voice(crate::voice::ModelUse::Session),
-        );
+            topics: topics.into_iter().take(MAX_LISTED).collect(),
+            terms: terms.into_iter().take(MAX_LISTED).collect(),
+            final_pass: final_window,
+            voice: self.config.voice(crate::voice::ModelUse::Session),
+        });
         let digest = digest(data, &request, &through);
         Ok(Some(Window {
             request,

@@ -1,5 +1,6 @@
 #[test]
 fn agent_write_shapes_match_goldens() {
+    use scribe_core::apps::proposal::ProposalAddInput;
     use scribe_core::{
         AgentEntry, Author, Label, Project, ProposalKind, Redactor, Store, StoreTag, Topics,
     };
@@ -48,11 +49,13 @@ fn agent_write_shapes_match_goldens() {
         .unwrap();
     store
         .add_agent_proposal(
-            ProposalKind::Stale,
-            "notes-1",
-            None,
-            "Review this note.",
-            author(),
+            ProposalAddInput {
+                kind: ProposalKind::Stale,
+                older: "notes-1",
+                newer: None,
+                reason: "Review this note.",
+                author: author(),
+            },
             now,
             &redactor,
         )

@@ -143,16 +143,16 @@ fn answer() -> SessionAnswer {
 
 fn check(answer: SessionAnswer, conversation: &[PassMessage]) -> Result<pass::Distilled, Invalid> {
     let previous = answer.open.as_ref().map(|_| session("s-1", T0));
-    let request = pass::request(
-        "fake",
-        previous.as_ref(),
-        Vec::new(),
-        pass::window(conversation, None, WINDOW_CHARS),
-        Vec::new(),
-        Vec::new(),
-        false,
-        crate::voice::Voice::default(),
-    );
+    let request = pass::request(pass::RequestInput {
+        model: "fake",
+        previous: previous.as_ref(),
+        linked: Vec::new(),
+        window: pass::window(conversation, None, WINDOW_CHARS),
+        topics: Vec::new(),
+        terms: Vec::new(),
+        final_pass: false,
+        voice: crate::voice::Voice::default(),
+    });
     pass::check(answer, conversation, &request)
 }
 
@@ -378,16 +378,16 @@ fn the_request_carries_the_previous_record_the_window_and_what_to_reuse() {
     let conversation = pass::conversation(&transcript());
     let previous = session("s-1", T0);
     let window = pass::window(&conversation, Some("a-1"), WINDOW_CHARS);
-    let request = pass::request(
-        "claude-haiku-5-5",
-        Some(&previous),
-        Vec::new(),
+    let request = pass::request(pass::RequestInput {
+        model: "claude-haiku-5-5",
+        previous: Some(&previous),
+        linked: Vec::new(),
         window,
-        vec![String::from("ci")],
-        vec![String::from("graduate to level 4")],
-        true,
-        crate::voice::Voice::default(),
-    );
+        topics: vec![String::from("ci")],
+        terms: vec![String::from("graduate to level 4")],
+        final_pass: true,
+        voice: crate::voice::Voice::default(),
+    });
     assert_eq!(request.budget, crate::models::SESSION_BUDGET);
     let prompt = request.prompt();
     for part in [
@@ -410,19 +410,19 @@ fn overflow_request(last: &str, window: &[&str]) -> SessionRequest {
     let mut previous = session("s-1", T0);
     previous.log[0].text = "o".repeat(800);
     previous.log[0].last_message = Some(last.to_owned());
-    pass::request(
-        "fake",
-        Some(&previous),
-        Vec::new(),
-        pass::Window {
+    pass::request(pass::RequestInput {
+        model: "fake",
+        previous: Some(&previous),
+        linked: Vec::new(),
+        window: pass::Window {
             messages: window.iter().map(|id| plain(id, 10)).collect(),
             dropped: 0,
         },
-        Vec::new(),
-        Vec::new(),
-        false,
-        crate::voice::Voice::default(),
-    )
+        topics: Vec::new(),
+        terms: Vec::new(),
+        final_pass: false,
+        voice: crate::voice::Voice::default(),
+    })
 }
 
 fn segment_at(starts_at: &str, text: String) -> NewSegmentAnswer {
@@ -538,16 +538,16 @@ fn a_claim_needs_a_subject_and_a_context_within_their_bounds() {
         })
         .collect();
     let conversation = pass::conversation(&turns);
-    let mut request = pass::request(
-        "fake",
-        None,
-        Vec::new(),
-        pass::window(&conversation, None, WINDOW_CHARS),
-        Vec::new(),
-        Vec::new(),
-        false,
-        crate::voice::Voice::default(),
-    );
+    let mut request = pass::request(pass::RequestInput {
+        model: "fake",
+        previous: None,
+        linked: Vec::new(),
+        window: pass::window(&conversation, None, WINDOW_CHARS),
+        topics: Vec::new(),
+        terms: Vec::new(),
+        final_pass: false,
+        voice: crate::voice::Voice::default(),
+    });
     request.candidate_limit = 3;
     request.candidate_turns = (1..=5)
         .map(|n| FiringTurn {

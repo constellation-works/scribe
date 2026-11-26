@@ -7,7 +7,7 @@ use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;
 use crate::entry::EntryStatus;
 use crate::memory::{self, Milestone, NowItem, Stem, profile};
-use crate::models::{MemoryContext, ProfileAnswer, ProfileRequest, ProfileSession};
+use crate::models::{MemoryContext, ProfileRequest, ProfileSession};
 use crate::repository::{HistoryRow, MemoryCommit};
 use crate::store::refusal;
 use crate::store::{bare, not_found};
@@ -508,17 +508,18 @@ impl MemoryVerbs for Store {
                     check_refresh_sessions(request, cursor_to.as_ref(), basis.cursor.as_ref(), &records, now)?;
                 plan_refresh_commit(
                     rows,
-                    files,
-                    latest.as_ref(),
-                    closed.as_ref(),
-                    &pinned,
-                    &tags,
-                    &known,
-                    &passed,
-                    &request.session_ids,
-                    backlog,
-                    cursor_to.as_ref(),
-                    &request.answer,
+                    RefreshCommitState {
+                        files,
+                        latest: latest.as_ref(),
+                        closed: closed.as_ref(),
+                        pinned: &pinned,
+                        tags: &tags,
+                        known: &known,
+                        passed: &passed,
+                        backlog,
+                        cursor_to: cursor_to.as_ref(),
+                    },
+                    request,
                     &masks,
                     now,
                 )
@@ -625,23 +626,39 @@ fn check_refresh_sessions(
         .count())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Current memory and the refresh scope verified under the store lock.
+struct RefreshCommitState<'a> {
+    files: &'a crate::repository::MemoryFiles,
+    latest: Option<&'a crate::repository::Revision>,
+    closed: Option<&'a crate::repository::Revision>,
+    pinned: &'a str,
+    tags: &'a [String],
+    known: &'a BTreeSet<String>,
+    passed: &'a [NowItem],
+    backlog: usize,
+    cursor_to: Option<&'a (OffsetDateTime, SessionId)>,
+}
+
 fn plan_refresh_commit(
     rows: &crate::repository::MemoryRows<'_>,
-    files: &crate::repository::MemoryFiles,
-    latest: Option<&crate::repository::Revision>,
-    closed: Option<&crate::repository::Revision>,
-    pinned: &str,
-    tags: &[String],
-    known: &BTreeSet<String>,
-    passed: &[NowItem],
-    session_ids: &[String],
-    backlog: usize,
-    cursor_to: Option<&(OffsetDateTime, SessionId)>,
-    answer: &ProfileAnswer,
+    state: RefreshCommitState<'_>,
+    request: &ApplyRefreshRequest,
     masks: &dyn Fn(&str) -> bool,
     now: OffsetDateTime,
 ) -> Result<(MemoryCommit, RefreshWritten)> {
+    let RefreshCommitState {
+        files,
+        latest,
+        closed,
+        pinned,
+        tags,
+        known,
+        passed,
+        backlog,
+        cursor_to,
+    } = state;
+    let answer = &request.answer;
+    let session_ids = &request.session_ids;
     let text = if answer.profile.ends_with('\n') {
         answer.profile.clone()
     } else {

@@ -4,6 +4,7 @@
 use super::{SESSION_BODY, Seed, on_disk, private_tempdir, seed, session_text};
 use crate::SessionVerbs;
 use crate::apps::memory::WindowMemory as PassMemory;
+use crate::apps::session::PassWindow;
 use crate::apps::store::MigrateTestWrites;
 use crate::consistency::{Settle, Settled};
 use crate::control::{self, Switch};
@@ -347,9 +348,11 @@ fn a_pass_window_commits_its_record_and_memory_together_then_applies_the_journal
             record.clone(),
             None,
             PassWrite::Settle(false),
-            &[],
-            Some(&memory(vec![draft("Sister's wedding")])),
-            &[],
+            PassWindow {
+                candidates: &[],
+                memory: Some(&memory(vec![draft("Sister's wedding")])),
+                messages: &[],
+            },
             &redactor,
         )
         .unwrap_err();
@@ -367,9 +370,11 @@ fn a_pass_window_commits_its_record_and_memory_together_then_applies_the_journal
             next,
             Some(record.updated),
             PassWrite::Settle(false),
-            &[],
-            Some(&memory(Vec::new())),
-            &[],
+            PassWindow {
+                candidates: &[],
+                memory: Some(&memory(Vec::new())),
+                messages: &[],
+            },
             &redactor,
         )
         .unwrap();
@@ -400,9 +405,11 @@ fn a_pass_window_that_fails_inside_its_transaction_writes_nothing() {
             session(id.as_str(), T0),
             None,
             PassWrite::Settle(false),
-            &[],
-            Some(&memory(vec![draft("Sister's wedding")])),
-            &[],
+            PassWindow {
+                candidates: &[],
+                memory: Some(&memory(vec![draft("Sister's wedding")])),
+                messages: &[],
+            },
             &redactor,
         )
         .unwrap_err();
@@ -441,9 +448,11 @@ fn session_forget_retires_single_source_memory_and_keeps_other_occurrences() {
                 record.clone(),
                 None,
                 PassWrite::Settle(false),
-                &[],
-                Some(&memory(drafts)),
-                &[],
+                PassWindow {
+                    candidates: &[],
+                    memory: Some(&memory(drafts)),
+                    messages: &[],
+                },
                 &redactor,
             )
             .unwrap();

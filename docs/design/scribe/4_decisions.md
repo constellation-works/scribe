@@ -5717,7 +5717,7 @@ Resolve the conflict as a recorded deviation, not by deleting code now:
 - Proposed, not filed: "export the file-store archive tables, then retire the archive importer and the `MIGRATIONS` chain (STD-14@1 §R1)", gated on Daniel's approval.
 - ORB-28930 (superseded memory CLI and config inputs) and ORB-28931 (catcher spellings) are reused as the kickoff proposed. Before removing either, check for stored values; any value the removed code still reads joins the export gate.
 
-## STD-02@10 §R51: the 15 suppression sites are a counted deviation
+## STD-02@10 §R51: parameter-count deviation closed
 
 **Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
 **Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs`, `apps/session/pass/mod.rs`, `apps/entry/verbs.rs`, `apps/memory/verbs.rs:628`, `apps/session/rules/pass.rs`, `apps/session/pass/run/workflow.rs`, `crates/scribe/tests/support/goldens.rs`
@@ -5728,10 +5728,18 @@ STD-02@10 §R51 bars more than seven parameters, receiver counted, and any `allo
 
 ### Decision
 
-Record `STD-02@10 §R51` with the count: 15 attribute lines naming `clippy::too_many_arguments` in 7 files, found by `rg`. Clippy at threshold 7 reports no unsuppressed site. The count may only fall; ORB-28929 removes the suppressions. ORB-28929 counted 14, and the current count is 15 lines.
+At adoption, the workspace had 15 source suppressions in seven files.
+Clippy at threshold seven reported no diagnostic with those suppressions
+in place.
 
-The gate is active through clippy's default threshold of 7. `clippy.toml` does not set `too-many-arguments-threshold` explicitly; setting it is part of ORB-28929.
+ORB-28929 closed the deviation. Clippy 1.96.0 with
+`--workspace --all-targets --locked -- --force-warn clippy::too_many_arguments`
+reported eight distinct source locations at threshold seven on
+`49ce79d53b75`. The refactor brought the diagnostic and suppression counts
+to zero.
 
 ### Consequences
 
-- Cost: the 15 suppressions, and the functions behind them (`apps/memory/verbs.rs:629` `plan_refresh_commit` takes about 13 parameters by text count), stand until ORB-28929 lands.
+- `clippy.toml` explicitly sets the threshold to seven. The workspace lint
+  is enabled at warn, and the existing CI Clippy command turns warnings into
+  errors. STD-02@10 §R51 also requires review to reject source suppressions.

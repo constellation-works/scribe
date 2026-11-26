@@ -1,7 +1,7 @@
 //! `scribe proposal settle` (ORB-27707 step 3d): an agent settling a
 //! proposal on the user's instruction.
 
-use super::verbs::ProposalVerbs;
+use super::verbs::{ProposalChangeInput, ProposalVerbs};
 use crate::apps::entry::{self, Instruction};
 use crate::apps::tag::redactor;
 use crate::instruction::{Act, Target};
@@ -56,15 +56,17 @@ pub fn settle<E: PortError>(
     )?;
     let redactor = redactor(ctx)?;
     Ok(ctx.store.change_agent_proposal(
-        input.id,
-        if input.approve {
-            ProposalChange::Approve
-        } else {
-            ProposalChange::Reject
+        ProposalChangeInput {
+            id: input.id,
+            change: if input.approve {
+                ProposalChange::Approve
+            } else {
+                ProposalChange::Reject
+            },
+            reason: input.reason,
+            instruction: instructed.as_ref(),
+            author: input.author,
         },
-        input.reason,
-        instructed.as_ref(),
-        input.author,
         ctx.clock.now(),
         &redactor,
     )?)

@@ -27,11 +27,11 @@ fn prompt(model_use: ModelUse, voice: Voice, _shipped_tags: bool) -> String {
     let budget = Duration::from_secs(5);
     match model_use {
         ModelUse::Session => {
-            let mut request = pass::request(
-                "m",
-                None,
-                Vec::new(),
-                pass::Window {
+            let mut request = pass::request(pass::RequestInput {
+                model: "m",
+                previous: None,
+                linked: Vec::new(),
+                window: pass::Window {
                     messages: vec![PassMessage {
                         uuid: String::from("u-1"),
                         role: Speaker::User,
@@ -40,11 +40,11 @@ fn prompt(model_use: ModelUse, voice: Voice, _shipped_tags: bool) -> String {
                     }],
                     dropped: 0,
                 },
-                Vec::new(),
-                Vec::new(),
-                false,
+                topics: Vec::new(),
+                terms: Vec::new(),
+                final_pass: false,
                 voice,
-            );
+            });
             request.candidate_limit = 1;
             request.write_limit = 1;
             request.candidate_turns = vec![
@@ -212,19 +212,19 @@ fn session_with_shipped_rules(voice: Voice) -> String {
             writes: tag == "idea",
         }
     });
-    let mut request = pass::request(
-        "m",
-        None,
-        Vec::new(),
-        pass::Window {
+    let mut request = pass::request(pass::RequestInput {
+        model: "m",
+        previous: None,
+        linked: Vec::new(),
+        window: pass::Window {
             messages: Vec::new(),
             dropped: 0,
         },
-        Vec::new(),
-        Vec::new(),
-        false,
+        topics: Vec::new(),
+        terms: Vec::new(),
+        final_pass: false,
         voice,
-    );
+    });
     request.candidate_limit = 1;
     request.write_limit = 1;
     request.candidate_turns = vec![FiringTurn {

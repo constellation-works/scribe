@@ -34,7 +34,7 @@ pub use pass::{
     PrepareInput, Prepared, SessionPassInput,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub use pass::{ClaimsWritten, PassVerbs, PassWrite, PassWritten, short_reason};
+pub use pass::{ClaimsWritten, PassVerbs, PassWindow, PassWrite, PassWritten, short_reason};
 #[cfg(any(test, feature = "test-support"))]
 pub use rebuild::{Finished, Mark, RebuildVerbs};
 pub use rebuild::{

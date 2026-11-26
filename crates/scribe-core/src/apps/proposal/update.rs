@@ -2,7 +2,7 @@
 //! reason. Arguments are refused before an unset `[redact]` env name is
 //! reported.
 
-use super::verbs::ProposalVerbs;
+use super::verbs::{ProposalChangeInput, ProposalVerbs};
 use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
 use crate::runtime::errors::WriteError;
@@ -24,11 +24,13 @@ pub fn update<E>(
     ctx.store.resolve_proposal(id)?;
     let redactor = redactor(ctx)?;
     Ok(ctx.store.change_agent_proposal(
-        id,
-        ProposalChange::Update,
-        Some(reason),
-        None,
-        author,
+        ProposalChangeInput {
+            id,
+            change: ProposalChange::Update,
+            reason: Some(reason),
+            instruction: None,
+            author,
+        },
         ctx.clock.now(),
         &redactor,
     )?)
