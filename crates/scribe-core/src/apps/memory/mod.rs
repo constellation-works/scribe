@@ -157,6 +157,32 @@ pub enum Outcome {
     Applied(Box<ApplyRefreshOutcome>),
 }
 
+/// A write names its item (`memory:<id>`) or the profile when it changed
+/// it, and writes no line when it did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        let item = |shown: &MemoryShown| Some(format!("memory:{}", shown_id(shown)));
+        match self {
+            Self::Show(shown) => match &**shown {
+                Shown::Item(shown) => vec![Line::success(item(shown))],
+                Shown::Revision(_) | Shown::Block(_) => vec![Line::success(None)],
+            },
+            Self::Acked(now, changed) => {
+                Line::written(Some(format!("memory:{}", now.stem)), *changed)
+            }
+            Self::Forgotten(shown) => vec![Line::success(item(shown))],
+            Self::Restored(shown, written) => Line::written(item(shown), *written),
+            Self::RefreshedNothingNew | Self::Prepared(_) => Vec::new(),
+            Self::Applied(outcome) => match &**outcome {
+                ApplyRefreshOutcome::Written(_) => {
+                    Line::written(Some(String::from("memory:profile")), true)
+                }
+                ApplyRefreshOutcome::Retry { .. } => Vec::new(),
+            },
+        }
+    }
+}
+
 /// Why a `scribe memory` write did not run.
 #[derive(Debug)]
 pub enum Error<E> {
@@ -181,6 +207,37 @@ pub enum Error<E> {
 impl<E> From<crate::Error> for Error<E> {
     fn from(err: crate::Error) -> Self {
         Self::Core(err)
+    }
+}
+
+/// `scribe memory`'s errors, each the variant it was before the flow moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Core(e) => Self::Core(e),
+            Error::Port(e) => e,
+            Error::ConfirmRequired(shown) => Self::ForgetConfirmRequired(shown_id(&shown)),
+            Error::NeedsOrbit {
+                sessions,
+                corrections,
+                passed,
+            } => {
+                let mut pending = Vec::new();
+                if sessions > 0 {
+                    pending.push(format!("{sessions} session(s)"));
+                }
+                if corrections {
+                    pending.push(String::from("profile edits"));
+                }
+                if passed > 0 {
+                    pending.push(format!("{passed} passed now item(s)"));
+                }
+                Self::Usage(format!(
+                    "memory refresh needs a model run ({}); run `orbit job run scribe-memory-refresh`, or use `scribe memory prepare --json` and `scribe memory apply`",
+                    pending.join(", ")
+                ))
+            }
+        }
     }
 }
 
@@ -237,62 +294,5 @@ fn shown_id(shown: &MemoryShown) -> String {
         MemoryShown::Profile(_) => String::from("profile"),
         MemoryShown::Now(n) => n.stem.to_string(),
         MemoryShown::Milestone(m) => m.stem.to_string(),
-    }
-}
-
-/// `scribe memory`'s errors, each the variant it was before the flow moved.
-impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
-    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            Error::Core(e) => Self::Core(e),
-            Error::Port(e) => e,
-            Error::ConfirmRequired(shown) => Self::ForgetConfirmRequired(shown_id(&shown)),
-            Error::NeedsOrbit {
-                sessions,
-                corrections,
-                passed,
-            } => {
-                let mut pending = Vec::new();
-                if sessions > 0 {
-                    pending.push(format!("{sessions} session(s)"));
-                }
-                if corrections {
-                    pending.push(String::from("profile edits"));
-                }
-                if passed > 0 {
-                    pending.push(format!("{passed} passed now item(s)"));
-                }
-                Self::Usage(format!(
-                    "memory refresh needs a model run ({}); run `orbit job run scribe-memory-refresh`, or use `scribe memory prepare --json` and `scribe memory apply`",
-                    pending.join(", ")
-                ))
-            }
-        }
-    }
-}
-
-/// A write names its item (`memory:<id>`) or the profile when it changed
-/// it, and writes no line when it did not.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        let item = |shown: &MemoryShown| Some(format!("memory:{}", shown_id(shown)));
-        match self {
-            Self::Show(shown) => match &**shown {
-                Shown::Item(shown) => vec![Line::success(item(shown))],
-                Shown::Revision(_) | Shown::Block(_) => vec![Line::success(None)],
-            },
-            Self::Acked(now, changed) => {
-                Line::written(Some(format!("memory:{}", now.stem)), *changed)
-            }
-            Self::Forgotten(shown) => vec![Line::success(item(shown))],
-            Self::Restored(shown, written) => Line::written(item(shown), *written),
-            Self::RefreshedNothingNew | Self::Prepared(_) => Vec::new(),
-            Self::Applied(outcome) => match &**outcome {
-                ApplyRefreshOutcome::Written(_) => {
-                    Line::written(Some(String::from("memory:profile")), true)
-                }
-                ApplyRefreshOutcome::Retry { .. } => Vec::new(),
-            },
-        }
     }
 }

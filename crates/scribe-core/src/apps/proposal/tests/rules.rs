@@ -8,6 +8,38 @@ use time::{Duration, OffsetDateTime};
 const T0: OffsetDateTime = datetime!(2026-10-01 09:00 UTC);
 const NOW: OffsetDateTime = datetime!(2026-11-02 06:00 UTC);
 
+trait WithState {
+    fn with_state(self, state: ProposalState) -> Self;
+}
+
+impl WithState for Proposal {
+    fn with_state(mut self, state: ProposalState) -> Self {
+        self.state = state;
+        self
+    }
+}
+
+trait RefusalCode {
+    fn refusal_code(&self) -> Option<&'static str>;
+}
+
+impl RefusalCode for Settled {
+    fn refusal_code(&self) -> Option<&'static str> {
+        match self {
+            Settled::Refused(why) => Some(SettleRefusal::code(why)),
+            Settled::Approved { .. }
+            | Settled::Rejected { .. }
+            | Settled::Retired(_)
+            | Settled::Forgotten(_)
+            | Settled::SessionForgotten(_)
+            | Settled::SessionForgetRepaired { .. }
+            | Settled::Covered { .. }
+            | Settled::Already(_)
+            | Settled::Recorded { .. } => None,
+        }
+    }
+}
+
 fn id(s: &str) -> EntryId {
     s.parse().unwrap()
 }
@@ -54,17 +86,6 @@ fn proposal(
     }
     .into_proposal(pid(n), T0)
     .with_state(state)
-}
-
-trait WithState {
-    fn with_state(self, state: ProposalState) -> Self;
-}
-
-impl WithState for Proposal {
-    fn with_state(mut self, state: ProposalState) -> Self {
-        self.state = state;
-        self
-    }
 }
 
 fn store() -> Vec<Entry> {
@@ -503,25 +524,4 @@ fn a_draft_is_dropped_once_its_entries_are_not_both_active() {
     assert!(!consistency::is_settled_or_gone(&draft, &[], &entries));
     entries[1].status = EntryStatus::Forgotten;
     assert!(consistency::is_settled_or_gone(&draft, &[], &entries));
-}
-
-trait RefusalCode {
-    fn refusal_code(&self) -> Option<&'static str>;
-}
-
-impl RefusalCode for Settled {
-    fn refusal_code(&self) -> Option<&'static str> {
-        match self {
-            Settled::Refused(why) => Some(SettleRefusal::code(why)),
-            Settled::Approved { .. }
-            | Settled::Rejected { .. }
-            | Settled::Retired(_)
-            | Settled::Forgotten(_)
-            | Settled::SessionForgotten(_)
-            | Settled::SessionForgetRepaired { .. }
-            | Settled::Covered { .. }
-            | Settled::Already(_)
-            | Settled::Recorded { .. } => None,
-        }
-    }
 }

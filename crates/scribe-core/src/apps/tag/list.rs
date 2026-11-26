@@ -68,7 +68,7 @@ pub fn list_tags(read: &Snapshot<'_>) -> Result<TagList> {
     }
     Ok(TagList {
         tags,
-        skipped,
         warnings,
+        skipped,
     })
 }

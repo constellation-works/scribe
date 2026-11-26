@@ -66,6 +66,17 @@ pub enum Outcome {
     Exported(Box<ExportWritten>),
 }
 
+/// `store migrate` writes one line, naming the records. `export` writes
+/// nothing to the store: never audited.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Migrated(_) => vec![Line::success(Some(String::from("store:records")))],
+            Self::Exported(_) => vec![Line::success(None)],
+        }
+    }
+}
+
 /// What `export` wrote, and where and how.
 pub struct ExportWritten {
     /// The counts and files written.
@@ -101,15 +112,4 @@ pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError
             })),
         })
     })
-}
-
-/// `store migrate` writes one line, naming the records. `export` writes
-/// nothing to the store: never audited.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Migrated(_) => vec![Line::success(Some(String::from("store:records")))],
-            Self::Exported(_) => vec![Line::success(None)],
-        }
-    }
 }

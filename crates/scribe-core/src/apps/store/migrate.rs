@@ -6,6 +6,24 @@ use super::rules;
 use crate::{ImportFacts, Result, Store};
 use time::OffsetDateTime;
 
+/// `store migrate` in the store tests' call syntax. Only for tests.
+#[cfg(any(test, feature = "test-support"))]
+pub trait MigrateTestWrites {
+    /// `store migrate` at `now`.
+    ///
+    /// # Errors
+    ///
+    /// As [`migrate`].
+    fn migrate_store(&self, now: OffsetDateTime) -> Result<crate::Imported>;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl MigrateTestWrites for Store {
+    fn migrate_store(&self, now: OffsetDateTime) -> Result<crate::Imported> {
+        migrate(self, now)
+    }
+}
+
 /// Refuse `store migrate` before anything is imported: when there is no
 /// archive to import, while a session is on, or while a rebuild
 /// checkpoint file waits in a leftover `sessions/`. Each fact is read
@@ -30,22 +48,4 @@ pub(crate) fn check_migrate(facts: &ImportFacts<'_>) -> Result<()> {
 /// moved; store failures.
 pub(crate) fn migrate(store: &Store, now: OffsetDateTime) -> Result<crate::Imported> {
     store.import_file_store(now, check_migrate)
-}
-
-/// `store migrate` in the store tests' call syntax. Only for tests.
-#[cfg(any(test, feature = "test-support"))]
-pub trait MigrateTestWrites {
-    /// `store migrate` at `now`.
-    ///
-    /// # Errors
-    ///
-    /// As [`migrate`].
-    fn migrate_store(&self, now: OffsetDateTime) -> Result<crate::Imported>;
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MigrateTestWrites for Store {
-    fn migrate_store(&self, now: OffsetDateTime) -> Result<crate::Imported> {
-        migrate(self, now)
-    }
 }

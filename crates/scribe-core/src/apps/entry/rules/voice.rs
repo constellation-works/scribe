@@ -8,6 +8,10 @@ use crate::config::voice::UserName;
 use crate::entry::{ContentFrom, Entry, Speaker};
 use time::OffsetDateTime;
 
+/// Whose instruction a line the user reads names: `entry show`, `record
+/// search` and `proposal list` speak to them.
+pub const INSTRUCTION_YOURS: &str = "your";
+
 /// Whose words an approved pass statement is, in `ask` evidence and in
 /// `scribe search` snippets (2_design.md §11.1).
 #[must_use]
@@ -158,10 +162,6 @@ pub fn outcome_text(outcome: &crate::Outcome, user: &UserName) -> String {
         (state, ..) => state.as_str().to_owned(),
     }
 }
-
-/// Whose instruction a line the user reads names: `entry show`, `record
-/// search` and `proposal list` speak to them.
-pub const INSTRUCTION_YOURS: &str = "your";
 
 /// Whose instruction a line in `ask` evidence names: the model reads it.
 #[must_use]

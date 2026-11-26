@@ -12,6 +12,11 @@ use std::{
     time::Duration,
 };
 
+/// Receipt format this binary writes. Format 2 adds `skill_files`.
+const RECEIPT_FORMAT: u32 = 2;
+/// Receipt formats this binary reads. Format 1 (no `skill_files`) upgrades in place.
+const READABLE_RECEIPT_FORMATS: [u32; 2] = [1, 2];
+
 /// One scaffolded artifact and its observed result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct InitFile {
@@ -35,11 +40,6 @@ pub struct InitReport {
     /// Exact remaining runtime steps.
     pub next: Vec<String>,
 }
-
-/// Receipt format this binary writes. Format 2 adds `skill_files`.
-const RECEIPT_FORMAT: u32 = 2;
-/// Receipt formats this binary reads. Format 1 (no `skill_files`) upgrades in place.
-const READABLE_RECEIPT_FORMATS: [u32; 2] = [1, 2];
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

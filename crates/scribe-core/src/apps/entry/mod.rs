@@ -196,6 +196,20 @@ pub enum Outcome {
     Written(Box<EntryWritten>),
 }
 
+/// A write names its entry when it changed it, and writes no line when it
+/// did not.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Written(written) => {
+                Line::written(Some(written.entry.id.to_string()), written.changed)
+            }
+            Self::Shown(shown) => vec![Line::success(Some(shown.entry.id.to_string()))],
+            Self::Listed(_) => vec![Line::success(None)],
+        }
+    }
+}
+
 /// Why an `entry` command did not run.
 #[derive(Debug)]
 pub enum Error<E> {
@@ -220,6 +234,16 @@ impl<E> From<WriteError<E>> for Error<E> {
 impl<E> From<crate::Error> for Error<E> {
     fn from(err: crate::Error) -> Self {
         Self::Read(ReadError::Core(err))
+    }
+}
+
+/// `scribe entry`'s errors, each the variant it was before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+        }
     }
 }
 
@@ -323,28 +347,4 @@ pub(crate) fn fill_cite_messages(
     find: impl Fn(&Cite) -> Option<String>,
 ) -> crate::Result<Vec<EntryId>> {
     verbs::EntryVerbs::fill_cite_messages(store, session, now, find)
-}
-
-/// `scribe entry`'s errors, each the variant it was before the app moved.
-impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
-    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-        }
-    }
-}
-
-/// A write names its entry when it changed it, and writes no line when it
-/// did not.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Written(written) => {
-                Line::written(Some(written.entry.id.to_string()), written.changed)
-            }
-            Self::Shown(shown) => vec![Line::success(Some(shown.entry.id.to_string()))],
-            Self::Listed(_) => vec![Line::success(None)],
-        }
-    }
 }

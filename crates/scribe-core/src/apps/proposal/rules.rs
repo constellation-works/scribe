@@ -33,6 +33,7 @@ pub mod candidates;
 pub mod proposals;
 
 use crate::apps::entry::{SettleRefusal, Settled, forget};
+pub use crate::capture::Settle;
 use crate::entry::{Cite, Entry, EntryId, EntryStatus};
 use crate::pass::{PassClaim, own_span};
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState, Quote};
@@ -83,6 +84,37 @@ impl Draft {
     }
 }
 
+/// One approval applied again by [`reapply`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reapplied {
+    /// The approved proposal.
+    pub proposal: ProposalId,
+    /// The older entry, now changed.
+    pub entry: EntryId,
+    /// Its status now.
+    pub status: EntryStatus,
+}
+
+/// An approved candidate a recovery closed because an active entry already
+/// covers its statement. The covering id is not stored on the proposal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoveredCandidate {
+    /// The candidate proposal, now `rejected`.
+    pub proposal: ProposalId,
+    /// The active entry that covers the candidate's statement.
+    pub by: EntryId,
+}
+
+/// What `ProposalVerbs::reapply_approved` in scribe-core repaired: approvals applied
+/// again, and approved candidates closed because a later entry covers them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReapplyReport {
+    /// Approvals whose older entry was still `active`.
+    pub applied: Vec<Reapplied>,
+    /// Approved candidates closed as `rejected` with no new entry.
+    pub covered: Vec<CoveredCandidate>,
+}
+
 /// Whether `entries` and `proposals` already hold what `draft` proposes,
 /// or `draft` no longer applies: a pair or stale entry with a proposal in
 /// any state is never proposed again, and both entries must still be
@@ -124,37 +156,6 @@ pub fn approved_status(proposal: &Proposal) -> (EntryStatus, Option<EntryId>) {
     }
 }
 
-/// One approval applied again by [`reapply`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Reapplied {
-    /// The approved proposal.
-    pub proposal: ProposalId,
-    /// The older entry, now changed.
-    pub entry: EntryId,
-    /// Its status now.
-    pub status: EntryStatus,
-}
-
-/// An approved candidate a recovery closed because an active entry already
-/// covers its statement. The covering id is not stored on the proposal.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CoveredCandidate {
-    /// The candidate proposal, now `rejected`.
-    pub proposal: ProposalId,
-    /// The active entry that covers the candidate's statement.
-    pub by: EntryId,
-}
-
-/// What `ProposalVerbs::reapply_approved` in scribe-core repaired: approvals applied
-/// again, and approved candidates closed because a later entry covers them.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ReapplyReport {
-    /// Approvals whose older entry was still `active`.
-    pub applied: Vec<Reapplied>,
-    /// Approved candidates closed as `rejected` with no new entry.
-    pub covered: Vec<CoveredCandidate>,
-}
-
 /// Apply every approved proposal whose older entry is still `active` to
 /// `entries` again (§7: approval writes two files, and a crash between them
 /// leaves the entry behind). Returns what changed, by proposal id.
@@ -184,8 +185,6 @@ pub fn reapply(
     }
     out
 }
-
-pub use crate::capture::Settle;
 
 /// Apply `action`, typed in the turn `cite`, to the loaded `proposals` and
 /// `entries` in memory; the caller writes what changed (the proposals first,

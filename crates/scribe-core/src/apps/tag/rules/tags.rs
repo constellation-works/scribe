@@ -64,6 +64,19 @@ pub struct TagSummary {
     pub rejected: usize,
 }
 
+/// Fields accepted by tag update.
+#[derive(Clone, Debug, Default)]
+pub struct TagPatch {
+    /// Replace the description.
+    pub description: Option<String>,
+    /// Aliases to add.
+    pub add_aliases: Vec<TagName>,
+    /// Aliases to remove.
+    pub remove_aliases: Vec<TagName>,
+    /// Replace the interval when supplied.
+    pub stale_after_days: Option<NonZeroU32>,
+}
+
 /// Every configured tag, plus any tag that has entries but no
 /// configuration, sorted by name, each with its entry count.
 #[must_use]
@@ -77,27 +90,18 @@ pub fn summarize(table: &TagTable, entries: &[Entry]) -> Vec<TagSummary> {
     }
     counts
         .into_iter()
-        .map(|(name, entries)| TagSummary {
-            author: None,
-            source: table.get(&name).map(|_| "config"),
-            def: table.get(&name).cloned(),
-            name,
-            entries,
-            retired: 0,
-            rejected: 0,
+        .map(|(name, entries)| {
+            let source = table.get(&name).map(|_| "config");
+            let def = table.get(&name).cloned();
+            TagSummary {
+                author: None,
+                source,
+                name,
+                def,
+                entries,
+                retired: 0,
+                rejected: 0,
+            }
         })
         .collect()
-}
-
-/// Fields accepted by tag update.
-#[derive(Clone, Debug, Default)]
-pub struct TagPatch {
-    /// Replace the description.
-    pub description: Option<String>,
-    /// Aliases to add.
-    pub add_aliases: Vec<TagName>,
-    /// Aliases to remove.
-    pub remove_aliases: Vec<TagName>,
-    /// Replace the interval when supplied.
-    pub stale_after_days: Option<NonZeroU32>,
 }

@@ -37,6 +37,18 @@ pub const SNIPPET_CHARS: usize = 240;
 /// How much of the snippet comes before the first matching word.
 const LEAD_CHARS: usize = 60;
 
+/// Entries are the user's explicit words, so they outrank summaries (§6.2).
+const ENTRY_WEIGHT: f64 = 1.5;
+
+/// An entry in a tag the question names ranks higher again.
+const TAG_BOOST: f64 = 1.5;
+
+/// BM25's term-frequency saturation.
+const BM25_K1: f64 = 1.2;
+
+/// BM25's length normalization.
+const BM25_B: f64 = 0.75;
+
 /// Why a search was refused before it ran.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchError {
@@ -122,6 +134,96 @@ pub struct Found {
     pub total: usize,
     /// How many hidden records also matched and were left out.
     pub hidden_matches: usize,
+}
+
+/// Which record kind a scope keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordKind {
+    /// Entries only.
+    Entry,
+    /// Session records only.
+    Session,
+    /// Stored messages only (`scribe.db`, 2_design.md §15.7).
+    Message,
+}
+
+impl RecordKind {
+    /// The canonical token.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "entry",
+            Self::Session => "session",
+            Self::Message => "message",
+        }
+    }
+}
+
+/// The records a search ranks, loaded by the caller.
+#[derive(Clone, Copy, Debug)]
+pub struct Corpus<'a> {
+    /// Every entry, any status.
+    pub entries: &'a [Entry],
+    /// Every session record.
+    pub sessions: &'a [SessionRecord],
+    /// Stored message matches supplied for a group-scoped question.
+    pub messages: &'a [crate::message::MessageMatch],
+    /// The configured tags, for tag words in the question.
+    pub tags: &'a TagTable,
+    /// How evidence labels and answers name the user (`[user] name`).
+    pub user: &'a UserName,
+}
+
+/// Where a ranked unit came from, by index into the [`Corpus`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// `corpus.entries[i]`.
+    Entry(usize),
+    /// The header of `corpus.sessions[i]`.
+    Header(usize),
+    /// Segment `log[j]` of `corpus.sessions[i]`.
+    Segment(usize, usize),
+}
+
+/// A candidate unit, ready to rank: an entry, a session header or segment.
+pub(crate) struct Doc {
+    /// The record it belongs to (a session's units share one), for counting
+    /// hidden matches once per record.
+    pub(crate) record: String,
+    pub(crate) item: EvidenceItem,
+    pub(crate) tokens: Vec<String>,
+    pub(crate) weight: f64,
+    pub(crate) order: u8,
+    pub(crate) at: OffsetDateTime,
+    pub(crate) hidden: bool,
+    pub(crate) origin: Origin,
+}
+
+/// One ranked unit's text and labels: what a hit's cite, snippet and
+/// attribution are read from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceItem {
+    /// Its cite: an entry id, `session:<id>` or `session:<id>#<n>`.
+    pub cite: String,
+    /// `entry` or `session`.
+    pub kind: &'static str,
+    /// Whose words the text is: the user, `assistant (recorded by the user)`,
+    /// `session summary` or `Orbit task`.
+    pub whose: String,
+    /// The record's status (`active`, `superseded`, `open`, `done`, ...).
+    pub status: String,
+    /// When it was recorded or last changed, `YYYY-MM-DD`.
+    pub date: String,
+    /// The text a claim may quote.
+    pub text: String,
+    /// The user's verbatim words within `text`, for an entry whose content is
+    /// scribe's statement of their turn (2_design.md §11.1): a claim is his
+    /// only when its quote lies within these. `None` for every other item.
+    pub quote: Option<String>,
+    /// For an entry an agent approved on the user's checked instruction, the
+    /// approved-by line (2_design.md §12.3); `None` otherwise. It sits
+    /// outside `text`, so no claim can quote it as the entry's words.
+    pub approval: Option<String>,
 }
 
 /// Rank the corpus for `query`.
@@ -464,56 +566,6 @@ pub fn snippet(text: &str, wanted: &BTreeSet<String>) -> String {
 
 // --- ranking (2_design.md §6.2, §6.7) ----------------------------------------
 
-/// Entries are the user's explicit words, so they outrank summaries (§6.2).
-const ENTRY_WEIGHT: f64 = 1.5;
-
-/// An entry in a tag the question names ranks higher again.
-const TAG_BOOST: f64 = 1.5;
-
-/// BM25's term-frequency saturation.
-const BM25_K1: f64 = 1.2;
-
-/// BM25's length normalization.
-const BM25_B: f64 = 0.75;
-
-/// Which record kind a scope keeps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RecordKind {
-    /// Entries only.
-    Entry,
-    /// Session records only.
-    Session,
-    /// Stored messages only (`scribe.db`, 2_design.md §15.7).
-    Message,
-}
-
-impl RecordKind {
-    /// The canonical token.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Entry => "entry",
-            Self::Session => "session",
-            Self::Message => "message",
-        }
-    }
-}
-
-/// The records a search ranks, loaded by the caller.
-#[derive(Clone, Copy, Debug)]
-pub struct Corpus<'a> {
-    /// Every entry, any status.
-    pub entries: &'a [Entry],
-    /// Every session record.
-    pub sessions: &'a [SessionRecord],
-    /// Stored message matches supplied for a group-scoped question.
-    pub messages: &'a [crate::message::MessageMatch],
-    /// The configured tags, for tag words in the question.
-    pub tags: &'a TagTable,
-    /// How evidence labels and answers name the user (`[user] name`).
-    pub user: &'a UserName,
-}
-
 /// The question's words for the lookup classifier: lowercase, split on
 /// anything but letters, digits and `-`.
 pub(crate) fn words(text: &str) -> Vec<String> {
@@ -531,31 +583,6 @@ fn project_named(project: &Project, word: &str) -> bool {
     slug != Project::GLOBAL
         && word.chars().count() >= 3
         && (slug == word || slug.rsplit('/').next() == Some(word))
-}
-
-/// Where a ranked unit came from, by index into the [`Corpus`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Origin {
-    /// `corpus.entries[i]`.
-    Entry(usize),
-    /// The header of `corpus.sessions[i]`.
-    Header(usize),
-    /// Segment `log[j]` of `corpus.sessions[i]`.
-    Segment(usize, usize),
-}
-
-/// A candidate unit, ready to rank: an entry, a session header or segment.
-pub(crate) struct Doc {
-    /// The record it belongs to (a session's units share one), for counting
-    /// hidden matches once per record.
-    pub(crate) record: String,
-    pub(crate) item: EvidenceItem,
-    pub(crate) tokens: Vec<String>,
-    pub(crate) weight: f64,
-    pub(crate) order: u8,
-    pub(crate) at: OffsetDateTime,
-    pub(crate) hidden: bool,
-    pub(crate) origin: Origin,
 }
 
 /// The store's units (§6.2 step 1, §6.7): every entry `keep_entry` accepts
@@ -585,6 +612,7 @@ pub(crate) fn store_docs(
         };
         docs.push(Doc {
             record: entry.id.to_string(),
+            item: entry_item(entry, corpus.user),
             tokens: tokens(&format!(
                 "{} {} {} {}",
                 entry.content,
@@ -600,7 +628,6 @@ pub(crate) fn store_docs(
             order: 0,
             at: entry.updated,
             hidden: entry.status.is_hidden(),
-            item: entry_item(entry, corpus.user),
             origin: Origin::Entry(i),
         });
     }
@@ -609,6 +636,7 @@ pub(crate) fn store_docs(
         if keep_unit(record, None) {
             docs.push(Doc {
                 record: key.clone(),
+                item: session_item(record, corpus.user),
                 tokens: tokens(&format!(
                     "{} {} {} {}",
                     record.title, record.summary, record.goals, record.next
@@ -617,7 +645,6 @@ pub(crate) fn store_docs(
                 order: 1,
                 at: record.updated,
                 hidden: !record.active,
-                item: session_item(record, corpus.user),
                 origin: Origin::Header(i),
             });
         }
@@ -627,12 +654,12 @@ pub(crate) fn store_docs(
             }
             docs.push(Doc {
                 record: key.clone(),
+                item: segment_item(record, segment),
                 tokens: tokens(&format!("{} {}", segment.heading, segment.text)),
                 weight: 1.0,
                 order: 1,
                 at: segment.to,
                 hidden: !record.active,
-                item: segment_item(record, segment),
                 origin: Origin::Segment(i, j),
             });
         }
@@ -942,31 +969,4 @@ fn segment_item(record: &SessionRecord, segment: &Segment) -> EvidenceItem {
         quote: None,
         approval: None,
     }
-}
-
-/// One ranked unit's text and labels: what a hit's cite, snippet and
-/// attribution are read from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvidenceItem {
-    /// Its cite: an entry id, `session:<id>` or `session:<id>#<n>`.
-    pub cite: String,
-    /// `entry` or `session`.
-    pub kind: &'static str,
-    /// Whose words the text is: the user, `assistant (recorded by the user)`,
-    /// `session summary` or `Orbit task`.
-    pub whose: String,
-    /// The record's status (`active`, `superseded`, `open`, `done`, ...).
-    pub status: String,
-    /// When it was recorded or last changed, `YYYY-MM-DD`.
-    pub date: String,
-    /// The text a claim may quote.
-    pub text: String,
-    /// The user's verbatim words within `text`, for an entry whose content is
-    /// scribe's statement of their turn (2_design.md §11.1): a claim is his
-    /// only when its quote lies within these. `None` for every other item.
-    pub quote: Option<String>,
-    /// For an entry an agent approved on the user's checked instruction, the
-    /// approved-by line (2_design.md §12.3); `None` otherwise. It sits
-    /// outside `text`, so no claim can quote it as the entry's words.
-    pub approval: Option<String>,
 }

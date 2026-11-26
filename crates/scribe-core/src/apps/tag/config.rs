@@ -66,6 +66,23 @@ impl<A: Access> ConfigReads for Tags<'_, A> {
     }
 }
 
+impl crate::composition::Context {
+    /// Config with provider-specific model defaults resolved.
+    ///
+    /// # Errors
+    ///
+    /// When the store or `config.toml` cannot be read.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn config(&self) -> Result<Config, crate::CommandError> {
+        Ok(self
+            .store()
+            .read()
+            .tags()
+            .config()?
+            .for_provider(self.provider()))
+    }
+}
+
 /// Merge routing definitions, letting config claim names and aliases first.
 fn merge_tags<A: Access>(
     tags: &Tags<'_, A>,
@@ -84,21 +101,4 @@ pub(crate) fn redactor<E>(
     ctx.redaction
         .redactor(&config)
         .map_err(crate::runtime::errors::WriteError::Port)
-}
-
-impl crate::composition::Context {
-    /// Config with provider-specific model defaults resolved.
-    ///
-    /// # Errors
-    ///
-    /// When the store or `config.toml` cannot be read.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn config(&self) -> Result<Config, crate::CommandError> {
-        Ok(self
-            .store()
-            .read()
-            .tags()
-            .config()?
-            .for_provider(self.provider()))
-    }
 }

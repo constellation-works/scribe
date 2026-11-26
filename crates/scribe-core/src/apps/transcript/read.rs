@@ -27,6 +27,30 @@ pub struct Surveyed {
     pub survey: Survey,
 }
 
+/// What `transcript list` reads.
+pub struct ListInput<'i> {
+    /// `--since`: the first day a transcript's span may overlap.
+    pub since: time::Date,
+    /// The checked `--since`/`--until` range.
+    pub dates: crate::DateRange,
+    /// `--project`, any of them; empty takes any.
+    pub projects: &'i [Project],
+    /// `--min-turns`.
+    pub min_turns: u32,
+    /// `--limit`.
+    pub limit: Option<std::num::NonZeroUsize>,
+}
+
+/// What `transcript list` found.
+pub struct Listed {
+    /// The transcripts kept, newest first, cut to the limit.
+    pub rows: Vec<Surveyed>,
+    /// How many were kept before the cut.
+    pub total: usize,
+    /// The transcripts that could not be read: the path and the error.
+    pub warnings: Vec<(String, String)>,
+}
+
 /// Survey `bytes`, `id`'s transcript, attributing it to a project of
 /// `config`.
 pub(crate) fn survey<E: PortError>(
@@ -106,30 +130,6 @@ pub fn show<E: PortError>(
         .map_err(CatalogError::Core)?
         .for_provider(provider);
     Ok(survey(ctx, &id, &bytes, &config))
-}
-
-/// What `transcript list` reads.
-pub struct ListInput<'i> {
-    /// `--since`: the first day a transcript's span may overlap.
-    pub since: time::Date,
-    /// The checked `--since`/`--until` range.
-    pub dates: crate::DateRange,
-    /// `--project`, any of them; empty takes any.
-    pub projects: &'i [Project],
-    /// `--min-turns`.
-    pub min_turns: u32,
-    /// `--limit`.
-    pub limit: Option<std::num::NonZeroUsize>,
-}
-
-/// What `transcript list` found.
-pub struct Listed {
-    /// The transcripts kept, newest first, cut to the limit.
-    pub rows: Vec<Surveyed>,
-    /// How many were kept before the cut.
-    pub total: usize,
-    /// The transcripts that could not be read: the path and the error.
-    pub warnings: Vec<(String, String)>,
 }
 
 /// `transcript list`: the `provider` transcripts with no session record and

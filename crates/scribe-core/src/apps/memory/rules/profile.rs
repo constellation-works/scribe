@@ -14,6 +14,37 @@ pub const DIFF_CHARS: usize = 4000;
 /// The heading whose body the job copies unchanged.
 pub const PINNED: &str = "Pinned";
 
+/// Why the job's profile is refused (§15.6); nothing is written and the
+/// cursor stays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileRefusal {
+    /// `profile_shape`: not the seven headings, in order.
+    Shape,
+    /// `profile_pinned`: Pinned changed.
+    Pinned,
+    /// `profile_too_long`: over [`PROFILE_CHARS`].
+    TooLong,
+    /// `profile_unknown_link`: a linked entry id that does not exist.
+    UnknownLink,
+    /// `profile_sensitive`: a credential (the redactor changes it), a
+    /// finance word or a sensitive event outside Pinned.
+    Sensitive,
+}
+
+impl ProfileRefusal {
+    /// The stable code.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Shape => "profile_shape",
+            Self::Pinned => "profile_pinned",
+            Self::TooLong => "profile_too_long",
+            Self::UnknownLink => "profile_unknown_link",
+            Self::Sensitive => "profile_sensitive",
+        }
+    }
+}
+
 /// The profile of a store with none yet: the seven headings, empty.
 #[must_use]
 pub fn template() -> String {
@@ -64,37 +95,6 @@ pub fn pinned(text: &str) -> Option<&str> {
         .into_iter()
         .find(|(h, _)| *h == PINNED)
         .map(|(_, body)| body.trim_end_matches(['\n', '\r', ' ', '\t']))
-}
-
-/// Why the job's profile is refused (§15.6); nothing is written and the
-/// cursor stays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProfileRefusal {
-    /// `profile_shape`: not the seven headings, in order.
-    Shape,
-    /// `profile_pinned`: Pinned changed.
-    Pinned,
-    /// `profile_too_long`: over [`PROFILE_CHARS`].
-    TooLong,
-    /// `profile_unknown_link`: a linked entry id that does not exist.
-    UnknownLink,
-    /// `profile_sensitive`: a credential (the redactor changes it), a
-    /// finance word or a sensitive event outside Pinned.
-    Sensitive,
-}
-
-impl ProfileRefusal {
-    /// The stable code.
-    #[must_use]
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::Shape => "profile_shape",
-            Self::Pinned => "profile_pinned",
-            Self::TooLong => "profile_too_long",
-            Self::UnknownLink => "profile_unknown_link",
-            Self::Sensitive => "profile_sensitive",
-        }
-    }
 }
 
 /// Check a rebuilt profile (§15.6): the seven headings in order; Pinned

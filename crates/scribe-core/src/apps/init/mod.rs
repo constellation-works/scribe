@@ -64,6 +64,17 @@ pub enum Outcome {
     Initialized(Box<InitReport>),
 }
 
+/// `init` writes its line only when it changed a file, naming the provider.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Initialized(report) => {
+                Line::written(Some(report.provider.to_string()), report.changed)
+            }
+        }
+    }
+}
+
 /// Why an `init` command did not run.
 pub type Error = crate::Error;
 
@@ -98,15 +109,4 @@ pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError
             }
         })
     })
-}
-
-/// `init` writes its line only when it changed a file, naming the provider.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Initialized(report) => {
-                Line::written(Some(report.provider.to_string()), report.changed)
-            }
-        }
-    }
 }

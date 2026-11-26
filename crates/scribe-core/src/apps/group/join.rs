@@ -115,10 +115,10 @@ pub fn run<E: PortError>(
     let earlier = earlier_turns(ctx, provider, &caller)?;
     let join = JoinGroup {
         group: &group.id,
-        session: &caller,
         seat: &seat,
-        author: &author,
         role: role.as_deref(),
+        session: &caller,
+        author: &author,
         replace,
         ended,
         predecessor: predecessor.as_ref(),
