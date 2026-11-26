@@ -126,6 +126,19 @@ pub struct RefreshWritten {
     pub backlog: usize,
 }
 
+/// Current memory and the refresh scope verified under the store lock.
+struct RefreshCommitState<'a> {
+    files: &'a crate::repository::MemoryFiles,
+    latest: Option<&'a crate::repository::Revision>,
+    closed: Option<&'a crate::repository::Revision>,
+    pinned: &'a str,
+    tags: &'a [String],
+    known: &'a BTreeSet<String>,
+    passed: &'a [NowItem],
+    backlog: usize,
+    cursor_to: Option<&'a (OffsetDateTime, SessionId)>,
+}
+
 /// The memory verbs, implemented for [`Store`].
 pub trait MemoryVerbs {
     /// Mark a `now` item raised in `session` by the agent `author`
@@ -624,19 +637,6 @@ fn check_refresh_sessions(
         .iter()
         .filter(|r| (r.updated, r.id.as_str()) > to)
         .count())
-}
-
-/// Current memory and the refresh scope verified under the store lock.
-struct RefreshCommitState<'a> {
-    files: &'a crate::repository::MemoryFiles,
-    latest: Option<&'a crate::repository::Revision>,
-    closed: Option<&'a crate::repository::Revision>,
-    pinned: &'a str,
-    tags: &'a [String],
-    known: &'a BTreeSet<String>,
-    passed: &'a [NowItem],
-    backlog: usize,
-    cursor_to: Option<&'a (OffsetDateTime, SessionId)>,
 }
 
 fn plan_refresh_commit(

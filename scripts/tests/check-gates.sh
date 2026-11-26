@@ -1296,33 +1296,7 @@ cat >"$cli_clippy/src/lib.rs" <<'EOF'
 //! Provider CLI adapter fixture.
 #![allow(dead_code)]
 
-/// Provider transport selection stub.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Provider {
-    /// Claude CLI.
-    ClaudeCode,
-    /// Codex CLI.
-    Codex,
-}
-
-/// Redactor stub.
-#[derive(Clone, Debug)]
-pub struct Redactor;
-
-impl Redactor {
-    /// Construct a stub redactor.
-    pub fn new<I, K, V>(_: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-    {
-        Self
-    }
-
-    /// Return text unchanged in the compile-only lint fixture.
-    pub fn mask(&self, text: &str) -> String {
-        text.to_owned()
-    }
-}
+mod cli;
 
 /// Model port stubs.
 pub mod models {
@@ -1418,6 +1392,34 @@ pub mod models {
     pub struct ProfileAnswer;
 }
 
+/// Provider transport selection stub.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Provider {
+    /// Claude CLI.
+    ClaudeCode,
+    /// Codex CLI.
+    Codex,
+}
+
+/// Redactor stub.
+#[derive(Clone, Debug)]
+pub struct Redactor;
+
+impl Redactor {
+    /// Construct a stub redactor.
+    pub fn new<I, K, V>(_: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+    {
+        Self
+    }
+
+    /// Return text unchanged in the compile-only lint fixture.
+    pub fn mask(&self, text: &str) -> String {
+        text.to_owned()
+    }
+}
+
 /// Models trait stub.
 pub trait Models {
     /// Session distillation stub.
@@ -1430,7 +1432,6 @@ pub trait Models {
     fn profile(&self, request: &models::ProfileRequest) -> Result<models::ProfileAnswer, models::ModelError>;
 }
 
-mod cli;
 EOF
 expect_clippy pass "$cli_clippy" "" "the production provider CLI adapter with scoped spawn expectation"
 cat >>"$cli_clippy/src/cli.rs" <<'EOF'
