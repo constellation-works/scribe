@@ -91,8 +91,7 @@ impl Memory<'_, ReadWrite> {
     }
 }
 
-/// The memory directory's name under the data directory.
-pub const MEMORY_DIR: &str = "memory";
+pub use crate::MEMORY_DIR;
 
 /// The `now` items' directory under [`MEMORY_DIR`].
 pub const NOW_DIR: &str = "now";

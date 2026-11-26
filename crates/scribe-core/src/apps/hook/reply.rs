@@ -13,6 +13,9 @@ use crate::runtime::audit::HookOutcome;
 /// The code of a payload whose transcript failed the provenance check.
 pub const PROVENANCE_FAILED: &str = "provenance_failed";
 
+/// The hook event for user prompt submission (`UserPromptSubmit`).
+pub const USER_PROMPT_SUBMIT_EVENT: &str = "UserPromptSubmit";
+
 /// The longest quote an echo shows, in characters; `entry show` has it all.
 const ECHO_CHARS: usize = 200;
 

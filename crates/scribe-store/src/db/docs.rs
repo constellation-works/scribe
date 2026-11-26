@@ -18,15 +18,15 @@
 //!   command could not commit without waiting is spooled to a file and
 //!   drained here by the next write, keyed by its file name (`spool`).
 
-use super::codec;
+use super::codec::{self, AUDIT_FORMAT};
 use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
 use super::{db_error, stamp};
+use crate::AuditEvent;
 use crate::MarkRecord;
 use crate::Pickup;
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};
-use crate::repository::audit::{AUDIT_FORMAT, AuditEvent};
 use crate::tag::StoreTag;
 use cw_sqlite::rusqlite::types::Value as Sql;
 use cw_sqlite::rusqlite::{self, Connection, params_from_iter};

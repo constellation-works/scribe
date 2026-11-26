@@ -3,8 +3,9 @@
 
 use super::verbs::ProposalVerbs;
 use crate::apps::entry::{self, Instruction};
+use crate::apps::tag::redactor;
 use crate::instruction::{Act, Target};
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::runtime::{Ctx, PortError};
 use crate::{AuthorName, Proposal, ProposalChange};
 

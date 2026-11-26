@@ -6,8 +6,8 @@
 //! The per-session locks are lock files in `locks/`, held across model
 //! calls, which no SQLite transaction may be.
 
+use super::codec::encode_checkpoint;
 use crate::Store;
-use crate::repository::sessions::encode_checkpoint;
 use crate::{Result, SessionId, SessionRecord};
 use time::OffsetDateTime;
 

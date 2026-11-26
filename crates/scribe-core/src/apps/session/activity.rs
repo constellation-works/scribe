@@ -5,8 +5,9 @@ use super::verbs::SessionVerbs;
 use crate::SessionView;
 use crate::activity::{self, ActiveOutcome, ActiveRoute, SetActive};
 use crate::apps::entry;
+use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::{Author, AuthorName, SessionId};
 use std::num::NonZeroU32;
 

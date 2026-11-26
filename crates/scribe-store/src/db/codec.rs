@@ -19,8 +19,13 @@
 //!   newer build wrote is refused by version;
 //! - the memory files' codec (`now` items and milestones).
 
+mod audit;
 mod entry;
 
+#[cfg(test)]
+pub(crate) use audit::AuditLine;
+pub use audit::decode_formatted;
+pub(crate) use audit::{AUDIT_FORMAT, encode_line};
 #[cfg(feature = "test-support")]
 pub(crate) use entry::decode_entry;
 pub use entry::encode_entry;
@@ -719,4 +724,9 @@ pub(crate) fn encode_milestone(path: &Path, item: &crate::Milestone) -> Result<S
         "---\n{front}---\n{}",
         memory_body(&item.title, &item.text)
     ))
+}
+
+/// The checkpoint's file text at the current format, as a row holds it.
+pub(crate) fn encode_checkpoint(path: &Path, record: &SessionRecord) -> Result<String> {
+    String::from_utf8(encode_session(path, record)?).map_err(|e| Error::corrupt(path, e))
 }

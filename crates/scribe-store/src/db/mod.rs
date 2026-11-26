@@ -718,6 +718,16 @@ pub fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) -> Error 
     from_sqlite_error(cw_sqlite::Error::sqlite(action, path, e), Instant::now())
 }
 
+/// Whether `id` has a forgotten row in `sessions`.
+pub(super) fn is_forgotten(conn: &Connection, id: &crate::SessionId) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sessions
+         WHERE provider_session = ?1 AND forgotten IS NOT NULL)",
+        [id.as_str()],
+        |row| row.get(0),
+    )
+}
+
 /// Restore the schema-10 shape before exercising migrations from an older version.
 #[cfg(any(test, feature = "test-support"))]
 pub const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "

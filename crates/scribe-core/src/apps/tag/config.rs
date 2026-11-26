@@ -76,6 +76,16 @@ fn merge_tags<A: Access>(
         .map_err(|e| refusal(WriteRefusal::TagConflict, e.to_string()))
 }
 
+/// The redactor for the stored config, as the record writes build it.
+pub(crate) fn redactor<E>(
+    ctx: &crate::runtime::Ctx<'_, E>,
+) -> Result<crate::Redactor, crate::runtime::errors::WriteError<E>> {
+    let config = ctx.store.read().tags().config()?;
+    ctx.redaction
+        .redactor(&config)
+        .map_err(crate::runtime::errors::WriteError::Port)
+}
+
 impl crate::composition::Context {
     /// Config with provider-specific model defaults resolved.
     ///

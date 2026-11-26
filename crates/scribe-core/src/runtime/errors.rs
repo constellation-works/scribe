@@ -6,7 +6,6 @@
 //! ports and composition report, and every app error maps into.
 
 use crate::SessionId;
-use crate::apps::tag::ConfigReads;
 use std::path::PathBuf;
 
 /// Why a read did not run.
@@ -80,14 +79,6 @@ impl<E> From<crate::Error> for WriteError<E> {
     fn from(err: crate::Error) -> Self {
         Self::Core(err)
     }
-}
-
-/// The redactor for the stored config, as the record writes build it.
-pub(crate) fn redactor<E>(
-    ctx: &crate::runtime::Ctx<'_, E>,
-) -> Result<crate::Redactor, WriteError<E>> {
-    let config = ctx.store.read().tags().config()?;
-    ctx.redaction.redactor(&config).map_err(WriteError::Port)
 }
 
 /// Every failure an app's command can end with, as the CLI has always

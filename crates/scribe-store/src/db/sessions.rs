@@ -25,7 +25,7 @@
 
 use super::log::check_log;
 use super::memory::read;
-use super::{DB_FILE, db_error, optimize_fts, stamp};
+use super::{DB_FILE, db_error, is_forgotten, optimize_fts, stamp};
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord};
 use cw_sqlite::rusqlite::types::Value as Sql;
@@ -434,16 +434,6 @@ pub(crate) fn forgotten(
         out.insert(id, Tombstone { number, at });
     }
     Ok(out)
-}
-
-/// Whether `id` has a forgotten row.
-pub(super) fn is_forgotten(conn: &Connection, id: &SessionId) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sessions
-         WHERE provider_session = ?1 AND forgotten IS NOT NULL)",
-        [id.as_str()],
-        |row| row.get(0),
-    )
 }
 
 pub(crate) use crate::error::forgotten_refusal;

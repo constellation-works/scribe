@@ -3,14 +3,13 @@
 //! use case owes, and no other subject.
 //!
 //! [`Ctx`] is the store and the ports a flow receives: composition's
-//! [`Context`](crate::composition::Context) fills them (`host/`), so no flow
+//! `Context` implements them (`composition/host/`), so no flow
 //! reads the environment or discovers a transcript itself. An app's `exec`
 //! takes the `Context` and runs its flow on the `Ctx` it lends (ORB-27921
 //! step 3).
 
 pub mod audit;
 pub mod errors;
-pub mod host;
 pub mod resolve;
 #[cfg(test)]
 mod tests;

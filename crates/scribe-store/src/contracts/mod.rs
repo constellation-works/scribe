@@ -7,6 +7,7 @@
 //! Step 5 moves the record shapes in, family by family.
 
 pub(crate) mod action;
+pub(crate) mod audit;
 pub mod entry;
 pub(crate) mod group;
 pub mod handoff;

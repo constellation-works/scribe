@@ -6,15 +6,15 @@
 mod tests;
 pub(crate) mod transcripts;
 
-#[cfg(unix)]
-use super::ClaudeRead;
-use super::{
-    AuditNotes, Clock, Ctx, Discovered, Redaction, TranscriptState, Transcripts, Unreadable,
-};
+use super::Context;
 #[cfg(unix)]
 use crate::ClaudeCapturePosition;
-use crate::composition::Context;
+#[cfg(unix)]
+use crate::runtime::ClaudeRead;
 use crate::runtime::errors::CommandError;
+use crate::runtime::{
+    AuditNotes, Clock, Ctx, Discovered, Redaction, TranscriptState, Transcripts, Unreadable,
+};
 use crate::{Config, Project, Provider, Redactor, SessionId};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;

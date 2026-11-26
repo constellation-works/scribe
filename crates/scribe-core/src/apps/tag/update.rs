@@ -1,9 +1,10 @@
 //! `scribe tag update` (ORB-27707 step 3d): an agent tag, without changing
 //! config.toml.
 
+use super::redactor;
 use super::verbs::TagVerbs;
 use crate::runtime::Ctx;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::{AuthorName, StoreTag, TagName, TagPatch};
 
 /// Update the agent tag `name`. The tag, and whether this changed it.

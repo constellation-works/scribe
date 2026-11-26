@@ -11,7 +11,7 @@ This file is the layout as built. Its source is
 amended at the end of ORB-27921 to the tree that migration produced.
 [`scripts/check-dependency-direction.sh`](scripts/check-dependency-direction.sh)
 enforces it ([STD-02](docs/standards/STD-02-rust-architecture-and-errors/STD-02.md)
-R1–R6). Every crate and top-level module has its place here, and every path
+R1–R6, R39). Every crate and top-level module has its place here, and every path
 written in code formatting exists
 ([`scripts/check-architecture-map.sh`](scripts/check-architecture-map.sh),
 STD-02 R43). A new crate, edge, app or guard changes this file, the spec and
@@ -94,6 +94,13 @@ flow of their own. The handler resolves the envelope's root with `Context::at`
 and calls the app's `exec` (or command handler that owns the work). `plugin` is
 the Orbit backend's transport, not a subject, so it has no app of its own.
 
+The `commands/` layer (17 modules) imports only strictly earlier modules in
+this order (STD-02 R39):
+
+```
+instruction < store < brief < consistency < entry < export < group < hook < init < mark < memory < proposal < search < session < tag < transcript < plugin
+```
+
 ## `scribe-core`
 
 ```
@@ -105,11 +112,11 @@ apps/<app>/
   verbs.rs           the app's private store verbs (*Verbs)
 runtime/
   mod.rs             Ctx, the port traits (Clock, Transcripts, Redaction, AuditNotes), RunLimits
-  host/              the ports implemented on Context
   resolve.rs         id and session resolution
   errors.rs          CommandError, read and write error mapping
-  audit.rs           the audit guard around a mutating command
+  audit.rs           the audit guard around a mutating command, InstructionNote and AuditHost
 composition.rs       Env, Context: the captured environment (the variables scribe reads, `SCRIBE_LOG`, and the process snapshot the terminal decision reads), and the resolved roots, store, provider and audit state
+composition/host/    the runtime port traits implemented on Context
 config.rs            config.toml shapes and parsing
 config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
@@ -149,7 +156,7 @@ pub fn exec(ctx: &Context, command: Command) -> Result<Outcome, CommandError>
   whether the process is interactive, and the audit state of the running
   command: the instruction note it acts on, and whether a stepwise command
   already committed its line. `exec` lends the ports to `run` as a
-  `Ctx<'_, CommandError>` (`ctx.core()`, `runtime/host/`): the store, the
+  `Ctx<'_, CommandError>` (`ctx.core()`, `composition/host/`): the store, the
   clock, the transcripts and the redactor, all implemented on the `Context`.
   Only `composition.rs` reads the environment.
 - **`run` is `exec` without the guard,** `pub(crate)`, on the `Ctx` that
@@ -191,7 +198,8 @@ so the guard holds each to the same order.
   redaction variables). `Context::resolve` picks the data directory, opens the
   `Store` and resolves the transcript roots and the provider. `config.rs`
   parses the config file; `Context::redactor` and `Context::models` build from a
-  parsed `Config`. `runtime/host/` implements the ports on the `Context`.
+  parsed `Config`. `composition/host/` implements `runtime`'s ports on the
+  `Context` (STD-02 R42), so `runtime` never imports `composition`.
 - `providers/` is interim while ORB-27911 removes Scribe's own model calls.
   Session pass, session catalog, session rebuild, group close and memory
   refresh use deterministic prepare/apply/begin/finish flows; Orbit jobs
@@ -229,6 +237,14 @@ testing.rs           test support (test-support)
   parser that enforces the type's own invariant, serde and `Display`, and
   own-shape methods. It imports nothing from `db/` or `repository/`, has no
   `check_*` function and reads no clock.
+- **In-layer orders (STD-02 R39):** the three multi-module layers in
+  `scribe-store` import only strictly earlier units in these orders:
+  - `db/`:
+    `archive < files < log < scope < codec < locks < memory < messages < groups < sessions < docs < import < write < documents`
+  - `contracts/`:
+    `audit < provider < record < session < entry < handoff < tag < action < group < mark < memory < message < proposal`
+  - `repository/`:
+    `ids < memory < audit < entries < groups < marks < messages < pickups < proposals < sessions < tags`
 - **The app owns product rules.** The calling app evaluates a rule requiring
   atomicity inside the store's transaction. The store owns format and
   persistence checks such as these:
@@ -298,6 +314,13 @@ what is refused stay in the app. The tools may use the store's contracts and
 a repository, but a tool that writes takes the caller's `Tx` and never calls
 `Store::write`. They take every root and every time as an argument.
 
+The top-level modules of `scribe-tools` (13 modules) import only strictly
+earlier modules in this order (STD-02 R39):
+
+```
+fs < host < origin < text < voice < markers < project < payload < transcript < window < group_close < memory_refresh < session_distill
+```
+
 ## Test support
 
 Each library has a `test-support` feature that only dev-dependencies turn on,
@@ -354,6 +377,14 @@ express. "Module" includes any file added later.
   `scribe-store` opens `scribe.db` only through `cw-sqlite`.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
+- **Import cycles and in-layer orders (STD-02 R6, R39):** the import graph
+  must be acyclic between workspace crates, between the top-level modules of
+  every crate, and between the sibling modules of every layer and module
+  directory (resolving `super::`, `self::`, grouped `use` trees and root
+  re-exports while ignoring comments and string literals). Every layer with
+  more than about ten units (`apps/`, `db/`, `contracts/`, `repository/`,
+  `scribe-tools`, `commands/`) obeys its declared order above; an unlisted
+  module or upward import fails.
 - **App order:** every directory under `apps/` is in the order above; an app
   imports only lower apps, through their `mod.rs`; no common, shared
   or util app.

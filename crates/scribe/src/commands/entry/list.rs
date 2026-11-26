@@ -80,7 +80,13 @@ pub(crate) struct ListArgs {
 pub(super) fn run(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let input = list_input(&args, ctx);
     let outcome = exec(ctx, Command::List(Box::new(input)))?;
-    Ok(output::output(outcome, false, Some(&args), ctx))
+    let display = output::ListDisplay {
+        related: &args.related,
+        dates: &args.dates,
+        after: args.after,
+        window: args.window,
+    };
+    Ok(output::output(outcome, false, Some(display), ctx))
 }
 
 fn list_input(args: &ListArgs, ctx: &Context) -> entry::ListInput {

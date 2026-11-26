@@ -254,6 +254,109 @@ for shape in db/codec repository/audit; do
   expect pass check-dependency-direction.sh "$ok" "a grouped import inside a raw string"
 done
 
+# --- check-dependency-direction.sh: unit import cycles & in-layer order (STD-02 R6, R39) ---
+# 1. Crate-level cycle (two crates mutually depending in [dependencies]).
+cyc_crate=$(tree cycle-crate-bad)
+printf '[package]\nname = "scribe-core"\n\n[dependencies]\nscribe = { path = "../scribe" }\n' \
+  >"$cyc_crate/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$cyc_crate" "a crate-level import cycle (scribe <-> scribe-core)"
+if ! grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing crate import cycle diagnostic" >&2
+  fail=1
+fi
+
+# 2. Top-level module cycles inside a crate (direct, relative super::, grouped, 3-node)
+#    plus clean acyclic twins and comment/string non-cycles.
+cyc_top_ok=$(tree cycle-top-clean)
+mkdir -p "$cyc_top_ok/crates/scribe-core/src/providers"
+printf '//! config\n' >"$cyc_top_ok/crates/scribe-core/src/config.rs"
+printf '//! providers\nuse crate::config;\n' >"$cyc_top_ok/crates/scribe-core/src/providers/mod.rs"
+expect pass check-dependency-direction.sh "$cyc_top_ok" "acyclic top-level modules (providers -> config)"
+
+for import in 'use crate::providers;' 'use super::providers;' 'use crate::{providers};'; do
+  cyc_top_bad=$(tree "cycle-top-$n")
+  mkdir -p "$cyc_top_bad/crates/scribe-core/src/providers"
+  printf '//! config\n%s\n' "$import" >"$cyc_top_bad/crates/scribe-core/src/config.rs"
+  printf '//! providers\nuse crate::config;\n' >"$cyc_top_bad/crates/scribe-core/src/providers/mod.rs"
+  expect fail check-dependency-direction.sh "$cyc_top_bad" "top-level module cycle config <-> providers via $import"
+  if ! grep -Fq "scribe-core import cycle:" "$work/out"; then
+    echo "check-gates: FAIL: missing scribe-core import cycle diagnostic for $import" >&2
+    fail=1
+  fi
+done
+
+cyc_three_ok=$(tree cycle-three-clean)
+printf '//! error\n' >"$cyc_three_ok/crates/scribe/src/error.rs"
+printf '//! help\nuse crate::error;\n' >"$cyc_three_ok/crates/scribe/src/help.rs"
+printf '//! cli\nuse crate::help;\n' >"$cyc_three_ok/crates/scribe/src/cli.rs"
+expect pass check-dependency-direction.sh "$cyc_three_ok" "acyclic 3-module chain (cli -> help -> error)"
+
+cyc_three_bad=$(tree cycle-three-bad)
+printf '//! error\nuse crate::cli;\n' >"$cyc_three_bad/crates/scribe/src/error.rs"
+printf '//! help\nuse crate::error;\n' >"$cyc_three_bad/crates/scribe/src/help.rs"
+printf '//! cli\nuse crate::help;\n' >"$cyc_three_bad/crates/scribe/src/cli.rs"
+expect fail check-dependency-direction.sh "$cyc_three_bad" "3-node top-level cycle cli -> help -> error -> cli"
+if ! grep -Fq "scribe import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing 3-node cycle diagnostic" >&2
+  fail=1
+fi
+
+cyc_comment=$(tree cycle-comment-clean)
+mkdir -p "$cyc_comment/crates/scribe-core/src/providers"
+printf '// use crate::providers;\n/* use crate::providers; */\nconst S: &str = r#"use crate::providers;"#;\n' \
+  >"$cyc_comment/crates/scribe-core/src/config.rs"
+printf '//! providers\nuse crate::config;\n' >"$cyc_comment/crates/scribe-core/src/providers/mod.rs"
+expect pass check-dependency-direction.sh "$cyc_comment" "commented and raw-string cycle-like imports"
+
+# 3. Module cycles inside a layer without a declared order (scribe::output)
+#    and inside a declared ordered layer (scribe-store::db).
+cyc_out_ok=$(tree cycle-output-clean)
+mkdir -p "$cyc_out_ok/crates/scribe/src/output"
+printf '//! color\n' >"$cyc_out_ok/crates/scribe/src/output/color.rs"
+printf '//! render\nuse super::color;\n' >"$cyc_out_ok/crates/scribe/src/output/render.rs"
+expect pass check-dependency-direction.sh "$cyc_out_ok" "acyclic scribe::output modules"
+
+cyc_out_bad=$(tree cycle-output-bad)
+mkdir -p "$cyc_out_bad/crates/scribe/src/output"
+printf '//! color\nuse super::render;\n' >"$cyc_out_bad/crates/scribe/src/output/color.rs"
+printf '//! render\nuse super::color;\n' >"$cyc_out_bad/crates/scribe/src/output/render.rs"
+expect fail check-dependency-direction.sh "$cyc_out_bad" "in-layer module cycle in scribe::output (color <-> render)"
+if ! grep -Fq "scribe::output import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing scribe::output cycle diagnostic" >&2
+  fail=1
+fi
+
+cyc_db_ok=$(store_tree cycle-db-clean)
+printf '//! groups\n' >"$cyc_db_ok/crates/scribe-store/src/db/groups.rs"
+printf '//! sessions\nuse super::groups;\n' >"$cyc_db_ok/crates/scribe-store/src/db/sessions.rs"
+expect pass check-dependency-direction.sh "$cyc_db_ok" "acyclic scribe-store::db downward edge (sessions -> groups)"
+
+cyc_db_bad=$(store_tree cycle-db-bad)
+printf '//! groups\nuse super::sessions;\n' >"$cyc_db_bad/crates/scribe-store/src/db/groups.rs"
+printf '//! sessions\nuse super::groups;\n' >"$cyc_db_bad/crates/scribe-store/src/db/sessions.rs"
+expect fail check-dependency-direction.sh "$cyc_db_bad" "in-layer module cycle in scribe-store::db (groups <-> sessions)"
+if ! grep -Fq "scribe-store::db import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing scribe-store::db cycle diagnostic" >&2
+  fail=1
+fi
+
+# 4. In-layer order enforcement without a cycle (upward edge and unlisted module).
+ord_db_bad=$(store_tree order-db-upward)
+printf '//! log\nuse super::codec;\n' >"$ord_db_bad/crates/scribe-store/src/db/log.rs"
+expect fail check-dependency-direction.sh "$ord_db_bad" "upward edge in scribe-store::db (log -> codec)"
+if ! grep -Fq "not lower in the declared order" "$work/out"; then
+  echo "check-gates: FAIL: missing declared order diagnostic" >&2
+  fail=1
+fi
+
+ord_db_unlisted=$(store_tree order-db-unlisted)
+printf '//! extra\n' >"$ord_db_unlisted/crates/scribe-store/src/db/extra.rs"
+expect fail check-dependency-direction.sh "$ord_db_unlisted" "unlisted module in scribe-store::db (extra)"
+if ! grep -Fq "has no place in the declared order" "$work/out"; then
+  echo "check-gates: FAIL: missing unlisted-module order diagnostic" >&2
+  fail=1
+fi
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.

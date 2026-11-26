@@ -1,37 +1,11 @@
 //! Read-only store export to a new or empty directory.
 
+use crate::db::documents::{ExportCounts, ExportFormat};
 use crate::db::{self, codec};
 use crate::error::{Error, Result, refusal};
 use crate::{CONTROL_FILE, RECORD_EXT, SESSIONS_DIR, Store, WriteRefusal};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
-
-/// The format of `scribe export`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExportFormat {
-    /// One file per session, the shape of today's record files, and
-    /// `control.json`.
-    Markdown,
-    /// One line per row, one file per table.
-    Jsonl,
-}
-
-/// What `scribe export` wrote.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ExportCounts {
-    /// The files written, relative to the target directory, in order.
-    pub files: Vec<String>,
-    /// Sessions written.
-    pub sessions: usize,
-    /// Entries written.
-    pub entries: usize,
-    /// Claims written.
-    pub claims: usize,
-    /// Audit lines written.
-    pub audit_lines: usize,
-    /// Records that did not read, so were not written.
-    pub skipped: Vec<PathBuf>,
-}
+use std::path::Path;
 
 impl Store {
     /// `scribe export`: write every record to `target`, a directory that is

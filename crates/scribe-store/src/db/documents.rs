@@ -18,56 +18,45 @@
 
 use crate::db::files;
 use crate::db::import::is_empty;
-use crate::db::write::{ImportCheck, ImportFacts, Move};
+use crate::db::write::{ImportCheck, ImportFacts, Imported, Move};
 use crate::db::{self, Conn as Connection, DB_FILE, codec, docs};
 use crate::error::{Error, Result};
-use crate::repository::audit;
-use crate::repository::tags::TAGS_FILE;
 use crate::session::ControlState;
 use crate::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Store,
+    SESSIONS_DIR, Store, TAGS_FILE,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 /// The legacy memory items' directory entries (`memory/m-<n>.md`).
 const LEGACY_MEMORY_PREFIX: &str = "m-";
 
-/// What `scribe store migrate`, or a write's own import, did.
+/// The format of `scribe export`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportFormat {
+    /// One file per session, the shape of today's record files, and
+    /// `control.json`.
+    Markdown,
+    /// One line per row, one file per table.
+    Jsonl,
+}
+
+/// What `scribe export` wrote.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Imported {
-    /// Session records imported (always 0 since phase 8: only archives are
-    /// imported).
+pub struct ExportCounts {
+    /// The files written, relative to the target directory, in order.
+    pub files: Vec<String>,
+    /// Sessions written.
     pub sessions: usize,
-    /// Switches imported (always 0 since phase 8).
-    pub switches: usize,
-    /// Codex cursors imported (always 0 since phase 8).
-    pub cursors: usize,
-    /// Rebuild checkpoints imported (always 0 since phase 8).
-    pub checkpoints: usize,
-    /// Entries imported (always 0 since phase 8).
+    /// Entries written.
     pub entries: usize,
-    /// Claims imported (always 0 since phase 8).
+    /// Claims written.
     pub claims: usize,
-    /// Store tags imported (always 0 since phase 8).
-    pub tags: usize,
-    /// Annotation marks imported (always 0 since phase 8).
-    pub marks: usize,
-    /// Pickups imported (always 0 since phase 8).
-    pub pickups: usize,
-    /// Spooled audit lines drained into the table.
+    /// Audit lines written.
     pub audit_lines: usize,
-    /// Audit lines that did not parse (always 0 since phase 8).
-    pub audit_torn: usize,
-    /// Where files went (always `None` since phase 8: archives are
-    /// imported, then removed).
-    pub moved_to: Option<String>,
-    /// `pre-sqlite-*` and `pre-issue-*` directories imported into the
-    /// archive tables.
-    pub archives: usize,
-    /// Archived records imported.
-    pub archived: usize,
+    /// Records that did not read, so were not written.
+    pub skipped: Vec<PathBuf>,
 }
 
 impl Store {
@@ -319,7 +308,7 @@ impl Store {
         let (lines, _) = self.audit_lines()?;
         let mut log = Vec::new();
         for (format, event) in &lines {
-            log.extend(audit::encode_line(*format, event).map_err(|e| {
+            log.extend(codec::encode_line(*format, event).map_err(|e| {
                 Error::corrupt(
                     target.join(AUDIT_FILE),
                     format!("an audit line does not encode: {e}"),

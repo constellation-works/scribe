@@ -14,8 +14,12 @@
     reason = "composition.rs is scribe-core's host composition root (STD-02 R3); it captures the environment and checks executable metadata on PATH"
 )]
 
+mod host;
+
 use crate::config::RedactorFromConfig;
 use crate::providers::{ClaudeCliModels, allowed_env};
+use crate::runtime::audit::AuditHost;
+pub use crate::runtime::audit::InstructionNote;
 use crate::runtime::errors::CommandError;
 use crate::{Config, Label, Provider, Redactor, SessionId, Store, unresolved_redact_env};
 use std::ffi::OsString;
@@ -148,15 +152,22 @@ pub struct Context {
     audit_committed: Arc<AtomicBool>,
 }
 
-/// The ids of the user's instruction a write ran on (2_design.md §12.4): the
-/// session from `--session`, and the turn's message once the check found it.
-/// Ids only; the instruction's words never reach the audit log.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct InstructionNote {
-    /// The `--session` the instruction was looked for in.
-    pub session: Option<String>,
-    /// The uuid of the turn that backs it, once the check passed.
-    pub message: Option<String>,
+impl AuditHost for Context {
+    fn audit_store(&self) -> &Store {
+        self.store()
+    }
+
+    fn audit_now(&self) -> OffsetDateTime {
+        self.now()
+    }
+
+    fn audit_committed_flag(&self) -> Arc<AtomicBool> {
+        self.audit_committed_flag()
+    }
+
+    fn audit_instruction_note(&self) -> InstructionNote {
+        self.instruction_note()
+    }
 }
 
 impl Context {
@@ -189,7 +200,7 @@ impl Context {
                 .claude_entrypoint
                 .as_deref()
                 .and_then(|e| e.to_str())
-                .is_some_and(|e| crate::instruction::INTERACTIVE_ENTRYPOINTS.contains(&e)),
+                .is_some_and(|e| crate::config::INTERACTIVE_ENTRYPOINTS.contains(&e)),
             instruction: Arc::default(),
             audit_committed: Arc::default(),
         })

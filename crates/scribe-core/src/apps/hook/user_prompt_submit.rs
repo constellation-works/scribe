@@ -70,7 +70,7 @@ pub struct PromptInput<'i> {
 }
 
 /// The hook event this replies to.
-pub const EVENT: &str = "UserPromptSubmit";
+pub use super::reply::USER_PROMPT_SUBMIT_EVENT as EVENT;
 /// What the agent is told after an applied echo, so it does not act on it
 /// again.
 const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";

@@ -3,8 +3,9 @@
 
 use super::verbs::ProposalVerbs;
 use crate::apps::entry::{self};
+use crate::apps::tag::redactor;
 use crate::runtime::Ctx;
-use crate::runtime::errors::{WriteError, redactor};
+use crate::runtime::errors::WriteError;
 use crate::{AuthorName, Proposal, ProposalKind, WriteRefusal};
 
 /// What `proposal add` runs.

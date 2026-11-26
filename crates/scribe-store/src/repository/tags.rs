@@ -50,9 +50,6 @@ impl Tags<'_, ReadWrite> {
     }
 }
 
-/// The store tags' stamp file.
-pub(crate) const TAGS_FILE: &str = "tags.json";
-
 impl Store {
     pub(crate) fn config_text(&self) -> Result<Option<(std::path::PathBuf, String)>> {
         let path = self.root.join(CONFIG_FILE);

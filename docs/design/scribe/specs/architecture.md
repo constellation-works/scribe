@@ -144,11 +144,11 @@ apps/
     verbs.rs         the app's private store verbs
 runtime/
   mod.rs             Ctx, the port traits, RunLimits
-  host/              the ports implemented on Context: the clock, transcripts, the redactor
   resolve.rs         id and session resolution
   errors.rs          CommandError, read and write error mapping
-  audit.rs           the audit guard around a mutating command
+  audit.rs           the audit guard around a mutating command, InstructionNote and AuditHost
 composition.rs       Env, Context: roots, config, store, redactor
+composition/host/    the runtime port traits implemented on Context: the clock, transcripts, the redactor
 config.rs            config.toml shapes and parsing
 config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
@@ -219,8 +219,9 @@ sees it.
   `transcripts`, `redaction`. The port traits (`Clock`, `Transcripts`,
   `Redaction`, `AuditNotes`) are in `runtime/mod.rs`, so test fakes
   implement them.
-- `runtime/host/` implements the ports on `Context`: the clock, the provider
-  transcripts on this host and the redactor. Transcript discovery and reads
+- `composition/host/` implements `runtime`'s ports on `Context`: the clock,
+  the provider transcripts on this host and the redactor, so `runtime` never
+  imports `composition` (STD-02 R42). Transcript discovery and reads
   are `scribe-tools/src/transcript/`, beside the parsing they feed.
 - `runtime` holds four subjects and no others: the context, id resolution,
   error mapping and the audit guard. A function belongs here only if it is
@@ -490,6 +491,12 @@ rules:
 
 - the banned crates per crate, from the table above (normal dependencies
   only, as today);
+- unit import cycles and declared in-layer orders (STD-02 R6, R39): the
+  import graph is acyclic between crates, between the top-level modules of
+  every crate, and between the sibling modules of every layer and module
+  directory; every layer with more than about ten units (`apps/`, `db/`,
+  `contracts/`, `repository/`, `scribe-tools`, `commands/`) obeys its
+  declared order in `ARCHITECTURE.md`;
 - the app order: an app imports only apps below it, and only through
   `apps::<app>::` paths that `mod.rs` exports; a relative `super::` path
   counts as the `crate::` path it names;
