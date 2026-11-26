@@ -29,71 +29,6 @@ const STOPWORDS: &[&str] = &[
     "would", "yes", "you", "your", "yours",
 ];
 
-/// The ranking tokens of `text` (§6.2): lowercase, split on anything not a
-/// letter or digit, stopwords and tokens under three characters dropped,
-/// and a light suffix strip (`-ing`, `-ed`, `-es`, `-s`, then a final `-e`,
-/// so `merge`, `merges`, `merged` and `merging` are one token).
-#[must_use]
-pub fn tokens(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.chars().count() >= 3 && !STOPWORDS.contains(w))
-        .map(stem)
-        .collect()
-}
-
-fn stem(word: &str) -> String {
-    let mut stem = word;
-    for suffix in ["ing", "ed", "es", "s"] {
-        if let Some(base) = stem.strip_suffix(suffix)
-            && base.chars().count() >= 3
-            && !(suffix == "s" && base.ends_with('s'))
-        {
-            stem = base;
-            break;
-        }
-    }
-    if stem.chars().count() > 3
-        && let Some(base) = stem.strip_suffix('e')
-    {
-        stem = base;
-    }
-    stem.to_owned()
-}
-
-/// What kind of sensitive event an item records (§13.8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SensitiveKind {
-    /// A death or a loss.
-    Loss,
-    /// A health event, never its detail.
-    Health,
-    /// A relationship event.
-    Relationship,
-    /// A family event.
-    Family,
-}
-
-impl SensitiveKind {
-    /// The kind's name.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Loss => "loss",
-            Self::Health => "health",
-            Self::Relationship => "relationship",
-            Self::Family => "family",
-        }
-    }
-}
-
-impl fmt::Display for SensitiveKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Words that mark financial detail; an element holding one is refused
 /// (§13.8). Matched on whole words, case aside.
 pub const FINANCE_WORDS: &[&str] = &[
@@ -141,6 +76,71 @@ pub const SENSITIVE_WORDS: &[(&str, SensitiveKind)] = &[
     ("pregnant", SensitiveKind::Family),
     ("pregnancy", SensitiveKind::Family),
 ];
+
+/// What kind of sensitive event an item records (§13.8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SensitiveKind {
+    /// A death or a loss.
+    Loss,
+    /// A health event, never its detail.
+    Health,
+    /// A relationship event.
+    Relationship,
+    /// A family event.
+    Family,
+}
+
+impl SensitiveKind {
+    /// The kind's name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Loss => "loss",
+            Self::Health => "health",
+            Self::Relationship => "relationship",
+            Self::Family => "family",
+        }
+    }
+}
+
+impl fmt::Display for SensitiveKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The ranking tokens of `text` (§6.2): lowercase, split on anything not a
+/// letter or digit, stopwords and tokens under three characters dropped,
+/// and a light suffix strip (`-ing`, `-ed`, `-es`, `-s`, then a final `-e`,
+/// so `merge`, `merges`, `merged` and `merging` are one token).
+#[must_use]
+pub fn tokens(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3 && !STOPWORDS.contains(w))
+        .map(stem)
+        .collect()
+}
+
+fn stem(word: &str) -> String {
+    let mut stem = word;
+    for suffix in ["ing", "ed", "es", "s"] {
+        if let Some(base) = stem.strip_suffix(suffix)
+            && base.chars().count() >= 3
+            && !(suffix == "s" && base.ends_with('s'))
+        {
+            stem = base;
+            break;
+        }
+    }
+    if stem.chars().count() > 3
+        && let Some(base) = stem.strip_suffix('e')
+    {
+        stem = base;
+    }
+    stem.to_owned()
+}
 
 /// Whether `text` holds `phrase` as whole words, case aside.
 #[must_use]

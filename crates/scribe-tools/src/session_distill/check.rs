@@ -1,17 +1,17 @@
 //! Deterministic checks on a session activity answer and its citation slices.
 
+mod repair;
+
 use super::{
     Budgets, NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, SessionHeader,
     SessionHeaderRequest, SessionRequest,
 };
 use crate::text::verbatim;
 use crate::voice::Voice;
+pub use repair::repair;
 use scribe_store::entry::Speaker;
 use scribe_store::record::{Related, Topic, Topics};
 use scribe_store::session::{SEGMENT_HEADING_CHARS, Term};
-
-mod repair;
-pub use repair::repair;
 
 /// The longest term, in characters.
 pub const TERM_CHARS: usize = 80;
@@ -99,6 +99,19 @@ pub struct Distilled {
     pub repairs: Vec<String>,
     /// An overlong open text with no successor seals at this window's end.
     pub seal_open: bool,
+}
+
+/// Validated content of a segment; message ranges are derived by scribe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedSegment {
+    /// One-line heading.
+    pub heading: String,
+    /// Plain text.
+    pub text: String,
+    /// Checked topic labels.
+    pub topics: Topics,
+    /// Parsed references.
+    pub related: Vec<Related>,
 }
 
 /// Check `answer` against the budgets and shape, and keep each term only
@@ -351,19 +364,6 @@ fn check_with_rules(
         repairs: Vec::new(),
         seal_open: false,
     })
-}
-
-/// Validated content of a segment; message ranges are derived by scribe.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CheckedSegment {
-    /// One-line heading.
-    pub heading: String,
-    /// Plain text.
-    pub text: String,
-    /// Checked topic labels.
-    pub topics: Topics,
-    /// Parsed references.
-    pub related: Vec<Related>,
 }
 
 fn check_segment(answer: SegmentAnswer, repairable: bool) -> Result<CheckedSegment, Invalid> {

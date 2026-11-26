@@ -107,6 +107,27 @@ pub struct ClaudeWindow {
     pub position: ClaudeCapturePosition,
 }
 
+/// Whether a Codex read parses the rollout and checks its identity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rollout {
+    Verify,
+    Unparsed,
+    Header,
+}
+
+/// TranscriptState entries found under a root: regular files, and entries named
+/// like a transcript whose file type is refused (a link, a device, a
+/// directory). A refused entry is present, not absent: it is never read. Every
+/// refused entry is kept, sorted by id and path, even when several in one root
+/// share a session id; a caller that opens them checks each one.
+#[derive(Debug, Default)]
+pub struct Discovered {
+    /// The regular transcripts, by session id.
+    pub files: Vec<(SessionId, PathBuf)>,
+    /// The entries named like a transcript whose file type is refused.
+    pub refused: Vec<(SessionId, PathBuf)>,
+}
+
 /// When `path` was last modified, when the file system says.
 #[must_use]
 pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
@@ -323,14 +344,6 @@ pub fn claude_header(
     read_checked_with(scope, path, session, Rollout::Header)
 }
 
-/// Whether a Codex read parses the rollout and checks its identity.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Rollout {
-    Verify,
-    Unparsed,
-    Header,
-}
-
 fn read_checked_with(
     scope: &Scope<'_>,
     path: &Path,
@@ -459,19 +472,6 @@ fn read_opened(
         )));
     }
     Ok(bytes)
-}
-
-/// TranscriptState entries found under a root: regular files, and entries named
-/// like a transcript whose file type is refused (a link, a device, a
-/// directory). A refused entry is present, not absent: it is never read. Every
-/// refused entry is kept, sorted by id and path, even when several in one root
-/// share a session id; a caller that opens them checks each one.
-#[derive(Debug, Default)]
-pub struct Discovered {
-    /// The regular transcripts, by session id.
-    pub files: Vec<(SessionId, PathBuf)>,
-    /// The entries named like a transcript whose file type is refused.
-    pub refused: Vec<(SessionId, PathBuf)>,
 }
 
 /// The session id a directory entry is named for, if its name is a transcript's.

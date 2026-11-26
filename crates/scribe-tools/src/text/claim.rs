@@ -5,6 +5,61 @@ use crate::entry::{Entry, EntryStatus, Outcome, TagName};
 use crate::record::Project;
 use scribe_store::EntryCandidate;
 
+/// How many tokens a new statement needs before an existing statement can
+/// cover it by containing those tokens. Shorter statements match only when
+/// the token sequences are equal.
+const MIN_COVER_TOKENS: usize = 4;
+
+/// Negation and exception words. A difference in how often any of these
+/// appears means the new statement is not the same claim. `dont` is the
+/// apostrophe-less spelling of `don't`; the tokenizer keeps an interior
+/// apostrophe, so both forms occur. The same pairing covers `can't`,
+/// `won't`, `shouldn't`, `doesn't`, `didn't` and `isn't`.
+///
+const MARKERS: [&str; 23] = [
+    "not",
+    "never",
+    "no",
+    "don't",
+    "dont",
+    "can't",
+    "cant",
+    "cannot",
+    "won't",
+    "wont",
+    "shouldn't",
+    "shouldnt",
+    "doesn't",
+    "doesnt",
+    "didn't",
+    "didnt",
+    "isn't",
+    "isnt",
+    "avoid",
+    "except",
+    "unless",
+    "only",
+    "without",
+];
+
+/// A checked claim on its way to the store: the candidate and Daniel's own
+/// words of the turn it cites, against which the store repeats the trigger
+/// match under its lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassClaim {
+    /// The candidate, with the admission the pass computed.
+    pub candidate: EntryCandidate,
+    /// Daniel's own words of the cited turn (pasted blocks left out).
+    pub turn: String,
+    /// Under a `write` tag, the idea's checked outcome (`open` or `parked`;
+    /// an idea that became a task in the session is not drafted); `None`
+    /// under a `propose` tag.
+    pub outcome: Option<Outcome>,
+    /// For a `parked` outcome, Daniel's own words of the turn its reason is
+    /// in, against which the store repeats the verbatim check.
+    pub outcome_turn: Option<String>,
+}
+
 /// `text` with fenced, indented and blockquoted material and marked
 /// instructions replaced by a NUL barrier each, so neither a quote nor a
 /// trigger match can be spliced across an excluded line.
@@ -51,61 +106,6 @@ pub(crate) fn own_lines_where(text: &str, keep: impl Fn(&str) -> bool) -> String
 pub fn own_span(text: &str, quote: &str) -> bool {
     verbatim::contains(text, quote) && text.contains(quote) && own_lines(text).contains(quote)
 }
-
-/// A checked claim on its way to the store: the candidate and Daniel's own
-/// words of the turn it cites, against which the store repeats the trigger
-/// match under its lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PassClaim {
-    /// The candidate, with the admission the pass computed.
-    pub candidate: EntryCandidate,
-    /// Daniel's own words of the cited turn (pasted blocks left out).
-    pub turn: String,
-    /// Under a `write` tag, the idea's checked outcome (`open` or `parked`;
-    /// an idea that became a task in the session is not drafted); `None`
-    /// under a `propose` tag.
-    pub outcome: Option<Outcome>,
-    /// For a `parked` outcome, Daniel's own words of the turn its reason is
-    /// in, against which the store repeats the verbatim check.
-    pub outcome_turn: Option<String>,
-}
-
-/// How many tokens a new statement needs before an existing statement can
-/// cover it by containing those tokens. Shorter statements match only when
-/// the token sequences are equal.
-const MIN_COVER_TOKENS: usize = 4;
-
-/// Negation and exception words. A difference in how often any of these
-/// appears means the new statement is not the same claim. `dont` is the
-/// apostrophe-less spelling of `don't`; the tokenizer keeps an interior
-/// apostrophe, so both forms occur. The same pairing covers `can't`,
-/// `won't`, `shouldn't`, `doesn't`, `didn't` and `isn't`.
-///
-const MARKERS: [&str; 23] = [
-    "not",
-    "never",
-    "no",
-    "don't",
-    "dont",
-    "can't",
-    "cant",
-    "cannot",
-    "won't",
-    "wont",
-    "shouldn't",
-    "shouldnt",
-    "doesn't",
-    "doesnt",
-    "didn't",
-    "didnt",
-    "isn't",
-    "isnt",
-    "avoid",
-    "except",
-    "unless",
-    "only",
-    "without",
-];
 
 /// Whether `token` is a negation or exception marker.
 #[must_use]

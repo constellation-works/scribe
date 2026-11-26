@@ -39,32 +39,6 @@ const AGENT_WRAPPERS: &[&str] = &[
     "<cross-session",
 ];
 
-fn normalize_origin(source: &str) -> String {
-    source.trim().to_lowercase().replace(['_', ' '], "-")
-}
-
-fn is_explicitly_plain(source: &str) -> bool {
-    let normalized = normalize_origin(source);
-    !normalized.is_empty() && PLAIN_SOURCES.contains(&normalized.as_str())
-}
-
-fn is_plain_or_empty(source: &str) -> bool {
-    let normalized = normalize_origin(source);
-    normalized.is_empty() || PLAIN_SOURCES.contains(&normalized.as_str())
-}
-
-/// Serde helper that distinguishes an explicit `null` from an omitted field,
-/// so fail-closed origin checks refuse `"origin": null` as an unexpected shape.
-///
-/// # Errors
-///
-/// Propagates deserialization errors from the underlying JSON value.
-pub fn present_value<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error> {
-    serde::Deserialize::deserialize(deserializer).map(Some)
-}
-
 /// Origin claims read from a Claude Code transcript line or hook payload
 /// (docs/design/scribe/2_design.md §4.1).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -188,27 +162,6 @@ pub struct PromptClaims<'a> {
     pub turn_origin: Option<&'a serde_json::Value>,
 }
 
-/// Whether a hook prompt with these `claims` was written by an agent or the
-/// harness rather than plainly typed: `isMeta`, the claims
-/// ([`OriginClaims`]), or the prompt text. The one rule for the prompt hook
-/// and for a Codex turn replayed through it.
-#[must_use]
-pub fn prompt_agent_originated(claims: &PromptClaims<'_>, prompt: &str) -> bool {
-    if claims.is_meta {
-        return true;
-    }
-    let mut origin = OriginClaims::default();
-    origin.push_claim(claims.source);
-    origin.push_prompt_source(claims.prompt_source_camel);
-    origin.push_prompt_source(claims.prompt_source);
-    origin.push_origin(claims.origin);
-    origin.push_claim(claims.prompt_origin_camel);
-    origin.push_claim(claims.prompt_origin);
-    origin.push_turn_origin(claims.turn_origin_camel);
-    origin.push_turn_origin(claims.turn_origin);
-    origin.is_agent_originated(prompt)
-}
-
 /// The fields of one Claude Code transcript line the origin guard reads beside
 /// its text (§4.1): the line's kind, uuid and entry point, and every origin
 /// claim it carries. A claim field keeps an explicit JSON `null` as present,
@@ -246,12 +199,6 @@ pub struct LineMeta {
     attachment: Option<LineAttachment>,
 }
 
-#[derive(Deserialize)]
-struct LineAttachment {
-    #[serde(default, deserialize_with = "present_value")]
-    origin: Option<serde_json::Value>,
-}
-
 impl LineMeta {
     /// Every origin claim the line carries: its own fields and, on a queued
     /// message's `attachment` line, the attachment's origin. Each is checked,
@@ -274,6 +221,59 @@ impl LineMeta {
         origin.push_turn_origin(self.turn_origin.as_ref());
         origin
     }
+}
+
+#[derive(Deserialize)]
+struct LineAttachment {
+    #[serde(default, deserialize_with = "present_value")]
+    origin: Option<serde_json::Value>,
+}
+
+fn normalize_origin(source: &str) -> String {
+    source.trim().to_lowercase().replace(['_', ' '], "-")
+}
+
+fn is_explicitly_plain(source: &str) -> bool {
+    let normalized = normalize_origin(source);
+    !normalized.is_empty() && PLAIN_SOURCES.contains(&normalized.as_str())
+}
+
+fn is_plain_or_empty(source: &str) -> bool {
+    let normalized = normalize_origin(source);
+    normalized.is_empty() || PLAIN_SOURCES.contains(&normalized.as_str())
+}
+
+/// Serde helper that distinguishes an explicit `null` from an omitted field,
+/// so fail-closed origin checks refuse `"origin": null` as an unexpected shape.
+///
+/// # Errors
+///
+/// Propagates deserialization errors from the underlying JSON value.
+pub fn present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
+/// Whether a hook prompt with these `claims` was written by an agent or the
+/// harness rather than plainly typed: `isMeta`, the claims
+/// ([`OriginClaims`]), or the prompt text. The one rule for the prompt hook
+/// and for a Codex turn replayed through it.
+#[must_use]
+pub fn prompt_agent_originated(claims: &PromptClaims<'_>, prompt: &str) -> bool {
+    if claims.is_meta {
+        return true;
+    }
+    let mut origin = OriginClaims::default();
+    origin.push_claim(claims.source);
+    origin.push_prompt_source(claims.prompt_source_camel);
+    origin.push_prompt_source(claims.prompt_source);
+    origin.push_origin(claims.origin);
+    origin.push_claim(claims.prompt_origin_camel);
+    origin.push_claim(claims.prompt_origin);
+    origin.push_turn_origin(claims.turn_origin_camel);
+    origin.push_turn_origin(claims.turn_origin);
+    origin.is_agent_originated(prompt)
 }
 
 /// Whether the origin claims on one Claude Code line refuse it. A line whose
