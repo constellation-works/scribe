@@ -45,7 +45,7 @@ max_open = 10
 |---|---|---|---|
 | `from` | `user`, `assistant`, `both` | the shipped value; none for a new tag | Whose turns the catcher reads. `daniel` still reads as `user`, with a warning, for the 30-day compatibility window. |
 | `route` | `propose`, `write` | the shipped value; none for a new tag | `propose` opens a claim the user settles with `#scribe approve` or `#scribe reject`. `write` has the pass write the entry itself, authored by `scribe:session-pass`, with no claim: a **collector**. |
-| `triggers` | up to 32 phrases, each at most 120 characters, words separated by spaces; `*` stands for one to four words between two words | the shipped list; none for a new tag | A turn reaches the model under the tag only when one occurs in it, matched on word boundaries, case-insensitive. The list replaces the shipped one whole. |
+| `triggers` | up to 32 phrases, each at most 120 characters, words separated by spaces; `*` stands for zero to four words between two words | the shipped list; none for a new tag | A turn reaches the model under the tag only when one occurs in it, matched on word boundaries, case-insensitive. The list replaces the shipped one whole. |
 | `criteria` | at most 300 characters | the shipped text; none | What qualifies, given to the model as the tag's definition. |
 | `not` | at most 300 characters | the shipped text; none | What does not qualify. |
 | `max_open` | 1 to 20 | 10 | The most open claims the tag may hold. |
@@ -95,8 +95,9 @@ opens no claim under any route, and may name any tag, catcher or not.
 ## Example catchers
 
 These are documentation, not shipped config. Paste one into `config.toml`
-to use it. `crates/scribe/tests/session_pass/catchers.rs` reads each block below
-from this page and runs it through a pass, so the examples stay working.
+to use it. `crates/scribe/tests/session_pass.rs` reads the orbit, todo,
+and issue blocks below from this page and runs them through a pass, so
+those examples stay working.
 
 ```toml
 # Every mention of a project, collected without approval.
