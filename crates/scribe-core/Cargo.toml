@@ -22,7 +22,8 @@ test-support = ["scribe-store/test-support"]
 
 [dependencies]
 # The captured process environment (`composition::Env::terminal`), which the
-# binary's terminal decision reads. The core names `cw_app::Env` only to hold it.
+# binary's terminal decision reads, and the `EnvVar` declarations of the
+# variables composition reads (`composition::ENV_VARS`).
 cw-app = { workspace = true }
 cw-fs = { workspace = true }
 scribe-store = { workspace = true }

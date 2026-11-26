@@ -172,8 +172,13 @@ fn golden_dir() -> PathBuf {
         .join("goldens")
 }
 
-fn updating() -> bool {
-    std::env::var_os("UPDATE_GOLDENS").is_some_and(|v| v == "1")
+/// The switch `make goldens UPDATE=1` sets. A harness read, not a variable the
+/// shipped program reads.
+const UPDATE_ENV: &str = "UPDATE_GOLDENS";
+
+/// Whether the goldens are being rewritten rather than compared.
+pub(super) fn updating() -> bool {
+    std::env::var_os(UPDATE_ENV).is_some_and(|v| v == "1")
 }
 
 pub(super) fn report(failures: &[String]) {

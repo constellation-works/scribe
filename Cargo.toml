@@ -22,8 +22,9 @@ repository = "https://github.com/constellation-works/scribe"
 [workspace.dependencies]
 # The cw-kit (https://github.com/constellation-works/satellites): file access
 # for a private data directory (cw-fs), SQLite open/configure/migrate
-# (cw-sqlite) and the output sink (cw-cli). cw-app is named only for the
-# captured `Env` that cw-cli's terminal decision reads; scribe's audit guard
+# (cw-sqlite) and the output sink (cw-cli). cw-app is named for the captured
+# `Env` that cw-cli's terminal decision reads and for the `EnvVar` declarations
+# of the variables scribe reads (composition's usage table); scribe's audit guard
 # is not the kit's. No release is published yet, so the workspace pins one commit
 # of the satellites `agent-main` for every kit crate; moving the pin is a
 # change of its own.

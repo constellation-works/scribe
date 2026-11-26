@@ -11,6 +11,7 @@ pub mod models;
 
 #[cfg(test)]
 pub(crate) use cli::{BASELINE_ENV, argv};
+pub(crate) use cli::{CODEX_HOME, LANG, PATH};
 pub use cli::{ClaudeCliModels, allowed_env};
 
 use crate::models::{

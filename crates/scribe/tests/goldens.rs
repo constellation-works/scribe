@@ -450,4 +450,34 @@ fn transcript_list_and_show_match_goldens() {
     report(&failures);
 }
 
+/// The guide's table of environment variables is the usage table of
+/// `ENV_VARS` (STD-01 R25): it is generated from the declarations, and a
+/// declaration that changes fails here until `make goldens UPDATE=1` rewrites
+/// the guide's copy between its markers.
+#[test]
+fn environment_table_matches_guide() {
+    const START: &str = "<!-- env-table:start -->";
+    const END: &str = "<!-- env-table:end -->";
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md");
+    let guide = std::fs::read_to_string(&path).expect("read docs/guide.md");
+    let start = guide
+        .find(START)
+        .expect("docs/guide.md has no env-table start marker");
+    let end = guide
+        .find(END)
+        .expect("docs/guide.md has no env-table end marker");
+    let table = scribe_core::composition::env_table();
+    if updating() {
+        let rewritten = format!("{}{START}\n{table}\n{}", &guide[..start], &guide[end..]);
+        std::fs::write(&path, rewritten).expect("write docs/guide.md");
+        return;
+    }
+    let current = guide[start + START.len()..end].trim();
+    assert_eq!(
+        current,
+        table.trim(),
+        "docs/guide.md's environment table differs from scribe_core::composition::ENV_VARS.\n\nIf the change is intended: make goldens UPDATE=1, then review the diff."
+    );
+}
+
 include!("golden_cases/entry_output.rs");

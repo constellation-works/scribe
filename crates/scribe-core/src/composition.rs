@@ -16,24 +16,31 @@
 
 mod host;
 
-use crate::config::RedactorFromConfig;
-use crate::providers::{ClaudeCliModels, allowed_env};
+use crate::config::{
+    ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, OPENAI_API_KEY, RedactorFromConfig,
+};
+use crate::providers::{CODEX_HOME, ClaudeCliModels, LANG, PATH, allowed_env};
 use crate::runtime::audit::AuditHost;
 pub use crate::runtime::audit::InstructionNote;
 use crate::runtime::errors::CommandError;
 use crate::{Config, Label, Provider, Redactor, SessionId, Store, unresolved_redact_env};
+use cw_app::env::{CLICOLOR_FORCE, COLUMNS, EnvVar, HOME, NO_COLOR, ROOT, TERM};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use time::OffsetDateTime;
 
+/// The program's name: the prefix of its own variables (`SCRIBE_ROOT`,
+/// `SCRIBE_FORMAT`, `SCRIBE_LOG`).
+pub const APP: &str = "scribe";
+
 /// The variable a provider sets to the calling session's id: what `group`
 /// reads to know who calls.
-pub(crate) const fn caller_env(provider: Provider) -> &'static str {
+pub(crate) const fn caller_env(provider: Provider) -> EnvVar {
     match provider {
-        Provider::ClaudeCode => "CLAUDE_CODE_SESSION_ID",
-        Provider::Codex => "CODEX_THREAD_ID",
+        Provider::ClaudeCode => CLAUDE_CODE_SESSION_ID,
+        Provider::Codex => CODEX_THREAD_ID,
     }
 }
 
@@ -56,19 +63,122 @@ pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
     Ok(binary)
 }
 
-/// Environment variable naming the data directory.
-pub const ROOT_ENV: &str = "SCRIBE_ROOT";
+// Each variable scribe names is declared once as an `EnvVar` (its name,
+// meaning, default and the flag it overrides): here, in the provider module
+// that reads it (PATH, LANG, CODEX_HOME), or in the kit (`cw_app::env`, for
+// ROOT, HOME and the terminal variables). Reads go through `read` or
+// `EnvVar::name_for`, and [`ENV_VARS`] is the usage table's source.
 
-/// Environment variable holding the log filter the binary's tracing reads
-/// (`warn` when unset).
-pub const LOG_ENV: &str = "SCRIBE_LOG";
+/// `SCRIBE_FORMAT`: the output format. The terminal decision reads it (in
+/// cw-cli, through the captured snapshot), not composition; it is declared
+/// here with the others so the usage table lists it.
+pub const FORMAT: EnvVar = EnvVar::app(
+    "FORMAT",
+    "The output format: `json` for one JSON document, `table` for a table, and `auto` for a table on a terminal and tab-separated lines otherwise.",
+)
+.with_default("`auto`")
+.with_flag("--format");
 
-/// Environment variable Claude Code sets on its hooks: `cli` when a person
-/// types into the session.
-const ENTRYPOINT_ENV: &str = "CLAUDE_CODE_ENTRYPOINT";
+/// `SCRIBE_LOG`: the log filter the binary's tracing reads, on stderr. A
+/// filter that does not parse is reported, and logging uses `warn`.
+pub const LOG: EnvVar = EnvVar::app(
+    "LOG",
+    "The log filter for stderr, in `tracing` syntax such as `debug`.",
+)
+.with_default("`warn`");
 
-/// Environment variable that moves Claude Code's state directory.
-const CLAUDE_CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
+/// `CLAUDE_CONFIG_DIR`: where Claude Code keeps its state instead of
+/// `~/.claude`, and so its transcripts (under `projects`).
+pub const CLAUDE_CONFIG_DIR: EnvVar = EnvVar::global(
+    "CLAUDE_CONFIG_DIR",
+    "Where Claude Code keeps its state, and so its transcripts under `projects`.",
+)
+.with_default("`$HOME/.claude`");
+
+/// `CLAUDE_CODE_ENTRYPOINT`: set by Claude Code on its hooks, `cli` when a
+/// person types into the session and `sdk-cli` for `claude -p`.
+pub const CLAUDE_CODE_ENTRYPOINT: EnvVar = EnvVar::global(
+    "CLAUDE_CODE_ENTRYPOINT",
+    "Set by Claude Code on its hooks: `cli` in an interactive session, `sdk-cli` for `claude -p`. Only `cli` and `claude-desktop` get the memory page at session start.",
+);
+
+/// `CLAUDE_CODE_SESSION_ID`: the Claude Code session a command runs in.
+pub const CLAUDE_CODE_SESSION_ID: EnvVar = EnvVar::global(
+    "CLAUDE_CODE_SESSION_ID",
+    "The Claude Code session a command runs in. `group` names it as the caller, and `entry add` reads it for a quote-less refresh.",
+);
+
+/// `CODEX_THREAD_ID`: the Codex session a command runs in.
+pub const CODEX_THREAD_ID: EnvVar = EnvVar::global(
+    "CODEX_THREAD_ID",
+    "The Codex session a command runs in, which `group` names as the caller for Codex.",
+);
+
+/// `COMPUTERNAME`: the host name on Windows, which records carry as their host
+/// label. Elsewhere the host name comes from the system.
+pub const COMPUTERNAME: EnvVar = EnvVar::global(
+    "COMPUTERNAME",
+    "The host name on Windows, which records carry as their host label.",
+);
+
+/// Every variable scribe reads, in the order the usage table lists them. The
+/// kit's declarations supply the rows for the root, color, width and home
+/// variables.
+pub const ENV_VARS: &[EnvVar] = &[
+    ROOT,
+    FORMAT,
+    LOG,
+    NO_COLOR,
+    CLICOLOR_FORCE,
+    TERM,
+    COLUMNS,
+    HOME,
+    CLAUDE_CONFIG_DIR,
+    CODEX_HOME,
+    CLAUDE_CODE_ENTRYPOINT,
+    CLAUDE_CODE_SESSION_ID,
+    CODEX_THREAD_ID,
+    PATH,
+    LANG,
+    CLAUDE_CODE_OAUTH_TOKEN,
+    ANTHROPIC_API_KEY,
+    OPENAI_API_KEY,
+    COMPUTERNAME,
+];
+
+/// The usage table of [`ENV_VARS`] as Markdown: a header, then one row per
+/// variable with its name, meaning, default and overriding flag (`—` when
+/// there is none). A `|` in a cell is escaped. `docs/guide.md` carries this
+/// table, and `make goldens` fails when the two differ.
+#[must_use]
+pub fn env_table() -> String {
+    let header = "| Variable | Meaning | Default | Flag |\n|---|---|---|---|";
+    let rows = ENV_VARS.iter().map(|var| {
+        format!(
+            "| `{}` | {} | {} | {} |",
+            var.name_for(APP),
+            cell(var.meaning()),
+            var.default().map_or_else(|| "—".to_owned(), cell),
+            var.flag()
+                .map_or_else(|| "—".to_owned(), |flag| format!("`{}`", cell(flag))),
+        )
+    });
+    std::iter::once(header.to_owned())
+        .chain(rows)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `text` safe inside a table cell: a `|` escaped.
+fn cell(text: &str) -> String {
+    text.replace('|', "\\|")
+}
+
+/// The value of `var` in the process environment, as set. An empty value is
+/// returned as set: each reader decides what empty means.
+fn read(var: &EnvVar) -> Option<OsString> {
+    std::env::var_os(var.name_for(APP))
+}
 
 /// The host label used when the host name cannot be read or is not a label.
 const UNKNOWN_HOST: &str = "unknown-host";
@@ -120,12 +230,12 @@ impl Env {
     #[must_use]
     pub fn from_process() -> Self {
         Self {
-            root: std::env::var_os(ROOT_ENV),
-            home: std::env::var_os("HOME"),
-            claude_config_dir: std::env::var_os(CLAUDE_CONFIG_ENV),
-            codex_home: std::env::var_os("CODEX_HOME"),
-            claude_entrypoint: std::env::var_os(ENTRYPOINT_ENV),
-            log: std::env::var_os(LOG_ENV),
+            root: read(&ROOT),
+            home: read(&HOME),
+            claude_config_dir: read(&CLAUDE_CONFIG_DIR),
+            codex_home: read(&CODEX_HOME),
+            claude_entrypoint: read(&CLAUDE_CODE_ENTRYPOINT),
+            log: read(&LOG),
             terminal: cw_app::Env::capture(),
         }
     }
@@ -227,7 +337,7 @@ impl Context {
     /// ([`caller_env`]), or `None` when it is unset or not a session id.
     #[must_use]
     pub fn caller(&self) -> Option<SessionId> {
-        std::env::var(caller_env(self.provider))
+        std::env::var(caller_env(self.provider).name_for(APP))
             .ok()
             .and_then(|s| s.parse().ok())
     }
@@ -237,7 +347,7 @@ impl Context {
     /// refresh.
     #[must_use]
     pub fn claude_session(&self) -> Option<String> {
-        std::env::var("CLAUDE_CODE_SESSION_ID").ok()
+        std::env::var(CLAUDE_CODE_SESSION_ID.name_for(APP)).ok()
     }
 
     /// The project of the working directory, or `None` when it cannot be
@@ -351,7 +461,7 @@ impl Context {
                 Provider::Codex => "codex",
                 Provider::ClaudeCode => "claude",
             };
-            let found = std::env::var_os("PATH").is_some_and(|path| {
+            let found = read(&PATH).is_some_and(|path| {
                 std::env::split_paths(&path).any(|dir| {
                     let path = dir.join(program);
                     std::fs::metadata(path).is_ok_and(|m| {
@@ -434,15 +544,19 @@ impl Context {
     /// every configured secret, as persisted text does (STD-05 R14).
     pub fn models(&self, config: &Config) -> ClaudeCliModels {
         let mut credentials = config.models.credentials.clone();
+        let codex_home = CODEX_HOME.name_for(APP);
         if config.models.provider == Provider::Codex {
-            credentials.push(String::from("CODEX_HOME"));
+            credentials.push(codex_home.clone());
         }
         let mut env = allowed_env(&credentials, |name| std::env::var_os(name));
         if config.models.provider == Provider::Codex
             && let Some(root) = self.codex_transcripts.as_ref().and_then(|p| p.parent())
         {
-            env.retain(|(key, _)| key != "CODEX_HOME");
-            env.push((OsString::from("CODEX_HOME"), root.as_os_str().to_owned()));
+            env.retain(|(key, _)| key != codex_home.as_str());
+            env.push((
+                OsString::from(codex_home.as_str()),
+                root.as_os_str().to_owned(),
+            ));
         }
         let named = if config.models.provider == Provider::Codex {
             Vec::new()
@@ -483,7 +597,9 @@ fn host_name() -> Option<String> {
 
 #[cfg(not(unix))]
 fn host_name() -> Option<String> {
-    std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty())
+    std::env::var(COMPUTERNAME.name_for(APP))
+        .ok()
+        .filter(|n| !n.is_empty())
 }
 
 /// The data-directory precedence, separated so tests can check it directly.

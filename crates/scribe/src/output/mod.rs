@@ -33,14 +33,11 @@ use crate::error::CliError;
 use cw_app::Env;
 use cw_cli::{Format, Mode, Probe, Terminal};
 use scribe_core::ShortIds;
-use scribe_core::composition::LOG_ENV;
+use scribe_core::composition::{APP, LOG};
 use serde::Serialize;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::process::ExitCode;
-
-/// The program's name in the kit's terms: it names `SCRIBE_FORMAT`.
-const APP: &str = "scribe";
 
 /// The one terminal decision of an invocation, and the sinks built from it.
 #[derive(Clone, Copy, Debug)]
@@ -114,12 +111,13 @@ fn io_error(error: cw_cli::Error) -> io::Error {
 /// the default, not silently ignored.
 pub(crate) fn init_logging(log: Option<&OsStr>) {
     use tracing_subscriber::EnvFilter;
+    let log_name = LOG.name_for(APP);
     let default = || EnvFilter::new("warn");
     let filter = match log.map(OsStr::to_str) {
         Some(Some(spec)) => EnvFilter::try_new(spec).unwrap_or_else(|e| {
             let _ = writeln!(
                 io::stderr().lock(),
-                "warning: ignoring {LOG_ENV}={spec:?} ({e}); logging at warn"
+                "warning: ignoring {log_name}={spec:?} ({e}); logging at warn"
             );
             default()
         }),
@@ -127,7 +125,7 @@ pub(crate) fn init_logging(log: Option<&OsStr>) {
         Some(None) => {
             let _ = writeln!(
                 io::stderr().lock(),
-                "warning: ignoring {LOG_ENV}: not valid UTF-8; logging at warn"
+                "warning: ignoring {log_name}: not valid UTF-8; logging at warn"
             );
             default()
         }
