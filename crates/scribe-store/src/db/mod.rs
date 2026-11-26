@@ -539,6 +539,23 @@ pub(super) fn from_sqlite_error(error: cw_sqlite::Error, started: Instant) -> Er
             path,
             source: format!("journal_mode stayed {mode}").into(),
         },
+        // Only a strict read refuses this way, and scribe makes none: an
+        // ordinary read or write creates or rebuilds the log files.
+        cw_sqlite::Error::WalUnavailable {
+            path,
+            missing,
+            source,
+        } => Error::Database {
+            action: "read",
+            path,
+            source: match source {
+                Some(source) => Box::new(source),
+                None => {
+                    let files: Vec<_> = missing.iter().map(|f| f.display().to_string()).collect();
+                    format!("write-ahead log files missing: {}", files.join(", ")).into()
+                }
+            },
+        },
         cw_sqlite::Error::Migration { path, source, .. } => Error::Database {
             action: "migrate",
             path,

@@ -112,18 +112,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw-app"
+version = "0.1.0"
+source = "git+https://github.com/constellation-works/satellites?rev=79c755a6615ca4da7063738a3326fbb3c96dea1f#79c755a6615ca4da7063738a3326fbb3c96dea1f"
+dependencies = [
+ "cw-base",
+ "cw-fs",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+]
+
+[[package]]
 name = "cw-base"
 version = "0.1.0"
-source = "git+https://github.com/constellation-works/satellites?rev=bdce98be91251d442cde3a8d0f3ddec13a81e362#bdce98be91251d442cde3a8d0f3ddec13a81e362"
+source = "git+https://github.com/constellation-works/satellites?rev=79c755a6615ca4da7063738a3326fbb3c96dea1f#79c755a6615ca4da7063738a3326fbb3c96dea1f"
 dependencies = [
  "thiserror",
  "time",
 ]
 
 [[package]]
+name = "cw-cli"
+version = "0.1.0"
+source = "git+https://github.com/constellation-works/satellites?rev=79c755a6615ca4da7063738a3326fbb3c96dea1f#79c755a6615ca4da7063738a3326fbb3c96dea1f"
+dependencies = [
+ "clap",
+ "cw-app",
+ "cw-base",
+ "rustix",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width",
+]
+
+[[package]]
 name = "cw-fs"
 version = "0.1.0"
-source = "git+https://github.com/constellation-works/satellites?rev=bdce98be91251d442cde3a8d0f3ddec13a81e362#bdce98be91251d442cde3a8d0f3ddec13a81e362"
+source = "git+https://github.com/constellation-works/satellites?rev=79c755a6615ca4da7063738a3326fbb3c96dea1f#79c755a6615ca4da7063738a3326fbb3c96dea1f"
 dependencies = [
  "cw-base",
  "rustix",
@@ -134,7 +164,7 @@ dependencies = [
 [[package]]
 name = "cw-sqlite"
 version = "0.1.0"
-source = "git+https://github.com/constellation-works/satellites?rev=bdce98be91251d442cde3a8d0f3ddec13a81e362#bdce98be91251d442cde3a8d0f3ddec13a81e362"
+source = "git+https://github.com/constellation-works/satellites?rev=79c755a6615ca4da7063738a3326fbb3c96dea1f#79c755a6615ca4da7063738a3326fbb3c96dea1f"
 dependencies = [
  "cw-base",
  "cw-fs",
@@ -428,8 +458,9 @@ name = "scribe"
 version = "0.3.0"
 dependencies = [
  "clap",
+ "cw-app",
+ "cw-cli",
  "rusqlite",
- "rustix",
  "scribe-core",
  "serde",
  "serde_json",

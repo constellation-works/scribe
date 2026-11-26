@@ -6,7 +6,8 @@ last_validated: 2026-11-24
 
 # Spec: Output contract
 
-Every data command renders one typed payload in the mode the sink resolved;
+Every data command renders one typed payload in the mode the terminal decision
+(the kit's `cw-cli`) resolved;
 stdout carries only that payload; warnings, notices and errors go to stderr;
 the exit code says whether it worked. The JSON form is a public contract,
 pinned by the output goldens in `crates/scribe/tests/goldens/output/`.
@@ -44,7 +45,7 @@ value means auto. Off a terminal there are no escapes and no truncation; on
 a terminal only the last free-text column is cut to the width, and `show`
 or `--json` has it whole. The width is `COLUMNS` when it holds a positive
 number, else the terminal's own size (`TIOCGWINSZ` on stdout); both are read
-in the output sink only, and with neither no table is cut. In plain and table
+by the kit's terminal decision only, and with neither no table is cut. In plain and table
 rows, free text is flattened to one line (every whitespace run becomes one
 space), an empty value or list is `-`, lists are comma-joined, and timestamps
 are RFC 3339, except in table mode, where every timestamp cell of a human list

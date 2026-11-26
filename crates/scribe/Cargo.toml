@@ -13,6 +13,10 @@ path = "src/main.rs"
 
 [dependencies]
 scribe-core = { workspace = true }
+# The output sink and its terminal decision (STD-01 R6-R9, R13, R14, R17).
+# cw-app is named for the captured `Env` that decision reads, nothing else.
+cw-app = { workspace = true }
+cw-cli = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,12 +25,6 @@ time = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 unicode-width = { workspace = true }
-
-# Unix only: the host name stamped on records and the effective uid the
-# transcript owner is checked against (STD-05 R1, R9), and the terminal's
-# width, asked of stdout when `COLUMNS` is unset (STD-01 R17).
-[target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs", "system", "termios"] }
 
 [dev-dependencies]
 # Tests stage entries and session records in `scribe.db` with

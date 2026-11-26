@@ -1,133 +1,201 @@
-//! Payload → bytes, one function per shape and mode. Every rendering reads
-//! the same payload, so no mode can show a value the others lack.
-
 mod detail;
 
 pub(crate) use detail::show;
 
-use super::color::{self, Role};
+use super::Sink;
+use super::color::role_for_status;
 use super::payload::{
     EntryPayload, HitPayload, HookJson, HookReply, HookSpecificJson, PassPayload, PassReport,
     PluginReply, ProposalPayload, Records, ScanReport, SessionPayload, TagPayload,
     TranscriptPayload, TreeRow, WarningPayload,
 };
-use super::sink::{OutputMode, Sink};
-use super::table::{self, Align, Cell, Column};
+use cw_cli::{Cell as KitCell, Column, Mode, Role, Table};
 use scribe_core::ShortIds;
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::io::{self, Write};
+use std::io::Write;
 use time::format_description::well_known::{Iso8601, Rfc3339};
 use time::{OffsetDateTime, UtcOffset};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const fn col(header: &'static str, align: Align, truncate: bool) -> Column {
-    Column {
-        header,
-        align,
-        truncate,
-    }
+/// The kit's result of a write; the binary's error wraps its failure.
+type Result = cw_cli::Result<()>;
+
+fn left(header: &'static str) -> Column {
+    Column::new(header)
 }
 
-const ENTRY_COLUMNS: [Column; 8] = [
-    col("ID", Align::Left, false),
-    col("STATUS", Align::Left, false),
-    col("PROJECT", Align::Left, false),
-    col("TOPICS", Align::Left, false),
-    col("CREATED", Align::Left, false),
-    col("CONTENT", Align::Left, true),
-    col("AUTHOR", Align::Left, false),
-    col("AGE", Align::Right, false),
-];
+fn right(header: &'static str) -> Column {
+    Column::new(header).right()
+}
 
-const SESSION_TREE_COLUMNS: [Column; 8] = [
-    col("ID", Align::Left, false),
-    col("PARENT", Align::Left, false),
-    col("STATUS", Align::Left, false),
-    col("DUE", Align::Left, false),
-    col("PROJECT", Align::Left, false),
-    col("TOPICS", Align::Left, false),
-    col("UPDATED", Align::Left, false),
-    col("TITLE", Align::Left, true),
-];
+fn cut(header: &'static str) -> Column {
+    Column::new(header).truncatable()
+}
 
-const SESSION_COLUMNS: [Column; 7] = [
-    col("ID", Align::Left, false),
-    col("STATUS", Align::Left, false),
-    col("DUE", Align::Left, false),
-    col("PROJECT", Align::Left, false),
-    col("TOPICS", Align::Left, false),
-    col("UPDATED", Align::Left, false),
-    col("TITLE", Align::Left, true),
-];
+fn entry_columns() -> Vec<Column> {
+    vec![
+        left("ID"),
+        left("STATUS"),
+        left("PROJECT"),
+        left("TOPICS"),
+        left("CREATED"),
+        cut("CONTENT"),
+        left("AUTHOR"),
+        right("AGE"),
+    ]
+}
 
-const PROPOSAL_COLUMNS: [Column; 9] = [
-    col("ID", Align::Left, false),
-    col("KIND", Align::Left, false),
-    col("STATE", Align::Left, false),
-    col("OLDER", Align::Left, false),
-    col("NEWER", Align::Left, false),
-    col("OPENED", Align::Left, false),
-    col("REASON", Align::Left, true),
-    col("ADMITTED", Align::Left, true),
-    col("CLOSED_REASON", Align::Left, false),
-];
+fn session_tree_columns() -> Vec<Column> {
+    vec![
+        left("ID"),
+        left("PARENT"),
+        left("STATUS"),
+        left("DUE"),
+        left("PROJECT"),
+        left("TOPICS"),
+        left("UPDATED"),
+        cut("TITLE"),
+    ]
+}
 
-const PASS_COLUMNS: [Column; 5] = [
-    col("SESSION", Align::Left, false),
-    col("RESULT", Align::Left, false),
-    col("CODE", Align::Left, false),
-    col("PASSES", Align::Right, false),
-    col("TERMS DROPPED", Align::Right, false),
-];
+fn session_columns() -> Vec<Column> {
+    vec![
+        left("ID"),
+        left("STATUS"),
+        left("DUE"),
+        left("PROJECT"),
+        left("TOPICS"),
+        left("UPDATED"),
+        cut("TITLE"),
+    ]
+}
 
-const SCAN_COLUMNS: [Column; 5] = [
-    col("ACTION", Align::Left, false),
-    col("ID", Align::Left, false),
-    col("WHAT", Align::Left, false),
-    col("OLDER", Align::Left, false),
-    col("NEWER", Align::Left, false),
-];
+fn proposal_columns() -> Vec<Column> {
+    vec![
+        left("ID"),
+        left("KIND"),
+        left("STATE"),
+        left("OLDER"),
+        left("NEWER"),
+        left("OPENED"),
+        cut("REASON"),
+        cut("ADMITTED"),
+        left("CLOSED_REASON"),
+    ]
+}
 
-const TAG_COLUMNS: [Column; 10] = [
-    col("NAME", Align::Left, false),
-    col("ENTRIES", Align::Right, false),
-    col("STALE DAYS", Align::Right, false),
-    col("ALIASES", Align::Left, false),
-    col("DESCRIPTION", Align::Left, true),
-    col("SOURCE", Align::Left, false),
-    col("ACTION", Align::Left, false),
-    col("RETIRED", Align::Right, false),
-    col("REJECTED", Align::Right, false),
-    col("ROUTE", Align::Left, false),
-];
+fn pass_columns() -> Vec<Column> {
+    vec![
+        left("SESSION"),
+        left("RESULT"),
+        left("CODE"),
+        right("PASSES"),
+        right("TERMS DROPPED"),
+    ]
+}
 
-const TRANSCRIPT_COLUMNS: [Column; 7] = [
-    col("SESSION", Align::Left, false),
-    col("PROJECT", Align::Left, false),
-    col("USER_TURNS", Align::Right, false),
-    col("BYTES", Align::Right, false),
-    col("STARTED", Align::Left, false),
-    col("ENDED", Align::Left, false),
-    col("FIRST_PROMPT", Align::Left, true),
-];
+fn scan_columns() -> Vec<Column> {
+    vec![
+        left("ACTION"),
+        left("ID"),
+        left("WHAT"),
+        left("OLDER"),
+        left("NEWER"),
+    ]
+}
 
-const MARK_COLUMNS: [Column; 7] = [
-    col("SESSION", Align::Left, false),
-    col("MESSAGE", Align::Left, true),
-    col("MARKER", Align::Right, false),
-    col("OUTCOME", Align::Left, false),
-    col("CODE", Align::Left, false),
-    col("ATTEMPTS", Align::Right, false),
-    col("AT", Align::Left, false),
-];
+fn tag_columns() -> Vec<Column> {
+    vec![
+        left("NAME"),
+        right("ENTRIES"),
+        right("STALE DAYS"),
+        left("ALIASES"),
+        cut("DESCRIPTION"),
+        left("SOURCE"),
+        left("ACTION"),
+        right("RETIRED"),
+        right("REJECTED"),
+        left("ROUTE"),
+    ]
+}
 
-const HIT_COLUMNS: [Column; 6] = [
-    col("CITE", Align::Left, false),
-    col("KIND", Align::Left, false),
-    col("SCORE", Align::Right, false),
-    col("UPDATED", Align::Left, false),
-    col("TITLE", Align::Left, false),
-    col("SNIPPET", Align::Left, true),
-];
+fn transcript_columns() -> Vec<Column> {
+    vec![
+        left("SESSION"),
+        left("PROJECT"),
+        right("USER_TURNS"),
+        right("BYTES"),
+        left("STARTED"),
+        left("ENDED"),
+        cut("FIRST_PROMPT"),
+    ]
+}
+
+fn mark_columns() -> Vec<Column> {
+    vec![
+        left("SESSION"),
+        cut("MESSAGE"),
+        right("MARKER"),
+        left("OUTCOME"),
+        left("CODE"),
+        right("ATTEMPTS"),
+        left("AT"),
+    ]
+}
+
+fn hit_columns() -> Vec<Column> {
+    vec![
+        left("CITE"),
+        left("KIND"),
+        right("SCORE"),
+        left("UPDATED"),
+        left("TITLE"),
+        cut("SNIPPET"),
+    ]
+}
+
+/// A list's `--json` form: [`Envelope`] around its records.
+struct ListJson<'a> {
+    records: &'a Records,
+    total: usize,
+    warnings: &'a [WarningPayload],
+    message_matches: Option<usize>,
+}
+
+impl Serialize for ListJson<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let (total, warnings) = (self.total, self.warnings);
+        match self.records {
+            Records::Groups(items) => {
+                envelope("items", items, total, warnings).serialize(serializer)
+            }
+            Records::Entries(items) => {
+                envelope("entries", items, total, warnings).serialize(serializer)
+            }
+            Records::Sessions { items, .. } => {
+                envelope("sessions", items, total, warnings).serialize(serializer)
+            }
+            Records::SessionTree { rows, .. } => {
+                envelope("sessions", rows, total, warnings).serialize(serializer)
+            }
+            Records::Proposals(items) => {
+                envelope("proposals", items, total, warnings).serialize(serializer)
+            }
+            Records::Tags(items) => envelope("tags", items, total, warnings).serialize(serializer),
+            Records::Hits(items) => Envelope {
+                message_matches: self.message_matches,
+                ..envelope("hits", items, total, warnings)
+            }
+            .serialize(serializer),
+            Records::Transcripts(items) => {
+                envelope("transcripts", items, total, warnings).serialize(serializer)
+            }
+            Records::Marks(items) => {
+                envelope("marks", items, total, warnings).serialize(serializer)
+            }
+        }
+    }
+}
 
 /// The `--json` form of a list: always `{"<records>": [...], "total",
 /// "truncated", "warnings"}`, whatever the flags, so its shape never depends
@@ -142,7 +210,7 @@ struct Envelope<'a, T> {
 }
 
 impl<T: Serialize> Serialize for Envelope<'_, T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let len = if self.message_matches.is_some() { 5 } else { 4 };
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry(self.key, self.items)?;
@@ -158,154 +226,152 @@ impl<T: Serialize> Serialize for Envelope<'_, T> {
 
 /// A list: table, tab-separated lines, or the JSON envelope. `total` is how
 /// many matched; `message_matches` is the count a search's hint gives.
-pub(crate) fn list(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(crate) fn list<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     shorts: &ShortIds,
     records: &Records,
     total: usize,
     warnings: &[WarningPayload],
     message_matches: Option<usize>,
-) -> io::Result<()> {
-    if sink.mode == OutputMode::Json {
-        return match records {
-            Records::Groups(items) => write_json(out, &envelope("items", items, total, warnings)),
-            Records::Entries(items) => {
-                write_json(out, &envelope("entries", items, total, warnings))
-            }
-            Records::Sessions { items, .. } => {
-                write_json(out, &envelope("sessions", items, total, warnings))
-            }
-            Records::SessionTree { rows, .. } => {
-                write_json(out, &envelope("sessions", rows, total, warnings))
-            }
-            Records::Proposals(items) => {
-                write_json(out, &envelope("proposals", items, total, warnings))
-            }
-            Records::Tags(items) => write_json(out, &envelope("tags", items, total, warnings)),
-            Records::Hits(items) => write_json(
-                out,
-                &Envelope {
-                    message_matches,
-                    ..envelope("hits", items, total, warnings)
-                },
-            ),
-            Records::Transcripts(items) => {
-                write_json(out, &envelope("transcripts", items, total, warnings))
-            }
-            Records::Marks(items) => write_json(out, &envelope("marks", items, total, warnings)),
-        };
-    }
+) -> Result {
+    let json = ListJson {
+        records,
+        total,
+        warnings,
+        message_matches,
+    };
+    let mode = sink.terminal().mode();
+    sink.emit(&json, |_| list_table(mode, shorts, records))
+}
+
+/// A list as the table its human modes show; no records is no rows.
+fn list_table(mode: Mode, shorts: &ShortIds, records: &Records) -> Table {
     let prefixes = shorts.prefixes_only();
-    let list_ids = if sink.mode == OutputMode::Table {
+    let list_ids = if mode == Mode::Table {
         &prefixes
     } else {
         shorts
     };
-    // An empty list prints nothing, not a lone header (STD-01 R16).
-    if records.len() == 0 {
-        return Ok(());
-    }
     let (columns, rows): (Vec<Column>, Vec<Vec<Cell>>) = match records {
         // The table holds short values only; the tab-separated form keeps
         // every field, and `group show` and `--json` carry them all.
-        Records::Groups(items) if sink.mode == OutputMode::Table => (
-            GROUP_LIST_COLUMNS.to_vec(),
+        Records::Groups(items) if mode == Mode::Table => (
+            group_list_columns(),
             items.iter().map(group_list_row).collect(),
         ),
         Records::Groups(items) => (
-            GROUP_COLUMNS
-                .iter()
-                .map(|label| col(label, Align::Left, false))
-                .collect(),
+            GROUP_COLUMNS.iter().map(|label| left(label)).collect(),
             items.iter().map(|g| group_row(g, Some(shorts))).collect(),
         ),
         // A STATE column, last so the other columns keep their places, only
         // when the list holds an open item (2_design.md §18.5).
         Records::Entries(items) if items.iter().any(|e| e.state.is_some()) => (
-            ENTRY_COLUMNS
-                .iter()
-                .copied()
-                .chain([col("STATE", Align::Left, false)])
-                .collect(),
+            entry_columns().into_iter().chain([left("STATE")]).collect(),
             items
                 .iter()
                 .map(|entry| {
-                    let mut row = entry_row(entry, sink.mode);
-                    row.push(Cell::plain(entry.state.unwrap_or("-").to_owned()));
+                    let mut row = entry_row(entry, mode);
+                    row.push(Cell::plain(entry.state.unwrap_or("-")));
                     row
                 })
                 .collect(),
         ),
         Records::Entries(items) => (
-            ENTRY_COLUMNS.to_vec(),
-            items
-                .iter()
-                .map(|entry| entry_row(entry, sink.mode))
-                .collect(),
+            entry_columns(),
+            items.iter().map(|entry| entry_row(entry, mode)).collect(),
         ),
         Records::Sessions {
             items,
             active_column,
         } => (
-            with_active(&SESSION_COLUMNS, *active_column, 2),
+            with_active(session_columns(), *active_column, 2),
             items
                 .iter()
-                .map(|s| session_row(s, *active_column, table_shorts(sink, list_ids), sink.mode))
+                .map(|s| session_row(s, *active_column, table_shorts(mode, list_ids), mode))
                 .collect(),
         ),
         Records::SessionTree {
             rows,
             active_column,
         } => (
-            with_active(&SESSION_TREE_COLUMNS, *active_column, 3),
+            with_active(session_tree_columns(), *active_column, 3),
             rows.iter()
-                .map(|row| tree_row(row, table_shorts(sink, list_ids), *active_column, sink.mode))
+                .map(|row| tree_row(row, table_shorts(mode, list_ids), *active_column, mode))
                 .collect(),
         ),
         Records::Proposals(items) => (
-            PROPOSAL_COLUMNS.to_vec(),
+            proposal_columns(),
             items
                 .iter()
-                .flat_map(|p| proposal_rows(p, sink.mode, shorts))
+                .flat_map(|p| proposal_rows(p, mode, shorts))
                 .collect(),
         ),
-        Records::Tags(items) => (TAG_COLUMNS.to_vec(), items.iter().map(tag_row).collect()),
+        Records::Tags(items) => (tag_columns(), items.iter().map(tag_row).collect()),
         Records::Hits(items) => (
-            HIT_COLUMNS.to_vec(),
-            items
-                .iter()
-                .map(|h| hit_row(h, sink.mode, shorts))
-                .collect(),
+            hit_columns(),
+            items.iter().map(|h| hit_row(h, mode, shorts)).collect(),
         ),
         Records::Transcripts(items) => (
-            TRANSCRIPT_COLUMNS.to_vec(),
+            transcript_columns(),
             items
                 .iter()
-                .map(|t| transcript_row(t, sink.mode, table_shorts(sink, list_ids)))
+                .map(|t| transcript_row(t, mode, table_shorts(mode, list_ids)))
                 .collect(),
         ),
         Records::Marks(items) => (
-            MARK_COLUMNS.to_vec(),
+            mark_columns(),
             items
                 .iter()
-                .map(|m| mark_row(m, sink.mode, table_shorts(sink, shorts)))
+                .map(|m| mark_row(m, mode, table_shorts(mode, shorts)))
                 .collect(),
         ),
     };
-    match sink.mode {
-        OutputMode::Table => {
-            out.write_all(table::render(&columns, &rows, sink.width, sink.color).as_bytes())
+    table(mode, columns, rows)
+}
+
+/// One cell of a row as scribe builds it: its text, which the plain line and
+/// the detail view read back, and what its color means.
+#[derive(Clone, Debug)]
+pub(super) struct Cell {
+    /// The text; an absent value is `-`, never empty (STD-01 R14), except in a
+    /// continuation row.
+    pub(super) text: String,
+    /// Semantic color role.
+    pub(super) role: Role,
+}
+
+impl Cell {
+    /// A cell with no emphasis.
+    pub(super) fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            role: Role::Neutral,
         }
-        OutputMode::Plain | OutputMode::Json => rows
-            .iter()
-            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
     }
 }
 
+/// The kit table for `rows`. In a table an empty cell is an absent value and
+/// shows as `-` (STD-01 R14); a row whose first cell is empty continues the
+/// row above it (a proposal's quote line), so its blanks stay blank.
+fn table(mode: Mode, columns: Vec<Column>, rows: Vec<Vec<Cell>>) -> Table {
+    let mut table = Table::new(columns);
+    for row in rows {
+        let continuation = row.first().is_some_and(|cell| cell.text.is_empty());
+        table.push(row.into_iter().map(|cell| {
+            let kit = if cell.text.is_empty() && mode == Mode::Table && !continuation {
+                KitCell::absent()
+            } else {
+                KitCell::new(cell.text)
+            };
+            kit.role(cell.role)
+        }));
+    }
+    table
+}
+
 /// Display names for non-JSON output; JSON retains provider ids.
-fn table_shorts<'a>(sink: &Sink, shorts: &'a ShortIds) -> Option<&'a ShortIds> {
-    (sink.mode != OutputMode::Json).then_some(shorts)
+fn table_shorts(mode: Mode, shorts: &ShortIds) -> Option<&ShortIds> {
+    (mode != Mode::Json).then_some(shorts)
 }
 
 /// A session id in its display form when `shorts` is set.
@@ -325,12 +391,11 @@ fn shown_cite(cite: &str, shorts: &ShortIds) -> String {
 }
 
 /// `columns` with an `ACTIVE` column inserted at `at` when `active`.
-fn with_active(columns: &[Column], active: bool, at: usize) -> Vec<Column> {
-    let mut out = columns.to_vec();
+fn with_active(mut columns: Vec<Column>, active: bool, at: usize) -> Vec<Column> {
     if active {
-        out.insert(at, col("ACTIVE", Align::Left, false));
+        columns.insert(at, left("ACTIVE"));
     }
-    out
+    columns
 }
 
 fn envelope<'a, T>(
@@ -349,8 +414,9 @@ fn envelope<'a, T>(
 }
 
 /// A hook's reply: one line of Claude Code hook JSON, or nothing when the
-/// hook has nothing to say. The mode is ignored: Claude Code reads this.
-pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
+/// hook has nothing to say. The mode is ignored: Claude Code reads this, so
+/// the sink it goes through is one that writes compact JSON.
+pub(crate) fn hook<O: Write, E: Write>(sink: &mut Sink<O, E>, reply: &HookReply) -> Result {
     if let Some(reason) = &reply.block {
         let json = HookJson {
             decision: Some("block"),
@@ -358,8 +424,7 @@ pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
             system_message: None,
             hook_specific_output: None,
         };
-        serde_json::to_writer(&mut *out, &json).map_err(io::Error::from)?;
-        return writeln!(out);
+        return sink.emit_text(&json, |_| String::new());
     }
     if reply.message.is_none() && reply.context.is_none() {
         return Ok(());
@@ -373,13 +438,12 @@ pub(crate) fn hook(out: &mut dyn Write, reply: &HookReply) -> io::Result<()> {
             additional_context: context,
         }),
     };
-    serde_json::to_writer(&mut *out, &json).map_err(io::Error::from)?;
-    writeln!(out)
+    sink.emit_text(&json, |_| String::new())
 }
 
 /// A plugin call's envelope: one JSON line, whatever the mode, since the
 /// Orbit host reads it.
-pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()> {
+pub(crate) fn plugin<O: Write, E: Write>(sink: &mut Sink<O, E>, reply: &PluginReply) -> Result {
     #[derive(serde::Serialize)]
     struct Ok<'a, T: serde::Serialize> {
         ok: bool,
@@ -391,37 +455,39 @@ pub(crate) fn plugin(out: &mut dyn Write, reply: &PluginReply) -> io::Result<()>
         error: &'a super::payload::PluginError,
     }
     match reply {
-        PluginReply::Scan(report) => serde_json::to_writer(
-            &mut *out,
+        PluginReply::Scan(report) => sink.emit_text(
             &Ok {
                 ok: true,
                 output: report.as_ref(),
             },
+            |_| String::new(),
         ),
-        PluginReply::Data(value) => serde_json::to_writer(
-            &mut *out,
+        PluginReply::Data(value) => sink.emit_text(
             &Ok {
                 ok: true,
                 output: value,
             },
+            |_| String::new(),
         ),
-        PluginReply::Error(error) => serde_json::to_writer(&mut *out, &Failed { ok: false, error }),
+        PluginReply::Error(error) => {
+            sink.emit_text(&Failed { ok: false, error }, |_| String::new())
+        }
     }
-    .map_err(io::Error::from)?;
-    writeln!(out)
 }
 
 /// The `group list` table: short values only (STD-01 R15). The opener,
 /// related references, seat chains and summary are in `group show`.
-const GROUP_LIST_COLUMNS: [Column; 7] = [
-    col("ID", Align::Left, false),
-    col("TITLE", Align::Left, true),
-    col("KIND", Align::Left, false),
-    col("PROJECT", Align::Left, false),
-    col("OPENED", Align::Left, false),
-    col("CLOSED", Align::Left, false),
-    col("SEATS", Align::Right, false),
-];
+fn group_list_columns() -> Vec<Column> {
+    vec![
+        left("ID"),
+        cut("TITLE"),
+        left("KIND"),
+        left("PROJECT"),
+        left("OPENED"),
+        left("CLOSED"),
+        right("SEATS"),
+    ]
+}
 
 /// The full field list: `group show` labels and the tab-separated line.
 const GROUP_COLUMNS: [&str; 10] = [
@@ -496,12 +562,12 @@ fn group_row(g: &scribe_core::group::Group, shorts: Option<&ShortIds>) -> Vec<Ce
     .collect()
 }
 
-fn entry_row(e: &EntryPayload, mode: OutputMode) -> Vec<Cell> {
+fn entry_row(e: &EntryPayload, mode: Mode) -> Vec<Cell> {
     vec![
         Cell::plain(e.id.clone()),
         Cell {
             text: e.status.to_owned(),
-            role: color::role_for_status(e.status),
+            role: role_for_status(e.status),
         },
         Cell::plain(e.project.clone()),
         Cell::plain(joined(&e.topics)),
@@ -542,37 +608,26 @@ fn age(seconds: i64) -> String {
 /// A session pass's report: a table or tab-separated lines, one per
 /// session passed, or `{"passes": [...], "remaining": n}`. Nothing passed
 /// prints nothing but the JSON object.
-pub(crate) fn pass(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(crate) fn pass<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     shorts: &ShortIds,
     report: &PassReport,
-) -> io::Result<()> {
-    if sink.mode == OutputMode::Json {
-        return write_json(out, report);
-    }
-    if report.passes.is_empty() {
-        return Ok(());
-    }
-    let prefixes = shorts.prefixes_only();
-    let pass_ids = if sink.mode == OutputMode::Table {
-        &prefixes
-    } else {
-        shorts
-    };
-    let rows: Vec<Vec<Cell>> = report
-        .passes
-        .iter()
-        .map(|p| pass_row(p, table_shorts(sink, pass_ids)))
-        .collect();
-    match sink.mode {
-        OutputMode::Table => {
-            out.write_all(table::render(&PASS_COLUMNS, &rows, sink.width, sink.color).as_bytes())
-        }
-        OutputMode::Plain | OutputMode::Json => rows
+) -> Result {
+    let mode = sink.terminal().mode();
+    sink.emit(report, |report| {
+        let prefixes = shorts.prefixes_only();
+        let pass_ids = if mode == Mode::Table {
+            &prefixes
+        } else {
+            shorts
+        };
+        let rows = report
+            .passes
             .iter()
-            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
-    }
+            .map(|p| pass_row(p, table_shorts(mode, pass_ids)))
+            .collect();
+        table(mode, pass_columns(), rows)
+    })
 }
 
 /// A consistency scan's report: a table or tab-separated lines, one per
@@ -581,15 +636,18 @@ pub(crate) fn pass(
 /// covered candidate, session deactivated or deactivation
 /// failed, or the JSON object. A scan that changed nothing prints nothing
 /// but the JSON object.
-pub(crate) fn scan(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(crate) fn scan<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     shorts: &ShortIds,
     report: &ScanReport,
-) -> io::Result<()> {
-    if sink.mode == OutputMode::Json {
-        return write_json(out, report);
-    }
+) -> Result {
+    let mode = sink.terminal().mode();
+    sink.emit(report, |report| {
+        table(mode, scan_columns(), scan_rows(shorts, report))
+    })
+}
+
+fn scan_rows(shorts: &ShortIds, report: &ScanReport) -> Vec<Vec<Cell>> {
     let mut rows: Vec<Vec<Cell>> = Vec::new();
     for r in &report.reapplied {
         rows.push(vec![
@@ -703,17 +761,7 @@ pub(crate) fn scan(
             Cell::plain("-"),
         ]);
     }
-    if rows.is_empty() {
-        return Ok(());
-    }
-    match sink.mode {
-        OutputMode::Table => {
-            out.write_all(table::render(&SCAN_COLUMNS, &rows, sink.width, sink.color).as_bytes())
-        }
-        OutputMode::Plain | OutputMode::Json => rows
-            .iter()
-            .try_for_each(|row| writeln!(out, "{}", plain_line(row))),
-    }
+    rows
 }
 
 fn pass_row(p: &PassPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
@@ -738,7 +786,7 @@ fn pass_row(p: &PassPayload, shorts: Option<&ShortIds>) -> Vec<Cell> {
 
 /// A `session list --tree` row: the session's row with its parent after
 /// the id; in a table the title is indented two spaces per level.
-fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: OutputMode) -> Vec<Cell> {
+fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: Mode) -> Vec<Cell> {
     let mut cells = session_row(&row.session, active, shorts, mode);
     cells.insert(
         1,
@@ -748,7 +796,7 @@ fn tree_row(row: &TreeRow, shorts: Option<&ShortIds>, active: bool, mode: Output
                 .map_or_else(|| String::from("-"), |parent| shown_id(parent, shorts)),
         ),
     );
-    if mode == OutputMode::Table
+    if mode == Mode::Table
         && let Some(title) = cells.last_mut()
     {
         title.text = format!("{}{}", "  ".repeat(row.depth), title.text);
@@ -765,7 +813,7 @@ fn session_row(
     s: &SessionPayload,
     active: bool,
     shorts: Option<&ShortIds>,
-    mode: OutputMode,
+    mode: Mode,
 ) -> Vec<Cell> {
     let updated = list_timestamp(s.updated, mode);
     let mut cells = vec![
@@ -827,12 +875,12 @@ fn settled_line(p: &ProposalPayload, shorts: Option<&ShortIds>) -> Option<String
 /// A proposal's rows: one, and for a candidate carrying scribe's
 /// context (or an older claim's statement), in the table, a second under it holding the user's quote in
 /// the `REASON` column (2_design.md §11.1).
-fn proposal_rows(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Vec<Cell>> {
+fn proposal_rows(p: &ProposalPayload, mode: Mode, shorts: &ShortIds) -> Vec<Vec<Cell>> {
     let mut rows = vec![proposal_row(p, mode, shorts)];
-    if mode == OutputMode::Table
+    if mode == Mode::Table
         && let Some(quote) = stated_candidate_quote(p)
     {
-        let mut under: Vec<Cell> = PROPOSAL_COLUMNS
+        let mut under: Vec<Cell> = proposal_columns()
             .iter()
             .map(|_| Cell::plain(String::new()))
             .collect();
@@ -844,10 +892,10 @@ fn proposal_rows(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Ve
         }
         rows.push(under);
     }
-    if mode == OutputMode::Table
+    if mode == Mode::Table
         && let Some(line) = settled_line(p, None)
     {
-        let mut under: Vec<Cell> = PROPOSAL_COLUMNS
+        let mut under: Vec<Cell> = proposal_columns()
             .iter()
             .map(|_| Cell::plain(String::new()))
             .collect();
@@ -881,12 +929,12 @@ fn stated_candidate_quote(p: &ProposalPayload) -> Option<String> {
 /// context (an older claim its labelled statement) as its reason; the plain
 /// line adds the speaker's quote after it, where the table puts it on the
 /// row under.
-fn proposal_row(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
+fn proposal_row(p: &ProposalPayload, mode: Mode, shorts: &ShortIds) -> Vec<Cell> {
     let reason = match (
         p.candidate.as_ref().and_then(super::payload::claim_context),
         stated_candidate_quote(p),
     ) {
-        (Some(context), Some(quote)) if mode != OutputMode::Table => {
+        (Some(context), Some(quote)) if mode != Mode::Table => {
             format!("{} | {quote}", one_line(&context))
         }
         (Some(context), _) => one_line(&context),
@@ -894,8 +942,8 @@ fn proposal_row(p: &ProposalPayload, mode: OutputMode, shorts: &ShortIds) -> Vec
     };
     // The plain line carries the instruction after the reason, where the
     // table puts it on a row under (2_design.md §12.3).
-    let reason = match settled_line(p, (mode == OutputMode::Plain).then_some(shorts)) {
-        Some(line) if mode != OutputMode::Table => format!("{reason} | {line}"),
+    let reason = match settled_line(p, (mode == Mode::Plain).then_some(shorts)) {
+        Some(line) if mode != Mode::Table => format!("{reason} | {line}"),
         _ => reason,
     };
     vec![
@@ -937,12 +985,12 @@ fn admitted(a: &scribe_core::Admitted) -> String {
 /// A hit's row, the same in the table and the plain line, except that the
 /// table cuts the title to [`TITLE_CELL_CHARS`] so the snippet keeps room.
 /// A hidden record's cite is muted in the table.
-fn hit_row(h: &HitPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
+fn hit_row(h: &HitPayload, mode: Mode, shorts: &ShortIds) -> Vec<Cell> {
     let title = one_line(&h.title);
     let hidden = h.active == Some(false) || !matches!(h.status, "active" | "open" | "final");
     vec![
         Cell {
-            text: if mode == OutputMode::Plain {
+            text: if mode == Mode::Plain {
                 shown_cite(&h.cite, shorts)
             } else {
                 h.cite.clone()
@@ -952,8 +1000,8 @@ fn hit_row(h: &HitPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
         Cell::plain(h.kind),
         Cell::plain(format!("{:.3}", h.score.as_f64().unwrap_or_default())),
         Cell::plain(list_timestamp(h.updated, mode)),
-        Cell::plain(if mode == OutputMode::Table {
-            table::truncate(&title, TITLE_CELL_CHARS)
+        Cell::plain(if mode == Mode::Table {
+            cap_title(&title)
         } else {
             title
         }),
@@ -961,10 +1009,32 @@ fn hit_row(h: &HitPayload, mode: OutputMode, shorts: &ShortIds) -> Vec<Cell> {
     ]
 }
 
-/// The widest title a hit's table row shows.
-const TITLE_CELL_CHARS: usize = 40;
+/// The widest title a hit's table row shows, in display columns.
+const TITLE_CELL_COLUMNS: usize = 40;
 
-fn transcript_row(t: &TranscriptPayload, mode: OutputMode, shorts: Option<&ShortIds>) -> Vec<Cell> {
+/// A hit's title as its table row shows it: cut to [`TITLE_CELL_COLUMNS`]
+/// display columns, ending in one `…` when anything was cut. The cap is
+/// scribe's own so the snippet keeps room; fitting a terminal is the kit's.
+fn cap_title(title: &str) -> String {
+    if title.width() <= TITLE_CELL_COLUMNS {
+        return title.to_owned();
+    }
+    let keep = TITLE_CELL_COLUMNS - 1;
+    let mut used = 0;
+    let mut cut = String::new();
+    for c in title.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > keep {
+            break;
+        }
+        used += w;
+        cut.push(c);
+    }
+    cut.push('…');
+    cut
+}
+
+fn transcript_row(t: &TranscriptPayload, mode: Mode, shorts: Option<&ShortIds>) -> Vec<Cell> {
     vec![
         Cell::plain(shown_id(&t.session, shorts)),
         Cell::plain(t.project.clone()),
@@ -978,7 +1048,7 @@ fn transcript_row(t: &TranscriptPayload, mode: OutputMode, shorts: Option<&Short
 
 fn mark_row(
     m: &scribe_core::annotation::MarkRecord,
-    mode: OutputMode,
+    mode: Mode,
     shorts: Option<&ShortIds>,
 ) -> Vec<Cell> {
     vec![
@@ -1089,15 +1159,15 @@ pub(super) fn table_date(at: OffsetDateTime) -> String {
         .unwrap_or_else(|| String::from("-"))
 }
 
-fn list_timestamp(at: OffsetDateTime, mode: OutputMode) -> String {
-    if mode == OutputMode::Table {
+fn list_timestamp(at: OffsetDateTime, mode: Mode) -> String {
+    if mode == Mode::Table {
         table_date(at)
     } else {
         timestamp(at)
     }
 }
 
-fn optional_list_timestamp(at: Option<OffsetDateTime>, mode: OutputMode) -> String {
+fn optional_list_timestamp(at: Option<OffsetDateTime>, mode: Mode) -> String {
     at.map(|at| list_timestamp(at, mode))
         .unwrap_or_else(|| String::from("-"))
 }
@@ -1108,44 +1178,35 @@ fn table_date_string(value: &str) -> String {
         .unwrap_or_else(|_| String::from("-"))
 }
 
-fn write_json<T: Serialize + ?Sized>(out: &mut dyn Write, value: &T) -> io::Result<()> {
-    serde_json::to_writer_pretty(&mut *out, value).map_err(io::Error::from)?;
-    writeln!(out)
-}
-
 /// Render scaffold artifacts and actionable next steps without claiming capture.
-pub(super) fn init(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(super) fn init<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     report: &scribe_core::apps::init::InitReport,
-) -> io::Result<()> {
-    if sink.mode == OutputMode::Json {
-        return write_json(out, report);
-    }
-    for file in &report.files {
-        writeln!(out, "{}\t{}", file.status, file.path.display())?;
-    }
-    for step in &report.next {
-        writeln!(out, "{step}")?;
-    }
-    Ok(())
+) -> Result {
+    sink.emit_text(report, |report| {
+        let mut text = String::new();
+        for file in &report.files {
+            text.push_str(&format!("{}\t{}\n", file.status, file.path.display()));
+        }
+        for step in &report.next {
+            text.push_str(step);
+            text.push('\n');
+        }
+        text
+    })
 }
 
 /// Render the result of a group backfill.
-pub(crate) fn group_backfill(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(crate) fn group_backfill<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     shorts: &ShortIds,
     report: &super::GroupBackfill,
-) -> io::Result<()> {
-    if sink.mode == super::sink::OutputMode::Json {
-        serde_json::to_writer(&mut *out, report)?;
-        writeln!(out)?;
-    } else {
+) -> Result {
+    sink.emit_text(report, |report| {
+        let mut text = String::new();
         for member in &report.members {
-            writeln!(
-                out,
-                "{} {}: {} stored, {} skipped{}",
+            text.push_str(&format!(
+                "{} {}: {} stored, {} skipped{}\n",
                 member.seat,
                 shown_id(&member.session, Some(shorts)),
                 member.stored,
@@ -1155,13 +1216,12 @@ pub(crate) fn group_backfill(
                 } else {
                     ""
                 }
-            )?;
+            ));
         }
-        writeln!(
-            out,
-            "Total: {} stored, {} skipped",
+        text.push_str(&format!(
+            "Total: {} stored, {} skipped\n",
             report.stored, report.skipped
-        )?;
-    }
-    Ok(())
+        ));
+        text
+    })
 }

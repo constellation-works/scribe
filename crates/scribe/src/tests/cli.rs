@@ -1,7 +1,7 @@
 use crate::cli::Cli;
 use crate::commands::{Command, EntryCommand};
-use crate::output::FormatArg;
 use clap::{CommandFactory, Parser};
+use cw_cli::Format;
 use std::ffi::OsString;
 
 #[test]
@@ -22,7 +22,7 @@ fn global_flags_parse_before_and_after_the_subcommand() {
     ])
     .unwrap();
     for cli in [before, after] {
-        assert_eq!(cli.global.requested_format(), Some(FormatArg::Json));
+        assert_eq!(cli.global.requested_format(), Some(Format::Json));
         assert_eq!(cli.global.root.as_deref(), Some(std::path::Path::new("/r")));
         assert!(matches!(cli.command, Command::Entry(EntryCommand::List(_))));
     }
@@ -31,7 +31,7 @@ fn global_flags_parse_before_and_after_the_subcommand() {
 #[test]
 fn json_is_shorthand_for_format_json_and_conflicts_with_format() {
     let cli = Cli::try_parse_from(["scribe", "entry", "list", "--json"]).unwrap();
-    assert_eq!(cli.global.requested_format(), Some(FormatArg::Json));
+    assert_eq!(cli.global.requested_format(), Some(Format::Json));
     for conflicting in [
         &["scribe", "--json", "entry", "list", "--format", "table"][..],
         &["scribe", "entry", "list", "--json", "--format", "auto"][..],

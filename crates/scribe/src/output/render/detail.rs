@@ -1,43 +1,103 @@
 //! Rendering for a single record, with its untruncated detail fields.
 
 use super::{
-    GROUP_COLUMNS, admitted, age, approved_line, author, col, due_role, entry_row, group_row,
+    Cell, GROUP_COLUMNS, admitted, age, approved_line, author, due_role, entry_row, group_row,
     joined, one_line, or_dash, plain_line, proposal_row, session_row, settled_line, shown_id,
-    timestamp, transcript_row, write_json, yes_no,
+    table, timestamp, transcript_row, yes_no,
 };
-use crate::output::color;
+use crate::output::Sink;
+use crate::output::color::role_for_status;
 use crate::output::payload::{
     EntryPayload, HandoffPayload, OriginPayload, Record, SessionHandoffsPayload, SessionPayload,
     TagShowPayload, TranscriptPayload,
 };
-use crate::output::sink::{OutputMode, Sink};
-use crate::output::table::{self, Align, Cell, Column};
+use cw_cli::{Column, Mode, Role, TextSpan};
 use scribe_core::ShortIds;
-use std::io::{self, Write};
+use serde::{Serialize, Serializer};
+use std::fmt::{self, Write as _};
+use std::io::Write;
 
-const MEMORY_RULE_COLUMNS: [Column; 4] = [
-    col("RULE", Align::Left, false),
-    col("VALUE", Align::Left, false),
-    col("ORIGIN", Align::Left, false),
-    col("MEANING", Align::Left, true),
-];
+/// A detail view under construction: text in order, a span at a time, so a
+/// value can carry the role that colors it. The kit escapes each span.
+#[derive(Default)]
+struct Detail {
+    spans: Vec<TextSpan>,
+}
+
+impl fmt::Write for Detail {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.spans.push(TextSpan::new(s));
+        Ok(())
+    }
+}
+
+/// A record's `--json` form: the record itself.
+struct RecordJson<'a>(&'a Record);
+
+impl Serialize for RecordJson<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Record::Group(v) => v.serialize(serializer),
+            Record::Tag(v) => v.serialize(serializer),
+            Record::TagRules(v) => v.serialize(serializer),
+            Record::Proposal(v) => v.serialize(serializer),
+            Record::Entry(v) => v.serialize(serializer),
+            Record::Session(v) => v.serialize(serializer),
+            Record::SessionHandoffs(v) => v.serialize(serializer),
+            Record::Transcript(v) => v.serialize(serializer),
+            Record::Memory(v) => v.serialize(serializer),
+            Record::MemoryRules(v) => v.serialize(serializer),
+            Record::MemoryBlock(v) => v.serialize(serializer),
+            Record::MemoryRevision(v) => v.serialize(serializer),
+            Record::MemoryRefresh(v) => v.serialize(serializer),
+            Record::MemoryPrepare(v) => v.serialize(serializer),
+            Record::MemoryRefreshRetry(v) => v.serialize(serializer),
+            Record::StoreMigrate(v) => v.serialize(serializer),
+            Record::Export(v) => v.serialize(serializer),
+            Record::Brief(v) => v.serialize(serializer),
+        }
+    }
+}
+
+fn memory_rule_columns() -> Vec<Column> {
+    vec![
+        Column::new("RULE"),
+        Column::new("VALUE"),
+        Column::new("ORIGIN"),
+        Column::new("MEANING").truncatable(),
+    ]
+}
 
 /// One record: a field-per-line detail view, one tab-separated line (the
 /// same line its list prints), or a JSON object. The detail view never
 /// truncates: it is where a truncated table cell is read in full (STD-01
 /// R15).
-pub(crate) fn show(
-    out: &mut dyn Write,
-    sink: &Sink,
+pub(crate) fn show<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
     shorts: &ShortIds,
     record: &Record,
-) -> io::Result<()> {
-    match (sink.mode, record) {
-        (OutputMode::Json, Record::Group(g)) => write_json(out, g),
-        (OutputMode::Plain, Record::Group(g)) => {
+) -> cw_cli::Result<()> {
+    let mode = sink.terminal().mode();
+    let json = RecordJson(record);
+    if let (Record::MemoryRules(rules), Mode::Plain | Mode::Table) = (record, mode) {
+        return sink.emit(&json, |_| memory_rules(mode, rules));
+    }
+    let mut detail = Detail::default();
+    // Json mode writes the payload and never reads the view.
+    if mode != Mode::Json {
+        // Writing to a `Detail` cannot fail.
+        let _ = view(&mut detail, mode, shorts, record);
+    }
+    sink.emit_text_spans(&json, |_| detail.spans)
+}
+
+fn view(out: &mut Detail, mode: Mode, shorts: &ShortIds, record: &Record) -> fmt::Result {
+    match (mode, record) {
+        (Mode::Json, _) => Ok(()),
+        (Mode::Plain, Record::Group(g)) => {
             writeln!(out, "{}", plain_line(&group_row(g, Some(shorts))))
         }
-        (OutputMode::Table, Record::Group(g)) => {
+        (Mode::Table, Record::Group(g)) => {
             for (label, cell) in GROUP_COLUMNS
                 .iter()
                 .take(GROUP_COLUMNS.len() - 1)
@@ -50,12 +110,9 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Json, Record::Tag(tag)) => write_json(out, tag),
-        (OutputMode::Json, Record::TagRules(tag)) => write_json(out, tag),
-        (OutputMode::Plain, Record::TagRules(tag)) => tag_rules(out, tag, false),
-        (OutputMode::Table, Record::TagRules(tag)) => tag_rules(out, tag, true),
-        (OutputMode::Json, Record::Proposal(proposal)) => write_json(out, proposal),
-        (OutputMode::Plain, Record::Tag(tag)) => writeln!(
+        (Mode::Plain, Record::TagRules(tag)) => tag_rules(out, tag, false),
+        (Mode::Table, Record::TagRules(tag)) => tag_rules(out, tag, true),
+        (Mode::Plain, Record::Tag(tag)) => writeln!(
             out,
             "{}\t{}\t{}\t{}",
             tag.name,
@@ -67,14 +124,10 @@ pub(crate) fn show(
                 .collect::<Vec<_>>()
                 .join(",")
         ),
-        (OutputMode::Plain, Record::Proposal(p)) => {
-            writeln!(
-                out,
-                "{}",
-                plain_line(&proposal_row(p, OutputMode::Plain, shorts))
-            )
+        (Mode::Plain, Record::Proposal(p)) => {
+            writeln!(out, "{}", plain_line(&proposal_row(p, Mode::Plain, shorts)))
         }
-        (OutputMode::Table, Record::Tag(tag)) => {
+        (Mode::Table, Record::Tag(tag)) => {
             field(out, "name", tag.name.as_str())?;
             field(out, "description", &tag.description)?;
             field(
@@ -103,7 +156,7 @@ pub(crate) fn show(
             field(out, "created", &timestamp(tag.created))?;
             field(out, "updated", &timestamp(tag.updated))
         }
-        (OutputMode::Table, Record::Proposal(p)) => {
+        (Mode::Table, Record::Proposal(p)) => {
             field(out, "id", &p.id)?;
             field(out, "kind", p.kind)?;
             field(out, "state", p.state)?;
@@ -165,11 +218,8 @@ pub(crate) fn show(
                 &p.settled_at.map_or_else(|| "-".to_owned(), timestamp),
             )
         }
-        (OutputMode::Json, Record::Entry(entry)) => write_json(out, entry),
-        (OutputMode::Json, Record::Session(session)) => write_json(out, session),
-        (OutputMode::Json, Record::SessionHandoffs(session)) => write_json(out, session),
-        (OutputMode::Plain, Record::Entry(entry)) => {
-            writeln!(out, "{}", plain_line(&entry_row(entry, OutputMode::Plain)))?;
+        (Mode::Plain, Record::Entry(entry)) => {
+            writeln!(out, "{}", plain_line(&entry_row(entry, Mode::Plain)))?;
             // Scribe's statement is the row's content; Daniel's own words
             // follow on their line, with whose statement it is.
             if let (Some(by), Some(quote)) = (&entry.stated_by, &entry.quote) {
@@ -214,16 +264,11 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Plain, Record::Session(session)) => {
+        (Mode::Plain, Record::Session(session)) => {
             writeln!(
                 out,
                 "{}",
-                plain_line(&session_row(
-                    session,
-                    false,
-                    Some(shorts),
-                    OutputMode::Plain
-                ))
+                plain_line(&session_row(session, false, Some(shorts), Mode::Plain))
             )?;
             if let Some(at) = session.forgotten {
                 writeln!(out, "forgotten\t{}", timestamp(at))?;
@@ -257,7 +302,7 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Plain, Record::SessionHandoffs(session)) => {
+        (Mode::Plain, Record::SessionHandoffs(session)) => {
             let latest = session
                 .handoffs
                 .first()
@@ -288,17 +333,14 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Table, Record::Entry(entry)) => entry_detail(out, sink, entry),
-        (OutputMode::Table, Record::Session(session)) => session_detail(out, sink, session),
-        (OutputMode::Table, Record::SessionHandoffs(session)) => {
-            session_handoffs_detail(out, sink, session)
-        }
-        (OutputMode::Json, Record::Transcript(transcript)) => write_json(out, transcript),
-        (OutputMode::Plain, Record::Transcript(transcript)) => {
+        (Mode::Table, Record::Entry(entry)) => entry_detail(out, entry),
+        (Mode::Table, Record::Session(session)) => session_detail(out, session),
+        (Mode::Table, Record::SessionHandoffs(session)) => session_handoffs_detail(out, session),
+        (Mode::Plain, Record::Transcript(transcript)) => {
             writeln!(
                 out,
                 "{}",
-                plain_line(&transcript_row(transcript, OutputMode::Plain, Some(shorts)))
+                plain_line(&transcript_row(transcript, Mode::Plain, Some(shorts)))
             )?;
             if let Some(turns) = &transcript.user_first_turns {
                 for (n, turn) in turns.iter().enumerate() {
@@ -308,9 +350,8 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
-        (OutputMode::Json, Record::Memory(item)) => write_json(out, item),
-        (OutputMode::Plain, Record::Memory(item)) => {
+        (Mode::Table, Record::Transcript(transcript)) => transcript_detail(out, transcript),
+        (Mode::Plain, Record::Memory(item)) => {
             writeln!(
                 out,
                 "{}",
@@ -326,25 +367,19 @@ pub(crate) fn show(
             }
             Ok(())
         }
-        (OutputMode::Table, Record::Memory(item)) => memory_detail(out, item),
-        (OutputMode::Json, Record::MemoryRules(rules)) => write_json(out, rules),
-        (OutputMode::Plain | OutputMode::Table, Record::MemoryRules(rules)) => {
-            memory_rules(out, sink, rules)
-        }
-        (OutputMode::Json, Record::MemoryBlock(block)) => write_json(out, block.as_ref()),
-        (OutputMode::Plain | OutputMode::Table, Record::MemoryBlock(block)) => {
+        (Mode::Table, Record::Memory(item)) => memory_detail(out, item),
+        (Mode::Plain | Mode::Table, Record::MemoryRules(_)) => Ok(()),
+        (Mode::Plain | Mode::Table, Record::MemoryBlock(block)) => {
             write!(out, "{}", block.text)
         }
-        (OutputMode::Json, Record::MemoryRevision(r)) => write_json(out, r.as_ref()),
-        (OutputMode::Plain | OutputMode::Table, Record::MemoryRevision(r)) => {
+        (Mode::Plain | Mode::Table, Record::MemoryRevision(r)) => {
             write!(out, "{}", r.text)?;
             if !r.text.ends_with('\n') {
                 writeln!(out)?;
             }
             Ok(())
         }
-        (OutputMode::Json, Record::MemoryRefresh(r)) => write_json(out, r.as_ref()),
-        (OutputMode::Plain, Record::MemoryRefresh(r)) => writeln!(
+        (Mode::Plain, Record::MemoryRefresh(r)) => writeln!(
             out,
             "{}\t{}\t{}\t{}\t{}\t{}",
             r.result,
@@ -355,7 +390,7 @@ pub(crate) fn show(
             r.milestones.len(),
             r.removed.len()
         ),
-        (OutputMode::Table, Record::MemoryRefresh(r)) => {
+        (Mode::Table, Record::MemoryRefresh(r)) => {
             field(out, "result", r.result)?;
             field(
                 out,
@@ -368,8 +403,7 @@ pub(crate) fn show(
             field(out, "milestones", &or_none(&r.milestones))?;
             field(out, "removed", &or_none(&r.removed))
         }
-        (OutputMode::Json, Record::MemoryPrepare(p)) => write_json(out, p.as_ref()),
-        (OutputMode::Plain, Record::MemoryPrepare(p)) => writeln!(
+        (Mode::Plain, Record::MemoryPrepare(p)) => writeln!(
             out,
             "{}\t{}\t{}\t{}",
             p.nothing_new,
@@ -377,7 +411,7 @@ pub(crate) fn show(
             p.backlog,
             p.passed_stems.len()
         ),
-        (OutputMode::Table, Record::MemoryPrepare(p)) => {
+        (Mode::Table, Record::MemoryPrepare(p)) => {
             field(
                 out,
                 "nothing_new",
@@ -392,17 +426,15 @@ pub(crate) fn show(
                 yes_no(p.inputs.as_ref().is_some_and(|i| i.corrections.is_some())),
             )
         }
-        (OutputMode::Json, Record::MemoryRefreshRetry(r)) => write_json(out, r.as_ref()),
-        (OutputMode::Plain, Record::MemoryRefreshRetry(r)) => {
+        (Mode::Plain, Record::MemoryRefreshRetry(r)) => {
             writeln!(out, "{}\t{}\t{}", r.status, r.code, one_line(&r.correction))
         }
-        (OutputMode::Table, Record::MemoryRefreshRetry(r)) => {
+        (Mode::Table, Record::MemoryRefreshRetry(r)) => {
             field(out, "status", r.status)?;
             field(out, "code", r.code)?;
             field(out, "correction", &r.correction)
         }
-        (OutputMode::Json, Record::StoreMigrate(r)) => write_json(out, r.as_ref()),
-        (OutputMode::Plain, Record::StoreMigrate(r)) => writeln!(
+        (Mode::Plain, Record::StoreMigrate(r)) => writeln!(
             out,
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             r.sessions,
@@ -418,7 +450,7 @@ pub(crate) fn show(
             r.archives,
             r.archived
         ),
-        (OutputMode::Table, Record::StoreMigrate(r)) => {
+        (Mode::Table, Record::StoreMigrate(r)) => {
             field(out, "sessions", &r.sessions.to_string())?;
             field(out, "switches", &r.switches.to_string())?;
             field(out, "cursors", &r.cursors.to_string())?;
@@ -435,14 +467,13 @@ pub(crate) fn show(
             field(out, "archives", &r.archives.to_string())?;
             field(out, "archived", &r.archived.to_string())
         }
-        (OutputMode::Json, Record::Export(r)) => write_json(out, r.as_ref()),
-        (OutputMode::Plain, Record::Export(r)) => {
+        (Mode::Plain, Record::Export(r)) => {
             for file in &r.files {
                 writeln!(out, "{file}")?;
             }
             Ok(())
         }
-        (OutputMode::Table, Record::Export(r)) => {
+        (Mode::Table, Record::Export(r)) => {
             field(out, "dir", &r.dir)?;
             field(out, "format", r.format)?;
             field(out, "sessions", &r.sessions.to_string())?;
@@ -452,8 +483,7 @@ pub(crate) fn show(
             field(out, "files", &r.files.len().to_string())?;
             field(out, "skipped", &or_none(&r.skipped))
         }
-        (OutputMode::Json, Record::Brief(brief)) => write_json(out, brief),
-        (OutputMode::Plain | OutputMode::Table, Record::Brief(brief)) => {
+        (Mode::Plain | Mode::Table, Record::Brief(brief)) => {
             write!(out, "{}", brief.text)
         }
     }
@@ -467,7 +497,7 @@ fn or_none(items: &[String]) -> String {
     }
 }
 
-fn memory_detail(out: &mut dyn Write, m: &crate::output::payload::MemoryPayload) -> io::Result<()> {
+fn memory_detail(out: &mut Detail, m: &crate::output::payload::MemoryPayload) -> fmt::Result {
     let or_dash = |v: Option<&str>| v.unwrap_or("-").to_owned();
     field(out, "id", &m.id)?;
     field(out, "kind", m.kind)?;
@@ -565,12 +595,12 @@ fn entry_record_fields(entry: &EntryPayload) -> Vec<(&'static str, String)> {
     fields
 }
 
-fn entry_detail(out: &mut dyn Write, sink: &Sink, e: &EntryPayload) -> io::Result<()> {
-    entry_metadata(out, e, sink.color)?;
+fn entry_detail(out: &mut Detail, e: &EntryPayload) -> fmt::Result {
+    entry_metadata(out, e)?;
     field(out, "content", or_dash(&e.content))
 }
 
-fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool) -> io::Result<()> {
+fn entry_metadata(out: &mut Detail, e: &EntryPayload) -> fmt::Result {
     let from = match (
         e.content_from.role,
         &e.content_from.message,
@@ -598,10 +628,9 @@ fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool) -> io::Res
             )
         })
         .unwrap_or_else(|| format!("agent note ({})", e.author.name));
-    let status = color::paint(e.status, color::role_for_status(e.status), color);
     field(out, "id", &e.id)?;
     field(out, "tag", &e.tag)?;
-    field(out, "status", &status)?;
+    field_role(out, "status", e.status, role_for_status(e.status))?;
     field(out, "project", &e.project)?;
     field(out, "topics", &joined(&e.topics))?;
     field(out, "related", &joined(&e.related))?;
@@ -720,7 +749,7 @@ fn entry_metadata(out: &mut dyn Write, e: &EntryPayload, color: bool) -> io::Res
 /// `tag show`: the tag's settings, then each capture field with its value
 /// and origin. Plain is `<field>\t<value>\t<origin>` lines (origin `-` for
 /// a setting); the table aligns the same lines, labels first.
-fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result<()> {
+fn tag_rules(out: &mut Detail, t: &TagShowPayload, table: bool) -> fmt::Result {
     let origin = origin_text;
     let c = &t.capture;
     let action = t.action.as_ref().map_or_else(
@@ -815,11 +844,7 @@ fn tag_rules(out: &mut dyn Write, t: &TagShowPayload, table: bool) -> io::Result
 /// `memory rules`: plain is `<rule>\t<value>\t<origin>` lines, like `tag
 /// show`; the table adds each rule's meaning, cut to fit (`--json` keeps
 /// it whole).
-fn memory_rules(
-    out: &mut dyn Write,
-    sink: &Sink,
-    rules: &crate::output::payload::MemoryRulesPayload,
-) -> io::Result<()> {
+fn memory_rules(mode: Mode, rules: &crate::output::payload::MemoryRulesPayload) -> cw_cli::Table {
     let rows: Vec<Vec<Cell>> = rules
         .rules
         .iter()
@@ -833,21 +858,20 @@ fn memory_rules(
                         .join(", ")
                 },
             );
-            vec![
+            let mut row = vec![
                 Cell::plain(r.rule),
                 Cell::plain(value),
                 Cell::plain(origin_text(&r.origin)),
-                Cell::plain(r.meaning),
-            ]
+            ];
+            if mode == Mode::Table {
+                row.push(Cell::plain(r.meaning));
+            }
+            row
         })
         .collect();
-    if sink.mode == OutputMode::Table {
-        return out.write_all(
-            table::render(&MEMORY_RULE_COLUMNS, &rows, sink.width, sink.color).as_bytes(),
-        );
-    }
-    rows.iter()
-        .try_for_each(|row| writeln!(out, "{}", plain_line(&row[..3])))
+    let mut columns = memory_rule_columns();
+    columns.truncate(rows.first().map_or(0, Vec::len));
+    table(mode, columns, rows)
 }
 
 fn origin_text(o: &OriginPayload) -> String {
@@ -858,8 +882,7 @@ fn origin_text(o: &OriginPayload) -> String {
     }
 }
 
-fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::Result<()> {
-    let due = color::paint(yes_no(s.due), due_role(s.due), sink.color);
+fn session_detail(out: &mut Detail, s: &SessionPayload) -> fmt::Result {
     field(out, "id", &s.id)?;
     if let Some(short) = &s.short_id {
         field(out, "short id", short)?;
@@ -894,7 +917,7 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     );
     field(out, "cataloged", &cataloged)?;
     field(out, "on", yes_no(s.on))?;
-    field(out, "due", &due)?;
+    field_role(out, "due", yes_no(s.due), due_role(s.due))?;
     field(out, "project", &s.project)?;
     field(out, "topics", &joined(&s.topics))?;
     field(out, "related", &joined(&s.related))?;
@@ -944,12 +967,7 @@ fn session_detail(out: &mut dyn Write, sink: &Sink, s: &SessionPayload) -> io::R
     session_log(out, s)
 }
 
-fn session_handoffs_detail(
-    out: &mut dyn Write,
-    sink: &Sink,
-    s: &SessionHandoffsPayload,
-) -> io::Result<()> {
-    let due = color::paint(yes_no(s.due), due_role(s.due), sink.color);
+fn session_handoffs_detail(out: &mut Detail, s: &SessionHandoffsPayload) -> fmt::Result {
     field(out, "id", &s.id)?;
     field(
         out,
@@ -961,12 +979,12 @@ fn session_handoffs_detail(
         },
     )?;
     field(out, "on", yes_no(s.on))?;
-    field(out, "due", &due)?;
+    field_role(out, "due", yes_no(s.due), due_role(s.due))?;
     field(out, "project", &s.project)?;
     session_handoffs(out, &s.handoffs)
 }
 
-fn session_handoffs(out: &mut dyn Write, handoffs: &[HandoffPayload]) -> io::Result<()> {
+fn session_handoffs(out: &mut Detail, handoffs: &[HandoffPayload]) -> fmt::Result {
     writeln!(out)?;
     writeln!(out, "## Handoffs")?;
     for h in handoffs {
@@ -986,7 +1004,7 @@ fn session_handoffs(out: &mut dyn Write, handoffs: &[HandoffPayload]) -> io::Res
     Ok(())
 }
 
-fn session_log(out: &mut dyn Write, s: &SessionPayload) -> io::Result<()> {
+fn session_log(out: &mut Detail, s: &SessionPayload) -> fmt::Result {
     let log = s.log.as_deref().unwrap_or_default();
     writeln!(out)?;
     writeln!(out, "## Log")?;
@@ -1022,13 +1040,21 @@ const LABEL_WIDTH: usize = 12;
 /// `label  value`, with continuation lines indented under the value. A label
 /// as long as the column or longer is followed by one space, never run into
 /// its value.
-fn field(out: &mut dyn Write, label: &str, value: &str) -> io::Result<()> {
-    let width = LABEL_WIDTH.max(label.chars().count() + 1);
-    let indent = format!("\n{}", " ".repeat(width));
-    writeln!(out, "{label:<width$}{}", value.replace('\n', &indent))
+fn field(out: &mut Detail, label: &str, value: &str) -> fmt::Result {
+    field_role(out, label, value, Role::Neutral)
 }
 
-fn transcript_detail(out: &mut dyn Write, t: &TranscriptPayload) -> io::Result<()> {
+/// [`field`] with the value in `role`'s color where color is on.
+fn field_role(out: &mut Detail, label: &str, value: &str, role: Role) -> fmt::Result {
+    let width = LABEL_WIDTH.max(label.chars().count() + 1);
+    let indent = format!("\n{}", " ".repeat(width));
+    write!(out, "{label:<width$}")?;
+    out.spans
+        .push(TextSpan::new(value.replace('\n', &indent)).role(role));
+    writeln!(out)
+}
+
+fn transcript_detail(out: &mut Detail, t: &TranscriptPayload) -> fmt::Result {
     field(out, "session", &t.session)?;
     field(out, "project", &t.project)?;
     let mentions = if t.project_mentions.is_empty() {
