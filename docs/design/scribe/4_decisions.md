@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, and why the consistency scan and the Stop hook call no model.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, why the consistency scan and the Stop hook call no model, and why the store file adapter keeps its filesystem lint expectations statement-scoped under STD-02 R6 and R35.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904]
 ---
 
 # scribe — Decisions
@@ -2480,6 +2480,7 @@ show` prints `rebuilt_by` only in `--json`.
   coverage, and the coverage check for resolved referents.
 - [ORB-26640] — proposed tags as catchers, the fixed three-part memory and
   one SQLite store, with the four decisions of the accepted proposal.
+- [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -5433,6 +5434,44 @@ What stays in scribe, per the cw-kit design:
   `"another scribe.db writer"` while checkpoint barriers said
   `"another scribe.db connection"`), and `db_error` classifies busy/locked SQLite
   errors as `Error::Locked` (`store_locked`) via `cw_sqlite::Error::sqlite`.
+
+## Store file lint expectations stay statement-scoped
+
+**Recorded:** 2026-11-26 · [ORB-28904]
+**Standard:** [STD-02@8 §R6 and §R35](../../standards/STD-02-rust-architecture-and-errors/STD-02.md)
+**Code anchors:** `crates/scribe-store/src/db/files.rs`, `clippy.toml`, `scripts/tests/check-gates.sh`
+
+### Context
+
+STD-02@8 §R6 says an allowed module carries a module-level expectation for a
+disallowed-method lint. In `scribe-store` the file adapter needs a small set of
+direct filesystem calls to resolve the permitted root link and inspect or
+remove paths. The same `clippy::disallowed_methods` boundary also bans direct
+SQLite opens: `scribe.db` must be opened through `cw-sqlite`. STD-02@8 §R35
+requires a lint expectation on the narrowest item that needs it.
+
+### Decision
+
+The six filesystem exceptions in `db/files.rs` stay on their individual
+statements rather than moving to a module-level `#![expect]`. This is a scoped
+deviation from §R6's prescribed placement, following §R35's narrowest-item
+rule. A module-wide expectation would also cover a future raw SQLite open in
+the adapter, hiding the violation that the `clippy.toml` boundary is meant to
+reject.
+
+The `store file adapter` fixture in `check-gates.sh` keeps both sides of this
+contract: the production adapter with its scoped expectations passes, while a
+raw `cw_sqlite::rusqlite::Connection::open` added to that module fails with
+`clippy::disallowed_methods` and the configured “open scribe.db through
+cw-sqlite” diagnostic.
+
+### Consequences
+
+- The adapter can make its required filesystem calls while the raw SQLite-open
+  ban remains active there.
+- **Cost:** each permitted direct filesystem call needs its own reasoned
+  expectation, and the fixture must keep checking that the exception scope
+  does not weaken the SQLite boundary.
 
 ## Application units are sliced by subject (STD-02 R45)
 
