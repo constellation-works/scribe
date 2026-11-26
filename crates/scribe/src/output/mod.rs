@@ -84,6 +84,12 @@ impl Console {
     }
 }
 
+#[derive(Serialize)]
+struct ErrorPayload<'a> {
+    error: &'a str,
+    code: &'a str,
+}
+
 /// Columns the root help may wrap command rows into, decided from the
 /// captured process environment `terminal`.
 ///
@@ -322,12 +328,6 @@ fn report_error(json: bool, err: &CliError) {
     } else {
         let _ = writeln!(io::stderr().lock(), "error: {message}");
     }
-}
-
-#[derive(Serialize)]
-struct ErrorPayload<'a> {
-    error: &'a str,
-    code: &'a str,
 }
 
 fn write_json_error(message: &str, code: &str) {

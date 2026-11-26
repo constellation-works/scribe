@@ -19,11 +19,6 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         related: Vec::new(),
         provider: String::from("claude-code"),
         host: String::from("host"),
-        author: AuthorPayload {
-            kind: "user",
-            name: String::from("user"),
-        },
-        updated_by: None,
         created: at,
         updated: at,
         said: String::from("#scribe preferences: x"),
@@ -34,7 +29,6 @@ fn entry(id: &str, content: &str) -> EntryPayload {
             message: None,
             at: None,
         },
-        retirement_reason: None,
         cite: Some(CitePayload {
             session: String::from("s-1"),
             message: None,
@@ -45,11 +39,18 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         }),
         superseded_by: None,
         review_after: None,
+        author: AuthorPayload {
+            kind: "user",
+            name: String::from("user"),
+        },
+        updated_by: None,
+        retirement_reason: None,
         quote: None,
         evidence: None,
         as_of: None,
         window_turns: None,
         window: None,
+        action: None,
         admitted: None,
         approved_by: None,
         instruction: None,
@@ -60,7 +61,6 @@ fn entry(id: &str, content: &str) -> EntryPayload {
         item: None,
         state: None,
         removal_instruction: None,
-        action: None,
     }
 }
 

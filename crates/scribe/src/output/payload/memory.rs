@@ -31,11 +31,6 @@ pub(crate) struct MemoryPayload {
     pub(crate) as_of: Option<String>,
 }
 
-fn day(date: time::Date) -> String {
-    date.format(time::macros::format_description!("[year]-[month]-[day]"))
-        .unwrap_or_default()
-}
-
 impl MemoryPayload {
     /// The payload of a shown file.
     pub(crate) fn from_shown(shown: &scribe_core::MemoryShown) -> Self {
@@ -279,4 +274,9 @@ pub(crate) struct RevisionPayload {
     pub(crate) created: Timestamp,
     /// The profile's text.
     pub(crate) text: String,
+}
+
+fn day(date: time::Date) -> String {
+    date.format(time::macros::format_description!("[year]-[month]-[day]"))
+        .unwrap_or_default()
 }

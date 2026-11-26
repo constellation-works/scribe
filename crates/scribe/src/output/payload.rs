@@ -15,6 +15,8 @@ pub(crate) use memory::{
     RevisionPayload,
 };
 
+pub(crate) use scribe_core::apps::hook::HookReply;
+pub(crate) use scribe_core::apps::session::{PassPayload, PassReport};
 use scribe_core::{
     Author, Cite, ContentFrom, Entry, Instruction, Proposal, Quote, Skipped, TagSummary,
 };
@@ -23,14 +25,12 @@ pub(crate) use session::{HandoffPayload, Kin, SessionHandoffsPayload, SessionPay
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
+/// The label an older claim's statement carries where a context would be
+/// (2_design.md §15.3).
+pub(crate) const OLDER_CLAIM: &str = "older claim";
+
 /// RFC 3339 with an explicit offset (R11).
 type Timestamp = OffsetDateTime;
-
-/// Tag text as output shows it: `{user}` reads "the user", never the
-/// configured name, which reaches prompts only (2_design.md §15.8).
-fn shown(text: &str) -> String {
-    scribe_core::voice::UserName::default().fill(text)
-}
 
 /// Where an entry's content came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -334,20 +334,6 @@ impl EntryPayload {
     }
 }
 
-fn strings<T: ToString>(items: &[T]) -> Vec<String> {
-    items.iter().map(ToString::to_string).collect()
-}
-
-/// `YYYY-MM-DD`.
-fn date(date: time::Date) -> String {
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        u8::from(date.month()),
-        date.day()
-    )
-}
-
 impl From<&Entry> for EntryPayload {
     fn from(entry: &Entry) -> Self {
         Self {
@@ -442,9 +428,9 @@ pub(crate) struct ProposalPayload {
 impl From<&Proposal> for ProposalPayload {
     fn from(p: &Proposal) -> Self {
         Self {
+            candidate: p.candidate.clone(),
             id: p.id.to_string(),
             kind: p.kind.as_str(),
-            candidate: p.candidate.clone(),
             older: p.older.to_string(),
             newer: p.newer.as_ref().map(ToString::to_string),
             reason: p.reason.clone(),
@@ -459,21 +445,6 @@ impl From<&Proposal> for ProposalPayload {
             closed_reason: p.closed_reason.map(scribe_core::ClosedReason::as_str),
             instruction: p.instruction.as_ref().map(InstructionPayload::from),
         }
-    }
-}
-
-/// The label an older claim's statement carries where a context would be
-/// (2_design.md §15.3).
-pub(crate) const OLDER_CLAIM: &str = "older claim";
-
-/// What a claim says, for the outputs (2_design.md §15.3):
-/// its context paragraph, or an older claim's one-line statement labelled
-/// [`OLDER_CLAIM`]; `None` for a claim opened before statements.
-pub(crate) fn claim_context(candidate: &scribe_core::EntryCandidate) -> Option<String> {
-    match (&candidate.context, &candidate.statement) {
-        (Some(context), _) => Some(context.clone()),
-        (None, Some(statement)) => Some(format!("{OLDER_CLAIM}: {statement}")),
-        (None, None) => None,
     }
 }
 
@@ -516,8 +487,8 @@ pub(crate) struct TagActionPayload {
 impl From<&TagSummary> for TagPayload {
     fn from(tag: &TagSummary) -> Self {
         Self {
-            source: tag.source,
             author: tag.author.as_ref().map(AuthorPayload::from),
+            source: tag.source,
             name: tag.name.to_string(),
             aliases: tag
                 .def
@@ -995,9 +966,10 @@ pub(crate) struct BriefClaimPayload {
 impl BriefPayload {
     /// The payload of `b`, whose memory block is `memory`.
     pub(crate) fn new(b: &scribe_core::brief::Brief, memory: MemoryBlockPayload) -> Self {
+        let warnings = memory.warnings.clone();
         Self {
-            warnings: memory.warnings.clone(),
             memory,
+            warnings,
             project: b.project.as_ref().map(ToString::to_string),
             last_group: b.last_group.clone(),
             sessions: b
@@ -1072,8 +1044,6 @@ pub(crate) struct TranscriptPayload {
     pub(crate) user_first_turns: Option<Vec<String>>,
 }
 
-pub(crate) use scribe_core::apps::hook::HookReply;
-
 /// The JSON a hook prints (Claude Code's hook output).
 #[derive(Serialize)]
 pub(crate) struct HookJson<'a> {
@@ -1095,8 +1065,6 @@ pub(crate) struct HookSpecificJson<'a> {
     #[serde(rename = "additionalContext")]
     pub(crate) additional_context: &'a str,
 }
-
-pub(crate) use scribe_core::apps::session::{PassPayload, PassReport};
 
 /// The run's error of a [`PassReport`].
 pub(crate) trait PassFailure {
@@ -1412,4 +1380,35 @@ pub(crate) enum Output {
     Scan(Box<ScanReport>),
     /// A plugin tool call's envelope.
     Plugin(PluginReply),
+}
+
+/// Tag text as output shows it: `{user}` reads "the user", never the
+/// configured name, which reaches prompts only (2_design.md §15.8).
+fn shown(text: &str) -> String {
+    scribe_core::voice::UserName::default().fill(text)
+}
+
+fn strings<T: ToString>(items: &[T]) -> Vec<String> {
+    items.iter().map(ToString::to_string).collect()
+}
+
+/// `YYYY-MM-DD`.
+fn date(date: time::Date) -> String {
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        u8::from(date.month()),
+        date.day()
+    )
+}
+
+/// What a claim says, for the outputs (2_design.md §15.3):
+/// its context paragraph, or an older claim's one-line statement labelled
+/// [`OLDER_CLAIM`]; `None` for a claim opened before statements.
+pub(crate) fn claim_context(candidate: &scribe_core::EntryCandidate) -> Option<String> {
+    match (&candidate.context, &candidate.statement) {
+        (Some(context), _) => Some(context.clone()),
+        (None, Some(statement)) => Some(format!("{OLDER_CLAIM}: {statement}")),
+        (None, None) => None,
+    }
 }
