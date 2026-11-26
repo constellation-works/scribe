@@ -65,27 +65,6 @@ pub struct PromptPayload {
     pub is_meta: serde_json::Value,
 }
 
-/// Whether this payload's turn was written by an agent or the harness,
-/// not plainly typed by the user ([`crate::origin::OriginClaims`]
-/// over its origin fields, `isMeta`, and prompt). Such a turn records
-/// nothing, decides nothing and does not switch `/scribe` on or off.
-pub fn agent_originated(payload: &PromptPayload) -> bool {
-    crate::origin::prompt_agent_originated(
-        &crate::origin::PromptClaims {
-            is_meta: payload.is_meta.as_bool() == Some(true),
-            source: payload.source.as_ref(),
-            prompt_source_camel: payload.prompt_source_camel.as_ref(),
-            prompt_source: payload.prompt_source.as_ref(),
-            origin: payload.origin.as_ref(),
-            prompt_origin_camel: payload.prompt_origin_camel.as_ref(),
-            prompt_origin: payload.prompt_origin.as_ref(),
-            turn_origin_camel: payload.turn_origin_camel.as_ref(),
-            turn_origin: payload.turn_origin.as_ref(),
-        },
-        &payload.prompt,
-    )
-}
-
 /// The fields of the `SessionStart` payload scribe uses.
 #[derive(Debug, Deserialize)]
 pub struct SessionStartPayload {
@@ -120,6 +99,27 @@ pub struct StopPayload {
     /// Fallback for transcript lines from clients that omit their cwd.
     #[serde(default)]
     pub cwd: Option<String>,
+}
+
+/// Whether this payload's turn was written by an agent or the harness,
+/// not plainly typed by the user ([`crate::origin::OriginClaims`]
+/// over its origin fields, `isMeta`, and prompt). Such a turn records
+/// nothing, decides nothing and does not switch `/scribe` on or off.
+pub fn agent_originated(payload: &PromptPayload) -> bool {
+    crate::origin::prompt_agent_originated(
+        &crate::origin::PromptClaims {
+            is_meta: payload.is_meta.as_bool() == Some(true),
+            source: payload.source.as_ref(),
+            prompt_source_camel: payload.prompt_source_camel.as_ref(),
+            prompt_source: payload.prompt_source.as_ref(),
+            origin: payload.origin.as_ref(),
+            prompt_origin_camel: payload.prompt_origin_camel.as_ref(),
+            prompt_origin: payload.prompt_origin.as_ref(),
+            turn_origin_camel: payload.turn_origin_camel.as_ref(),
+            turn_origin: payload.turn_origin.as_ref(),
+        },
+        &payload.prompt,
+    )
 }
 
 /// Parse a payload: the value, or why the bytes are not one.

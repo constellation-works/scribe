@@ -80,6 +80,20 @@ impl Iterator for ReadDir {
     }
 }
 
+/// What [`inspect_owned`] found at a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owned {
+    /// Nothing is there.
+    Missing,
+    /// It has the asked-for type, belongs to this user and no other user
+    /// can write it.
+    Fits,
+    /// It is a link, or not the asked-for type.
+    WrongType,
+    /// It belongs to another user or another user can write it.
+    Foreign,
+}
+
 /// Resolve `path` to its canonical, absolute form.
 ///
 /// # Errors
@@ -205,20 +219,6 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
         ));
     }
     std::fs::File::open(path).map(File)
-}
-
-/// What [`inspect_owned`] found at a path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Owned {
-    /// Nothing is there.
-    Missing,
-    /// It has the asked-for type, belongs to this user and no other user
-    /// can write it.
-    Fits,
-    /// It is a link, or not the asked-for type.
-    WrongType,
-    /// It belongs to another user or another user can write it.
-    Foreign,
 }
 
 /// Inspect `path` without following a link: whether it is a directory

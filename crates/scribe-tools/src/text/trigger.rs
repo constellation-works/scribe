@@ -55,6 +55,14 @@ enum Pat {
     Gap,
 }
 
+/// One word of a text: its byte range, its sentence and its folded form.
+struct Word {
+    start: usize,
+    end: usize,
+    sentence: usize,
+    norm: String,
+}
+
 /// Check one trigger phrase as config gives it.
 pub fn check(phrase: &str) -> Result<(), TriggerError> {
     parse(phrase).map(|_| ())
@@ -96,14 +104,6 @@ fn is_sentence_end(c: char) -> bool {
 
 fn is_apostrophe(c: char) -> bool {
     matches!(c, '\'' | '\u{2019}')
-}
-
-/// One word of a text: its byte range, its sentence and its folded form.
-struct Word {
-    start: usize,
-    end: usize,
-    sentence: usize,
-    norm: String,
 }
 
 /// The words of `text`: runs of letters and digits, with an apostrophe kept

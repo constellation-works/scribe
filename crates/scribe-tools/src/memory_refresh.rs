@@ -3,6 +3,30 @@
 //!
 //! No I/O and no store writes (STD-02 R5).
 
+mod cursor_serde {
+    use super::RefreshCursor;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use time::OffsetDateTime;
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<(OffsetDateTime, String)>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let wire = value.as_ref().map(|(at, session)| RefreshCursor {
+            at: *at,
+            session: session.clone(),
+        });
+        wire.serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<(OffsetDateTime, String)>, D::Error> {
+        let wire = Option::<RefreshCursor>::deserialize(deserializer)?;
+        Ok(wire.map(|c| (c.at, c.session)))
+    }
+}
+
 use scribe_store::record::nullable;
 use scribe_store::{MemoryContext, Stem};
 use serde::{Deserialize, Serialize};
@@ -84,30 +108,6 @@ pub struct RefreshCursor {
     pub at: OffsetDateTime,
     /// The last read session's id.
     pub session: String,
-}
-
-mod cursor_serde {
-    use super::RefreshCursor;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use time::OffsetDateTime;
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &Option<(OffsetDateTime, String)>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let wire = value.as_ref().map(|(at, session)| RefreshCursor {
-            at: *at,
-            session: session.clone(),
-        });
-        wire.serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<(OffsetDateTime, String)>, D::Error> {
-        let wire = Option::<RefreshCursor>::deserialize(deserializer)?;
-        Ok(wire.map(|c| (c.at, c.session)))
-    }
 }
 
 /// What a refresh's write checks has not changed since its inputs.

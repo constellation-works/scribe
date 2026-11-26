@@ -16,6 +16,12 @@ pub const PROMPT_MESSAGE_CHARS: usize = 8_000;
 /// The marker that ends a message cut to [`PROMPT_MESSAGE_CHARS`].
 pub const CUT_MARK: &str = "[… cut]";
 
+/// The default characters of message content in one window (2_design.md §5.3).
+pub const WINDOW_CHARS: usize = 15_000;
+
+/// The default number of messages in one window.
+pub const WINDOW_MESSAGES: usize = 40;
+
 /// One message of a session, as the session model reads it.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PassMessage {
@@ -37,12 +43,6 @@ impl PassMessage {
     }
 }
 
-/// The default characters of message content in one window (2_design.md §5.3).
-pub const WINDOW_CHARS: usize = 15_000;
-
-/// The default number of messages in one window.
-pub const WINDOW_MESSAGES: usize = 40;
-
 /// Bounds on each consecutive model window, configured under `[catalog]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowLimits {
@@ -60,6 +60,15 @@ impl Default for WindowLimits {
             chars: std::num::NonZeroUsize::new(WINDOW_CHARS).unwrap_or(std::num::NonZeroUsize::MIN),
         }
     }
+}
+
+/// The messages one pass sends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Window {
+    /// The messages after the last pass, oldest first.
+    pub messages: Vec<PassMessage>,
+    /// Kept for request compatibility; consecutive windows never drop messages.
+    pub dropped: usize,
 }
 
 /// The session's messages as a pass reads them, in transcript order.
@@ -105,15 +114,6 @@ pub fn start_after(conversation: &[PassMessage], through: Option<&str>) -> usize
     through
         .and_then(|uuid| conversation.iter().position(|m| m.uuid == uuid))
         .map_or(0, |i| i + 1)
-}
-
-/// The messages one pass sends.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Window {
-    /// The messages after the last pass, oldest first.
-    pub messages: Vec<PassMessage>,
-    /// Kept for request compatibility; consecutive windows never drop messages.
-    pub dropped: usize,
 }
 
 /// The messages after `through` (the record's `scribed_through`; all of

@@ -21,6 +21,7 @@
 
 use crate::control;
 use crate::entry::Speaker;
+pub use crate::markers::slash_command_args;
 use crate::origin;
 use serde::Deserialize;
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -35,6 +36,27 @@ pub const PROMPT_CHARS: usize = 300;
 pub const FIRST_TURNS: usize = 5;
 /// A transcript whose last message is at least this old has ended.
 pub const ENDED_AFTER: time::Duration = time::Duration::hours(24);
+
+/// User turns Claude Code writes itself, not Daniel. A turn whose text
+/// starts with one of these tags is dropped, the same rule a pass uses,
+/// except a slash command's args ([`slash_command_args`]).
+const SYNTHETIC: &[&str] = &[
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<user-prompt-submit-hook>",
+];
+
+const PASTED_OPEN: &str = "<pasted_content";
+const PASTED_CLOSE: &str = "</pasted_content>";
 
 /// One message of the conversation.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -67,221 +89,12 @@ pub struct Predecessors {
     pub launch: Vec<crate::SessionId>,
 }
 
-/// Distinct cleared sessions in the opening desktop transcript metadata.
-/// A launch ancestor or a reference inside a conversation turn is never a parent.
-#[must_use]
-pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
-    predecessors(header).clear
-}
-
-/// Distinct clear and launch predecessors in the opening desktop transcript
-/// metadata. Launch predecessors retain their first appearance order. Reads the
-/// same rows as [`cleared_sessions`]; a reference inside a
-/// conversation turn is never a predecessor.
-#[must_use]
-pub fn predecessors(header: &[u8]) -> Predecessors {
-    #[derive(Deserialize)]
-    struct Row {
-        #[serde(rename = "type")]
-        kind: String,
-        #[serde(default)]
-        sessions: Vec<Ancestor>,
-    }
-    #[derive(Deserialize)]
-    struct Ancestor {
-        via: String,
-        id: crate::SessionId,
-    }
-    let mut clear = std::collections::BTreeSet::new();
-    let mut launch = Vec::new();
-    for (index, line) in header.split(|b| *b == b'\n').enumerate() {
-        if line.is_empty() {
-            break;
-        }
-        let Ok(row) = serde_json::from_slice::<Row>(line) else {
-            return Predecessors::default();
-        };
-        match row.kind.as_str() {
-            "derived-from" => {
-                for ancestor in row.sessions {
-                    match ancestor.via.as_str() {
-                        "clear" => clear.insert(ancestor.id),
-                        "launch" => {
-                            if !launch.contains(&ancestor.id) {
-                                launch.push(ancestor.id);
-                            }
-                            true
-                        }
-                        _ => false,
-                    };
-                }
-            }
-            "user" | "assistant" | "system" => break,
-            _ if index == 0 => {}
-            _ => break,
-        }
-    }
-    Predecessors {
-        clear: clear.into_iter().collect(),
-        launch,
-    }
-}
-
-/// The messages of a transcript, in file order, each uuid once: a replayed
-/// line keeps the position of its first copy.
-#[must_use]
-pub fn parse(bytes: &[u8]) -> Vec<Message> {
-    analyze(bytes, false, true).messages
-}
-
-/// A Claude suffix does not have a provider prelude. The caller has already
-/// checked its provider, so the first record cannot reinterpret the batch.
-/// Also returns the uuids of the refused typed forms in the batch, first
-/// copies only: they are not messages, but group capture still needs their
-/// verdict to survive into the next batch.
-#[must_use]
-pub fn parse_claude(bytes: &[u8]) -> (Vec<Message>, Vec<String>) {
-    let analysis = analyze(bytes, false, false);
-    (analysis.messages, analysis.refused)
-}
-
-/// Parse the messages and, for Claude transcripts, the zero-based source line
-/// of each retained message. Codex rollouts have no Claude source-line map.
-#[must_use]
-pub fn parse_with_line_indices(bytes: &[u8]) -> (Vec<Message>, Option<Vec<usize>>) {
-    let analysis = analyze(bytes, true, true);
-    (analysis.messages, analysis.line_indices)
-}
-
-/// The working directory the transcript's first message was written in
-/// (each line carries Claude Code's `cwd`), if any line names one.
-#[must_use]
-pub fn cwd(bytes: &[u8]) -> Option<String> {
-    analyze(bytes, false, true).cwd
-}
-
-/// Survey and cwd from a single pass over `bytes`.
-#[must_use]
-pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
-    let analysis = analyze(bytes, false, true);
-    (survey_from(&analysis.messages, bytes.len()), analysis.cwd)
-}
-
 struct Analysis {
     messages: Vec<Message>,
     /// Uuids of refused typed forms, first copies only, in file order.
     refused: Vec<String>,
     line_indices: Option<Vec<usize>>,
     cwd: Option<String>,
-}
-
-/// One pass over `bytes`: Codex is detected from the first parseable line,
-/// and Claude lines are deserialized into a typed borrowed view, so no
-/// `serde_json::Value` DOM is built per line.
-fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysis {
-    let mut seen = std::collections::HashSet::new();
-    let mut messages = Vec::new();
-    let mut refused = Vec::new();
-    let mut line_indices = with_line_indices.then(Vec::new);
-    let mut cwd: Option<String> = None;
-    let mut decided = !detect_codex;
-    for (line_index, line) in bytes.split(|&b| b == b'\n').enumerate() {
-        let raw = match serde_json::from_slice::<RawLine<'_>>(line) {
-            Ok(raw) => raw,
-            Err(_) => {
-                if !decided && serde_json::from_slice::<IgnoredAny>(line).is_ok() {
-                    decided = true;
-                }
-                continue;
-            }
-        };
-        if !decided {
-            decided = true;
-            if matches!(
-                raw.kind.as_deref(),
-                Some("session_meta" | "response_item" | "turn_context")
-            ) {
-                return match crate::codex::parse(bytes) {
-                    Ok(rollout) => Analysis {
-                        messages: rollout.messages,
-                        refused: Vec::new(),
-                        line_indices: None,
-                        cwd: Some(rollout.cwd),
-                    },
-                    Err(_) => Analysis {
-                        messages: Vec::new(),
-                        refused: Vec::new(),
-                        line_indices: None,
-                        cwd: None,
-                    },
-                };
-            }
-        }
-        let message = message_from(&raw).or_else(|| {
-            (raw.kind.as_deref() == Some("attachment"))
-                .then(|| queued_message(line))
-                .flatten()
-        });
-        if let Some(message) = message {
-            if cwd.is_none() {
-                cwd = raw
-                    .cwd
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned);
-            }
-            // A typed form the origin guard refuses is not conversation. Its
-            // uuid is still used up, so a replay of it stays refused, and it is
-            // reported so group capture keeps the verdict across batches.
-            let is_refused = refused_typed_form(line, &raw, &message);
-            if seen.insert(message.uuid.clone()) {
-                if is_refused {
-                    refused.push(message.uuid);
-                } else {
-                    messages.push(message);
-                    if let Some(indices) = &mut line_indices {
-                        indices.push(line_index);
-                    }
-                }
-            }
-        }
-    }
-    Analysis {
-        messages,
-        refused,
-        line_indices,
-        cwd,
-    }
-}
-
-fn message_from(line: &RawLine<'_>) -> Option<Message> {
-    let role = match line.kind.as_deref()? {
-        "user" => Speaker::User,
-        "assistant" => Speaker::Assistant,
-        _ => return None,
-    };
-    if line.is_sidechain.0 || line.is_meta.0 {
-        return None;
-    }
-    let uuid = line.uuid.as_deref()?.to_owned();
-    let at = OffsetDateTime::parse(line.timestamp.as_deref()?, &Rfc3339).ok()?;
-    let blocks = match line.message.as_ref()?.content.as_ref()? {
-        RawContent::Text(text) => vec![text.clone().into_owned()],
-        RawContent::Blocks(items) => items
-            .iter()
-            .filter_map(|block| match block {
-                RawBlock::Text(text) => Some(text.clone().into_owned()),
-                RawBlock::Other => None,
-            })
-            .collect(),
-        RawContent::Other => return None,
-    };
-    (!blocks.is_empty()).then_some(Message {
-        uuid,
-        role,
-        at,
-        blocks,
-    })
 }
 
 /// An `attachment` line, read only for the kind this module keeps: a message
@@ -314,57 +127,44 @@ struct RawAttachment<'a> {
     origin: Option<serde_json::Value>,
 }
 
-/// The message Daniel typed while the agent was busy, when `line` is a
-/// `queued_command` attachment Claude Code marks as his: `humanTurn` true,
-/// `origin.kind` `human`, and neither meta nor sidechain. Its words are the
-/// attachment's `prompt`. Claude Code keeps no `user` line for it. The origin
-/// guard still reads the line's claims before a check accepts the message.
-#[must_use]
-pub fn queued_message(line: &[u8]) -> Option<Message> {
-    let queued: RawQueued<'_> = serde_json::from_slice(line).ok()?;
-    let attachment = queued.attachment.as_ref()?;
-    let human = attachment
-        .origin
-        .as_ref()
-        .and_then(|origin| origin.get("kind"))
-        .and_then(serde_json::Value::as_str)
-        == Some("human");
-    if attachment.kind.as_deref()? != "queued_command"
-        || !attachment.human_turn.0
-        || attachment.is_meta.0
-        || queued.is_meta.0
-        || queued.is_sidechain.0
-        || !human
-    {
-        return None;
-    }
-    let uuid = queued.uuid.as_deref()?.to_owned();
-    let at = OffsetDateTime::parse(queued.timestamp.as_deref()?, &Rfc3339).ok()?;
-    let prompt = attachment.prompt.as_deref()?;
-    Some(Message {
-        uuid,
-        role: Speaker::User,
-        at,
-        blocks: vec![prompt.to_owned()],
-    })
+/// One of Daniel's turns: his own words, and the blocks pasted into it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserTurn {
+    /// Words he typed, pasted blocks removed.
+    pub own: String,
+    /// Pasted blocks, in order, trimmed and without the tags.
+    pub pasted: Vec<String>,
 }
 
-/// Whether the origin guard (§4.1) refuses a typed form on `line`: a slash
-/// command's args, or a queued message. Either is Daniel's only when no origin
-/// claim on the line refuses it and its words are not an agent or harness
-/// wrapper, the test the instruction check applies. A session pass reads this
-/// same parse, so a refused form is not a turn there either.
-fn refused_typed_form(line: &[u8], raw: &RawLine<'_>, message: &Message) -> bool {
-    if message.role != Speaker::User {
-        return false;
+impl UserTurn {
+    /// His own words when he typed any, otherwise the pasted text, on one
+    /// line and cut to [`PROMPT_CHARS`].
+    #[must_use]
+    pub fn prompt(&self) -> String {
+        let source = if self.own.is_empty() {
+            self.pasted.join(" ")
+        } else {
+            self.own.clone()
+        };
+        flatten_cut(&source, PROMPT_CHARS)
     }
-    let text = message.text();
-    let words = match slash_command_args(&text) {
-        Some(args) => args,
-        None if raw.kind.as_deref() == Some("attachment") => text.as_str(),
-        None => return false,
-    };
-    origin::agent_originated(&[], words) || origin::line_refused(line)
+}
+
+/// A model-free reading of a transcript (docs/design/scribe/2_design.md §5.8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Survey {
+    /// The first kept message, if the file has one.
+    pub started: Option<OffsetDateTime>,
+    /// The last kept message.
+    pub ended: Option<OffsetDateTime>,
+    /// The file's length.
+    pub bytes: u64,
+    /// Daniel's turns ([`user_turn`]).
+    pub user_turns: u32,
+    /// His first turn, cut to [`PROMPT_CHARS`]. Empty when he has none.
+    pub first_prompt: String,
+    /// His first [`FIRST_TURNS`] turns, each cut the same way.
+    pub first_turns: Vec<String>,
 }
 
 /// A string field that is `None` when the JSON value is not a string; the
@@ -719,48 +519,266 @@ where
     }
 }
 
-/// User turns Claude Code writes itself, not Daniel. A turn whose text
-/// starts with one of these tags is dropped, the same rule a pass uses,
-/// except a slash command's args ([`slash_command_args`]).
-const SYNTHETIC: &[&str] = &[
-    "<task-notification>",
-    "<command-name>",
-    "<command-message>",
-    "<command-args>",
-    "<local-command-stdout>",
-    "<local-command-stderr>",
-    "<local-command-caveat>",
-    "<system-reminder>",
-    "<bash-input>",
-    "<bash-stdout>",
-    "<bash-stderr>",
-    "<user-prompt-submit-hook>",
-];
-
-const PASTED_OPEN: &str = "<pasted_content";
-const PASTED_CLOSE: &str = "</pasted_content>";
-
-/// One of Daniel's turns: his own words, and the blocks pasted into it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UserTurn {
-    /// Words he typed, pasted blocks removed.
-    pub own: String,
-    /// Pasted blocks, in order, trimmed and without the tags.
-    pub pasted: Vec<String>,
+/// Distinct cleared sessions in the opening desktop transcript metadata.
+/// A launch ancestor or a reference inside a conversation turn is never a parent.
+#[must_use]
+pub fn cleared_sessions(header: &[u8]) -> Vec<crate::SessionId> {
+    predecessors(header).clear
 }
 
-impl UserTurn {
-    /// His own words when he typed any, otherwise the pasted text, on one
-    /// line and cut to [`PROMPT_CHARS`].
-    #[must_use]
-    pub fn prompt(&self) -> String {
-        let source = if self.own.is_empty() {
-            self.pasted.join(" ")
-        } else {
-            self.own.clone()
-        };
-        flatten_cut(&source, PROMPT_CHARS)
+/// Distinct clear and launch predecessors in the opening desktop transcript
+/// metadata. Launch predecessors retain their first appearance order. Reads the
+/// same rows as [`cleared_sessions`]; a reference inside a
+/// conversation turn is never a predecessor.
+#[must_use]
+pub fn predecessors(header: &[u8]) -> Predecessors {
+    #[derive(Deserialize)]
+    struct Row {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(default)]
+        sessions: Vec<Ancestor>,
     }
+    #[derive(Deserialize)]
+    struct Ancestor {
+        via: String,
+        id: crate::SessionId,
+    }
+    let mut clear = std::collections::BTreeSet::new();
+    let mut launch = Vec::new();
+    for (index, line) in header.split(|b| *b == b'\n').enumerate() {
+        if line.is_empty() {
+            break;
+        }
+        let Ok(row) = serde_json::from_slice::<Row>(line) else {
+            return Predecessors::default();
+        };
+        match row.kind.as_str() {
+            "derived-from" => {
+                for ancestor in row.sessions {
+                    match ancestor.via.as_str() {
+                        "clear" => clear.insert(ancestor.id),
+                        "launch" => {
+                            if !launch.contains(&ancestor.id) {
+                                launch.push(ancestor.id);
+                            }
+                            true
+                        }
+                        _ => false,
+                    };
+                }
+            }
+            "user" | "assistant" | "system" => break,
+            _ if index == 0 => {}
+            _ => break,
+        }
+    }
+    Predecessors {
+        clear: clear.into_iter().collect(),
+        launch,
+    }
+}
+
+/// The messages of a transcript, in file order, each uuid once: a replayed
+/// line keeps the position of its first copy.
+#[must_use]
+pub fn parse(bytes: &[u8]) -> Vec<Message> {
+    analyze(bytes, false, true).messages
+}
+
+/// A Claude suffix does not have a provider prelude. The caller has already
+/// checked its provider, so the first record cannot reinterpret the batch.
+/// Also returns the uuids of the refused typed forms in the batch, first
+/// copies only: they are not messages, but group capture still needs their
+/// verdict to survive into the next batch.
+#[must_use]
+pub fn parse_claude(bytes: &[u8]) -> (Vec<Message>, Vec<String>) {
+    let analysis = analyze(bytes, false, false);
+    (analysis.messages, analysis.refused)
+}
+
+/// Parse the messages and, for Claude transcripts, the zero-based source line
+/// of each retained message. Codex rollouts have no Claude source-line map.
+#[must_use]
+pub fn parse_with_line_indices(bytes: &[u8]) -> (Vec<Message>, Option<Vec<usize>>) {
+    let analysis = analyze(bytes, true, true);
+    (analysis.messages, analysis.line_indices)
+}
+
+/// The working directory the transcript's first message was written in
+/// (each line carries Claude Code's `cwd`), if any line names one.
+#[must_use]
+pub fn cwd(bytes: &[u8]) -> Option<String> {
+    analyze(bytes, false, true).cwd
+}
+
+/// Survey and cwd from a single pass over `bytes`.
+#[must_use]
+pub fn survey_with_cwd(bytes: &[u8]) -> (Survey, Option<String>) {
+    let analysis = analyze(bytes, false, true);
+    (survey_from(&analysis.messages, bytes.len()), analysis.cwd)
+}
+
+/// One pass over `bytes`: Codex is detected from the first parseable line,
+/// and Claude lines are deserialized into a typed borrowed view, so no
+/// `serde_json::Value` DOM is built per line.
+fn analyze(bytes: &[u8], with_line_indices: bool, detect_codex: bool) -> Analysis {
+    let mut seen = std::collections::HashSet::new();
+    let mut messages = Vec::new();
+    let mut refused = Vec::new();
+    let mut line_indices = with_line_indices.then(Vec::new);
+    let mut cwd: Option<String> = None;
+    let mut decided = !detect_codex;
+    for (line_index, line) in bytes.split(|&b| b == b'\n').enumerate() {
+        let raw = match serde_json::from_slice::<RawLine<'_>>(line) {
+            Ok(raw) => raw,
+            Err(_) => {
+                if !decided && serde_json::from_slice::<IgnoredAny>(line).is_ok() {
+                    decided = true;
+                }
+                continue;
+            }
+        };
+        if !decided {
+            decided = true;
+            if matches!(
+                raw.kind.as_deref(),
+                Some("session_meta" | "response_item" | "turn_context")
+            ) {
+                return match crate::codex::parse(bytes) {
+                    Ok(rollout) => Analysis {
+                        messages: rollout.messages,
+                        refused: Vec::new(),
+                        line_indices: None,
+                        cwd: Some(rollout.cwd),
+                    },
+                    Err(_) => Analysis {
+                        messages: Vec::new(),
+                        refused: Vec::new(),
+                        line_indices: None,
+                        cwd: None,
+                    },
+                };
+            }
+        }
+        let message = message_from(&raw).or_else(|| {
+            (raw.kind.as_deref() == Some("attachment"))
+                .then(|| queued_message(line))
+                .flatten()
+        });
+        if let Some(message) = message {
+            if cwd.is_none() {
+                cwd = raw
+                    .cwd
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+            }
+            // A typed form the origin guard refuses is not conversation. Its
+            // uuid is still used up, so a replay of it stays refused, and it is
+            // reported so group capture keeps the verdict across batches.
+            let is_refused = refused_typed_form(line, &raw, &message);
+            if seen.insert(message.uuid.clone()) {
+                if is_refused {
+                    refused.push(message.uuid);
+                } else {
+                    messages.push(message);
+                    if let Some(indices) = &mut line_indices {
+                        indices.push(line_index);
+                    }
+                }
+            }
+        }
+    }
+    Analysis {
+        messages,
+        refused,
+        line_indices,
+        cwd,
+    }
+}
+
+fn message_from(line: &RawLine<'_>) -> Option<Message> {
+    let role = match line.kind.as_deref()? {
+        "user" => Speaker::User,
+        "assistant" => Speaker::Assistant,
+        _ => return None,
+    };
+    if line.is_sidechain.0 || line.is_meta.0 {
+        return None;
+    }
+    let uuid = line.uuid.as_deref()?.to_owned();
+    let at = OffsetDateTime::parse(line.timestamp.as_deref()?, &Rfc3339).ok()?;
+    let blocks = match line.message.as_ref()?.content.as_ref()? {
+        RawContent::Text(text) => vec![text.clone().into_owned()],
+        RawContent::Blocks(items) => items
+            .iter()
+            .filter_map(|block| match block {
+                RawBlock::Text(text) => Some(text.clone().into_owned()),
+                RawBlock::Other => None,
+            })
+            .collect(),
+        RawContent::Other => return None,
+    };
+    (!blocks.is_empty()).then_some(Message {
+        uuid,
+        role,
+        at,
+        blocks,
+    })
+}
+
+/// The message Daniel typed while the agent was busy, when `line` is a
+/// `queued_command` attachment Claude Code marks as his: `humanTurn` true,
+/// `origin.kind` `human`, and neither meta nor sidechain. Its words are the
+/// attachment's `prompt`. Claude Code keeps no `user` line for it. The origin
+/// guard still reads the line's claims before a check accepts the message.
+#[must_use]
+pub fn queued_message(line: &[u8]) -> Option<Message> {
+    let queued: RawQueued<'_> = serde_json::from_slice(line).ok()?;
+    let attachment = queued.attachment.as_ref()?;
+    let human = attachment
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("human");
+    if attachment.kind.as_deref()? != "queued_command"
+        || !attachment.human_turn.0
+        || attachment.is_meta.0
+        || queued.is_meta.0
+        || queued.is_sidechain.0
+        || !human
+    {
+        return None;
+    }
+    let uuid = queued.uuid.as_deref()?.to_owned();
+    let at = OffsetDateTime::parse(queued.timestamp.as_deref()?, &Rfc3339).ok()?;
+    let prompt = attachment.prompt.as_deref()?;
+    Some(Message {
+        uuid,
+        role: Speaker::User,
+        at,
+        blocks: vec![prompt.to_owned()],
+    })
+}
+
+/// Whether the origin guard (§4.1) refuses a typed form on `line`: a slash
+/// command's args, or a queued message. Either is Daniel's only when no origin
+/// claim on the line refuses it and its words are not an agent or harness
+/// wrapper, the test the instruction check applies. A session pass reads this
+/// same parse, so a refused form is not a turn there either.
+fn refused_typed_form(line: &[u8], raw: &RawLine<'_>, message: &Message) -> bool {
+    if message.role != Speaker::User {
+        return false;
+    }
+    let text = message.text();
+    let words = match slash_command_args(&text) {
+        Some(args) => args,
+        None if raw.kind.as_deref() == Some("attachment") => text.as_str(),
+        None => return false,
+    };
+    origin::agent_originated(&[], words) || origin::line_refused(line)
 }
 
 /// Daniel's turn, or `None` when `message` is not one: an assistant line,
@@ -787,29 +805,10 @@ pub fn user_turn(message: &Message) -> Option<UserTurn> {
     (!own.is_empty() || !pasted.is_empty()).then_some(UserTurn { own, pasted })
 }
 
-pub use crate::markers::slash_command_args;
-
 /// Daniel's turns, in transcript order.
 #[must_use]
 pub fn user_turns(messages: &[Message]) -> Vec<UserTurn> {
     messages.iter().filter_map(user_turn).collect()
-}
-
-/// A model-free reading of a transcript (docs/design/scribe/2_design.md §5.8).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Survey {
-    /// The first kept message, if the file has one.
-    pub started: Option<OffsetDateTime>,
-    /// The last kept message.
-    pub ended: Option<OffsetDateTime>,
-    /// The file's length.
-    pub bytes: u64,
-    /// Daniel's turns ([`user_turn`]).
-    pub user_turns: u32,
-    /// His first turn, cut to [`PROMPT_CHARS`]. Empty when he has none.
-    pub first_prompt: String,
-    /// His first [`FIRST_TURNS`] turns, each cut the same way.
-    pub first_turns: Vec<String>,
 }
 
 /// Survey `bytes`. Times come from kept messages; turn counts use the pass's

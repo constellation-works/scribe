@@ -1,18 +1,17 @@
 //! Shared inputs, output contracts and prompting rules for session distillation.
 
-use crate::voice::Voice;
-pub use crate::window::{CUT_MARK, PROMPT_MESSAGE_CHARS, PassMessage};
-use scribe_store::entry::Speaker;
-pub use scribe_store::{MemoryContext, PendingContext};
-use std::fmt::Write as _;
-use std::time::Duration;
-
 mod check;
 
+use crate::voice::Voice;
+pub use crate::window::{CUT_MARK, PROMPT_MESSAGE_CHARS, PassMessage};
 pub use check::{
     BUDGETS, CheckedSegment, Distilled, Invalid, SAID_CHARS, SEGMENT_CHARS, TERM_CHARS, check,
     compression_request, merge_terms, repair,
 };
+use scribe_store::entry::Speaker;
+pub use scribe_store::{MemoryContext, PendingContext};
+use std::fmt::Write as _;
+use std::time::Duration;
 
 /// How long the session model may take for one session (2_design.md §5.2).
 pub const SESSION_BUDGET: Duration = Duration::from_secs(120);
@@ -21,21 +20,26 @@ pub const SESSION_BUDGET: Duration = Duration::from_secs(120);
 /// requested (2_design.md §13.3).
 const MEMORY_PROPERTY: &str = r#""memory":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["now","milestone"]},"title":{"type":"string","maxLength":80,"description":"one line naming the event or plan"},"text":{"type":"string","maxLength":400,"description":"what the user said, third person, standing alone, with the date"},"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"date":{"type":["string","null"],"maxLength":10,"description":"YYYY-MM-DD resolved against the turn's date, else null"},"now_kind":{"type":["string","null"],"enum":["deadline","event","plan",null]},"update":{"type":["string","null"],"maxLength":64,"description":"the stem of a listed now item this changes, else null"},"completes":{"type":["string","null"],"maxLength":32,"description":"the id of a listed pending candidate this dates, else null"}},"required":["kind","title","text","quote","message","date","now_kind","update","completes"],"additionalProperties":false}},"signal":{"type":"integer","minimum":0,"maximum":3,"description":"how much this window says about who the user is: role, goals, projects, habits"}"#;
 
-/// The session answer's schema with the `memory` and `signal` properties:
-/// sent only when a request asks for memory, so a request that asks for
-/// none (a rebuild) sends [`SESSION_SCHEMA`] unchanged.
-#[must_use]
-pub fn session_schema_with_memory() -> String {
-    let marker =
-        r#"},"required":["title","summary","goals","next","topics","related","terms","new"]"#;
-    SESSION_SCHEMA.replacen(marker, &format!(",{MEMORY_PROPERTY}{marker}"), 1)
-}
-
 /// The JSON schema of a session-pass answer.
 pub const SESSION_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string","description":"one line naming what the session was about"},"summary":{"type":"string","description":"what happened in the session; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string","description":"what the user set out to do"},"next":{"type":"array","items":{"type":"string"},"description":"open next steps, one per item; aim for at most 750 characters in all, hard limit 1000, counting a '- ' prefix per item and a newline between items"},"topics":{"type":"array","items":{"type":"string"},"description":"0-5 lowercase kebab-case labels, reusing existing ones first"},"related":{"type":"array","items":{"type":"string"},"description":"references the session mentions: task:<id>, pr:<owner>/<repo>#<n>, repo:<slug> or session:<id>"},"terms":{"type":"array","items":{"type":"object","properties":{"term":{"type":"string","description":"the phrase the user coined or defined"},"said":{"type":"string","description":"the user's own words that define or first use it, copied character for character"},"message":{"type":"string","description":"the id of the user message those words are in"}},"required":["term","said","message"],"additionalProperties":false}},"open":{"description":"rewrite the existing open segment; omitted or null keeps its content; without an existing open segment, an object starts a new segment at the first window message","anyOf":[{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}}},"required":["heading","text","topics","related"],"additionalProperties":false},{"type":"null"}]},"new":{"type":"array","items":{"type":"object","properties":{"heading":{"type":"string"},"text":{"type":"string"},"topics":{"type":"array","items":{"type":"string"}},"related":{"type":"array","items":{"type":"string"}},"starts_at":{"type":"string"}},"required":["heading","text","topics","related","starts_at"],"additionalProperties":false}},"candidates":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"quote":{"type":"string","minLength":8,"maxLength":400},"message":{"type":"string","maxLength":128},"tag":{"type":"string","maxLength":32},"context":{"type":"string","maxLength":600,"description":"two to four sentences that stand alone, in the third person: what was being discussed and what the turn settles; never a single line"},"subject":{"type":"string","maxLength":80,"description":"what the turn is about (the page, task, feature, tool or host) as a short noun phrase; empty when the conversation does not name it"},"outcome":{"type":"string","enum":["open","parked","task"],"description":"under a written tag only: open, parked when the user set it aside, task when it became a task in this session"},"outcome_said":{"type":"string","maxLength":300,"description":"for parked: the user's own words setting the idea aside, copied character for character"},"outcome_message":{"type":"string","maxLength":128,"description":"for parked: the id of the user message those words are in"},"task":{"type":"string","maxLength":64,"description":"for task: the task id, as the conversation writes it"}},"required":["quote","message","tag","context","subject"],"additionalProperties":false}}},"required":["title","summary","goals","next","topics","related","terms","new"],"additionalProperties":false}"#;
 
 /// The JSON schema of a compression-only session header answer.
 pub const SESSION_HEADER_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string","description":"shortened summary; aim for at most 900 characters, hard limit 1200"},"goals":{"type":"string"},"next":{"type":"array","items":{"type":"string"},"description":"shortened next steps; aim for at most 750 characters in all, hard limit 1000"}},"required":["title","summary","goals","next"],"additionalProperties":false}"#;
+
+/// The shipped instruction text of a [`SessionRequest`]
+/// (`[instructions] session` replaces it).
+pub const SESSION_INSTRUCTIONS: &str = "You keep the record of one coding session between {user} \
+     and an AI assistant. Read the record so far, if any, and the conversation's new messages, \
+     and return the whole updated record.";
+
+/// The text a segment may hold before a model should seal it: below the
+/// 900-character hard limit, for a model's imprecise character counting.
+pub const SEGMENT_TARGET: usize = 700;
+
+/// The shipped instruction text of a [`SessionHeaderRequest`]
+/// (`[instructions] session_header` replaces it).
+pub const SESSION_HEADER_INSTRUCTIONS: &str = "Compress only the session header below. Preserve \
+     its meaning and shorten the prose. Do not add facts.";
 
 /// The record a pass extends, as the session model reads it.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -190,12 +194,6 @@ pub struct SessionWindowInput {
 /// The interim provider adapter uses the same window as the Orbit activity.
 pub type SessionRequest = SessionWindowInput;
 
-/// The shipped instruction text of a [`SessionRequest`]
-/// (`[instructions] session` replaces it).
-pub const SESSION_INSTRUCTIONS: &str = "You keep the record of one coding session between {user} \
-     and an AI assistant. Read the record so far, if any, and the conversation's new messages, \
-     and return the whole updated record.";
-
 /// One of the user's turns that fired a trigger of a capture tag.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FiringTurn {
@@ -235,10 +233,6 @@ pub struct Budgets {
     /// `## Next`, as rendered: one `- <item>` line per item.
     pub next: usize,
 }
-
-/// The text a segment may hold before a model should seal it: below the
-/// 900-character hard limit, for a model's imprecise character counting.
-pub const SEGMENT_TARGET: usize = 700;
 
 impl Budgets {
     /// Leave room for a model's imprecise character counting.
@@ -642,11 +636,6 @@ pub struct SessionHeaderRequest {
     pub voice: Voice,
 }
 
-/// The shipped instruction text of a [`SessionHeaderRequest`]
-/// (`[instructions] session_header` replaces it).
-pub const SESSION_HEADER_INSTRUCTIONS: &str = "Compress only the session header below. Preserve \
-     its meaning and shorten the prose. Do not add facts.";
-
 impl SessionHeaderRequest {
     /// The prompt the model reads on stdin; no window is resent.
     #[must_use]
@@ -847,4 +836,14 @@ pub struct NewSegmentAnswer {
     pub topics: Vec<String>,
     /// References.
     pub related: Vec<String>,
+}
+
+/// The session answer's schema with the `memory` and `signal` properties:
+/// sent only when a request asks for memory, so a request that asks for
+/// none (a rebuild) sends [`SESSION_SCHEMA`] unchanged.
+#[must_use]
+pub fn session_schema_with_memory() -> String {
+    let marker =
+        r#"},"required":["title","summary","goals","next","topics","related","terms","new"]"#;
+    SESSION_SCHEMA.replacen(marker, &format!(",{MEMORY_PROPERTY}{marker}"), 1)
 }

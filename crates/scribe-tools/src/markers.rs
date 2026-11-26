@@ -43,6 +43,35 @@ pub const GLOBAL_OPENER: &str = "#scribe/global";
 /// Verbs that settle a proposal or hide an entry (form 4).
 pub(crate) const SETTLING: [&str; 4] = ["approve", "reject", "retire", "forget"];
 
+/// The group lengths of a UUID, which a Claude Code or Codex session id is.
+const UUID_GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
+
+/// The most markers one turn may hold; a fourth is refused
+/// [`MarkProblem::TooMany`] before any model call (§14.5).
+pub const MAX_MARKS: usize = 3;
+
+/// What a word after a marker sheds at its end.
+const PUNCTUATION: [char; 9] = [':', ',', '.', ';', '!', '?', ')', ']', '}'];
+
+/// The prepositions before the tag that ends a folded form 2 or 3 line.
+const PREPOSITIONS: [&str; 3] = ["to", "in", "under"];
+/// The optional determiners before that tag.
+const DETERMINERS: [&str; 2] = ["my", "the"];
+
+/// Built-in settings commands whose args are a value Claude Code writes into a
+/// setting (`/model claude-haiku-5-5`), not words Daniel says. Their args are
+/// never his turn: a typed `/model` and one the desktop app writes when another
+/// session changes the model leave the same line, so origin cannot tell them
+/// apart.
+const SETTINGS_COMMANDS: &[&str] = &[
+    "/config",
+    "/effort",
+    "/fast",
+    "/model",
+    "/output-style",
+    "/permissions",
+];
+
 /// Why a settling line was not applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
@@ -126,6 +155,114 @@ impl Parsed {
             Self::Settle(s) => s.line,
             Self::Refused(r) => r.line,
         }
+    }
+}
+
+/// A settling instruction (form 4): `#scribe approve|reject <p-id>` or
+/// `#scribe retire|forget <entry-id>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Settle {
+    /// Apply a proposal: its older entry becomes `superseded` (or `retired`
+    /// for a stale proposal).
+    Approve(ProposalId),
+    /// Close a proposal for good; its pair is never proposed again.
+    Reject(ProposalId),
+    /// Hide an entry from answers; it stays on disk.
+    Retire(EntryId),
+    /// Blank an entry's text for good; its id, cite and status stay.
+    Forget(EntryId),
+    /// Erase a session's stored record and sources (`s-<n>`, its provider
+    /// id or a unique prefix of it, which the store resolves), leaving an id-only tombstone. Open claims sourced from it are
+    /// withdrawn, citing entries are detached, and handoffs naming it are
+    /// deleted (2_design.md §15.7). The store applies it
+    /// (`ProposalVerbs::settle` in scribe-core).
+    ForgetSession(SessionId),
+}
+
+impl Settle {
+    /// The id the instruction names, as typed.
+    #[must_use]
+    pub fn target(&self) -> String {
+        match self {
+            Self::Approve(id) | Self::Reject(id) => id.to_string(),
+            Self::Retire(id) | Self::Forget(id) => id.to_string(),
+            Self::ForgetSession(id) => id.to_string(),
+        }
+    }
+}
+
+/// Why a marker is refused before any model call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MarkProblem {
+    /// A settling verb after a marker inside a sentence: settling needs
+    /// its own line (§14.1).
+    Settling,
+    /// `#scribe/<word>` with a word other than `global`.
+    BadOpener,
+    /// A marker past [`MAX_MARKS`] in one turn.
+    TooMany,
+}
+
+impl MarkProblem {
+    /// The refusal code it is recorded and audited with.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Settling | Self::BadOpener => "unparsed_instruction",
+            Self::TooMany => "too_many_marks",
+        }
+    }
+
+    /// Why, for Daniel's echo.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            Self::Settling => String::from(
+                "settling needs its own line: #scribe approve|reject <p-id> or #scribe retire|forget <entry-id>",
+            ),
+            Self::BadOpener => format!("only {MARKER} and {GLOBAL_OPENER} mark a message"),
+            Self::TooMany => format!("at most {MAX_MARKS} #scribe markers in one message"),
+        }
+    }
+}
+
+/// One `#scribe` marker of a typed turn (§14.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// Its number in the turn, from 1, in text order.
+    pub number: u32,
+    /// The line it is on, from 1, as `capture::lines` numbers lines.
+    pub line: u32,
+    /// That line as typed.
+    pub said: String,
+    /// It was `#scribe/global`: the entry's project is `global`.
+    pub global: bool,
+    /// The word right after it, lowercased and without a trailing `:`,
+    /// when there is one; a hint only when it names a tag ([`Mark::hint`]).
+    pub word: Option<String>,
+    /// For a marker that opens its line, the last word after `to`, `in` or
+    /// `under` (and an optional `my` or `the`) at the end of the line: the
+    /// tag of a folded form 2 or 3 (`#scribe add this to preferences`).
+    pub tail: Option<String>,
+    /// Hashtags after it on its line: the entry's topics.
+    pub topics: Topics,
+    /// Why it is refused before any call; `None` for a marker the model
+    /// reads.
+    pub problem: Option<MarkProblem>,
+}
+
+impl Mark {
+    /// The tag its next word names (a tag or an alias), else the tag its
+    /// line ends with ([`Mark::tail`]), which the model may not change;
+    /// `None` when neither names one.
+    #[must_use]
+    pub fn hint<'a>(&self, tags: &'a TagTable) -> Option<&'a TagName> {
+        [self.word.as_deref(), self.tail.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|word| tags.resolve(word))
+            .map(|def| &def.name)
+            .next()
     }
 }
 
@@ -297,9 +434,6 @@ fn parse(line: u32, said: &str) -> Option<Parsed> {
     }
 }
 
-/// The group lengths of a UUID, which a Claude Code or Codex session id is.
-const UUID_GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
-
 /// The session a forget names: `s-<n>` (no leading zero), a provider
 /// session id in UUID form, or a prefix of one (at least
 /// [`crate::session::MIN_ID_PREFIX`] characters, as a table prints it). A UUID or
@@ -336,120 +470,6 @@ fn is_uuid_prefix(id: &str) -> bool {
         && hex(last)
 }
 
-// --- markers (§14.1) ---------------------------------------------------------
-
-/// A settling instruction (form 4): `#scribe approve|reject <p-id>` or
-/// `#scribe retire|forget <entry-id>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Settle {
-    /// Apply a proposal: its older entry becomes `superseded` (or `retired`
-    /// for a stale proposal).
-    Approve(ProposalId),
-    /// Close a proposal for good; its pair is never proposed again.
-    Reject(ProposalId),
-    /// Hide an entry from answers; it stays on disk.
-    Retire(EntryId),
-    /// Blank an entry's text for good; its id, cite and status stay.
-    Forget(EntryId),
-    /// Erase a session's stored record and sources (`s-<n>`, its provider
-    /// id or a unique prefix of it, which the store resolves), leaving an id-only tombstone. Open claims sourced from it are
-    /// withdrawn, citing entries are detached, and handoffs naming it are
-    /// deleted (2_design.md §15.7). The store applies it
-    /// (`ProposalVerbs::settle` in scribe-core).
-    ForgetSession(SessionId),
-}
-
-impl Settle {
-    /// The id the instruction names, as typed.
-    #[must_use]
-    pub fn target(&self) -> String {
-        match self {
-            Self::Approve(id) | Self::Reject(id) => id.to_string(),
-            Self::Retire(id) | Self::Forget(id) => id.to_string(),
-            Self::ForgetSession(id) => id.to_string(),
-        }
-    }
-}
-
-/// The most markers one turn may hold; a fourth is refused
-/// [`MarkProblem::TooMany`] before any model call (§14.5).
-pub const MAX_MARKS: usize = 3;
-
-/// Why a marker is refused before any model call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MarkProblem {
-    /// A settling verb after a marker inside a sentence: settling needs
-    /// its own line (§14.1).
-    Settling,
-    /// `#scribe/<word>` with a word other than `global`.
-    BadOpener,
-    /// A marker past [`MAX_MARKS`] in one turn.
-    TooMany,
-}
-
-impl MarkProblem {
-    /// The refusal code it is recorded and audited with.
-    #[must_use]
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::Settling | Self::BadOpener => "unparsed_instruction",
-            Self::TooMany => "too_many_marks",
-        }
-    }
-
-    /// Why, for Daniel's echo.
-    #[must_use]
-    pub fn message(&self) -> String {
-        match self {
-            Self::Settling => String::from(
-                "settling needs its own line: #scribe approve|reject <p-id> or #scribe retire|forget <entry-id>",
-            ),
-            Self::BadOpener => format!("only {MARKER} and {GLOBAL_OPENER} mark a message"),
-            Self::TooMany => format!("at most {MAX_MARKS} #scribe markers in one message"),
-        }
-    }
-}
-
-/// One `#scribe` marker of a typed turn (§14.1).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Mark {
-    /// Its number in the turn, from 1, in text order.
-    pub number: u32,
-    /// The line it is on, from 1, as `capture::lines` numbers lines.
-    pub line: u32,
-    /// That line as typed.
-    pub said: String,
-    /// It was `#scribe/global`: the entry's project is `global`.
-    pub global: bool,
-    /// The word right after it, lowercased and without a trailing `:`,
-    /// when there is one; a hint only when it names a tag ([`Mark::hint`]).
-    pub word: Option<String>,
-    /// For a marker that opens its line, the last word after `to`, `in` or
-    /// `under` (and an optional `my` or `the`) at the end of the line: the
-    /// tag of a folded form 2 or 3 (`#scribe add this to preferences`).
-    pub tail: Option<String>,
-    /// Hashtags after it on its line: the entry's topics.
-    pub topics: Topics,
-    /// Why it is refused before any call; `None` for a marker the model
-    /// reads.
-    pub problem: Option<MarkProblem>,
-}
-
-impl Mark {
-    /// The tag its next word names (a tag or an alias), else the tag its
-    /// line ends with ([`Mark::tail`]), which the model may not change;
-    /// `None` when neither names one.
-    #[must_use]
-    pub fn hint<'a>(&self, tags: &'a TagTable) -> Option<&'a TagName> {
-        [self.word.as_deref(), self.tail.as_deref()]
-            .into_iter()
-            .flatten()
-            .filter_map(|word| tags.resolve(word))
-            .map(|def| &def.name)
-            .next()
-    }
-}
-
 /// The tag word a folded form 2 or 3 line ends with: `… (to|in|under)
 /// [my|the] <tag>`, before any trailing hashtags.
 fn tail(rest: &str) -> Option<String> {
@@ -470,14 +490,6 @@ fn tail(rest: &str) -> Option<String> {
         .then_some(tag)
         .filter(|tag| !tag.is_empty())
 }
-
-/// What a word after a marker sheds at its end.
-const PUNCTUATION: [char; 9] = [':', ',', '.', ';', '!', '?', ')', ']', '}'];
-
-/// The prepositions before the tag that ends a folded form 2 or 3 line.
-const PREPOSITIONS: [&str; 3] = ["to", "in", "under"];
-/// The optional determiners before that tag.
-const DETERMINERS: [&str; 2] = ["my", "the"];
 
 /// The markers of a typed turn, in text order, numbered from 1 (§14.1).
 ///
@@ -509,20 +521,6 @@ pub fn marks(text: &str) -> Vec<Mark> {
     }
     found
 }
-
-/// Built-in settings commands whose args are a value Claude Code writes into a
-/// setting (`/model claude-haiku-5-5`), not words Daniel says. Their args are
-/// never his turn: a typed `/model` and one the desktop app writes when another
-/// session changes the model leave the same line, so origin cannot tell them
-/// apart.
-const SETTINGS_COMMANDS: &[&str] = &[
-    "/config",
-    "/effort",
-    "/fast",
-    "/model",
-    "/output-style",
-    "/permissions",
-];
 
 /// The args of a slash command Daniel typed, when `text` is one: the text
 /// inside its `<command-args>` tag, trimmed. Claude Code writes the command's
