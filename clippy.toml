@@ -7,6 +7,7 @@ disallowed-types = [
     { path = "std::fs::OpenOptions", reason = "file I/O belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host files" },
     { path = "std::fs::ReadDir", reason = "directory listing belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host directories" },
     { path = "std::fs::DirEntry", reason = "directory listing belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host directories" },
+    { path = "std::fs::DirBuilder", reason = "create directories through cw-fs::create_private_dir or scribe-store's db/files.rs" },
 ]
 
 disallowed-methods = [
@@ -38,6 +39,7 @@ disallowed-methods = [
     { path = "std::env::vars_os", reason = "capture environment variables in scribe_core::composition and pass values down" },
     { path = "std::env::current_dir", reason = "resolve the working directory in scribe_core::composition and pass it down" },
     { path = "std::env::home_dir", reason = "resolve the home directory in scribe_core::composition and pass it down" },
+    { path = "std::env::temp_dir", reason = "resolve temporary roots in scribe_core::composition (or use tempfile in providers/) instead of discovering a host temp directory" },
     # the process environment as a snapshot (cw-app), captured once by composition; the CLI crate receives it
     { path = "cw_app::env::Env::capture", reason = "capture the process environment once in scribe_core::composition::Env::from_process and pass it down" },
 
@@ -45,6 +47,7 @@ disallowed-methods = [
     { path = "std::process::Command::output", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
     { path = "std::process::Command::status", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
     { path = "std::process::Command::spawn", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
+    { path = "std::process::exit", reason = "return an error or ExitCode and let main exit through normal command error handling" },
 
     # std::sync::mpsc — unbounded channels lack backpressure (STD-03)
     { path = "std::sync::mpsc::channel", reason = "use a bounded channel (std::sync::mpsc::sync_channel) instead of an unbounded channel" },

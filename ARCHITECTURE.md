@@ -360,10 +360,15 @@ module-level `#![expect(..., reason = "...")]` on the boundary owners),
 `scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
 express. "Module" includes any file added later.
 
-- **Clippy disallowed paths (`clippy.toml`):** bans `std::fs` types and
-  methods, `std::env` reads (`var`, `var_os`, `vars`, `vars_os`,
-  `current_dir`, `home_dir`), the process snapshot `cw_app::env::Env::capture`,
-  `std::process::Command::{output,status,spawn}`,
+- **Clippy disallowed paths (`clippy.toml`):** bans the `std::fs` I/O types
+  (`File`, `OpenOptions`, `ReadDir`, `DirEntry`, `DirBuilder`) and filesystem
+  functions (`read`, `read_to_string`, `write`, `remove_*`, `create_dir*`,
+  `rename`, `copy`, `hard_link`, `soft_link`, `metadata`, `symlink_metadata`,
+  `set_permissions`, `read_dir`, `read_link`, `canonicalize`, `exists`),
+  `std::env` reads and directory discovery (`var`, `var_os`, `vars`,
+  `vars_os`, `current_dir`, `home_dir`, `temp_dir`), the process snapshot
+  `cw_app::env::Env::capture`,
+  `std::process::Command::{output,status,spawn}`, `std::process::exit`,
   `std::sync::mpsc::channel`, and `rusqlite::Connection::open` (including its
   `open_with_flags` forms) regardless of how a path is imported or aliased.
   Production exemptions are confined to the boundary owners:
@@ -373,8 +378,9 @@ express. "Module" includes any file added later.
   snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`
   (supervised process spawn and drain channel). The binary has no exemption:
   `main` and the output layer receive captured values.
-  `rusqlite::Connection::open*` has no production exemption:
-  `scribe-store` opens `scribe.db` only through `cw-sqlite`.
+  `std::process::exit` has no production exemption (commands return errors or
+  `ExitCode` to `main`), and `rusqlite::Connection::open*` has no production
+  exemption (`scribe-store` opens `scribe.db` only through `cw-sqlite`).
 - **Crate edges:** each crate's internal allowlist and banned crates, from the
   table above. A crate without a policy fails.
 - **Import cycles and in-layer orders (STD-02 R6, R39):** the import graph
