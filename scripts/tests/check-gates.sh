@@ -266,6 +266,68 @@ if ! grep -Fq "crate import cycle:" "$work/out"; then
   fail=1
 fi
 
+# Cargo resolves a dependency by its `package`, not its table key, and accepts
+# the same dependency as an inline entry, a dotted key or a subtable. Mix the
+# forms on both sides of the cycle: each pair must still report it.
+n_scribe=0
+for scribe_dep in \
+  $'[dependencies]\nrenamed-core = { path = "../scribe-core", package = "scribe-core" }\n' \
+  $'[dependencies]\nrenamed-core.path = "../scribe-core"\nrenamed-core.package = "scribe-core"\n' \
+  $'[dependencies.renamed-core]\npath = "../scribe-core"\npackage = "scribe-core"\n' \
+  $'[dependencies]\nscribe-core.workspace = true\n'; do
+  for core_dep in \
+    $'[dependencies]\nback = { path = "../scribe", package = "scribe" }\n' \
+    $'[dependencies]\nback.path = "../scribe"\nback.package = "scribe"\n' \
+    $'[dependencies.back]\npath = "../scribe"\npackage = "scribe"\n' \
+    $'[target.\'cfg(unix)\'.dependencies.back]\npackage = "scribe"\npath = "../scribe"\n' \
+    $'[build-dependencies]\nscribe = { path = "../scribe" }\n'; do
+    n_scribe=$((n_scribe + 1))
+    mixed=$(tree "cycle-crate-mixed-$n_scribe")
+    printf '[package]\nname = "scribe"\n\n%s' "$scribe_dep" >"$mixed/crates/scribe/Cargo.toml"
+    printf '[package]\nname = "scribe-core"\n\n%s' "$core_dep" >"$mixed/crates/scribe-core/Cargo.toml"
+    expect fail check-dependency-direction.sh "$mixed" "a crate cycle through mixed dependency forms ($n_scribe)"
+    if ! grep -Fq "crate import cycle:" "$work/out"; then
+      echo "check-gates: FAIL: missing crate import cycle diagnostic for mixed forms ($n_scribe)" >&2
+      cat "$work/out" >&2
+      fail=1
+    fi
+  done
+done
+
+# The same forms without a back edge are legal: an aliased scribe -> scribe-core
+# edge, and an alias that merely reuses an internal crate's name for an
+# external package, are not cycles.
+for scribe_dep in \
+  $'[dependencies]\nrenamed-core = { path = "../scribe-core", package = "scribe-core" }\n' \
+  $'[dependencies.renamed-core]\npath = "../scribe-core"\npackage = "scribe-core"\n'; do
+  for core_dep in \
+    $'[dependencies]\nscribe = { version = "1", package = "serde" }\n' \
+    $'[dependencies.scribe]\nversion = "1"\npackage = "serde"\n' \
+    $'[dev-dependencies]\nback = { path = "../scribe", package = "scribe" }\n' \
+    $'[dev-dependencies.back]\npath = "../scribe"\npackage = "scribe"\n'; do
+    n_scribe=$((n_scribe + 1))
+    legal=$(tree "cycle-crate-aliased-clean-$n_scribe")
+    printf '[package]\nname = "scribe"\n\n%s' "$scribe_dep" >"$legal/crates/scribe/Cargo.toml"
+    printf '[package]\nname = "scribe-core"\n\n%s' "$core_dep" >"$legal/crates/scribe-core/Cargo.toml"
+    expect pass check-dependency-direction.sh "$legal" "an acyclic aliased dependency ($n_scribe)"
+  done
+done
+
+# The allowlist reads the package too: an alias cannot hide a banned crate.
+for banned_dep in \
+  $'sql = { version = "0.43", package = "rusqlite" }\n' \
+  $'\n[dependencies.sql]\nversion = "0.43"\npackage = "rusqlite"\n'; do
+  n_scribe=$((n_scribe + 1))
+  hidden=$(tree "banned-aliased-$n_scribe")
+  printf '[package]\nname = "scribe"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n%s' \
+    "$banned_dep" >"$hidden/crates/scribe/Cargo.toml"
+  expect fail check-dependency-direction.sh "$hidden" "a banned crate behind an alias ($n_scribe)"
+  if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+    echo "check-gates: FAIL: missing banned-crate diagnostic for the alias ($n_scribe)" >&2
+    fail=1
+  fi
+done
+
 # 2. Top-level module cycles inside a crate (direct, relative super::, grouped, 3-node)
 #    plus clean acyclic twins and comment/string non-cycles.
 cyc_top_ok=$(tree cycle-top-clean)
