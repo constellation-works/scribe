@@ -421,7 +421,10 @@ express. "Module" includes any file added later.
   `scribe-tools`, `commands/`) obeys its declared order above; an unlisted
   module or upward import fails. Inline modules count as units; root modules
   containing only public re-exports are treated as compatibility facades
-  outside declared orders.
+  outside declared orders. A facade is no node, but a path through it
+  (`crate::facade::item`, named or glob) is followed through any further
+  re-exports to the module that defines the item, so the dependency edge and
+  any cycle it closes are kept.
   Test-only and test-support modules are excluded.
 - **App order:** every directory under `apps/` is in the order above; an app
   imports only lower apps, through their `mod.rs`; no common, shared

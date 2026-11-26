@@ -372,6 +372,59 @@ for case in alias grouped; do
   expect pass check-dependency-direction.sh "$cyc" "acyclic control for $case import"
 done
 
+# A root facade is no unit, but a path through it still reaches what it
+# re-exports: a consumer calling crate::facade::item() depends on backing, and
+# backing calling the consumer back is a cycle (ORB-28903).
+for reexport in 'pub use crate::backing::item;' 'pub use crate::backing::*;' \
+  'pub use crate::backing::item as item;' 'pub use crate::{backing::item};'; do
+  fac=$(tree "cycle-facade-$n")
+  printf '//! app\nmod backing;\nmod consumer;\npub mod facade { %s }\nfn main() {}\n' "$reexport" \
+    >"$fac/crates/scribe/src/main.rs"
+  printf '//! consumer\npub fn helper() { crate::facade::item(); }\n' >"$fac/crates/scribe/src/consumer.rs"
+  printf '//! backing\npub fn item() { crate::consumer::helper(); }\n' >"$fac/crates/scribe/src/backing.rs"
+  expect fail check-dependency-direction.sh "$fac" "a cycle through the facade re-export $reexport"
+  if ! grep -Fq "scribe import cycle: backing -> consumer -> backing" "$work/out"; then
+    echo "check-gates: FAIL: missing the facade cycle diagnostic for $reexport" >&2
+    fail=1
+  fi
+  printf '//! consumer\nuse crate::facade::item;\npub fn helper() { item(); }\n' >"$fac/crates/scribe/src/consumer.rs"
+  expect fail check-dependency-direction.sh "$fac" "a cycle through a use of the facade re-export $reexport"
+  printf '//! backing\npub fn item() {}\n' >"$fac/crates/scribe/src/backing.rs"
+  expect pass check-dependency-direction.sh "$fac" "an acyclic control for the facade re-export $reexport"
+done
+
+# A facade with several globs sends a name to the glob that defines it, a name
+# another crate defines carries no edge, and a facade that goes through
+# another re-export is followed to the module that defines the item.
+fac_globs=$(tree cycle-facade-globs)
+printf '//! app\nmod backing;\nmod consumer;\nmod other;\npub mod facade { pub use crate::backing::*; pub use crate::other::*; }\nfn main() {}\n' \
+  >"$fac_globs/crates/scribe/src/main.rs"
+printf '//! consumer\npub fn helper() { crate::facade::item(); }\n' >"$fac_globs/crates/scribe/src/consumer.rs"
+printf '//! backing\npub fn item() {}\n' >"$fac_globs/crates/scribe/src/backing.rs"
+printf '//! other\npub fn unrelated() { crate::consumer::helper(); }\n' >"$fac_globs/crates/scribe/src/other.rs"
+expect pass check-dependency-direction.sh "$fac_globs" "a facade glob that does not define the name"
+printf '//! other\npub fn item() { crate::consumer::helper(); }\n' >"$fac_globs/crates/scribe/src/other.rs"
+expect fail check-dependency-direction.sh "$fac_globs" "a facade glob that does define the name"
+
+fac_ext=$(tree cycle-facade-external)
+printf '//! app\nmod backing;\nmod consumer;\npub mod facade { pub use other_crate::item; pub use crate::backing::*; }\nfn main() {}\n' \
+  >"$fac_ext/crates/scribe/src/main.rs"
+printf '//! consumer\npub fn helper() { crate::facade::item(); }\n' >"$fac_ext/crates/scribe/src/consumer.rs"
+printf '//! backing\npub fn unrelated() { crate::consumer::helper(); }\n' >"$fac_ext/crates/scribe/src/backing.rs"
+expect pass check-dependency-direction.sh "$fac_ext" "a facade name another crate defines"
+
+fac_chain=$(tree cycle-facade-chain)
+printf '//! app\nmod backing;\nmod consumer;\nmod real;\npub mod facade { pub use crate::backing::*; }\nfn main() {}\n' \
+  >"$fac_chain/crates/scribe/src/main.rs"
+printf '//! consumer\npub fn helper() { crate::facade::item(); }\n' >"$fac_chain/crates/scribe/src/consumer.rs"
+printf '//! backing\npub use crate::real::item;\n' >"$fac_chain/crates/scribe/src/backing.rs"
+printf '//! real\npub fn item() { crate::consumer::helper(); }\n' >"$fac_chain/crates/scribe/src/real.rs"
+expect fail check-dependency-direction.sh "$fac_chain" "a cycle through a facade and a further re-export"
+if ! grep -Fq "scribe import cycle: consumer -> real -> consumer" "$work/out"; then
+  echo "check-gates: FAIL: missing the diagnostic for a facade and a further re-export" >&2
+  fail=1
+fi
+
 cyc_three_ok=$(tree cycle-three-clean)
 printf '//! error\n' >"$cyc_three_ok/crates/scribe/src/error.rs"
 printf '//! help\nuse crate::error;\n' >"$cyc_three_ok/crates/scribe/src/help.rs"
