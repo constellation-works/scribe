@@ -64,8 +64,8 @@ disallowed-methods = [
 ]
 
 # STD-12 §R20 and §R23: top-level item order in a Rust file and struct literal
-# field order. The lints stay at their default (allow) level until the
-# enforcement task sets them in the workspace lint table.
+# field order. `arbitrary_source_item_ordering` and `inconsistent_struct_constructor`
+# are enabled in Cargo.toml [workspace.lints.clippy] and enforced by `make ci-lint` (-D warnings).
 source-item-ordering = ["module"]
 module-item-order-groupings = [
     ["modules", ["extern_crate", "mod", "foreign_mod"]],
