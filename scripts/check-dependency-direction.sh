@@ -380,7 +380,42 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
   file="$STORE/${shape%%:*}.rs"
   [[ -d "$STORE" && ! -f "$file" ]] && err "${file#crates/} is missing: update this guard with the file"
   ban_std "$file" 'fs' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
-  ban "$file" '(super|crate::db)::files' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" '(^|[^[:alnum:]_])(super|db)::files([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  # Flatten grouped use trees before checking their paths. This catches nested
+  # and multiline groups without banning unrelated variables named `files`.
+  grouped=$(FILE="$file" perl -0777 -ne '
+    sub paths {
+      my ($prefix, $tree) = @_;
+      my (@items, @out); my ($depth, $item) = (0, "");
+      for my $c (split //, $tree) {
+        $depth++ if $c eq "{"; $depth-- if $c eq "}";
+        if ($c eq "," && !$depth) { push @items, $item; $item = ""; next }
+        $item .= $c;
+      }
+      push @items, $item;
+      for (@items) {
+        s/^\s+|\s+$//g;
+        if (/^(.*?)\{(.*)\}$/s) {
+          my ($p, $body) = ($1, $2); $p =~ s/\s+//g;
+          push @out, paths($prefix . $p, $body);
+        } else {
+          s/\s+as\s+\w+$//; s/\s+//g;
+          push @out, $prefix . $_;
+        }
+      }
+      return @out;
+    }
+    while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+([^;]+);/mg) {
+      my ($tree, $at) = ($1, $-[0]);
+      $tree =~ s{//[^\n]*}{}g;
+      next unless grep { /^(?:::)?(?:super|(?:crate::)?db)::files(?:$|::)/ } paths("", $tree);
+      my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
+      print "$ENV{FILE}:$line: grouped import reaches db/files.rs\n";
+    }' "$file" 2>/dev/null || true)
+  if [[ -n "$grouped" ]]; then
+    echo "$grouped" >&2
+    err "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  fi
   ban "$file" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
 done
 # The core and the store receive resolved roots and configuration (R3).
