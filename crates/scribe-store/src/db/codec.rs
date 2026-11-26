@@ -51,6 +51,10 @@ pub(crate) const FORMAT: u32 = 31;
 /// What the frontmatter's `kind` says a Markdown record is.
 const SESSION_KIND: &str = "session";
 
+/// The oldest session record [`decode_session`] reads: format 6 has the
+/// current frontmatter.
+const SESSION_SINCE: u32 = 6;
+
 /// A shape problem found after parsing: a missing delimiter, a section out
 /// of order, a record whose id does not match its file.
 #[derive(Debug)]
@@ -64,15 +68,60 @@ impl fmt::Display for ShapeError {
 
 impl std::error::Error for ShapeError {}
 
-pub(crate) fn shape(path: &Path, message: impl Into<String>) -> Error {
-    Error::corrupt(path, ShapeError(message.into()))
-}
-
 /// Just the format number, read before the full document. Format 0 never
 /// existed, so it reads as corrupt.
 #[derive(Deserialize)]
 struct FormatProbe {
     format: NonZeroU32,
+}
+
+/// The frontmatter of a session record as written.
+#[derive(Serialize)]
+struct SessionFront<'a> {
+    format: u32,
+    kind: &'static str,
+    #[serde(flatten)]
+    record: &'a SessionRecord,
+}
+
+/// `control.json` as written.
+#[derive(Serialize)]
+struct ControlOut<'a> {
+    codex_cursors: &'a BTreeMap<SessionId, String>,
+    format: u32,
+    sessions: &'a BTreeMap<SessionId, SessionControl>,
+}
+
+/// `proposals.json` as written.
+#[derive(Serialize)]
+struct ProposalsOut<'a> {
+    format: u32,
+    proposals: &'a [Proposal],
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TagsDocument {
+    format: u32,
+    tags: Vec<crate::StoreTag>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PickupsDocument {
+    format: u32,
+    pickups: Vec<crate::Pickup>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarksDocument {
+    format: u32,
+    marks: Vec<crate::MarkRecord>,
+}
+
+pub(crate) fn shape(path: &Path, message: impl Into<String>) -> Error {
+    Error::corrupt(path, ShapeError(message.into()))
 }
 
 /// Refuse a newer format; return the one found.
@@ -167,10 +216,6 @@ pub(crate) fn decode_session(path: &Path, bytes: &[u8], expected: &str) -> Resul
     Ok(record)
 }
 
-/// The oldest session record [`decode_session`] reads: format 6 has the
-/// current frontmatter.
-const SESSION_SINCE: u32 = 6;
-
 /// Refuse a JSON document whose `format` is newer than this build's: a
 /// stamp a newer build left. Reads only the `format`.
 pub(crate) fn check_stamp(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -179,15 +224,6 @@ pub(crate) fn check_stamp(path: &Path, bytes: &[u8]) -> Result<()> {
         serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e)),
     )
     .map(drop)
-}
-
-/// The frontmatter of a session record as written.
-#[derive(Serialize)]
-struct SessionFront<'a> {
-    format: u32,
-    kind: &'static str,
-    #[serde(flatten)]
-    record: &'a SessionRecord,
 }
 
 /// A session record file's bytes at the current format: the frontmatter
@@ -359,21 +395,13 @@ fn split_body(
     Ok((header.map(trim), texts.into_iter().map(trim).collect()))
 }
 
-/// `control.json` as written.
-#[derive(Serialize)]
-struct ControlOut<'a> {
-    codex_cursors: &'a BTreeMap<SessionId, String>,
-    format: u32,
-    sessions: &'a BTreeMap<SessionId, SessionControl>,
-}
-
 /// `control.json`'s bytes at the current format, one line break at the end.
 /// [`decode_control`] reads it back to the same state.
 pub(crate) fn encode_control(path: &Path, state: &ControlState) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(&ControlOut {
+        codex_cursors: &state.codex_cursors,
         format: FORMAT,
         sessions: &state.sessions,
-        codex_cursors: &state.codex_cursors,
     })
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');
@@ -501,13 +529,6 @@ fn has_matching_instruction(proposal: &Proposal, inst: &crate::Instruction) -> b
         })
 }
 
-/// `proposals.json` as written.
-#[derive(Serialize)]
-struct ProposalsOut<'a> {
-    format: u32,
-    proposals: &'a [Proposal],
-}
-
 /// `proposals.json`'s bytes at the current format, by id, one line break at
 /// the end. [`decode_proposals`] reads it back to the same proposals.
 pub(crate) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Vec<u8>> {
@@ -520,13 +541,6 @@ pub(crate) fn encode_proposals(path: &Path, proposals: &[Proposal]) -> Result<Ve
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');
     Ok(bytes)
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TagsDocument {
-    format: u32,
-    tags: Vec<crate::StoreTag>,
 }
 
 /// Refuse store tags that clash or lack agent authors: a file's and a
@@ -557,13 +571,6 @@ pub(crate) fn encode_tags(path: &Path, tags: &[crate::StoreTag]) -> Result<Vec<u
     Ok(bytes)
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PickupsDocument {
-    format: u32,
-    pickups: Vec<crate::Pickup>,
-}
-
 /// Refuse a pickup without an agent author: a file's and a row's alike.
 pub(crate) fn check_pickups(path: &Path, pickups: &[crate::Pickup]) -> Result<()> {
     if pickups
@@ -586,13 +593,6 @@ pub(crate) fn encode_pickups(path: &Path, pickups: &[crate::Pickup]) -> Result<V
     .map_err(|e| Error::corrupt(path, e))?;
     bytes.push(b'\n');
     Ok(bytes)
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MarksDocument {
-    format: u32,
-    marks: Vec<crate::MarkRecord>,
 }
 
 /// Refuse a mark whose fields disagree with its outcome: a file's and a

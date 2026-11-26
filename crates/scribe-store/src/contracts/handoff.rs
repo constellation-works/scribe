@@ -3,14 +3,14 @@
 //! references an entry carries. The checks a handoff write must pass are the
 //! entry app's (`scribe-core`'s `apps/entry/rules/handoff.rs`).
 
+pub use crate::entry::HandoffMode as Mode;
+
 use crate::entry::Entry;
 use crate::record::RelatedKind;
 use crate::session::SessionId;
 
 /// The shipped tag name for agent-written session handoffs.
 pub const HANDOFF_TAG: &str = "handoff";
-
-pub use crate::entry::HandoffMode as Mode;
 
 /// The six required level-2 Markdown headings, in exact order.
 pub const HEADINGS: [&str; 6] = [

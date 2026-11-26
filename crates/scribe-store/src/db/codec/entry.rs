@@ -11,6 +11,16 @@ use std::path::Path;
 
 const ENTRY_KIND: &str = "entry";
 
+/// The frontmatter as written: `format` and `kind` first, then the
+/// record's own keys.
+#[derive(Serialize)]
+struct EntryFront<'a> {
+    format: u32,
+    kind: &'static str,
+    #[serde(flatten)]
+    entry: &'a Entry,
+}
+
 /// An entry row with its content `body`, checked: its id and tag match
 /// `expected` and `tag_dir` (the row's id and tag), and its fields agree
 /// with each other.
@@ -271,16 +281,6 @@ pub(crate) fn validate_entry(
         }
     }
     Ok(())
-}
-
-/// The frontmatter as written: `format` and `kind` first, then the
-/// record's own keys.
-#[derive(Serialize)]
-struct EntryFront<'a> {
-    format: u32,
-    kind: &'static str,
-    #[serde(flatten)]
-    entry: &'a Entry,
 }
 
 /// An entry file's bytes at the current format: the frontmatter between two

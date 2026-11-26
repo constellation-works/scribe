@@ -33,6 +33,24 @@ use time::OffsetDateTime;
 /// The longest `active_change.reason`, in characters.
 pub const REASON_CHARS: usize = 300;
 
+/// The shortest id prefix any command accepts, in characters: the store's id
+/// resolution and the typed `#scribe forget` parser share it.
+pub const MIN_ID_PREFIX: usize = 4;
+
+/// The shortest prefix a table prints for a session id, in characters. The
+/// first group of a Claude Code UUID is this long.
+pub const SHORT_ID_MIN: usize = 8;
+
+/// The header's body sections, in file order. `## Log` follows them. A
+/// stored record is read whatever their length; the pass enforces budgets.
+pub const HEADER_SECTIONS: [&str; 3] = ["Summary", "Goals", "Next"];
+
+/// The heading of the log section, after the header's.
+pub const LOG_SECTION: &str = "Log";
+
+/// The longest segment heading, in characters.
+pub const SEGMENT_HEADING_CHARS: usize = 80;
+
 /// How `active` or `keep_active` last changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -162,14 +180,6 @@ impl fmt::Display for SessionId {
     }
 }
 
-/// The shortest id prefix any command accepts, in characters: the store's id
-/// resolution and the typed `#scribe forget` parser share it.
-pub const MIN_ID_PREFIX: usize = 4;
-
-/// The shortest prefix a table prints for a session id, in characters. The
-/// first group of a Claude Code UUID is this long.
-pub const SHORT_ID_MIN: usize = 8;
-
 /// The short forms of session ids, git-style: each id prints as its shortest
 /// prefix that no other known id shares, at least [`SHORT_ID_MIN`] characters.
 /// The universe is every id the store resolves, not only the rows shown, so a
@@ -266,16 +276,6 @@ impl SessionStatus {
         }
     }
 }
-
-/// The header's body sections, in file order. `## Log` follows them. A
-/// stored record is read whatever their length; the pass enforces budgets.
-pub const HEADER_SECTIONS: [&str; 3] = ["Summary", "Goals", "Next"];
-
-/// The heading of the log section, after the header's.
-pub const LOG_SECTION: &str = "Log";
-
-/// The longest segment heading, in characters.
-pub const SEGMENT_HEADING_CHARS: usize = 80;
 
 /// Whether a segment may still be rewritten.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
