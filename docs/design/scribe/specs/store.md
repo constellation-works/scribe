@@ -299,11 +299,16 @@ its group's summary. Deleting a stored turn or forgetting a handoff also
 invalidates the affected summary. Affected writes use the normal FTS cleanup
 and WAL checkpoint after deleting text.
 
-Close takes a per-group lock, reads the snapshot, then makes one bounded model
-call outside the SQLite write transaction. The group lock precedes the SQLite
-write lock on every close. It checks the input again before
-committing `closed` and `summary` together. A model error or changed evidence
-leaves the group open for retry.
+Close is split into evidence preparation, drafting and apply. `group evidence`
+and `scribe.group-close-prepare` authorize the closer and read a bounded
+snapshot without a write lock or audit row. The caller drafts the summary
+outside the store transaction. `group close` and `scribe.group-close-apply`
+then recheck authorization and commit the closed timestamp, summary and success
+audit in one writer transaction. When the CLI supplies `--if-evidence`, the
+transaction compares the current snapshot digest and refuses with
+`group_evidence_changed` if it changed while the summary was drafted; omitting
+that optional flag skips the comparison. The plugin apply tool requires the
+digest. A refusal or transaction failure leaves an open group open.
 
 ### Decisions and open items
 

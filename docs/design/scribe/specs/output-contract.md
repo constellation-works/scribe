@@ -1233,6 +1233,17 @@ the consistency scan report for `scribe.consistency-scan`, the prepared refresh 
 "correction"}` for `scribe.memory-refresh-apply`. A failure is `{"ok": false, "error": {"code",
 "message", "retryable"}}`.
 
+`scribe.group-close-prepare` takes `group`, `session` and `provider`, with an
+optional `quote`. For an open group its success output contains `id`,
+`closed: false`, `evidence` (`title`, `handoffs`, `turns`), `related`,
+`evidence_sha256`, `instructions` and `crew`. `scribe.group-close-apply` takes
+the same caller fields plus required `summary` (1–4,000 characters) and
+`evidence_sha256`; its success output is
+`{"group": <closed group record>, "changed": <boolean>}`. For an already
+closed group, prepare returns `id`, `closed: true` and `crew`. The
+`scribe-group-close` job passes the prepare digest to apply. A stale digest
+returns `ok: false` with code `group_evidence_changed`.
+
 **Configuration.** For every tool, `root` must be an absolute store path. A
 `root` that is missing, empty, relative or the manifest's `/var/tmp` default
 is `not_configured`. A non-empty `codex_home` must be absolute, or the call is
@@ -1313,3 +1324,39 @@ characters); a terminal `group show` table does the same, while a terminal
 `session list` table prints prefixes only. `--json` and stored references
 retain full provider ids. This supersedes the earlier STD-01@2 §R15 reading for piped session ids; Daniel chose
 “Yes, s-<n> alias for open-item-7” (2_design.md, Ids).
+
+`group evidence <id> --json` returns the bounded snapshot used to draft a
+close. The example below shows its shape; the all-zero digest is a placeholder.
+An open-group response has `id`, `closed: false`, `evidence`, `related`,
+`evidence_sha256` and `instructions`; an already-closed group returns only
+`id` and `closed: true`. `evidence.handoffs` items are `[entry id, text]` and
+`evidence.turns` items are `[session id, provider message id, text]`, matching
+the `messages` query.
+
+```json
+{
+  "id": "g-1",
+  "closed": false,
+  "evidence": {
+    "title": "Release review",
+    "handoffs": [["e-12", "Review is ready."]],
+    "turns": [["session-id", "provider-message-id", "Please review the release."]]
+  },
+  "related": ["task:example"],
+  "evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "instructions": null
+}
+```
+
+The group integration fixture checks a
+turn whose JSON tuple is `["22222222-2222-4222-8222-222222222222", "u",
+"... sprucechecklist ..."]`: the middle value is the provider message id,
+not a timestamp. The plugin prepare output adds `crew` to either CLI response.
+
+`group close --json` prints the updated group record, without a separate
+`changed` field. The CLI's `--if-evidence <sha256>` is optional: when present,
+the writer transaction compares the current evidence digest and refuses with
+`group_evidence_changed` if it differs; when absent, it performs no digest
+comparison. Both CLI and plugin apply recheck authorization and commit the
+close and success audit in one transaction. Drafting happens between evidence
+read and apply, outside that transaction.
