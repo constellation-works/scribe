@@ -51,6 +51,15 @@ const MAX_ENVELOPE: u64 = 1024 * 1024;
 /// The envelope version this backend speaks.
 const SCHEMA_VERSION: u64 = 1;
 
+/// The `root` default in `plugin.yaml`, which means unset. Orbit grants
+/// writes only to a directory that exists outside the install tree (it
+/// resolves an empty or relative path against that tree), so the default
+/// is a directory every host has, and no store is ever opened there.
+const ROOT_UNSET: &str = "/var/tmp";
+/// The `transcripts` default: empty (a read grant may name the install
+/// tree).
+const TRANSCRIPTS_UNSET: &str = "";
+
 /// Verbs on the `plugin` noun.
 #[derive(Debug, Subcommand)]
 pub(crate) enum PluginCommand {
@@ -64,23 +73,6 @@ pub(crate) enum PluginCommand {
 /// Arguments to `plugin call`: none (the envelope is on stdin).
 #[derive(Debug, Args)]
 pub(crate) struct CallArgs {}
-
-/// Run one `plugin` verb.
-pub(super) fn run(command: PluginCommand, ctx: &Context) -> Result<Output, CliError> {
-    match command {
-        PluginCommand::Call(CallArgs {}) => {
-            let mut raw = Vec::new();
-            std::io::stdin()
-                .take(MAX_ENVELOPE)
-                .read_to_end(&mut raw)
-                .map_err(|source| CliError::Read {
-                    what: String::from("stdin"),
-                    source,
-                })?;
-            Ok(Output::Plugin(call(&raw, ctx)))
-        }
-    }
-}
 
 /// The envelope Orbit writes on stdin.
 #[derive(Deserialize)]
@@ -97,6 +89,43 @@ struct Envelope {
 struct EnvelopeContext {
     #[serde(default)]
     config: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupCloseRequest {
+    group: String,
+    session: scribe_core::SessionId,
+    provider: scribe_core::Provider,
+    #[serde(default)]
+    quote: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    evidence_sha256: Option<String>,
+}
+
+/// The input of a routine tool: an empty object
+/// (`schemas/empty.input.json`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineInput {}
+
+/// Run one `plugin` verb.
+pub(super) fn run(command: PluginCommand, ctx: &Context) -> Result<Output, CliError> {
+    match command {
+        PluginCommand::Call(CallArgs {}) => {
+            let mut raw = Vec::new();
+            std::io::stdin()
+                .take(MAX_ENVELOPE)
+                .read_to_end(&mut raw)
+                .map_err(|source| CliError::Read {
+                    what: String::from("stdin"),
+                    source,
+                })?;
+            Ok(Output::Plugin(call(&raw, ctx)))
+        }
+    }
 }
 
 fn failure(code: &'static str, message: impl Into<String>, retryable: bool) -> PluginReply {
@@ -157,15 +186,6 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
     }
 }
 
-/// The `root` default in `plugin.yaml`, which means unset. Orbit grants
-/// writes only to a directory that exists outside the install tree (it
-/// resolves an empty or relative path against that tree), so the default
-/// is a directory every host has, and no store is ever opened there.
-const ROOT_UNSET: &str = "/var/tmp";
-/// The `transcripts` default: empty (a read grant may name the install
-/// tree).
-const TRANSCRIPTS_UNSET: &str = "";
-
 /// The absolute path the setting `key` names, unless it is empty, relative
 /// or its `unset` default.
 fn setting_path(
@@ -195,12 +215,6 @@ fn store_root(config: &Value) -> Result<PathBuf, PluginReply> {
         "the scribe data directory, an absolute path such as /home/<user>/.scribe",
     )
 }
-
-/// The input of a routine tool: an empty object
-/// (`schemas/empty.input.json`).
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RoutineInput {}
 
 /// Check a routine tool's `input`: `{}` (or absent).
 fn routine_input(tool: &str, input: &Value) -> Result<(), PluginReply> {
@@ -482,20 +496,6 @@ fn message_of(err: &CliError) -> String {
         source = cause.source();
     }
     message
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GroupCloseRequest {
-    group: String,
-    session: scribe_core::SessionId,
-    provider: scribe_core::Provider,
-    #[serde(default)]
-    quote: Option<String>,
-    #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
-    evidence_sha256: Option<String>,
 }
 
 fn group_close(input: &Value, config: &Value, apply: bool) -> PluginReply {

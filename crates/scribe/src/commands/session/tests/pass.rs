@@ -78,6 +78,95 @@ impl Answers {
     }
 }
 
+struct Setup {
+    dir: tempfile::TempDir,
+    ctx: Context,
+}
+
+impl Setup {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".claude/projects/-work")).unwrap();
+        let env = AppEnv {
+            root: None,
+            home: Some(home.into_os_string()),
+            claude_config_dir: None,
+            codex_home: None,
+            claude_entrypoint: None,
+            ..Default::default()
+        };
+        let ctx = Context::resolve(Some(&dir.path().join("root")), &env).unwrap();
+        let setup = Self { dir, ctx };
+        setup.write(
+            ON,
+            &[
+                line("user", "u-1", &format!("Crews. {DEFINED}.")),
+                line("assistant", "a-1", ASSISTANT),
+            ],
+        );
+        setup.write(NEVER, &[line("user", "n-1", NEVER_SAID)]);
+        setup
+    }
+
+    fn transcript(&self, session: &str) -> PathBuf {
+        self.dir
+            .path()
+            .join(format!("home/.claude/projects/-work/{session}.jsonl"))
+    }
+
+    fn write(&self, session: &str, lines: &[serde_json::Value]) {
+        use std::os::unix::fs::PermissionsExt;
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        let path = self.transcript(session);
+        std::fs::write(&path, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    fn append(&self, lines: &[serde_json::Value]) {
+        let mut text = std::fs::read_to_string(self.transcript(ON)).unwrap();
+        text.extend(lines.iter().map(|l| format!("{l}\n")));
+        std::fs::write(self.transcript(ON), text).unwrap();
+    }
+
+    fn switch_on(&self) {
+        let id: SessionId = ON.parse().unwrap();
+        self.ctx
+            .store()
+            .update_control(|s| control::switch(s, &id, &Switch::On, self.ctx.now()))
+            .unwrap();
+    }
+
+    fn mark_due(&self) {
+        let id: SessionId = ON.parse().unwrap();
+        self.ctx
+            .store()
+            .update_control(|s| s.sessions.get_mut(&id).unwrap().due = true)
+            .unwrap();
+    }
+
+    fn run(&self, models: &Answers) -> Vec<PassPayload> {
+        drive(&self.ctx, models, &[], false).passes
+    }
+
+    /// The `ON` record as its file reads (`scribe export`).
+    fn record_text(&self) -> String {
+        let target = tempfile::tempdir().unwrap();
+        let dir = target.path().join("export");
+        self.ctx
+            .store()
+            .export(&dir, scribe_core::ExportFormat::Markdown)
+            .unwrap();
+        std::fs::read_to_string(dir.join(format!("sessions/2026/11/{ON}.md"))).unwrap()
+    }
+
+    fn due(&self) -> bool {
+        let id: SessionId = ON.parse().unwrap();
+        self.ctx.store().control().unwrap().get(&id).unwrap().due
+    }
+}
+
 fn drive(
     ctx: &Context,
     responses: &Answers,
@@ -241,99 +330,10 @@ fn answer() -> SessionAnswer {
     }
 }
 
-struct Setup {
-    dir: tempfile::TempDir,
-    ctx: Context,
-}
-
 fn line(kind: &str, uuid: &str, text: &str) -> serde_json::Value {
     json!({"type": kind, "uuid": uuid, "timestamp": "2026-11-03T06:00:00Z",
            "cwd": "/nonexistent/work/scribe",
            "message": {"role": kind, "content": text}})
-}
-
-impl Setup {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir_all(home.join(".claude/projects/-work")).unwrap();
-        let env = AppEnv {
-            root: None,
-            home: Some(home.into_os_string()),
-            claude_config_dir: None,
-            codex_home: None,
-            claude_entrypoint: None,
-            ..Default::default()
-        };
-        let ctx = Context::resolve(Some(&dir.path().join("root")), &env).unwrap();
-        let setup = Self { dir, ctx };
-        setup.write(
-            ON,
-            &[
-                line("user", "u-1", &format!("Crews. {DEFINED}.")),
-                line("assistant", "a-1", ASSISTANT),
-            ],
-        );
-        setup.write(NEVER, &[line("user", "n-1", NEVER_SAID)]);
-        setup
-    }
-
-    fn transcript(&self, session: &str) -> PathBuf {
-        self.dir
-            .path()
-            .join(format!("home/.claude/projects/-work/{session}.jsonl"))
-    }
-
-    fn write(&self, session: &str, lines: &[serde_json::Value]) {
-        use std::os::unix::fs::PermissionsExt;
-        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        let path = self.transcript(session);
-        std::fs::write(&path, text).unwrap();
-        // Owner-only, as Claude Code writes it: the umask must not decide it.
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-
-    fn append(&self, lines: &[serde_json::Value]) {
-        let mut text = std::fs::read_to_string(self.transcript(ON)).unwrap();
-        text.extend(lines.iter().map(|l| format!("{l}\n")));
-        std::fs::write(self.transcript(ON), text).unwrap();
-    }
-
-    fn switch_on(&self) {
-        let id: SessionId = ON.parse().unwrap();
-        self.ctx
-            .store()
-            .update_control(|s| control::switch(s, &id, &Switch::On, self.ctx.now()))
-            .unwrap();
-    }
-
-    fn mark_due(&self) {
-        let id: SessionId = ON.parse().unwrap();
-        self.ctx
-            .store()
-            .update_control(|s| s.sessions.get_mut(&id).unwrap().due = true)
-            .unwrap();
-    }
-
-    fn run(&self, models: &Answers) -> Vec<PassPayload> {
-        drive(&self.ctx, models, &[], false).passes
-    }
-
-    /// The `ON` record as its file reads (`scribe export`).
-    fn record_text(&self) -> String {
-        let target = tempfile::tempdir().unwrap();
-        let dir = target.path().join("export");
-        self.ctx
-            .store()
-            .export(&dir, scribe_core::ExportFormat::Markdown)
-            .unwrap();
-        std::fs::read_to_string(dir.join(format!("sessions/2026/11/{ON}.md"))).unwrap()
-    }
-
-    fn due(&self) -> bool {
-        let id: SessionId = ON.parse().unwrap();
-        self.ctx.store().control().unwrap().get(&id).unwrap().due
-    }
 }
 
 fn fixed(answer: Result<SessionAnswer, ModelError>) -> Answers {

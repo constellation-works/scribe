@@ -12,6 +12,22 @@ pub(super) struct ListDisplay<'a> {
     pub(super) window: bool,
 }
 
+struct Actions(entry::Actions);
+
+impl Actions {
+    /// `entry` as output, with its action state when its tag is an action
+    /// tag and its window when `window`.
+    fn payload(&self, entry: &scribe_core::Entry, window: bool) -> EntryPayload {
+        let state = self.0.state(entry);
+        let payload = EntryPayload::from(entry).with_action(state.as_ref());
+        if window {
+            payload.with_window(entry)
+        } else {
+            payload
+        }
+    }
+}
+
 /// The output of `outcome`: `window` is `show --window`, and a list
 /// echoes `args` as criteria.
 pub(super) fn output(
@@ -116,20 +132,4 @@ fn criteria_with_related(filter: &EntryFilter, related: &[scribe_core::Related])
         criteria.push(format!("--state {state}"));
     }
     criteria
-}
-
-struct Actions(entry::Actions);
-
-impl Actions {
-    /// `entry` as output, with its action state when its tag is an action
-    /// tag and its window when `window`.
-    fn payload(&self, entry: &scribe_core::Entry, window: bool) -> EntryPayload {
-        let state = self.0.state(entry);
-        let payload = EntryPayload::from(entry).with_action(state.as_ref());
-        if window {
-            payload.with_window(entry)
-        } else {
-            payload
-        }
-    }
 }

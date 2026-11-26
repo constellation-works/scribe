@@ -6,13 +6,13 @@ use scribe_core::apps::init::{Command, Outcome, exec};
 use scribe_core::composition::Context;
 use std::path::PathBuf;
 
-const SKILL: &str = include_str!("../../../../skills/scribe/SKILL.md");
-
 macro_rules! skill_files {
     ($($path:literal),+ $(,)?) => {
         &[$(($path, include_str!(concat!("../../../../skills/scribe/", $path)))),+]
     };
 }
+
+const SKILL: &str = include_str!("../../../../skills/scribe/SKILL.md");
 
 const SKILL_FILES: &[(&str, &str)] = skill_files![
     "evals/cases.md",

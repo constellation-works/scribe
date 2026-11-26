@@ -37,15 +37,6 @@ pub(crate) struct PassArgs {
     pub(crate) sessions: Vec<SessionId>,
 }
 
-pub(super) fn run(args: PassArgs, ctx: &Context) -> Result<Output, CliError> {
-    let input = SessionPassInput {
-        sessions: args.sessions,
-        resolve: true,
-        ..Default::default()
-    };
-    Ok(passed(exec(ctx, Command::Pass(input, ctx.host()))?, ctx))
-}
-
 /// Parsed by both the CLI and the plugin backend before accessing a store:
 /// the session-pass, session-catalog and session-rebuild job steps.
 pub(in crate::commands) enum Step {
@@ -112,6 +103,15 @@ impl Step {
         };
         value.map_err(|err| CliError::Output(err.into()))
     }
+}
+
+pub(super) fn run(args: PassArgs, ctx: &Context) -> Result<Output, CliError> {
+    let input = SessionPassInput {
+        sessions: args.sessions,
+        resolve: true,
+        ..Default::default()
+    };
+    Ok(passed(exec(ctx, Command::Pass(input, ctx.host()))?, ctx))
 }
 
 pub(super) fn step_stdin(name: &str, ctx: &Context) -> Result<Output, CliError> {

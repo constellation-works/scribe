@@ -119,6 +119,71 @@ pub(crate) enum Command {
     Plugin(PluginCommand),
 }
 
+/// What a list needs to say on stderr beside its records.
+pub(super) struct ListNotice<'a> {
+    /// The plural noun, such as `entries`.
+    pub(super) noun: &'static str,
+    /// The filters applied, as the flags that set them (`--tag preferences`).
+    pub(super) criteria: Vec<String>,
+    /// The line for an empty store with no filters.
+    pub(super) empty: &'a str,
+}
+
+impl ListNotice<'_> {
+    /// The stderr line for a list, if it needs one: nothing matched (STD-01
+    /// R16, naming what was searched), or the limit cut the list (R34). A
+    /// full, non-empty list has none.
+    pub(super) fn line(&self, shown: usize, total: usize) -> Option<String> {
+        if total == 0 && self.criteria.is_empty() {
+            Some(self.empty.to_owned())
+        } else if total == 0 {
+            Some(format!(
+                "no {} match {}",
+                self.noun,
+                self.criteria.join(" ")
+            ))
+        } else if shown < total {
+            Some(format!(
+                "showing {shown} of {total} matching {}; raise or drop --limit to see the rest",
+                self.noun
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+/// `--since` and `--until`, shared by every list and the search.
+#[derive(Debug, Args)]
+pub(crate) struct DateArgs {
+    /// Only records on or after this day, YYYY-MM-DD [default: no lower bound]
+    #[arg(long, value_name = "DATE", value_parser = day_parser)]
+    pub(crate) since: Option<Date>,
+
+    /// Only records on or before this day, YYYY-MM-DD [default: no upper bound]
+    #[arg(long, value_name = "DATE", value_parser = day_parser)]
+    pub(crate) until: Option<Date>,
+}
+
+impl DateArgs {
+    /// The range, or a usage error when it ends before it starts.
+    pub(crate) fn range(&self) -> Result<DateRange, CliError> {
+        DateRange::checked(self.since, self.until).map_err(CliError::Usage)
+    }
+
+    /// The flags that set the range, for a list's "no match" line.
+    pub(crate) fn criteria(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(since) = self.since {
+            out.push(format!("--since {}", scribe_core::DateRange::day(since)));
+        }
+        if let Some(until) = self.until {
+            out.push(format!("--until {}", scribe_core::DateRange::day(until)));
+        }
+        out
+    }
+}
+
 /// Display names for session ids in non-JSON output, unique across stored
 /// sessions, group members and local transcripts. Cataloged sessions use their
 /// stable aliases; others use prefixes. Failed reads leave full ids available.
@@ -206,74 +271,9 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
     }
 }
 
-/// `--since` and `--until`, shared by every list and the search.
-#[derive(Debug, Args)]
-pub(crate) struct DateArgs {
-    /// Only records on or after this day, YYYY-MM-DD [default: no lower bound]
-    #[arg(long, value_name = "DATE", value_parser = day_parser)]
-    pub(crate) since: Option<Date>,
-
-    /// Only records on or before this day, YYYY-MM-DD [default: no upper bound]
-    #[arg(long, value_name = "DATE", value_parser = day_parser)]
-    pub(crate) until: Option<Date>,
-}
-
-impl DateArgs {
-    /// The range, or a usage error when it ends before it starts.
-    pub(crate) fn range(&self) -> Result<DateRange, CliError> {
-        DateRange::checked(self.since, self.until).map_err(CliError::Usage)
-    }
-
-    /// The flags that set the range, for a list's "no match" line.
-    pub(crate) fn criteria(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        if let Some(since) = self.since {
-            out.push(format!("--since {}", scribe_core::DateRange::day(since)));
-        }
-        if let Some(until) = self.until {
-            out.push(format!("--until {}", scribe_core::DateRange::day(until)));
-        }
-        out
-    }
-}
-
 /// `YYYY-MM-DD`; anything else is a usage error (exit 2).
 pub(crate) fn day_parser(text: &str) -> Result<Date, String> {
     scribe_core::parse_day(text)
-}
-
-/// What a list needs to say on stderr beside its records.
-pub(super) struct ListNotice<'a> {
-    /// The plural noun, such as `entries`.
-    pub(super) noun: &'static str,
-    /// The filters applied, as the flags that set them (`--tag preferences`).
-    pub(super) criteria: Vec<String>,
-    /// The line for an empty store with no filters.
-    pub(super) empty: &'a str,
-}
-
-impl ListNotice<'_> {
-    /// The stderr line for a list, if it needs one: nothing matched (STD-01
-    /// R16, naming what was searched), or the limit cut the list (R34). A
-    /// full, non-empty list has none.
-    pub(super) fn line(&self, shown: usize, total: usize) -> Option<String> {
-        if total == 0 && self.criteria.is_empty() {
-            Some(self.empty.to_owned())
-        } else if total == 0 {
-            Some(format!(
-                "no {} match {}",
-                self.noun,
-                self.criteria.join(" ")
-            ))
-        } else if shown < total {
-            Some(format!(
-                "showing {shown} of {total} matching {}; raise or drop --limit to see the rest",
-                self.noun
-            ))
-        } else {
-            None
-        }
-    }
 }
 
 /// A list's output: the records, the files skipped, and its notice.

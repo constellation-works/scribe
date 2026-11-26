@@ -15,14 +15,6 @@ const INDENT: usize = 2;
 /// Spaces between the longest name and its summary.
 const GAP: usize = 2;
 
-/// One heading and the commands that belong under it, in display order.
-pub(crate) struct Group {
-    /// Heading printed above the commands, without the trailing colon.
-    pub(crate) heading: &'static str,
-    /// Command names, each exactly the clap subcommand name.
-    pub(crate) commands: &'static [&'static str],
-}
-
 /// Root nouns, in the order `scribe --help` shows them.
 ///
 /// `brief` leads Find: it is what a session reads first. `search` sits with Find: it searches stored records, it is not one of them.
@@ -52,6 +44,14 @@ pub(crate) const ROOT_GROUPS: &[Group] = &[
         commands: &["hook", "plugin"],
     },
 ];
+
+/// One heading and the commands that belong under it, in display order.
+pub(crate) struct Group {
+    /// Heading printed above the commands, without the trailing colon.
+    pub(crate) heading: &'static str,
+    /// Command names, each exactly the clap subcommand name.
+    pub(crate) commands: &'static [&'static str],
+}
 
 /// Install the grouped root template.
 ///

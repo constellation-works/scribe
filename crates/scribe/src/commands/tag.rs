@@ -63,6 +63,45 @@ pub(crate) struct ShowArgs {
 #[derive(Debug, Args)]
 pub(crate) struct ListArgs {}
 
+#[derive(Debug, Args)]
+pub(crate) struct AddArgs {
+    /// Canonical tag name
+    name: scribe_core::TagName,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// What belongs in the tag
+    #[arg(long)]
+    description: String,
+    /// Alias, repeatable
+    #[arg(long)]
+    alias: Vec<scribe_core::TagName>,
+    /// Days before review (positive; omitted means never)
+    #[arg(long)]
+    stale_after_days: Option<std::num::NonZeroU32>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Canonical store tag name
+    name: scribe_core::TagName,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Replacement description
+    #[arg(long)]
+    description: Option<String>,
+    /// Alias to add, repeatable
+    #[arg(long)]
+    add_alias: Vec<scribe_core::TagName>,
+    /// Alias to remove, repeatable
+    #[arg(long)]
+    remove_alias: Vec<scribe_core::TagName>,
+    /// Replacement review interval in days (positive)
+    #[arg(long)]
+    stale_after_days: Option<std::num::NonZeroU32>,
+}
+
 /// Run one `tag` verb.
 pub(super) fn run(command: TagCommand, ctx: &Context) -> Result<Output, CliError> {
     let command = match command {
@@ -113,43 +152,4 @@ fn list(found: scribe_core::TagList) -> Output {
         notices.extend(found.warnings);
     }
     output
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct AddArgs {
-    /// Canonical tag name
-    name: scribe_core::TagName,
-    /// Agent name
-    #[arg(long)]
-    author: scribe_core::AuthorName,
-    /// What belongs in the tag
-    #[arg(long)]
-    description: String,
-    /// Alias, repeatable
-    #[arg(long)]
-    alias: Vec<scribe_core::TagName>,
-    /// Days before review (positive; omitted means never)
-    #[arg(long)]
-    stale_after_days: Option<std::num::NonZeroU32>,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct UpdateArgs {
-    /// Canonical store tag name
-    name: scribe_core::TagName,
-    /// Agent name
-    #[arg(long)]
-    author: scribe_core::AuthorName,
-    /// Replacement description
-    #[arg(long)]
-    description: Option<String>,
-    /// Alias to add, repeatable
-    #[arg(long)]
-    add_alias: Vec<scribe_core::TagName>,
-    /// Alias to remove, repeatable
-    #[arg(long)]
-    remove_alias: Vec<scribe_core::TagName>,
-    /// Replacement review interval in days (positive)
-    #[arg(long)]
-    stale_after_days: Option<std::num::NonZeroU32>,
 }

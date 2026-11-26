@@ -110,7 +110,14 @@ pub(in crate::commands) fn scan(ctx: &Context) -> Result<Output, CliError> {
                 by: item.by.to_string(),
             })
             .collect(),
+        // No pair is judged since ORB-27911 step 2a; the pair, label and batch
+        // counters stay neutral.
+        judged_pairs: 0,
+        pairs_left: 0,
+        unrelated_pairs: 0,
+        dropped_labels: 0,
         stale_entries: outcome.stale_entries,
+        failed_batches: Vec::new(),
         deactivated: outcome
             .deactivated
             .into_iter()
@@ -131,12 +138,6 @@ pub(in crate::commands) fn scan(ctx: &Context) -> Result<Output, CliError> {
                 error_code: f.error_code,
             })
             .collect(),
-        // No pair is judged since ORB-27911 step 2a; these stay neutral.
-        judged_pairs: 0,
-        pairs_left: 0,
-        unrelated_pairs: 0,
-        dropped_labels: 0,
-        failed_batches: Vec::new(),
         removal_pairs_judged: 0,
         removal_pairs_left: 0,
         dropped_removal_labels: 0,
