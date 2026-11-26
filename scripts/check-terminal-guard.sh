@@ -35,19 +35,29 @@ ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG
 # status of a clean no-match. So a scan that cannot create its files fails
 # here (status 2) and is never read as no matches.
 #
+# The scratch directory is checked before mktemp runs, and the files use an
+# explicit template inside it. A bare mktemp falls back to another directory
+# on some platforms (macOS does when TMPDIR is absent), so it cannot be the
+# check that decides.
+#
 # grep exit 1 (no matches) is a clean result; only an exit above 1 is a scan
 # failure. The comment filter's exit 1 is likewise its no-match, and only an
 # exit above 1 from it fails the scan.
 scan() {
   local pattern="$1"
+  local scratch="${TMPDIR:-/tmp}"
   local out err rc=0 filter_rc=0
-  if ! out=$(mktemp); then
-    echo "terminal-guard: cannot scan: cannot create a scan file in ${TMPDIR:-/tmp}" >&2
+  if [[ ! -d "$scratch" || ! -w "$scratch" ]]; then
+    echo "terminal-guard: cannot scan: cannot create a scan file in $scratch" >&2
     return 2
   fi
-  if ! err=$(mktemp); then
+  if ! out=$(mktemp "$scratch/terminal-guard.XXXXXX"); then
+    echo "terminal-guard: cannot scan: cannot create a scan file in $scratch" >&2
+    return 2
+  fi
+  if ! err=$(mktemp "$scratch/terminal-guard.XXXXXX"); then
     rm -f "$out"
-    echo "terminal-guard: cannot scan: cannot create a scan file in ${TMPDIR:-/tmp}" >&2
+    echo "terminal-guard: cannot scan: cannot create a scan file in $scratch" >&2
     return 2
   fi
   grep -rnE --include='*.rs' --exclude-dir=tests "$pattern" crates >"$out" 2>"$err" || rc=$?
