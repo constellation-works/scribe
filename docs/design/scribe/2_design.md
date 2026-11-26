@@ -63,6 +63,10 @@ deterministic call at 300 seconds. Model activities run in Orbit.
 | `scribe.session-pass-prepare` | `mutating` | `false` | `none` | selected window or settlement |
 | `scribe.session-pass-apply` | `mutating` | `false` | `none` | write, retry or failure status |
 | `scribe.session-pass-fail` | `mutating` | `false` | `none` | activity failure backoff |
+| `scribe.session-catalog-begin` | `mutating` | `false` | `none` | catalog switch write or resume plus catalog selection |
+| `scribe.session-rebuild-prepare` | `mutating` | `false` | `none` | rebuild window or checkpoint ready to finish |
+| `scribe.session-rebuild-apply` | `mutating` | `false` | `none` | checkpoint write, retry or stale status |
+| `scribe.session-rebuild-finish` | `mutating` | `false` | `none` | record replacement or rebase status |
 | `scribe.consistency-scan` | `mutating` | `false` | `none` | consistency scan report |
 | `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply` | `mutating` | `false` | `none` | refresh inputs and result |
 | `scribe.group-close-prepare` | `read_only` | `false` | `none` | open group: `{id, closed: false, evidence: {title, handoffs, turns}, related, evidence_sha256, instructions, crew}`; closed group: `{id, closed: true, crew}` |
