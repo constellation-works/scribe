@@ -727,6 +727,56 @@ pub fn bail() -> ! {
 EOF
 )" "clippy::disallowed-methods" "scribe-core importing std::process::exit by name"
 
+# Compile the actual store file adapter with the pinned kit dependencies. The
+# bad twin appends a raw open to that same module; both run the real lint
+# configuration, without ever executing the open. The fixture resolves offline
+# from the repository lock, so fetch that locked graph first: a cold cargo cache
+# (CI runs this gate before any build) cannot check out the git kit offline.
+if ! cargo fetch --locked --manifest-path "$REPO_ROOT/Cargo.toml" >"$work/fetch.out" 2>&1; then
+  echo "check-gates: FAIL: cannot fetch the locked kit dependencies" >&2
+  sed 's/^/  | /' "$work/fetch.out" >&2
+  exit 1
+fi
+store_clippy="$work/clippy-store-files"
+mkdir -p "$store_clippy/src/db"
+cp "$REPO_ROOT/clippy.toml" "$store_clippy/clippy.toml"
+cp "$REPO_ROOT/crates/scribe-store/src/db/files.rs" "$store_clippy/src/db/files.rs"
+{
+  printf '[workspace]\nresolver = "3"\n\n[package]\nname = "store-files-fixture"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n'
+  grep -E '^cw-(fs|sqlite) = ' "$REPO_ROOT/Cargo.toml"
+  printf '\n[lints]\nworkspace = true\n\n%s\n' "$clippy_lints"
+} >"$store_clippy/Cargo.toml"
+cp "$REPO_ROOT/Cargo.lock" "$store_clippy/Cargo.lock"
+cat >"$store_clippy/src/lib.rs" <<'EOF'
+//! Store file adapter fixture.
+#![allow(dead_code)]
+mod error {
+    use std::path::{Path, PathBuf};
+    pub enum Error { Symlink { path: PathBuf }, Other }
+    pub type Result<T> = std::result::Result<T, Error>;
+    impl Error {
+        pub fn io(_: &str, _: &Path, _: std::io::Error) -> Self { Self::Other }
+    }
+    impl From<cw_fs::Error> for Error {
+        fn from(_: cw_fs::Error) -> Self { Self::Other }
+    }
+}
+mod db { mod files; }
+EOF
+expect_clippy pass "$store_clippy" "" "the production file adapter with scoped filesystem expectations"
+cat >>"$store_clippy/src/db/files.rs" <<'EOF'
+
+fn forbidden_open(path: &std::path::Path) -> cw_sqlite::rusqlite::Result<cw_sqlite::rusqlite::Connection> {
+    cw_sqlite::rusqlite::Connection::open(path)
+}
+EOF
+expect_clippy fail "$store_clippy" "clippy::disallowed-methods" \
+  "a raw SQLite open through the cw-sqlite re-export in the file adapter"
+if ! grep -Fq "open scribe.db through cw-sqlite" "$work/out"; then
+  echo "check-gates: FAIL: missing raw SQLite open diagnostic" >&2
+  fail=1
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi
