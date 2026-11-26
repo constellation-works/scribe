@@ -224,6 +224,29 @@ for shape in db/codec repository/audit; do
   done
 done
 
+# Delimiters in line comments and literals cannot hide a later live import.
+# Check the diagnostic as well as the exit status: blanking must keep lines.
+for shape in db/codec repository/audit; do
+  for prefix in '// glob dir/*' 'const P: &str = "/*";' \
+    'const P: &str = r#"/*"#;' 'const P: &str = "escaped \" /*";'; do
+    bad=$(store_tree "store-lex-$n")
+    printf '%s\nuse crate::db::{docs, files};\n/* trailing note */\n' "$prefix" \
+      >"$bad/crates/scribe-store/src/${shape}.rs"
+    expect fail check-dependency-direction.sh "$bad" "a live import after $prefix"
+    if ! grep -Fq "crates/scribe-store/src/${shape}.rs:2: grouped import reaches db/files.rs" "$work/out"; then
+      echo "check-gates: FAIL: missing line 2 diagnostic for $shape after $prefix" >&2
+      fail=1
+    fi
+  done
+  ok=$(store_tree "store-nested-lex-$n")
+  printf '%s\n' '/* outer /* inner */' 'use crate::db::{docs, files};' '*/' \
+    >"$ok/crates/scribe-store/src/${shape}.rs"
+  expect pass check-dependency-direction.sh "$ok" "a grouped import inside nested block comments"
+  printf '%s\n' 'const TEXT: &str = r#"' 'use crate::db::{docs, files};' '"#;' \
+    >"$ok/crates/scribe-store/src/${shape}.rs"
+  expect pass check-dependency-direction.sh "$ok" "a grouped import inside a raw string"
+done
+
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
 # files the clean README below names. A broken case appends one reference to it.
