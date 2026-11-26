@@ -144,6 +144,7 @@ runtime/
   audit.rs           the audit guard around a mutating command
 composition.rs       Env, Context: roots, config, store, redactor
 config.rs            config.toml shapes and parsing
+config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
 providers/           interim: the Models port, its shapes (models.rs) and adapters (cli.rs, cli/)
 ```
@@ -297,7 +298,7 @@ Invariants:
   - `check_log` (`db/log.rs`): the codec runs it on every session record it
     reads, and the session writer before a write. A malformed log is
     `store_corrupt`.
-  - `export_target_exists` (`repository/sessions.rs::prepare_target`):
+  - `export_target_exists` (`repository/sessions/export.rs::prepare_target`):
     `export` refuses a target that is not an empty directory. The check is
     the precondition of the store's own filesystem write, and only the
     store touches the filesystem.
