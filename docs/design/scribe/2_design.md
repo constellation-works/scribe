@@ -2887,22 +2887,20 @@ Config, under the tag (`[tags.<name>.capture]`):
 
 ```toml
 [tags.preferences.capture]
-from = "daniel"                  # whose turns; only "daniel" is accepted for now
-route = "propose"                # propose | write | agent
+from = "user"                     # whose turns: user | assistant | both
+route = "propose"                # propose | write
 triggers = ["always", "never", "should not", "from now on", "I prefer", "by default"]
 criteria = "A standing rule from Daniel that applies beyond the work at hand."
 not = "A choice about one page or task (it goes on its Orbit task or the feature's 4_decisions.md); an acknowledgement."
 ```
 
-- `from`: whose turns are read. Only `daniel` (his typed turns, with
-  §5.3's exclusions) is accepted; `assistant` is refused
-  (`config_invalid`) until a need for assistant-turn capture is seen again
-  ([§11.3](#113-the-shipped-tag-set-and-retired-tag-cleanup)).
+- `from`: whose turns are read: `user` (his typed turns, with
+  §5.3's exclusions), `assistant`, or `both`. Any other value, including
+  `daniel`, is refused (`config_invalid`).
 - `route`: what a claim becomes. `propose` opens a candidate proposal that
   Daniel settles (§5.3); `write` has the pass write the entry itself, with
-  no proposal ([§11.6](#116-idea-capture-after-finding-is-gone)); `agent`
-  has the prompt hook tell the agent in the chat, and the pass captures
-  nothing under the tag ([§11.4](#114-issues)).
+  no proposal ([§11.6](#116-idea-capture-after-finding-is-gone)). `route =
+  "agent"` is refused (`config_invalid`) under STD-14@1.
 - `triggers`: phrases matched case-insensitively on word boundaries.
   Inside a phrase, `*` stands for zero to four words, and the match must
   lie within one sentence (a sentence ends at `.`, `!`, `?`, a line
@@ -3277,7 +3275,7 @@ and step (b2) builds them:
   `stated_by` says the pass wrote the statement. The span is still checked
   byte-for-byte.
 - **Assistant ideas.** ORB-25987 point 4 captures an assistant suggestion
-  Daniel defers. With `from = "daniel"` the triggers fire only on his
+  Daniel defers. With `from = "user"` the triggers fire only on his
   words, and no assistant-turn route remains, so point 4 is not built until
   seen.
 
@@ -3297,7 +3295,7 @@ preference, a question of fact, an idea the session goes on to carry out).
   `--author-kind scribe`), and `ask`, `scribe search` and `entry show`
   label it "captured by the session pass", apart from a typed
   `#scribe idea:` entry. Assistant turns never fire a trigger (`from =
-  "daniel"`), so an assistant's idea is never written.
+  "user"`), so an assistant's idea is never written.
 - **Outcome.** Each such entry has an `outcome` (format 16,
   [specs/store.md](./specs/store.md)): `open`; `parked` with
   Daniel's words, kept only when they are a span of the turn the model
@@ -4213,7 +4211,7 @@ interactive session**: the hook reads Claude Code's entry point
 `sdk-cli` for every `claude -p` run) and adds no page otherwise, so
 headless Orbit runs, routines and drains carry none of it. Codex's
 equivalent is mapped by the implementation task, or Codex sessions get
-the page through the skill (`scribe memory show --page`) until it is.
+the page through the skill (`scribe memory show`) until it is.
 The page does not depend on this session being on: reading needs no
 switch; only writing does.
 
@@ -6490,7 +6488,7 @@ Daniel's words, with its reason.
 | `.codex-<id>.lock`, `.<id>.rebuild.lock` | kept as lock files, moved to `locks/` | phase 6; they serialise work across model calls and hold no data |
 | `sessions/…/.<id>.rebuild.md` (rebuild checkpoints) | `rebuild_checkpoints` rows | phase 6; `store migrate` refuses while one exists, so the user finishes or discards it first |
 | `scribe-init.json`, `.scribe-init.lock` (in the provider's config directory, outside the store) | unchanged | none: they belong to `scribe init`, not the store |
-| `config.toml` | stays the user's file | phase 2 adds `[user]`, `[instructions]`, and warns on `[tags.issue.capture]` route `agent` for 30 days, then refuses it; phase 5 deprecates `[memory]` keys; `from = "daniel"` read as `user` |
+| `config.toml` | stays the user's file | phase 2 adds `[user]` and `[instructions]`; route `agent`, any `[memory]` key, `instructions.memory_pairs` and `from = "daniel"` are refused as `config_invalid` (STD-14@1) |
 | `store/format.rs::UPGRADES` | replaced by SQL migrations on `user_version` | phase 8 removes it with `format.rs`; the current-format codecs stay in `store/codec.rs` |
 | `pre-sqlite-<date>/`, `pre-issue-<date>/` | imported into the `archives` and `archive_records` tables of `scribe.db` | phase 8, at the first write or `store migrate`; the files are removed after the commit |
 
