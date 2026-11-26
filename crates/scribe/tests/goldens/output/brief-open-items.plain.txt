@@ -1,0 +1,18 @@
+# scribe brief
+
+## Profile
+(none)
+## Now
+(none)
+## Milestones
+(none)
+
+## Open items
+- open-item-1 · open · orbit-0-capt · ORB-42 · Which API should the release use?
+- open-item-2 · open · 0-chief · ORB-42 · hand · Restart the dashboard
+
+## Recent sessions
+(none)
+
+## Open claims
+(none)

@@ -493,6 +493,25 @@ fn typed_records_match_goldens() {
         self_refresh_verified: false,
         spoken: false,
     };
+    let start = || {
+        let out = run_with_input(
+            &fx,
+            &["hook", "session-start"],
+            br#"{"session_id":"session-test","hook_event_name":"SessionStart","source":"startup"}"#,
+            None,
+        );
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        if out.stdout.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice::<Value>(&out.stdout).unwrap()
+        }
+    };
+    assert!(
+        start()["systemMessage"]
+            .as_str()
+            .is_none_or(|line| !line.contains("open item"))
+    );
     store
         .add_agent_entry(
             AgentEntry {
@@ -576,6 +595,25 @@ fn typed_records_match_goldens() {
         }
     }
 
+    for (name, args) in [
+        ("brief-open-items", &["brief", "--project", "scribe"][..]),
+        ("search-decision-item", &["search", "release API"][..]),
+    ] {
+        for (suffix, mode) in MODES {
+            let out = fx.check(&[args, *mode].concat(), Success);
+            failures.extend(compare_golden(
+                &format!("output/{name}.{suffix}"),
+                &text(&out.stdout),
+            ));
+        }
+    }
+    assert!(
+        start()["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("2 open items for you")
+    );
+
     // §18.4: the user's answer, then the close naming decision-1. The
     // store's verbs are driven directly: the CLI's transcript check is
     // covered in tests/agent_writes/records.rs.
@@ -603,6 +641,12 @@ fn typed_records_match_goldens() {
             &text(&out.stdout),
         ));
     }
+    assert!(
+        start()["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("2 open items for you")
+    );
     let decision = "decision-1".parse().unwrap();
     store
         .close_open_item(
@@ -614,6 +658,12 @@ fn typed_records_match_goldens() {
             &Redactor::default(),
         )
         .unwrap();
+    assert!(
+        start()["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("1 open item for you")
+    );
     for (suffix, mode) in MODES {
         let out = fx.check(
             &[&["entry", "show", "open-item-1"][..], *mode].concat(),

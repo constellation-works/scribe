@@ -78,7 +78,7 @@ fn an_empty_store_has_both_sections_and_says_they_are_empty() {
     assert_eq!(brief.claim_count(), 0);
     assert_eq!(
         brief.text(),
-        "# scribe brief\n\n## Recent sessions\n(none)\n\n## Open claims\n(none)\n"
+        "# scribe brief\n\n## Open items\n(none)\n\n## Recent sessions\n(none)\n\n## Open claims\n(none)\n"
     );
 }
 
@@ -189,6 +189,9 @@ fn the_text_puts_the_memory_block_first_then_dated_sessions_and_claims() {
          Now:\n\
          - an item [m-1]\n\
          \n\
+         ## Open items\n\
+         (none)\n\
+         \n\
          ## Recent sessions\n\
          - s-1 · 2026-11-01 11:00Z · scribe · Ship the brief\n\
          \n\
@@ -252,5 +255,42 @@ fn brief_marks_recorded_sessions_with_newest_handoff_and_lists_unrecorded_ones()
         brief
             .text()
             .contains("- s-rec · 2026-11-01 12:00Z · scribe · Recorded work [handoff: handoff-2]")
+    );
+}
+
+#[test]
+fn open_items_are_ordered_capped_and_include_legacy_records() {
+    use crate::entry::{AnswerIn, ItemAnswer, OpenItem};
+    let mut answered = entry("open-item-1", T0);
+    answered.item = Some(OpenItem {
+        asked_by: "captain".parse().unwrap(),
+        options: vec![],
+        recommended: None,
+        why: None,
+        blocked: "nothing".into(),
+        answer_in: AnswerIn::Hand,
+        answer: Some(ItemAnswer {
+            words: "yes".into(),
+            session: "s-1".parse().unwrap(),
+            at: T0,
+            recorded_by: "captain".parse().unwrap(),
+        }),
+        closed: None,
+    });
+    let mut records: Vec<_> = (2..=12)
+        .map(|n| entry(&format!("open-item-{n}"), T0 + Duration::days(n)))
+        .collect();
+    records.push(answered);
+    let mut retired = entry("open-item-13", T0);
+    retired.status = EntryStatus::Retired;
+    records.push(retired);
+    let mut page = brief::build(&[], &[], &[], None, None, 5);
+    page.open_items = brief::open_items(&records);
+    assert_eq!(page.open_items.len(), 12);
+    assert_eq!(page.open_items[0].id, "open-item-2");
+    assert_eq!(page.open_items[11].state, "answered");
+    assert!(
+        page.text()
+            .contains("(+2 more: scribe entry list --tag open-item --state open --state answered)")
     );
 }

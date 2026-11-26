@@ -75,6 +75,25 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
             "scribe: {n} proposals to review — scribe proposal list"
         )),
     };
+    let items = match ctx.store.read().entries().list(&crate::EntryFilter {
+        tag: crate::entry::OPEN_ITEM_TAG.parse().ok(),
+        status: Some(crate::EntryStatus::Active),
+        ..crate::EntryFilter::default()
+    }) {
+        Ok(listed) => {
+            let n = crate::brief::open_items(&listed.listing.items).len();
+            (n > 0).then(|| {
+                format!(
+                    "scribe: {n} open {} for you",
+                    if n == 1 { "item" } else { "items" }
+                )
+            })
+        }
+        Err(err) => {
+            tracing::warn!(%err, "cannot read open items; not reporting them");
+            None
+        }
+    };
     let stuck = match stuck_actions(&ctx.store.read(), ctx.clock.now()) {
         Ok(counts) => stuck_line(&counts),
         Err(err) => {
@@ -133,6 +152,7 @@ pub fn run<E: PortError>(ctx: &Ctx<'_, E>, input: &SessionStartInput<'_>) -> Hoo
     outcomes.extend(seat.outcomes);
     let lines: Vec<String> = proposals
         .into_iter()
+        .chain(items)
         .chain(stuck)
         .chain(continuation)
         .chain(seat.message)

@@ -937,6 +937,8 @@ pub(crate) struct BriefPayload {
     pub(crate) sessions: Vec<BriefSessionPayload>,
     /// How many open claims `claims` holds.
     pub(crate) claim_count: usize,
+    /// Open and answered items, in display order.
+    pub(crate) open_items: Vec<scribe_core::brief::OpenItem>,
     /// The open claims, grouped by tag.
     pub(crate) claims: Vec<BriefClaimGroupPayload>,
     /// The brief as text, exactly as it prints and as the hook injects it.
@@ -1013,6 +1015,7 @@ impl BriefPayload {
                 })
                 .collect(),
             claim_count: b.claim_count(),
+            open_items: b.open_items.iter().take(10).cloned().collect(),
             claims: b
                 .claims
                 .iter()

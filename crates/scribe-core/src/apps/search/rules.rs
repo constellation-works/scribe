@@ -331,7 +331,23 @@ fn hit(score: f64, doc: &Doc, corpus: Corpus<'_>, wanted: &BTreeSet<String>) -> 
                 segment: None,
                 message: None,
                 score,
-                title: format!("{} ({})", e.id, e.tag),
+                title: if let Some(decision) = &e.decision {
+                    format!(
+                        "{} (decision, by {})",
+                        e.id,
+                        if decision.by_user() {
+                            "the user"
+                        } else {
+                            decision.decided_by.as_str()
+                        }
+                    )
+                } else if e.tag.as_str() == crate::entry::DECISION_TAG {
+                    format!("{} (decision, decider unknown)", e.id)
+                } else if let Some(state) = crate::entry::ItemState::of(e) {
+                    format!("{} (open-item, {})", e.id, state.as_str())
+                } else {
+                    format!("{} ({})", e.id, e.tag)
+                },
                 snippet,
                 project: e.project.clone(),
                 topics: e.topics.as_slice().to_vec(),
