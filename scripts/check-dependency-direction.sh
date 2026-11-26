@@ -724,7 +724,7 @@ for cyc in find_cycles(workspace_crates, crate_edges):
 RAW_STR_RE = re.compile(r'(?:br|cr|r)(#*)"')
 CHAR_LIT_RE = re.compile(r"b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^'\\\n])'")
 USE_STMT_RE = re.compile(
-    r'(?:^|[;{}])[ \t\n]*((?:#\[[^\]]*\][ \t\n]*)*)'
+    r'(?:^|(?<=[;{}]))[ \t\n]*((?:#\[[^\]]*\][ \t\n]*)*)'
     r'(?:pub(?:\s*\([^)]*\))?\s+)?use\s+([^;]+);',
     re.M,
 )
@@ -795,7 +795,7 @@ def strip_comments_and_strings(src):
     return "".join(out)
 
 def flatten_use_tree(prefix, tree):
-    """Flatten a possibly nested, multiline Rust use tree into full paths."""
+    """Flatten a use tree into (full path, optional binding) pairs."""
     items = []
     depth = 0
     cur = []
@@ -820,12 +820,15 @@ def flatten_use_tree(prefix, tree):
             p = re.sub(r"\s+", "", m.group(1))
             out.extend(flatten_use_tree(prefix + p, m.group(2)))
         else:
-            item = re.sub(r"\s+as\s+\w+$", "", item)
+            alias_match = re.search(r"\s+as\s+(\w+)$", item)
+            alias = alias_match.group(1) if alias_match else None
+            if alias_match:
+                item = item[:alias_match.start()]
             item = re.sub(r"\s+", "", item)
             if item == "self":
-                out.append(prefix.rstrip(":"))
+                out.append((prefix.rstrip(":"), alias))
             else:
-                out.append(prefix + item)
+                out.append((prefix + item, alias))
     return out
 
 def resolve_to_crate(path_str, mod_parts, aliases):
@@ -867,12 +870,12 @@ def collect_root_aliases(src_dir, top_units):
             stmt_start = clean.rfind("\n", 0, m.start(2)) + 1
             if clean[stmt_start : m.start(2)].startswith((" ", "\t")):
                 continue
-            for raw in flatten_use_tree("", tree):
+            for raw, binding in flatten_use_tree("", tree):
                 segs = [s for s in raw.lstrip(":").split("::") if s]
                 if segs and segs[0] == "crate":
                     segs = segs[1:]
                 if len(segs) >= 2 and segs[0] in top_units and segs[-1] != "*":
-                    alias = segs[-1]
+                    alias = binding or segs[-1]
                     if alias not in top_units:
                         candidates[alias].add(tuple(segs))
     # Keep only aliases that map unambiguously to a single internal path.
@@ -923,7 +926,7 @@ def extract_resolved_refs(fp, src_dir, aliases):
             skip_spans.append((m.start(), m.end()))
             continue
         lineno = 1 + clean.count("\n", 0, m.start(2))
-        for p in flatten_use_tree("", m.group(2)):
+        for p, _binding in flatten_use_tree("", m.group(2)):
             res = resolve_to_crate(p, mod_parts, aliases)
             if res:
                 refs.append((res, lineno))

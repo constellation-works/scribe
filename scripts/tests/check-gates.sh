@@ -286,6 +286,30 @@ for import in 'use crate::providers;' 'use super::providers;' 'use crate::{provi
   fi
 done
 
+# Re-exports retain their public binding, and adjacent use statements must each
+# be scanned. Check the full cycle and both source locations.
+for case in alias grouped; do
+  cyc=$(tree "cycle-regression-$case")
+  mkdir -p "$cyc/crates/scribe-core/src/providers"
+  printf 'use crate::config::Config;\n' >"$cyc/crates/scribe-core/src/providers/mod.rs"
+  if [ "$case" = alias ]; then
+    printf 'pub use providers::ProviderValue as RuntimeValue;\n' >"$cyc/crates/scribe-core/src/lib.rs"
+    printf 'use crate::RuntimeValue;\n' >"$cyc/crates/scribe-core/src/config.rs"
+  else
+    printf 'use std::fmt; use crate::{providers::ProviderValue};\n' >"$cyc/crates/scribe-core/src/config.rs"
+  fi
+  expect fail check-dependency-direction.sh "$cyc" "cycle through $case import"
+  for evidence in 'scribe-core import cycle: config -> providers -> config' \
+    'crates/scribe-core/src/config.rs:1' 'crates/scribe-core/src/providers/mod.rs:1'; do
+    if ! grep -Fq "$evidence" "$work/out"; then
+      echo "check-gates: FAIL: missing $evidence for $case cycle" >&2
+      fail=1
+    fi
+  done
+  printf 'struct ProviderValue;\n' >"$cyc/crates/scribe-core/src/providers/mod.rs"
+  expect pass check-dependency-direction.sh "$cyc" "acyclic control for $case import"
+done
+
 cyc_three_ok=$(tree cycle-three-clean)
 printf '//! error\n' >"$cyc_three_ok/crates/scribe/src/error.rs"
 printf '//! help\nuse crate::error;\n' >"$cyc_three_ok/crates/scribe/src/help.rs"
