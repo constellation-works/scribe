@@ -67,7 +67,7 @@ pub fn show<E: PortError>(
     let id = catalog::resolve_transcript(ctx, provider, input)?;
     let dir = ctx
         .transcripts
-        .dir()
+        .dir(provider)
         .ok_or_else(|| CatalogError::TranscriptNotFound {
             id: id.clone(),
             dir: PathBuf::from("(no transcripts directory)"),
@@ -142,7 +142,7 @@ pub fn list<E: PortError>(
     provider: Provider,
     input: &ListInput<'_>,
 ) -> Result<Option<Listed>, CatalogError<E>> {
-    if ctx.transcripts.dir().is_none() {
+    if ctx.transcripts.dir(provider).is_none() {
         return Ok(None);
     }
     let config = ctx

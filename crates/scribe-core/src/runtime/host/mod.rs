@@ -75,8 +75,10 @@ impl Redaction for Context {
 impl Transcripts for Context {
     type Error = CommandError;
 
-    fn dir(&self) -> Option<PathBuf> {
-        self.transcripts().map(PathBuf::from)
+    fn dir(&self, provider: Provider) -> Option<PathBuf> {
+        self.with_provider(provider)
+            .transcripts()
+            .map(PathBuf::from)
     }
 
     fn files(&self, provider: Provider) -> Result<Vec<(SessionId, PathBuf)>, CommandError> {

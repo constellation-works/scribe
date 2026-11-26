@@ -1,4 +1,5 @@
 mod activity;
+mod catalog;
 mod control;
 mod message;
 mod pass;

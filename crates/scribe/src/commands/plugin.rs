@@ -288,7 +288,11 @@ fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
         }
         Err(reply) => return reply,
     };
-    let routine = Context::at(root, transcripts).with_codex_home(codex_home);
+    let codex_only = transcripts.is_none();
+    let mut routine = Context::at(root, transcripts).with_codex_home(codex_home);
+    if codex_only {
+        routine = routine.with_provider(scribe_core::Provider::Codex);
+    }
     match step.run(&routine) {
         Ok(value) if abort => {
             let message = value["pass"]["session"].as_str().map_or_else(

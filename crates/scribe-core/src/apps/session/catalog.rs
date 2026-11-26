@@ -204,7 +204,7 @@ pub fn resolve_transcript<E: PortError>(
     provider: Provider,
     input: &SessionId,
 ) -> Result<SessionId, CatalogError<E>> {
-    let Some(dir) = ctx.transcripts.dir() else {
+    let Some(dir) = ctx.transcripts.dir(provider) else {
         return Err(CatalogError::TranscriptNotFound {
             id: input.clone(),
             dir: PathBuf::from("(no transcripts directory)"),
@@ -252,7 +252,7 @@ pub fn begin<E: PortError>(
     refuse_forgotten(ctx.store, &id)?;
     let dir = ctx
         .transcripts
-        .dir()
+        .dir(provider)
         .ok_or_else(|| CatalogError::TranscriptNotFound {
             id: id.clone(),
             dir: PathBuf::from("(no transcripts directory)"),

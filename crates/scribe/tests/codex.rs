@@ -681,3 +681,132 @@ fn decision_quotes_require_the_whole_short_codex_turn_and_user_provenance() {
     assert!(stored.status.success(), "{}", text(&stored.stderr));
     assert_eq!(entries(&fx)[0]["quote"], "yes");
 }
+
+#[test]
+fn plugin_session_catalog_begin_works_in_codex_only_configuration() {
+    let f = Fixture::new();
+    let mut c = Codex::new(&f);
+    c.typed("choice", "t", "We choose compact widgets.");
+    c.write();
+
+    let codex_home = f.home().join(".codex");
+    let empty_transcripts_cfg =
+        json!({"root": f.root(), "codex_home": codex_home, "transcripts": ""});
+    let absent_transcripts_cfg = json!({"root": f.root(), "codex_home": codex_home});
+
+    // Explicit `provider: "codex"` with `transcripts: ""` writes the catalog switch.
+    let begun = support::pass::plugin_tool(
+        &f,
+        &[],
+        "session-catalog-begin",
+        json!({"session": ID, "author": "opus", "provider": "codex"}),
+        &empty_transcripts_cfg,
+    )
+    .unwrap();
+    assert_eq!(begun["session"], ID, "{begun}");
+    assert_eq!(begun["sessions"], json!([ID]), "{begun}");
+    assert_eq!(begun["wrote_switch"], true, "{begun}");
+    assert_eq!(begun["catalog"], json!({"author": "opus", "project": null}));
+
+    let state = support::control(&f.root());
+    assert_eq!(state["sessions"][ID]["provider"], "codex");
+    assert_eq!(state["sessions"][ID]["on"], true);
+    assert_eq!(state["sessions"][ID]["cataloged_by"]["by"]["name"], "opus");
+
+    // Resuming with `provider` omitted and `transcripts` absent succeeds without rewriting.
+    let resumed = support::pass::plugin_tool(
+        &f,
+        &[],
+        "session-catalog-begin",
+        json!({"session": ID, "author": "opus"}),
+        &absent_transcripts_cfg,
+    )
+    .unwrap();
+    assert_eq!(resumed["session"], ID, "{resumed}");
+    assert_eq!(resumed["wrote_switch"], false, "{resumed}");
+
+    // A second Codex rollout in `archived_sessions`, started by prefix with `provider` omitted.
+    const SECOND: &str = "22222222-3333-4444-8555-666666666666";
+    let archived_dir = codex_home.join("archived_sessions");
+    f.create_private_dir_all(&archived_dir);
+    let archived_path = archived_dir.join(format!("rollout-2026-11-12T00-00-00-{SECOND}.jsonl"));
+    std::fs::write(
+        &archived_path,
+        format!(
+            "{}\n{}\n",
+            json!({"type":"session_meta","payload":{"id":SECOND,"source":"vscode","thread_source":"user","cwd":f.home()}}),
+            json!({"type":"response_item","timestamp":"2026-11-12T00:00:00Z","payload":{"type":"message","id":"m-1","role":"user","content":[{"type":"input_text","text":"We choose compact widgets."}],"internal_chat_message_metadata_passthrough":{"turn_id":"t-1","content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}}})
+        ),
+    )
+    .unwrap();
+    support::make_private(&archived_path);
+
+    let begun_second = support::pass::plugin_tool(
+        &f,
+        &[],
+        "session-catalog-begin",
+        json!({"session": "22222222", "author": "opus"}),
+        &empty_transcripts_cfg,
+    )
+    .unwrap();
+    assert_eq!(begun_second["session"], SECOND, "{begun_second}");
+    assert_eq!(begun_second["wrote_switch"], true, "{begun_second}");
+    assert_eq!(
+        support::control(&f.root())["sessions"][SECOND]["provider"],
+        "codex"
+    );
+
+    // Complete the catalog pass in Codex-only mode so `SECOND` has a final record.
+    let report = support::pass::run(
+        |step, input| support::pass::plugin_step(&f, &[], step, input, &empty_transcripts_cfg),
+        json!({
+            "sessions": begun_second["sessions"],
+            "resolve": false,
+            "catalog": begun_second["catalog"],
+        }),
+        widget_answer,
+    )
+    .unwrap();
+    assert_eq!(report["passes"][0]["result"], "written", "{report}");
+    let record: Value = f.check(Cli(&["session", "show", SECOND, "--json"]), Json);
+    assert_eq!(record["provider"], "codex");
+    assert_eq!(record["status"], "final");
+
+    // Re-beginning an already-cataloged session with `provider` omitted fails with
+    // `session_cataloged` and audits the resolved Codex session target via `Command::subject`.
+    let already = support::pass::plugin_tool(
+        &f,
+        &[],
+        "session-catalog-begin",
+        json!({"session": "22222222", "author": "opus"}),
+        &empty_transcripts_cfg,
+    )
+    .unwrap_err();
+    let already_reply: Value = serde_json::from_slice(&already.stdout).unwrap();
+    assert_eq!(already_reply["ok"], false, "{already_reply}");
+    assert_eq!(already_reply["error"]["code"], "session_cataloged");
+    let audit = support::audit_lines(&f.root());
+    assert!(
+        audit.iter().any(|line| {
+            line["command"] == "session catalog"
+                && line["status"] == "failure"
+                && line["error_code"] == "session_cataloged"
+                && line["target"] == format!("session:{SECOND}")
+                && line["author"] == "opus"
+        }),
+        "{audit:?}"
+    );
+
+    // Explicit `provider: "claude-code"` in Codex-only mode still has no Claude transcripts dir.
+    let claude = support::pass::plugin_tool(
+        &f,
+        &[],
+        "session-catalog-begin",
+        json!({"session": ID, "author": "opus", "provider": "claude-code"}),
+        &empty_transcripts_cfg,
+    )
+    .unwrap_err();
+    let claude_reply: Value = serde_json::from_slice(&claude.stdout).unwrap();
+    assert_eq!(claude_reply["ok"], false, "{claude_reply}");
+    assert_eq!(claude_reply["error"]["code"], "transcript_not_found");
+}
