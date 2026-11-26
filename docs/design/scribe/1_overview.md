@@ -1,29 +1,29 @@
 ---
 title: scribe — Overview
 owner: claude
-last_updated: 2026-11-23
+last_updated: 2026-11-26
 last_validated: 2026-11-02
 status: Draft
 stage: building
-next: 2_design.md §14 annotations built (steps 1–3, store format 22; Codex wired, ORB-26535); S7 discussions unfiled
+next: 2_design.md §19 replaces the remaining model callers with Orbit jobs; approved, not built; S7 discussions unfiled
 feature: scribe
 doc_role: overview
 type: design
-summary: A standalone Orbit plugin that keeps Daniel's explicitly marked preferences, catalogs the sessions he turns on or names (each a header over an append-only log), lets agents search, read and write those records through its CLI under one skill, with verbatim citations.
+summary: A standalone Rust CLI and Orbit plugin that records explicit preferences, catalogs sessions Daniel turns on or names, and lets agents search and manage attributed records through the CLI and one skill.
 tags: [scribe]
 paths: ["crates/**", "plugin/**"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-25977, ORB-25980, ORB-25983, ORB-25987, ORB-27638]
+related_artifacts: [ORB-21747, ORB-21744, ORB-21404, ORB-23849, ORB-23892, ORB-25977, ORB-25980, ORB-25983, ORB-25987, ORB-27638, ORB-27655, ORB-27656, ORB-27911]
 ---
 
 # scribe — Overview
 
-scribe is a small, standalone Orbit plugin. It records only what Daniel
-explicitly asks it to record, catalogs only the sessions he turns on, and
-lets any agent find what Daniel said or decided, with verbatim
-citations: agents on the Mac search and write scribe through its CLI,
-taught by one skill. It replaces the scribe built inside orbit-office, without the
-Library, to-dos or calendar around it.
+scribe is a standalone Rust CLI and Orbit plugin. It records preferences
+Daniel explicitly marks, catalogs sessions he turns on or names, and stores
+agent-authored records with their authorship. Agents search and manage these
+records through the CLI, guided by one skill. Orbit routines keep session
+records and proposals current. Scribe replaces the scribe built inside
+orbit-office, without the Library, to-dos or calendar around it.
 
 > The design ([2_design.md](./2_design.md),
 > [4_decisions.md](./4_decisions.md)) describes the plugin. Delivery state
@@ -34,11 +34,12 @@ Library, to-dos or calendar around it.
 providing insights implicitly, rather than explicitly - seamlessly
 cataloging things that would've been lost otherwise without any additional
 effort. I just turn on scribe, and scribe extracts insights and turn them
-into value". Turning a session on is the one act scribe asks of him. A step
+into value". For ongoing capture, turning a session on is the one act scribe
+asks of him; naming a past session opts that session in as well. A step
 that needs him to type, approve or remember has to earn its place. This
-reverses "records only what Daniel explicitly asks it to record" for
-everything except preferences; the paragraph above still describes what is
-built. What changes and which tasks carry it:
+widens capture to qualifying material from sessions Daniel chose to
+catalog; preferences still require his explicit instruction or checked
+approval. What changes and which tasks carry it:
 [Directions of 2026-11-20](#directions-of-2026-11-20).
 
 ## 1. Directions (Daniel, 2026-11-02)
@@ -83,7 +84,7 @@ decision is recorded on its Orbit task or in a feature's `4_decisions.md`
 Daniel's 2026-11-02 words above are kept as he wrote them.
 Amended 2026-11-23 ([ORB-27638]): a decision that outlives one task
 returns as a shipped `decision` record, beside `open-item` records for what
-waits on Daniel ([2_design.md §18](./2_design.md#18-decisions-and-open-items-proposed)).
+waits on Daniel ([2_design.md §18](./2_design.md#18-decisions-and-open-items)).
 
 ### Directions of 2026-11-10 ([ORB-23892])
 
@@ -137,7 +138,7 @@ none under `task`, `friction`, `decisions`, `finding` or `idea`; and 20 open
 proposals, the store-wide cap, so the session pass had asked for no
 candidates since 2026-11-17.
 
-| Change | Task | State on 2026-11-20 |
+| Change | Task | State when filed |
 |---|---|---|
 | `task` and `friction` stop shipping; work and friction are filed in Orbit | [ORB-25977] | filed, not landed |
 | `decisions` stops shipping; a decision lives on its Orbit task or in a `4_decisions.md` | [ORB-25980] | filed, not landed |
@@ -150,38 +151,41 @@ Two things the principle asks for that no task covers yet:
 
 - **Approving a preference should cost less** than typing
   `#scribe approve <id>`. Four candidates had waited since 2026-11-16.
-- **The read side is not measured.** scribe does not record whether an
-  entry was ever cited by `ask` or shown again, so it cannot tell a useful
-  catalog from a pile.
+- **The read side is not measured.** `search` returns ranked hits, but
+  scribe does not record whether an entry was later consulted, so it cannot
+  tell a useful catalog from a pile.
 
 ## 2. Shape
 
 | Part | Does | Model |
 |---|---|---|
-| `#scribe <instruction>` | In a user-typed turn, in any session whether on or off, adds exactly one entry to the named tag. It quotes Daniel verbatim, cites the message, and echoes the tag, text and id. An unknown tag is refused with the configured list. A bare `#preference` captures nothing. | None, unless the instruction says "this"/"it": then Haiku picks the referenced message |
-| `/scribe on` | Catalogs that session into one session record (summary, goals, outcome, next), refreshed on cadence and at session end. Writes no tag entries. No backfill of other sessions. `/scribe on --from <id>` or `/scribe link <id>` links it to the session it was spawned from or continues ([§5.4](./2_design.md#54-session-links)); its pass reads that session's summary as context. | Haiku |
-| Consistency routine | Flags contradictions and stale entries and proposes "B supersedes A" or "retire A". Daniel approves with `#scribe approve <id>`. A superseded entry stays on disk, is marked, and is hidden from answers by default. From S10 it also deactivates sessions whose feature a later entry Daniel wrote says was removed (only Daniel-authored entries count as removal evidence), and sessions past a generous age limit unless pinned. | Haiku, on model-free candidate pairs |
-| CLI agent surface (S11–S13) | Agents on the Mac search (`scribe search`, BM25), filter lists by date, status, topic and task, and add or update entries, tags and proposals with `--author`; one `scribe` skill teaches it. Agent writes are marked `author.kind: agent`, never quoted as Daniel's words, and never settle an entry Daniel wrote. | None |
-| Backfill by name (S14) | `scribe transcript list --since 2026-10-01` lists long uncataloged sessions; Daniel picks and runs `scribe session catalog <id>`. | Haiku (the session pass) |
+| `#scribe` marker | The prompt hook marks a typed turn. At Stop, an unresolved marker is handed to the main agent, which records it through the CLI with a checked quote or explains why nothing was recorded. | Main agent |
+| `/scribe on` and `scribe session catalog` | Catalog the current session or a named past session. The session pass refreshes a header and append-only log from its provider transcript. | Session model |
+| `scribe search` | Ranks entries, session headers and log segments. `--kind message` searches stored turns. Search reads the local store and makes no model or Orbit call. | None |
+| `entry`, `proposal`, `memory`, `group` and `brief` | Read and manage entries (including decisions and open items), proposals, memory, session groups and the session-start page. | Depends on the command |
+| `consistency scan` | Reapplies approved proposals, opens proposals for stale entries, closes candidates for retired tags, and deactivates aged sessions. It does not judge entry pairs or infer feature removal. | None |
+| Orbit plugin | Its jobs call the plugin's prepare/apply tools; the manifest sets every tool's `mcp_scope` to `none`. | Orbit runner |
+| Backfill by name | `scribe transcript list` finds uncataloged provider transcripts; Daniel can pick one with `scribe session catalog <id>`. | Session model |
 
-Daniel's own entries and settlements come only from his typed `#scribe`
-turns. No tool is advertised to agents over MCP: `ask`, the one that
-was, is removed ([ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); from S12 agents read and write through
-the CLI, each write recording its author. A session record becomes a
-rewritable header over an append-only log of segments (S8, S9), and a
-session can be inactive: hidden, not removed (S8, S10).
+When an entry attributes words to Daniel, it cites his typed turn and keeps
+the checked quote; agent-authored records identify their author. The plugin
+does not expose its tools over MCP. The `ask` command was removed
+([ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed));
+agents use the CLI to search and manage records. A session record has a
+rewritable header over an append-only log of segments, and an inactive
+session is hidden rather than removed.
 
 ## 3. Core concepts
 
-- **Tag** — a named list Daniel writes to, such as `preferences`, declared in the config with its aliases.
-- **Entry** — one record in a tag: Daniel's instruction verbatim, the
-  content it records (verbatim from his instruction or from the message it
-  points at), and a citation of the message.
+- **Tag** — a named record category supplied by scribe or configured with aliases.
+- **Entry** — a stored record with content, an author, status and provenance;
+  some entries also carry a checked quote or structured decision, open-item
+  or handoff fields.
 - **Session record** — the one catalog record of a session Daniel turned on
   or named: a header (title, summary, goals, next) over a log of segments.
 - **Segment** — one sealed or open stretch of a session record's log, cited
   `session:<id>#<n>`.
-- **Author** — who wrote an entry or proposal: Daniel (`#scribe`), an agent
+- **Author** — who wrote an entry or proposal: the user (`#scribe`), an agent
   (the CLI) or scribe's routine.
 - **Proposal** — a consistency finding ("B supersedes A", "A is stale")
   waiting for Daniel's approval.
@@ -196,26 +200,26 @@ can override.
 | Question | Decision |
 |---|---|
 | Whether superseded entries are ever removed, or only hidden (the directions say "outdated record removal") | [Superseded and stale entries are hidden, not removed](./4_decisions.md#superseded-and-stale-entries-are-hidden-not-removed) |
-| Storage layout and the search index | [One Markdown file per record, metadata in YAML frontmatter](./4_decisions.md#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [`ask` ranks in memory with no persisted index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
+| Storage and search | [The SQLite store and its exported document formats](./specs/store.md); [`scribe search` ranks stored records without a persisted search index](./4_decisions.md#ask-ranks-in-memory-with-no-persisted-index) |
 | The migration from the orbit-office scribe (its v1 and v2 records) | [No migration of orbit-office scribe records](./4_decisions.md#no-migration-of-orbit-office-scribe-records) |
-| Which tags ship by default beyond `preferences` and `decisions` | [Only decisions and preferences ship by default](./4_decisions.md#only-decisions-and-preferences-ship-by-default) |
+| Which tags ship by default | [The shipped tag definitions](./specs/store.md) |
 
 ## 5. At a glance
 
 | Concern | Where it lives | Slice |
 |---------|--------------------|-------|
-| Entries, session records, proposals; the store | `crates/scribe-core/src/apps/{entry,session,proposal}/`, `crates/scribe-store/` | S1 |
-| `#scribe` parsing and capture | `crates/scribe-tools/src/markers.rs`, `crates/scribe-core/src/apps/hook/`, `crates/scribe/src/commands/hook/` | S2, S3 |
-| `/scribe on` and session passes | `crates/scribe-core/src/apps/{session,hook}/`, `crates/scribe-tools/src/transcript/`, `commands/session/` | S4 |
+| Entries, proposals, memory and the store | `crates/scribe-core/src/apps/{entry,proposal,memory}/`, `crates/scribe-store/` | S1, later slices |
+| `#scribe` markers and capture | `crates/scribe-core/src/apps/hook/`, `crates/scribe/src/commands/hook/` | S2, S3, §14 |
+| `/scribe on`, catalog and session passes | `crates/scribe-core/src/apps/{session,hook}/`, `crates/scribe-tools/src/transcript/`, `crates/scribe/src/commands/session/` | S4, S14 |
 | Session links (`spawned_from`, `continues`) | `crates/scribe-core/src/apps/session/rules/control.rs`, `apps/hook/scribe_command.rs`, `crates/scribe-store/`, `commands/session/` | ORB-23849 |
-| Consistency routine | `crates/scribe-core/src/apps/consistency/`, `commands/consistency.rs` | S6 |
+| Consistency scan | `crates/scribe-core/src/apps/consistency/`, `crates/scribe/src/commands/consistency.rs` | S6 |
 | Orbit plugin tree | `plugin/.orbit-plugin/` | S5 |
 | Claude Code hooks package | `plugin/claude-code/` | S2 |
 | Store format 4: session header and log, `active`, authors (the tags store is S12) | `crates/scribe-store/src/contracts/{session,record}.rs`, `apps/session/rules/activity.rs`, `crates/scribe-store/` | S8 |
 | Segment-writing passes, `session rebuild` | `crates/scribe-core/src/apps/session/rules/pass.rs`, `commands/session/rebuild.rs` | S9 |
 | Deactivation routes | `crates/scribe-core/src/apps/session/activity.rs`, `apps/consistency/`, `commands/session/activity.rs` | S10 |
-| `scribe search`, list filters, id prefixes | `crates/scribe-core/src/apps/search/`, `crates/scribe-store/src/repository/ids.rs`, `commands/search.rs` | S11 |
-| Agent write verbs and the author guard | `crates/scribe-core/src/apps/{entry,tag,proposal}/`, `commands/{entry,tag,proposal}.rs` | S12 |
+| `scribe search`, filters and id prefixes | `crates/scribe-core/src/apps/search/`, `crates/scribe-store/src/repository/ids.rs`, `crates/scribe/src/commands/search.rs` | S11 |
+| Agent write verbs, groups and authorship | `crates/scribe-core/src/apps/{entry,tag,proposal,group}/`, `crates/scribe/src/commands/` | S12, later slices |
 | The `scribe` skill | `skills/scribe/`, synced to `plugin/claude-code/skills/scribe/` | S13 |
 | `session catalog`, `transcript list/show` | `commands/session/catalog.rs`, `commands/transcript.rs` | S14 |
 
@@ -233,6 +237,9 @@ can override.
 - [ORB-25980] — stop shipping the `decisions` memory tag.
 - [ORB-25983] — the session pass writes findings itself.
 - [ORB-25987] — the session pass captures ideas and their outcome.
-- [ORB-27638] — design: `decision` and `open-item` records (proposed).
+- [ORB-27638] — designed the `decision` and `open-item` records.
+- [ORB-27655] — built the decision and open-item entry records.
+- [ORB-27656] — built open-item answer, close and state commands.
+- [ORB-27911] — removed `ask`, the tmux popup and in-process model calls.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.

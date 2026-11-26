@@ -1,17 +1,17 @@
 ---
 title: scribe — Design
 owner: claude
-last_updated: 2026-11-24
+last_updated: 2026-11-26
 last_validated: 2026-11-24
 status: Draft
 feature: scribe
 doc_role: design
 type: design
-summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (proposed 2026-11-23, not built) ships `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (proposed 2026-11-24, not built) replaces the five remaining model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs, keeping the callers in `providers/` until Daniel approves.
+summary: How the scribe plugin is bounded (one binary; Daniel writes through hooks, agents read and write through the CLI taught by one skill, and no tool is advertised over MCP), how #scribe entries, /scribe on session records (a rewritable header over an append-only log of segments), active and inactive sessions, search, the consistency routine, and backfill by name work, where everything is stored, which model does what, and the slice plan that builds it; §11–§13 are proposed designs (claims and issues, settling on instruction, and the descriptive memory written from sessions switched on by /scribe on or cataloged by name; its personal base for sessions that are off, people, recurring dates and light catalog entries are designed but parked 2026-11-21, and scribe reads Claude Code and Codex sessions only); §14 (approved 2026-11-21; step 1 built, store format 22) catalogs `#scribe` as an annotation anywhere in a typed turn, at the end of the turn, with a statement and a verbatim quote; §15 (proposed 2026-11-22, not built) makes tags configurable catchers whose inferred catches are claims with a context paragraph and a verbatim quote, adds `scribe brief`, fixes memory to `profile.md`, `now/` and `milestones/` with a weekly profile job, removes every personal name from shipped text, makes `issue` a catcher tag instead of a record kind, and moves sessions, entries, claims, state and audit into one SQLite database; §18 (approved 2026-11-23; records built by [ORB-27655] and settling built by [ORB-27656], with reading, skill and formation follow-up) defines `decision` and `open-item` records: a checked decision record for choices that outlive a task, and an open item with open, answered and closed states that the brief counts; §19 (approved 2026-11-25, not built) replaces the five remaining model callers (session pass, session catalog, session rebuild, memory refresh, group close summary) with deterministic prepare/apply CLI and plugin primitives and Orbit `agent_loop` jobs, keeping the callers in `providers/` until the replacement jobs are in place.
 tags: [scribe, plugin, architecture]
 paths: ["crates/**", "plugin/**", "scripts/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27656, ORB-27911, ORB-28068, ORB-28109]
+related_artifacts: [ORB-21747, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-23995, ORB-24005, ORB-26214, ORB-26204, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26642, ORB-26826, ORB-26827, ORB-27638, ORB-27655, ORB-27656, ORB-27911, ORB-28068, ORB-28109]
 ---
 
 # scribe — Design
@@ -539,7 +539,7 @@ The body is `content`, verbatim.
   except on action entries: `window` is the transcript window a `#scribe`
   line under an action tag keeps, `quote` the human's correction an agent
   quoted under a tag with `require_quote`.
-- `evidence` and `as_of` (store format 10, [§4.7](#47-findings)) are `null`
+- `evidence` and `as_of` (store format 10, [§4.7](#47-evidence-backed-findings-configured-tags)) are `null`
   except on a finding: the pointer its result can be checked against and
   the date the result was true. An assistant turn kept by approving a
   session-pass candidate is the second agent shape beside the direct CLI
@@ -679,7 +679,7 @@ Reads upgrade formats 1–8 in memory; writes use format 9. Prior proposal
 fields, values and attribution are preserved, with `candidate: null` added.
 Format 10 adds `role` (`user` for an upgraded candidate) and `evidence`
 (`null`) to a candidate, so a pass can also quote an assistant turn
-([§4.7](#47-findings)); entry files gain `evidence` and `as_of`, both
+([§4.7](#47-evidence-backed-findings-configured-tags)); entry files gain `evidence` and `as_of`, both
 `null` on upgrade. Writes use format 10.
 
 **Tags store** (`tags.json`, from S12): `{"format": 4, "tags": [{"name",
@@ -2046,7 +2046,7 @@ proposals'.
 
 ## 8. Models
 
-> **Interim until [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-proposed) is approved:** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. Only the five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) still call `Models` through `crates/scribe-core/src/providers/` until Daniel approves the replacement design in §19.
+> **Interim until [§19](#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved) is implemented:** `ask` ([ORB-27911]), `models.referent` ([ORB-26530]), and the model steps of `Stop` and `consistency scan` ([ORB-27911] step 2a) are already removed. The five callers named in [specs/architecture.md](./specs/architecture.md#providers-interim) (`session pass`, `session catalog`, `session rebuild`, `memory refresh`, `group close`) still call `Models` through `crates/scribe-core/src/providers/` until their replacement jobs are in place.
 
 | Use | Config key | Default | Called from | Budget |
 |---|---|---|---|---|
@@ -6922,7 +6922,7 @@ associated through the group's member sessions. Use `search --kind message`
 to find their stored turns. The project brief shows its most recently opened group
 and its closing summary when available.
 
-## 18. Decisions and open items (proposed)
+## 18. Decisions and open items
 
 Designed in [ORB-27638] and approved by Daniel on 2026-11-23. The
 records, `entry add` and decision corrections are implemented in
@@ -7169,7 +7169,7 @@ carry the answer out itself; when another session must act, it records the
 answer and the asker closes. Keeping `answered` apart from `closed` is what
 lets him see that his answer has not yet been acted on.
 
-### 18.5 Where they show: `brief`, the hook, `search` and `ask`
+### 18.5 Where they show: `brief`, the hook and `search`
 
 **`scribe brief`** gains a part after `## Last group`:
 
@@ -7187,8 +7187,8 @@ lets him see that his answer has not yet been acted on.
 It lists open and answered items of every project, because what waits for him
 does not depend on the session's checkout; there are few. An empty part prints
 `(none)`. `--json` adds `open_items: [{id, state, asked_by, task, answer_in,
-question}]`. Decisions are not on the page: they are reference, and `ask`
-cites them.
+question}]`. Decisions are not on the page: they remain entries that `search` and
+`entry show` can return.
 
 **`SessionStart`'s `systemMessage`**, the line for the user beside "N
 proposals to review", adds "N open items for you" when there are open items,
@@ -7204,15 +7204,10 @@ right entries. Each hit is labelled: `decision-1 (decision, by the user)`,
 `decision-12 (decision, by orbit-0-capt)`, `open-item-5 (open-item,
 answered)`.
 
-**`ask`** includes decisions by default, as a memory tag. A `user` decision is
-read like a spoken-instruction entry (§16.6): `stated_by` is the writing
-agent, the content is the agent's statement, and the quote and reason quote
-are the user's words, cited as his. An agent decision is an agent note,
-attributed to its decider (`agent decision (orbit-0-capt)`), with its
-rationale. Superseded decisions are left out, as superseded entries are.
-Open items are left out of `ask` unless the question's scope names the tag:
-an item is a question, not a fact. Its answer reaches `ask` through the
-decision that settles it.
+`search` returns matching decision and open-item entries as records; it does
+not produce a model answer. Hidden entries remain excluded unless the caller
+passes `--include-hidden`. An open item is a question that waits for a
+response, not a settled decision.
 
 ### 18.6 Who writes what
 
@@ -7249,8 +7244,8 @@ shipped. No entry is rewritten.
 - **Orbit decision requests stay in Orbit.** A decision request is already
   Daniel's queue there, with its own options and answer. No open item copies
   one. `brief` reads scribe's local entries and does not show Orbit decision
-  requests. This does not change `ask`'s separate, read-only use of Orbit tasks
-  as evidence (§6.2). The aide reads `orbit attention` and lists both, side by
+  requests. The removed `ask` command used to search Orbit tasks; current `search`
+  reads scribe records and does not search Orbit tasks. The aide reads `orbit attention` and lists both, side by
   side, when he checks in. An open item may name a request's id in its text.
 - **An answer in scribe is not an approval in another session.** The app's
   auto mode reads only each session's own chat. An answer recorded by the
@@ -7273,8 +7268,7 @@ shipped. No entry is rewritten.
   repository's `4_decisions.md`. scribe records only a short pointer
   decision for it, when Daniel or an agent of the formation made it: the
   statement, who decided, and the `4_decisions.md` entry in `related`
-  (`doc:<repo>/<path>#<anchor>`, a new `related` kind), so that `ask` across
-  projects finds it.
+  (`doc:<repo>/<path>#<anchor>`, a new `related` kind), so that a `search` across the shared scribe store can find it.
   The context and the alternatives stay in the doc. (decision-8 of the trial
   copied ORB-27633's entry instead.)
 - The session pass still proposes no decisions.
@@ -7284,7 +7278,7 @@ shipped. No entry is rewritten.
 
 ### 18.10 The skill
 
-The shipped scribe skill gains one reference, `references/decisions.md`
+The scribe skill is planned to gain a `references/decisions.md` page
 (STD-11: the router names it, the reference holds the procedure), carrying
 §18.2–§18.6 as instructions:
 
@@ -7317,15 +7311,15 @@ store with shipped decisions.
    `decision` → `design-decision` in both `TAGS` lists, the action-tag
    declaration and the plugin's tests. First, because the trial's entries
    already sit under `decision`.
-2. **Records** (scribe, [ORB-27655]): ship `decision` and `open-item`; the format step and
+2. **Records, built** (scribe, [ORB-27655]): ship `decision` and `open-item`; the format step and
    migration; `entry add` flags, the checks of §18.3 and §18.4 (verbatim with
    short whole turns, rationale and reason, options count, supersede rules,
    size), the marker refusal, the `doc:` related kind; goldens.
-3. **Settling** (scribe, [ORB-27656]): `entry answer`, `entry close`, `entry list
+3. **Settling, built** (scribe, [ORB-27656]): `entry answer`, `entry close`, `entry list
    --state`, the derived `state`; refusals; goldens.
 4. **Reading** (scribe): the `## Open items` brief part and JSON, the
-   `systemMessage` count, `search` labels, `ask` attribution and the
-   open-item exclusion.
+   `systemMessage` count, `search` labels and the open-item exclusion.
+   `ask` attribution was removed with `ask` in [ORB-27911].
 5. **Skill** (scribe): `references/decisions.md` and the router line.
 6. **Formation** (constellation): the trial section becomes a pointer; the
    aide's check-in lists open items beside `orbit attention`.
@@ -7510,7 +7504,7 @@ Current surfaces:
 
 ### 19.5 Deletions and configuration migration (after approval)
 
-Only after Daniel approves this design and the Orbit jobs are in place:
+Only after the Orbit jobs are in place:
 
 1. Delete `crates/scribe-core/src/providers/` (`Models`, `ClaudeCliModels`, `cli/codex.rs`, `models.rs`) and remove `ModelsOnce`, `ModelsEach`, and `ModelsFor` from `apps/{session,memory,group}/mod.rs`.
 2. Update `scripts/check-dependency-direction.sh` and `ARCHITECTURE.md` to remove the `providers/` exceptions (`std::process`, `std::fs`, and the five-caller allowlist; remove `rustix`/`tempfile` from `scribe-core` dependencies if nothing else uses them).
@@ -7596,7 +7590,9 @@ Daniel approved §19 on 2026-11-25 with these four answers ("Approve"); its `age
   `ask`, and skill updates).
 - [ORB-27638] — designed §18: the `decision` and `open-item` records, their
   checks and states, `entry answer` and `entry close`, the brief's open
-  items, and the intake rename (proposed, not built).
+  items, and the intake rename.
+- [ORB-27655] — built §18.11 step 2: decision and open-item records, their
+  checked fields, and `entry add`.
 - [ORB-27656] — §18.11 step 3: `entry answer`, `entry close`, `entry list
   --state` and the derived open-item `state`, with their refusals.
 - [ORB-27561] — the 2026-11-23 formation, in which the decision and
@@ -7608,7 +7604,7 @@ Daniel approved §19 on 2026-11-25 with these four answers ("Approve"); its `age
 - [ORB-28068] — drafted §19 (approved 2026-11-25): replace the five remaining model callers
   (`session pass`, `session catalog`, `session rebuild`, `memory refresh`,
   `group close` summary) with deterministic `prepare`/`apply` primitives and
-  Orbit `agent_loop` jobs; callers stay in `providers/` until Daniel approves.
+  Orbit `agent_loop` jobs; callers stay in `providers/` until the replacement jobs are in place.
 - [ORB-27911] — deleted `ask`, the tmux popup and the in-process model
   steps that could go without a job; holds Daniel's words that §19 carries out.
 - [ORB-28109] — the scribe captain's assignment of 2026-11-25; Daniel's
