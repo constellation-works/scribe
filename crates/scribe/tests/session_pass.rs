@@ -3501,6 +3501,128 @@ fn the_plugin_failure_tool_records_backoff_and_keeps_the_session_due() {
     assert_eq!(setup.control()["due"], false);
 }
 
+/// A pass step's refusal: its error code and message.
+fn plugin_pass_refusal(setup: &Setup, name: &str, input: Value) -> (String, String) {
+    let config = json!({
+        "root": setup.fx.root(), "transcripts": setup.fx.home().join(".claude/projects"),
+    });
+    let reply = pass::plugin_step(&setup.fx, &[], name, input, &config).unwrap_err();
+    let reply: Value = serde_json::from_slice(&reply.stdout).unwrap();
+    (
+        reply["error"]["code"].as_str().unwrap().to_owned(),
+        reply["error"]["message"].as_str().unwrap().to_owned(),
+    )
+}
+
+#[test]
+fn a_continuation_prepare_refuses_a_catalog_injected_onto_a_normal_cursor() {
+    let setup = Setup::new();
+    setup.scribe("/scribe on");
+    let prepared = plugin_pass(&setup, "prepare", json!({"sessions": [ON]}));
+    assert_eq!(prepared["needs_model"], true, "{prepared}");
+    assert!(prepared["basis"]["catalog"].is_null(), "{prepared}");
+    let control = setup.control_bytes();
+    // A reserved author and a plausible one are both refused: the cursor
+    // never carried a catalog, so the caller cannot add one.
+    for catalog in [
+        json!({"author": "daniel", "project": "elsewhere"}),
+        json!({"author": "opus", "project": "elsewhere"}),
+    ] {
+        let (code, message) = plugin_pass_refusal(
+            &setup,
+            "prepare",
+            json!({
+                "sessions": [ON], "catalog": catalog,
+                "progress": [{"cursor": prepared["cursor"]}],
+            }),
+        );
+        assert_eq!(code, "invalid_input", "{message}");
+        assert!(message.contains("catalog selection"), "{message}");
+    }
+    assert_eq!(setup.control_bytes(), control, "a refusal writes nothing");
+    // The same continuation without a catalog still prepares.
+    let again = plugin_pass(
+        &setup,
+        "prepare",
+        json!({"sessions": [ON], "progress": [{"cursor": prepared["cursor"]}]}),
+    );
+    assert_eq!(again["needs_model"], true, "{again}");
+}
+
+#[test]
+fn a_continuation_prepare_refuses_a_catalog_changed_mid_run() {
+    let setup = Setup::new();
+    let config = pass::claude_config(&setup.fx);
+    let begun = pass::plugin_tool(
+        &setup.fx,
+        &[],
+        "session-catalog-begin",
+        json!({"session": NEVER, "author": "opus", "project": "first"}),
+        &config,
+    )
+    .unwrap();
+    let selection =
+        json!({"sessions": begun["sessions"], "resolve": false, "catalog": begun["catalog"]});
+    let prepared = plugin_pass(&setup, "prepare", selection.clone());
+    assert_eq!(prepared["basis"]["catalog"]["author"], "opus", "{prepared}");
+    let cursor = json!([{"cursor": prepared["cursor"]}]);
+    let with = |catalog: Value| {
+        let mut input = selection.clone();
+        input["catalog"] = catalog;
+        input["progress"] = cursor.clone();
+        input
+    };
+    for catalog in [
+        json!({"author": "daniel", "project": "first"}),
+        json!({"author": "sonnet", "project": "first"}),
+        json!({"author": "opus", "project": "second"}),
+        json!({"author": "opus"}),
+        Value::Null,
+    ] {
+        let (code, message) = plugin_pass_refusal(&setup, "prepare", with(catalog.clone()));
+        assert_eq!(code, "invalid_input", "{catalog}: {message}");
+        assert!(message.contains("catalog selection"), "{message}");
+    }
+    // The unchanged selection continues the run.
+    let again = plugin_pass(&setup, "prepare", with(begun["catalog"].clone()));
+    assert_eq!(again["basis"]["catalog"], begun["catalog"], "{again}");
+    // A cursor a catalog run returned cannot start a normal pass either.
+    let (code, _) = plugin_pass_refusal(
+        &setup,
+        "prepare",
+        json!({"sessions": [NEVER], "progress": cursor}),
+    );
+    assert_eq!(code, "invalid_input");
+}
+
+#[test]
+fn a_continuation_prepare_refuses_a_catalog_run_whose_switch_is_not_a_catalog_switch() {
+    let setup = Setup::new();
+    let config = pass::claude_config(&setup.fx);
+    let begun = pass::plugin_tool(
+        &setup.fx,
+        &[],
+        "session-catalog-begin",
+        json!({"session": NEVER, "author": "opus"}),
+        &config,
+    )
+    .unwrap();
+    let selection =
+        json!({"sessions": begun["sessions"], "resolve": false, "catalog": begun["catalog"]});
+    let prepared = plugin_pass(&setup, "prepare", selection.clone());
+    let mut next = selection;
+    next["progress"] = json!([{"cursor": prepared["cursor"]}]);
+    // The switch loses its catalog marker between iterations.
+    support::set_switch(&setup.fx.root(), NEVER, "cataloged_by", "NULL");
+    let (code, message) = plugin_pass_refusal(&setup, "prepare", next.clone());
+    assert_eq!(code, "invalid_input", "{message}");
+    assert!(message.contains("catalog switch"), "{message}");
+    // So does a run that names no single session.
+    next["sessions"] = json!([]);
+    let (code, message) = plugin_pass_refusal(&setup, "prepare", next);
+    assert_eq!(code, "invalid_input", "{message}");
+}
+
 /// A second session, spawned from `ON`.
 const CHILD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
 /// A well-formed id scribe has never seen.
