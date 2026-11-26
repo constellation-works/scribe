@@ -4,6 +4,10 @@ use crate::support::command::{Expectation, Input};
 use crate::support::{Fixture, make_private, text};
 use serde_json::Value;
 
+pub(super) const ISSUE: &str = include_str!("../fixtures/issue-store/issue-1.md");
+
+pub(super) const SESSION: &str = "session:7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -14,10 +18,6 @@ impl Fixture {
         input.into().run(self, &["entry"], expect)
     }
 }
-
-pub(super) const ISSUE: &str = include_str!("../fixtures/issue-store/issue-1.md");
-
-pub(super) const SESSION: &str = "session:7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
 
 pub(super) fn json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap()

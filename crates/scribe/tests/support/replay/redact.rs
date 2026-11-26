@@ -1,5 +1,69 @@
 use super::*;
 
+const TITLECASE_2_BYTE: &[u32] = &[0x01C5, 0x01C8, 0x01CB, 0x01F2];
+const TITLECASE_3_BYTE: &[u32] = &[
+    0x1F88, 0x1F89, 0x1F8A, 0x1F8B, 0x1F8C, 0x1F8D, 0x1F8E, 0x1F8F, 0x1F98, 0x1F99, 0x1F9A, 0x1F9B,
+    0x1F9C, 0x1F9D, 0x1F9E, 0x1F9F, 0x1FA8, 0x1FA9, 0x1FAA, 0x1FAB, 0x1FAC, 0x1FAD, 0x1FAE, 0x1FAF,
+    0x1FBC, 0x1FCC, 0x1FFC,
+];
+
+/// JSON keys whose string values are ids, enums, timestamps or references,
+/// kept as they are. Every other string value is free text and mapped.
+const KEEP_KEYS: &[&str] = &[
+    "type",
+    "subtype",
+    "role",
+    "uuid",
+    "parentUuid",
+    "logicalParentUuid",
+    "leafUuid",
+    "sessionId",
+    "session_id",
+    "timestamp",
+    "version",
+    "userType",
+    "requestId",
+    "id",
+    "tool_use_id",
+    "name",
+    "model",
+    "stop_reason",
+    "stop_sequence",
+    "signature",
+    "gitBranch",
+    "level",
+    "service_tier",
+    "starts_at",
+    "message",
+    "related",
+    "status",
+    "state",
+    "origin",
+    "kind",
+    "since",
+    "at",
+    "retry_after",
+    "pending_links",
+    "cite",
+    "target",
+    "command_id",
+    "media_type",
+    "provider",
+];
+
+/// Frontmatter keys of store Markdown whose values are free text.
+const FREE_YAML_KEYS: &[&str] = &[
+    "title", "heading", "term", "said", "reason", "cwd", "project", "host", "summary", "goals",
+    "text", "note", "question", "answer", "content",
+];
+
+/// Frontmatter keys whose list items are free text.
+const FREE_YAML_LISTS: &[&str] = &["topics"];
+
+/// The prompt lines that list store labels in sorted order, and their
+/// separators: mapping reorders them, so they compare as sets.
+const SORTED_LINES: &[(&str, &str)] = &[("Existing topics: ", ", "), ("Existing terms: ", "; ")];
+
 /// A keyed substitution of letters and digits. ASCII letters map to ASCII
 /// letters of the same case and digits to digits, by a permutation the key
 /// fixes; non-ASCII alphabetic characters map to letters of the same UTF-8
@@ -13,13 +77,6 @@ pub struct Key {
     digits: [u8; 10],
     seed: u64,
 }
-
-const TITLECASE_2_BYTE: &[u32] = &[0x01C5, 0x01C8, 0x01CB, 0x01F2];
-const TITLECASE_3_BYTE: &[u32] = &[
-    0x1F88, 0x1F89, 0x1F8A, 0x1F8B, 0x1F8C, 0x1F8D, 0x1F8E, 0x1F8F, 0x1F98, 0x1F99, 0x1F9A, 0x1F9B,
-    0x1F9C, 0x1F9D, 0x1F9E, 0x1F9F, 0x1FA8, 0x1FA9, 0x1FAA, 0x1FAB, 0x1FAC, 0x1FAD, 0x1FAE, 0x1FAF,
-    0x1FBC, 0x1FCC, 0x1FFC,
-];
 
 impl Key {
     pub fn new(key: &str) -> Self {
@@ -160,50 +217,6 @@ impl Key {
     }
 }
 
-/// JSON keys whose string values are ids, enums, timestamps or references,
-/// kept as they are. Every other string value is free text and mapped.
-const KEEP_KEYS: &[&str] = &[
-    "type",
-    "subtype",
-    "role",
-    "uuid",
-    "parentUuid",
-    "logicalParentUuid",
-    "leafUuid",
-    "sessionId",
-    "session_id",
-    "timestamp",
-    "version",
-    "userType",
-    "requestId",
-    "id",
-    "tool_use_id",
-    "name",
-    "model",
-    "stop_reason",
-    "stop_sequence",
-    "signature",
-    "gitBranch",
-    "level",
-    "service_tier",
-    "starts_at",
-    "message",
-    "related",
-    "status",
-    "state",
-    "origin",
-    "kind",
-    "since",
-    "at",
-    "retry_after",
-    "pending_links",
-    "cite",
-    "target",
-    "command_id",
-    "media_type",
-    "provider",
-];
-
 /// A string value that is an id or a timestamp whatever its key.
 fn looks_like_id(s: &str) -> bool {
     let uuid = s.len() == 36
@@ -335,14 +348,6 @@ fn redact_embedded(key: &Key, body: &str) -> Option<String> {
     let encoded = serde_json::to_string(&rewritten).ok()?;
     Some(encoded[1..encoded.len() - 1].to_owned())
 }
-
-/// Frontmatter keys of store Markdown whose values are free text.
-const FREE_YAML_KEYS: &[&str] = &[
-    "title", "heading", "term", "said", "reason", "cwd", "project", "host", "summary", "goals",
-    "text", "note", "question", "answer", "content",
-];
-/// Frontmatter keys whose list items are free text.
-const FREE_YAML_LISTS: &[&str] = &["topics"];
 
 /// Redact a store Markdown file: in the frontmatter, the values of
 /// [`FREE_YAML_KEYS`] (block scalars included) and the items of
@@ -558,10 +563,6 @@ pub fn redact_recording(from: &Path, to: &Path, key: &Key) -> Result<(), String>
     }
     Ok(())
 }
-
-/// The prompt lines that list store labels in sorted order, and their
-/// separators: mapping reorders them, so they compare as sets.
-const SORTED_LINES: &[(&str, &str)] = &[("Existing topics: ", ", "), ("Existing terms: ", "; ")];
 
 /// `prompt` is `original` with some characters mapped by `key`: line for
 /// line, each character is the recorded one or its mapped one, except that

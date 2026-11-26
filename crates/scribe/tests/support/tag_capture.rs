@@ -5,6 +5,15 @@ use crate::support::command::{Expectation, Input};
 use crate::support::{Fixture, make_private};
 use serde_json::Value;
 
+pub(super) const SHIPPED_TRIGGERS: [&str; 6] = [
+    "always",
+    "never",
+    "should not",
+    "from now on",
+    "I prefer",
+    "by default",
+];
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -30,15 +39,6 @@ pub(super) fn config(fx: &Fixture, toml: &str) -> std::path::PathBuf {
 pub(super) fn show(fx: &Fixture, tag: &str) -> Value {
     fx.check(&["show", tag, "--json"], Json)
 }
-
-pub(super) const SHIPPED_TRIGGERS: [&str; 6] = [
-    "always",
-    "never",
-    "should not",
-    "from now on",
-    "I prefer",
-    "by default",
-];
 
 pub(super) fn listed(fx: &Fixture) -> Value {
     fx.check(&["list", "--json"], Json)

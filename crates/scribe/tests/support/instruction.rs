@@ -7,6 +7,28 @@ use std::path::PathBuf;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
+pub(super) const CODEX_SESSION: &str = "11111111-2222-4333-8444-555555555555";
+
+pub(super) const STORED_SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+
+/// Daniel's superseded entry `decisions-1` in the seeded store, word for
+/// word, which the open proposal `p-1` quotes.
+pub(super) const DECISION: &str = "merge agent PRs with a merge commit";
+
+/// Daniel's active entry `preferences-1` in the seeded store, word for word.
+pub(super) const PREFERENCE: &str = "short commit subjects, imperative mood";
+
+/// Daniel's claim the session pass opened as `p-1` (reserving
+/// `preferences-1`): scribe's statement of his turn, his words in `quote`.
+pub(super) const CLAIM_QUOTE: &str = "I prefer reviews that name the file and line.";
+
+pub(super) const CLAIM_STATEMENT: &str = "Daniel prefers reviews that name the file and line.";
+
+/// An assistant turn's claim, `p-2` (reserving `preferences-2`).
+pub(super) const ASSISTANT_QUOTE: &str = "Run the goldens after every help change.";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -20,14 +42,35 @@ impl Fixture {
     }
 }
 
-pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
-
-pub(super) const CODEX_SESSION: &str = "11111111-2222-4333-8444-555555555555";
-
-pub(super) const STORED_SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-
 /// One transcript line: `(uuid, role, text, minutes before now)`.
 pub(super) type Turn<'a> = (&'a str, &'a str, &'a str, i64);
+
+/// [`state`]'s result; a mismatch prints the files' names and sizes, not
+/// their bytes.
+#[derive(PartialEq)]
+pub(super) struct State {
+    files: Vec<(PathBuf, Vec<u8>, u32)>,
+    records: Vec<(PathBuf, Vec<u8>, u32)>,
+}
+
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (kind, set) in [("file", &self.files), ("record", &self.records)] {
+            for (path, bytes, mode) in set {
+                let name = path.components().rev().take(3).collect::<Vec<_>>();
+                let sum = bytes
+                    .iter()
+                    .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(u64::from(*b)));
+                writeln!(
+                    f,
+                    "{kind} {name:?} {} bytes sum {sum} mode {mode:o}",
+                    bytes.len()
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// A Claude Code transcript under the fixture's home, every line carrying
 /// `entrypoint` (or none, for `None`).
@@ -166,40 +209,6 @@ pub(super) fn state(fx: &Fixture) -> State {
     State { files, records }
 }
 
-/// [`state`]'s result; a mismatch prints the files' names and sizes, not
-/// their bytes.
-#[derive(PartialEq)]
-pub(super) struct State {
-    files: Vec<(PathBuf, Vec<u8>, u32)>,
-    records: Vec<(PathBuf, Vec<u8>, u32)>,
-}
-
-impl std::fmt::Debug for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (kind, set) in [("file", &self.files), ("record", &self.records)] {
-            for (path, bytes, mode) in set {
-                let name = path.components().rev().take(3).collect::<Vec<_>>();
-                let sum = bytes
-                    .iter()
-                    .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(u64::from(*b)));
-                writeln!(
-                    f,
-                    "{kind} {name:?} {} bytes sum {sum} mode {mode:o}",
-                    bytes.len()
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Daniel's superseded entry `decisions-1` in the seeded store, word for
-/// word, which the open proposal `p-1` quotes.
-pub(super) const DECISION: &str = "merge agent PRs with a merge commit";
-
-/// Daniel's active entry `preferences-1` in the seeded store, word for word.
-pub(super) const PREFERENCE: &str = "short commit subjects, imperative mood";
-
 /// `entry forget <id>` on `instruction` in [`SESSION`], with `--confirm`.
 pub(super) fn forget<'a>(id: &'a str, instruction: &'a str) -> Vec<&'a str> {
     vec![
@@ -244,15 +253,6 @@ pub(super) fn files_holding(fx: &Fixture, needle: &str) -> Vec<PathBuf> {
         .map(|(path, _, _)| path)
         .collect()
 }
-
-/// Daniel's claim the session pass opened as `p-1` (reserving
-/// `preferences-1`): scribe's statement of his turn, his words in `quote`.
-pub(super) const CLAIM_QUOTE: &str = "I prefer reviews that name the file and line.";
-
-pub(super) const CLAIM_STATEMENT: &str = "Daniel prefers reviews that name the file and line.";
-
-/// An assistant turn's claim, `p-2` (reserving `preferences-2`).
-pub(super) const ASSISTANT_QUOTE: &str = "Run the goldens after every help change.";
 
 /// `proposal settle <id>` with `act` on `instruction` in [`SESSION`].
 pub(super) fn settle<'a>(id: &'a str, act: &'a str, instruction: &'a str) -> Vec<&'a str> {

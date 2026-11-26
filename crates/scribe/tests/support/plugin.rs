@@ -4,6 +4,11 @@ use crate::support::{Fixture, text};
 use serde_json::{Value, json};
 use std::process::Output;
 
+const CLAUDE: &str = "#!/bin/sh\n\
+    echo call >> \"$HOME/claude-calls\"\n\
+    cat > /dev/null\n\
+    printf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":{\"status\":\"answered\",\"answer\":\"Squash.\",\"claims\":[{\"text\":\"squash\",\"quote\":\"squash-merge agent PRs;\",\"cite\":\"preferences-2\"}],\"conflicts\":[]}}'\n";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -21,11 +26,6 @@ impl Fixture {
             })
     }
 }
-
-const CLAUDE: &str = "#!/bin/sh\n\
-    echo call >> \"$HOME/claude-calls\"\n\
-    cat > /dev/null\n\
-    printf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":{\"status\":\"answered\",\"answer\":\"Squash.\",\"claims\":[{\"text\":\"squash\",\"quote\":\"squash-merge agent PRs;\",\"cite\":\"preferences-2\"}],\"conflicts\":[]}}'\n";
 
 pub(super) struct Setup {
     pub(super) fx: Fixture,

@@ -5,14 +5,16 @@ fn consistency_scan_closes_retired_tag_candidates_without_a_model_call() {
         "claude",
         "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
     );
+    let transcript = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{SESSION}.jsonl"));
+    let cwd = fx.elsewhere("work/scribe");
     let s = Setup {
-        transcript: fx
-            .home()
-            .join(".claude/projects/-work-scribe")
-            .join(format!("{SESSION}.jsonl")),
-        cwd: fx.elsewhere("work/scribe"),
         fx,
         path,
+        transcript,
+        cwd,
     };
     let cite = |msg: &str| {
         json!({
@@ -131,14 +133,16 @@ fn a_scan_that_fails_after_closing_candidates_rolls_back_and_audits_failure() {
         "claude",
         "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
     );
+    let transcript = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{SESSION}.jsonl"));
+    let cwd = fx.elsewhere("work/scribe");
     let s = Setup {
-        transcript: fx
-            .home()
-            .join(".claude/projects/-work-scribe")
-            .join(format!("{SESSION}.jsonl")),
-        cwd: fx.elsewhere("work/scribe"),
         fx,
         path,
+        transcript,
+        cwd,
     };
     let proposal = json!({
         "id": "p-1",
@@ -227,14 +231,16 @@ fn consistency_scan_with_custom_tag_config_keeps_open_preferences_candidates() {
         "claude",
         "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
     );
+    let transcript = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{SESSION}.jsonl"));
+    let cwd = fx.elsewhere("work/scribe");
     let s = Setup {
-        transcript: fx
-            .home()
-            .join(".claude/projects/-work-scribe")
-            .join(format!("{SESSION}.jsonl")),
-        cwd: fx.elsewhere("work/scribe"),
         fx,
         path,
+        transcript,
+        cwd,
     };
     std::fs::create_dir_all(s.fx.root()).unwrap();
     make_private(&s.fx.root());
@@ -304,14 +310,16 @@ fn a_scan_that_fails_after_reapply_and_open_rolls_back_every_write() {
         "claude",
         "#!/bin/sh\necho call >> \"$HOME/claude-calls\"\nexit 1\n",
     );
+    let transcript = fx
+        .home()
+        .join(".claude/projects/-work-scribe")
+        .join(format!("{SESSION}.jsonl"));
+    let cwd = fx.elsewhere("work/scribe");
     let s = Setup {
-        transcript: fx
-            .home()
-            .join(".claude/projects/-work-scribe")
-            .join(format!("{SESSION}.jsonl")),
-        cwd: fx.elsewhere("work/scribe"),
         fx,
         path,
+        transcript,
+        cwd,
     };
     // Active entries:
     // - preferences-1 would be superseded when p-1 is reapplied

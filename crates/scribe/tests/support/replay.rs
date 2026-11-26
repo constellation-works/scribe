@@ -28,17 +28,14 @@
 //! a call past the last recorded one, writes the reason to a failure file
 //! and fails the activity; the harness reports it ahead of anything the
 //! rebuild says.
+pub mod redact;
+
 use super::{Fixture, copy_private, make_private, text};
 use crate::support::command::Exit::Success;
 use crate::support::command::Input::Cli;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-
-/// The checked-in recordings.
-pub fn recordings_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/replay")
-}
 
 /// A recording's `fixture.json`.
 #[derive(Clone, Debug)]
@@ -68,17 +65,6 @@ impl Meta {
             expect: value["expect"].clone(),
         })
     }
-}
-
-/// The recorded calls, `call-001` onwards, stopping at the first gap.
-pub fn recorded_calls(recording: &Path) -> usize {
-    (1..)
-        .take_while(|n| recording.join(format!("{}.out", call_name(*n))).is_file())
-        .count()
-}
-
-pub fn call_name(n: usize) -> String {
-    format!("call-{n:03}")
 }
 
 /// How the fake `claude` treats the recorded requests.
@@ -146,6 +132,22 @@ impl Run {
             .check(Cli(&["session", "show", session, "--json"]), Success);
         serde_json::from_slice(&out.stdout).unwrap_or(Value::Null)
     }
+}
+
+/// The checked-in recordings.
+pub fn recordings_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/replay")
+}
+
+/// The recorded calls, `call-001` onwards, stopping at the first gap.
+pub fn recorded_calls(recording: &Path) -> usize {
+    (1..)
+        .take_while(|n| recording.join(format!("{}.out", call_name(*n))).is_file())
+        .count()
+}
+
+pub fn call_name(n: usize) -> String {
+    format!("call-{n:03}")
 }
 
 /// Run the `scribe-session-rebuild` job for the recording's session and
@@ -325,5 +327,3 @@ pub fn bless(recording: &Path) {
         std::fs::write(recording.join(format!("{name}.in")), input).expect("write prompt");
     }
 }
-
-pub mod redact;

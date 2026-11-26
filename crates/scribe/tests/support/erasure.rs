@@ -16,6 +16,16 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use time::macros::datetime;
 
+pub(super) const SOURCE: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+
+const USER: &str = "50ffac20-d430-4d20-a54d-0f6b2afcf5be";
+
+pub(super) const AT: OffsetDateTime = datetime!(2026-11-02 20:00 UTC);
+
+pub(super) const KEPT: &str = "keep-unrelated-archive-8bc43";
+
+pub(super) const ARCHIVE: &str = "pre-sqlite-2026-10-01";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -45,15 +55,29 @@ impl Expectation for Concurrent {
     }
 }
 
-pub(super) const SOURCE: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+pub(super) struct EntrySeed {
+    pub(super) n: usize,
+    pub(super) id: String,
+    old: String,
+    pub(super) edited: String,
+    pub(super) quote: String,
+}
 
-const USER: &str = "50ffac20-d430-4d20-a54d-0f6b2afcf5be";
+impl EntrySeed {
+    pub(super) fn new(n: usize) -> Self {
+        Self {
+            n,
+            id: format!("preferences-{n}"),
+            old: format!("erase-original-entry-{n}-51d7e"),
+            edited: format!("erase-edited-entry-{n}-b16ee"),
+            quote: format!("erase-claim-quote-{n}-cf72a"),
+        }
+    }
 
-pub(super) const AT: OffsetDateTime = datetime!(2026-11-02 20:00 UTC);
-
-pub(super) const KEPT: &str = "keep-unrelated-archive-8bc43";
-
-pub(super) const ARCHIVE: &str = "pre-sqlite-2026-10-01";
+    pub(super) fn markers(&self) -> [&str; 3] {
+        [&self.old, &self.edited, &self.quote]
+    }
+}
 
 /// Include even files that are hidden, have no known suffix, or contain
 /// binary data. Report the paths, so a new copy identifies its own surface.
@@ -187,30 +211,6 @@ pub(super) fn sweep(fx: &Fixture, markers: &[&str]) {
         export(fx, &fx.root().join(format!("export-{format}")), format);
     }
     check();
-}
-
-pub(super) struct EntrySeed {
-    pub(super) n: usize,
-    pub(super) id: String,
-    old: String,
-    pub(super) edited: String,
-    pub(super) quote: String,
-}
-
-impl EntrySeed {
-    pub(super) fn new(n: usize) -> Self {
-        Self {
-            n,
-            id: format!("preferences-{n}"),
-            old: format!("erase-original-entry-{n}-51d7e"),
-            edited: format!("erase-edited-entry-{n}-b16ee"),
-            quote: format!("erase-claim-quote-{n}-cf72a"),
-        }
-    }
-
-    pub(super) fn markers(&self) -> [&str; 3] {
-        [&self.old, &self.edited, &self.quote]
-    }
 }
 
 /// A format-31 entry an agent wrote, so `entry update` may change it.

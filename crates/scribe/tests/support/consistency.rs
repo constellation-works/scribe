@@ -8,6 +8,31 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
+pub(super) const OLDER: &str = "squash-merge agent PRs into agent-main";
+
+pub(super) const NEWER: &str = "rebase-merge agent PRs into agent-main, never squash";
+
+pub(super) const RITUAL: &str = "run the full gate before every push";
+
+/// The nine counters the scan report kept from before ORB-27911 step 2a.
+/// No pair is judged any more, so each is neutral; removing one would break
+/// `--json` (STD-01@2 §R10).
+pub(super) const RETIRED_COUNTERS: [&str; 9] = [
+    "judged_pairs",
+    "pairs_left",
+    "unrelated_pairs",
+    "dropped_labels",
+    "failed_batches",
+    "removal_pairs_judged",
+    "removal_pairs_left",
+    "dropped_removal_labels",
+    "failed_removal_batches",
+];
+
+const REMOVAL: &str = "The digest feature was ripped out and replaced by the weekly report.";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -21,71 +46,6 @@ impl Fixture {
                 cmd.env("PATH", fx.program_path());
             })
     }
-}
-
-pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
-
-pub(super) const OLDER: &str = "squash-merge agent PRs into agent-main";
-
-pub(super) const NEWER: &str = "rebase-merge agent PRs into agent-main, never squash";
-
-pub(super) const RITUAL: &str = "run the full gate before every push";
-
-/// The judgement the fake model gives pair 1: a contradiction quoting both
-/// entries verbatim.
-fn contradicts() -> Value {
-    json!({"judgements": [{"pair": "1", "label": "contradicts",
-        "reason": "The newer decision replaces squash merges with rebase merges.",
-        "older_quote": "squash-merge agent PRs", "newer_quote": "rebase-merge agent PRs"}]})
-}
-
-/// One entry file: `<tag>-<n>` recorded on `created`.
-fn entry_file(
-    id: &str,
-    created: &str,
-    content: &str,
-    status: &str,
-    review_after: Option<&str>,
-) -> String {
-    let tag = id.rsplit_once('-').unwrap().0;
-    format!(
-        "---
-format: 31
-kind: entry
-id: {id}
-tag: {tag}
-status: {status}
-project: scribe
-topics: []
-related: []
-provider: claude-code
-host: host
-author: {{kind: user, name: user}}
-updated_by: null
-created: {created}
-updated: {created}
-inactive_since: null
-said: \"#scribe {tag}: {content}\"
-content_from: {{kind: instruction}}
-cite: {{session: s-1, message: null, at: {created}, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
-retirement_reason: null
-superseded_by: null
-review_after: {review}
-quote: null
-window: null
-evidence: null
-as_of: null
-approved_by: null
-instruction: null
-removal_instruction: null
-stated_by: null
-outcome: null
----
-{content}
-",
-        sha = "0".repeat(64),
-        review = review_after.unwrap_or("null"),
-    )
 }
 
 pub(super) struct Setup {
@@ -105,10 +65,11 @@ impl Setup {
         let cwd = fx.elsewhere("work/scribe");
         std::fs::create_dir_all(&cwd).unwrap();
         let path = fx.fake_program("claude", "#!/bin/sh\nexit 1\n");
+        let transcript = project.join(format!("{SESSION}.jsonl"));
         let setup = Self {
-            transcript: project.join(format!("{SESSION}.jsonl")),
             fx,
             path,
+            transcript,
             cwd,
         };
         setup.entry(
@@ -250,112 +211,6 @@ impl Setup {
     }
 }
 
-/// Add `proposals` (format-31 shape; a candidate's `context` defaults to
-/// null) to the store at `root`.
-fn seed_proposals(root: &Path, proposals: &Value) {
-    let mut proposals = proposals.clone();
-    for p in proposals.as_array_mut().unwrap() {
-        if let Some(c) = p.get_mut("candidate").and_then(Value::as_object_mut) {
-            c.entry("context").or_insert(Value::Null);
-            c.entry("statement").or_insert(Value::Null);
-            c.entry("subject").or_insert(Value::Null);
-        }
-        let o = p.as_object_mut().unwrap();
-        o.entry("candidate").or_insert(Value::Null);
-        o.entry("instruction").or_insert(Value::Null);
-        o.entry("author")
-            .or_insert(json!({"kind": "scribe", "name": "consistency"}));
-        for field in ["updated_by", "settled_author", "closed_reason"] {
-            o.entry(field).or_insert(Value::Null);
-        }
-    }
-    let body = json!({"format": 31, "proposals": proposals}).to_string();
-    support::seed_records(root, &[&body]);
-}
-
-/// Renames the `segments` table of `scribe.db` away so any later read of
-/// the sessions fails (`store_database`).
-/// [`mend_sessions`] puts it back so the records can be read.
-pub(super) fn break_sessions(s: &Setup) {
-    support::sql(
-        &s.fx.root(),
-        "ALTER TABLE segments RENAME TO segments_gone;",
-    );
-}
-
-pub(super) fn mend_sessions(s: &Setup) {
-    support::sql(
-        &s.fx.root(),
-        "ALTER TABLE segments_gone RENAME TO segments;",
-    );
-}
-
-fn audit_in(root: &Path) -> Vec<Value> {
-    support::audit_lines(root)
-}
-
-pub(super) fn ids(list: &Value) -> Vec<String> {
-    list.as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["id"].as_str().unwrap().to_owned())
-        .collect()
-}
-
-/// The nine counters the scan report kept from before ORB-27911 step 2a.
-/// No pair is judged any more, so each is neutral; removing one would break
-/// `--json` (STD-01@2 §R10).
-pub(super) const RETIRED_COUNTERS: [&str; 9] = [
-    "judged_pairs",
-    "pairs_left",
-    "unrelated_pairs",
-    "dropped_labels",
-    "failed_batches",
-    "removal_pairs_judged",
-    "removal_pairs_left",
-    "dropped_removal_labels",
-    "failed_removal_batches",
-];
-
-/// Run `plugin call` for `tool` with `config`, without `SCRIBE_ROOT`.
-pub(super) fn plugin(s: &Setup, tool: &str, config: &Value) -> Value {
-    let envelope = json!({"schema_version": 1, "tool": tool, "input": {},
-        "context": {"config": config}});
-    let out = s.fx.check(
-        s.fx.cmd(&["plugin", "call"])
-            .env_remove("SCRIBE_ROOT")
-            .env("PATH", &s.path),
-        Success.stdin(envelope.to_string().as_bytes()),
-    );
-    serde_json::from_slice(&out.stdout).unwrap()
-}
-
-const REMOVAL: &str = "The digest feature was ripped out and replaced by the weekly report.";
-
-/// `days` before now, whole seconds.
-pub(super) fn days_ago(days: i64) -> time::OffsetDateTime {
-    let at = time::OffsetDateTime::now_utc() - time::Duration::days(days);
-    at.replace_nanosecond(0).unwrap()
-}
-
-/// RFC 3339.
-fn rfc3339(at: time::OffsetDateTime) -> String {
-    at.format(&time::format_description::well_known::Rfc3339)
-        .unwrap()
-}
-
-/// One format-31 session record: started `days_ago`, its one segment's last
-/// message an hour later, `updated` `updated_ago` days ago.
-pub(super) struct SessionFile<'a> {
-    pub(super) id: &'a str,
-    pub(super) days_ago: i64,
-    pub(super) updated_ago: i64,
-    pub(super) title: &'a str,
-    pub(super) topics: &'a str,
-    pub(super) keep_active: bool,
-    pub(super) segment: &'a str,
-}
-
 impl Setup {
     pub(super) fn session(&self, s: &SessionFile<'_>) {
         let started = days_ago(s.days_ago);
@@ -416,6 +271,152 @@ Ship it.
     pub(super) fn session_json(&self, id: &str) -> Value {
         self.json(&["session", "show", id, "--json"])
     }
+}
+
+/// One format-31 session record: started `days_ago`, its one segment's last
+/// message an hour later, `updated` `updated_ago` days ago.
+pub(super) struct SessionFile<'a> {
+    pub(super) id: &'a str,
+    pub(super) days_ago: i64,
+    pub(super) updated_ago: i64,
+    pub(super) title: &'a str,
+    pub(super) topics: &'a str,
+    pub(super) keep_active: bool,
+    pub(super) segment: &'a str,
+}
+
+/// The judgement the fake model gives pair 1: a contradiction quoting both
+/// entries verbatim.
+fn contradicts() -> Value {
+    json!({"judgements": [{"pair": "1", "label": "contradicts",
+        "reason": "The newer decision replaces squash merges with rebase merges.",
+        "older_quote": "squash-merge agent PRs", "newer_quote": "rebase-merge agent PRs"}]})
+}
+
+/// One entry file: `<tag>-<n>` recorded on `created`.
+fn entry_file(
+    id: &str,
+    created: &str,
+    content: &str,
+    status: &str,
+    review_after: Option<&str>,
+) -> String {
+    let tag = id.rsplit_once('-').unwrap().0;
+    format!(
+        "---
+format: 31
+kind: entry
+id: {id}
+tag: {tag}
+status: {status}
+project: scribe
+topics: []
+related: []
+provider: claude-code
+host: host
+author: {{kind: user, name: user}}
+updated_by: null
+created: {created}
+updated: {created}
+inactive_since: null
+said: \"#scribe {tag}: {content}\"
+content_from: {{kind: instruction}}
+cite: {{session: s-1, message: null, at: {created}, prompt_sha256: \"{sha}\", line: 1, cwd: /work}}
+retirement_reason: null
+superseded_by: null
+review_after: {review}
+quote: null
+window: null
+evidence: null
+as_of: null
+approved_by: null
+instruction: null
+removal_instruction: null
+stated_by: null
+outcome: null
+---
+{content}
+",
+        sha = "0".repeat(64),
+        review = review_after.unwrap_or("null"),
+    )
+}
+
+/// Add `proposals` (format-31 shape; a candidate's `context` defaults to
+/// null) to the store at `root`.
+fn seed_proposals(root: &Path, proposals: &Value) {
+    let mut proposals = proposals.clone();
+    for p in proposals.as_array_mut().unwrap() {
+        if let Some(c) = p.get_mut("candidate").and_then(Value::as_object_mut) {
+            c.entry("context").or_insert(Value::Null);
+            c.entry("statement").or_insert(Value::Null);
+            c.entry("subject").or_insert(Value::Null);
+        }
+        let o = p.as_object_mut().unwrap();
+        o.entry("candidate").or_insert(Value::Null);
+        o.entry("instruction").or_insert(Value::Null);
+        o.entry("author")
+            .or_insert(json!({"kind": "scribe", "name": "consistency"}));
+        for field in ["updated_by", "settled_author", "closed_reason"] {
+            o.entry(field).or_insert(Value::Null);
+        }
+    }
+    let body = json!({"format": 31, "proposals": proposals}).to_string();
+    support::seed_records(root, &[&body]);
+}
+
+/// Renames the `segments` table of `scribe.db` away so any later read of
+/// the sessions fails (`store_database`).
+/// [`mend_sessions`] puts it back so the records can be read.
+pub(super) fn break_sessions(s: &Setup) {
+    support::sql(
+        &s.fx.root(),
+        "ALTER TABLE segments RENAME TO segments_gone;",
+    );
+}
+
+pub(super) fn mend_sessions(s: &Setup) {
+    support::sql(
+        &s.fx.root(),
+        "ALTER TABLE segments_gone RENAME TO segments;",
+    );
+}
+
+fn audit_in(root: &Path) -> Vec<Value> {
+    support::audit_lines(root)
+}
+
+pub(super) fn ids(list: &Value) -> Vec<String> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Run `plugin call` for `tool` with `config`, without `SCRIBE_ROOT`.
+pub(super) fn plugin(s: &Setup, tool: &str, config: &Value) -> Value {
+    let envelope = json!({"schema_version": 1, "tool": tool, "input": {},
+        "context": {"config": config}});
+    let out = s.fx.check(
+        s.fx.cmd(&["plugin", "call"])
+            .env_remove("SCRIBE_ROOT")
+            .env("PATH", &s.path),
+        Success.stdin(envelope.to_string().as_bytes()),
+    );
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+/// `days` before now, whole seconds.
+pub(super) fn days_ago(days: i64) -> time::OffsetDateTime {
+    let at = time::OffsetDateTime::now_utc() - time::Duration::days(days);
+    at.replace_nanosecond(0).unwrap()
+}
+
+/// RFC 3339.
+fn rfc3339(at: time::OffsetDateTime) -> String {
+    at.format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
 }
 
 pub(super) fn session_files() -> [SessionFile<'static>; 5] {

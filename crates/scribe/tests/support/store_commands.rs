@@ -5,6 +5,10 @@ use crate::support::command::Input::Cli;
 use crate::support::command::{Expectation, Input};
 use serde_json::Value;
 
+pub(super) const ON: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+
+pub(super) const ARCHIVE: &str = "pre-sqlite-2026-10-01";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -15,10 +19,6 @@ impl Fixture {
         input.into().run(self, &["store"], expect)
     }
 }
-
-pub(super) const ON: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-
-pub(super) const ARCHIVE: &str = "pre-sqlite-2026-10-01";
 
 pub(super) fn json(out: &std::process::Output) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()

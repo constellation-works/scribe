@@ -8,6 +8,10 @@ use crate::support::command::{Expectation, Input};
 use serde_json::{Value, json};
 use std::{path::PathBuf, process::Output};
 
+pub(super) const ID: &str = "11111111-2222-4333-8444-555555555555";
+
+pub(super) const MARKED: &str = "I always want short status updates #scribe preferences";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -18,8 +22,6 @@ impl Fixture {
         input.into().run(self, &["--provider", "codex"], expect)
     }
 }
-
-pub(super) const ID: &str = "11111111-2222-4333-8444-555555555555";
 
 pub(super) struct Codex {
     pub(super) path: PathBuf,
@@ -73,6 +75,36 @@ impl Codex {
     }
 }
 
+impl Codex {
+    /// [`Codex::hook`] with `PATH` set to `path`, where a fake `codex`
+    /// logs any model call.
+    pub(super) fn hook_with(
+        &self,
+        f: &Fixture,
+        event: &str,
+        turn: &str,
+        prompt: &str,
+        path: &std::ffi::OsStr,
+    ) -> Output {
+        let verb = match event {
+            "UserPromptSubmit" => "user-prompt-submit",
+            "Stop" => "stop",
+            _ => panic!("fixture event"),
+        };
+        f.check(
+            f.cmd(&["--provider", "codex", "hook", verb])
+                .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
+                .env("PATH", path),
+            Success.stdin(self.payload(event, turn, prompt).to_string().as_bytes()),
+        )
+    }
+
+    /// An assistant reply in the rollout.
+    pub(super) fn reply(&mut self, id: &str, body: &str) {
+        self.rows.push(json!({"type":"response_item","timestamp":"2026-11-12T00:00:01Z","payload":{"type":"message","id":id,"role":"assistant","content":[{"type":"output_text","text":body}]}}));
+    }
+}
+
 pub(super) fn entries(f: &Fixture) -> Vec<Value> {
     f.check(Cli(&["entry", "list", "--json"]), Json)["entries"]
         .as_array()
@@ -123,38 +155,6 @@ pub(super) fn plugin_pass(f: &Fixture) -> Value {
         widget_answer,
     )
     .unwrap()
-}
-
-pub(super) const MARKED: &str = "I always want short status updates #scribe preferences";
-
-impl Codex {
-    /// [`Codex::hook`] with `PATH` set to `path`, where a fake `codex`
-    /// logs any model call.
-    pub(super) fn hook_with(
-        &self,
-        f: &Fixture,
-        event: &str,
-        turn: &str,
-        prompt: &str,
-        path: &std::ffi::OsStr,
-    ) -> Output {
-        let verb = match event {
-            "UserPromptSubmit" => "user-prompt-submit",
-            "Stop" => "stop",
-            _ => panic!("fixture event"),
-        };
-        f.check(
-            f.cmd(&["--provider", "codex", "hook", verb])
-                .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
-                .env("PATH", path),
-            Success.stdin(self.payload(event, turn, prompt).to_string().as_bytes()),
-        )
-    }
-
-    /// An assistant reply in the rollout.
-    pub(super) fn reply(&mut self, id: &str, body: &str) {
-        self.rows.push(json!({"type":"response_item","timestamp":"2026-11-12T00:00:01Z","payload":{"type":"message","id":id,"role":"assistant","content":[{"type":"output_text","text":body}]}}));
-    }
 }
 
 /// A fake `codex` whose every call fails, logging each call.

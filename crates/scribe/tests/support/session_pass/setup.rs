@@ -13,18 +13,6 @@ pub(crate) struct Setup {
     pub(crate) before_answer_after: std::cell::Cell<usize>,
 }
 
-pub(crate) enum Responses {
-    Fixed(Value, bool),
-    Sequence(Vec<Option<Value>>),
-    Failure(&'static str, String),
-}
-
-pub(crate) fn line(kind: &str, uuid: &str, text: &str) -> Value {
-    json!({"type": kind, "uuid": uuid, "timestamp": "2026-11-03T06:00:00Z",
-           "cwd": "/nonexistent/work/scribe",
-           "message": {"role": kind, "content": text}})
-}
-
 impl Setup {
     pub(crate) fn new() -> Self {
         Self::in_fixture(Fixture::new())
@@ -420,6 +408,46 @@ impl Setup {
     }
 }
 
+impl Setup {
+    /// `/scribe …` typed in `session`: the hook's block reason.
+    pub(crate) fn scribe_in(&self, session: &str, prompt: &str) -> String {
+        let payload = json!({"session_id": session,
+               "transcript_path": self.transcript(session),
+               "cwd": self.cwd,
+               "permission_mode": "default",
+               "hook_event_name": "UserPromptSubmit",
+               "prompt": prompt});
+        let out = self.hook("user-prompt-submit", &payload);
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["decision"], "block", "{reply}");
+        reply["reason"].as_str().unwrap().to_owned()
+    }
+
+    /// The `error_code` of every audit line, oldest first.
+    pub(crate) fn audit_codes(&self) -> Vec<Value> {
+        support::audit_lines(&self.fx.root())
+            .iter()
+            .map(|l| l["error_code"].clone())
+            .collect()
+    }
+
+    pub(crate) fn switch_of(&self, session: &str) -> Value {
+        support::control(&self.fx.root())["sessions"][session].clone()
+    }
+}
+
+pub(crate) enum Responses {
+    Fixed(Value, bool),
+    Sequence(Vec<Option<Value>>),
+    Failure(&'static str, String),
+}
+
+pub(crate) fn line(kind: &str, uuid: &str, text: &str) -> Value {
+    json!({"type": kind, "uuid": uuid, "timestamp": "2026-11-03T06:00:00Z",
+           "cwd": "/nonexistent/work/scribe",
+           "message": {"role": kind, "content": text}})
+}
+
 /// Generate an answer for the actual request. Compression returns only the
 /// prose header. Explicit S9 window answers are passed through unchanged;
 /// the generic fixture rewrites an open segment or starts a new one at the
@@ -511,32 +539,4 @@ pub(crate) fn answer() -> Value {
              "message": "a-1"}
         ]
     })
-}
-
-impl Setup {
-    /// `/scribe …` typed in `session`: the hook's block reason.
-    pub(crate) fn scribe_in(&self, session: &str, prompt: &str) -> String {
-        let payload = json!({"session_id": session,
-               "transcript_path": self.transcript(session),
-               "cwd": self.cwd,
-               "permission_mode": "default",
-               "hook_event_name": "UserPromptSubmit",
-               "prompt": prompt});
-        let out = self.hook("user-prompt-submit", &payload);
-        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(reply["decision"], "block", "{reply}");
-        reply["reason"].as_str().unwrap().to_owned()
-    }
-
-    /// The `error_code` of every audit line, oldest first.
-    pub(crate) fn audit_codes(&self) -> Vec<Value> {
-        support::audit_lines(&self.fx.root())
-            .iter()
-            .map(|l| l["error_code"].clone())
-            .collect()
-    }
-
-    pub(crate) fn switch_of(&self, session: &str) -> Value {
-        support::control(&self.fx.root())["sessions"][session].clone()
-    }
 }

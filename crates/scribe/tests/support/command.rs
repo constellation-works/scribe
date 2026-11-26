@@ -115,27 +115,6 @@ pub enum Input<'a> {
     Prepared(&'a mut Command),
 }
 
-/// A full CLI invocation with one environment override.
-pub fn with_env<'a>(
-    args: &'a [&'a str],
-    key: &'a str,
-    value: impl AsRef<std::ffi::OsStr>,
-) -> Input<'a> {
-    Input::WithEnv(args, key, value.as_ref().to_owned())
-}
-
-impl<'a, A: ?Sized + AsRef<[&'a str]>> From<&'a A> for Input<'a> {
-    fn from(args: &'a A) -> Self {
-        Self::Subject(args.as_ref())
-    }
-}
-
-impl<'a> From<&'a mut Command> for Input<'a> {
-    fn from(command: &'a mut Command) -> Self {
-        Self::Prepared(command)
-    }
-}
-
 impl Input<'_> {
     #[track_caller]
     pub fn run<E: Expectation>(self, fixture: &Fixture, prefix: &[&str], expect: E) -> E::Output {
@@ -162,4 +141,25 @@ impl Input<'_> {
             Self::Prepared(command) => expect.observe(command),
         }
     }
+}
+
+impl<'a, A: ?Sized + AsRef<[&'a str]>> From<&'a A> for Input<'a> {
+    fn from(args: &'a A) -> Self {
+        Self::Subject(args.as_ref())
+    }
+}
+
+impl<'a> From<&'a mut Command> for Input<'a> {
+    fn from(command: &'a mut Command) -> Self {
+        Self::Prepared(command)
+    }
+}
+
+/// A full CLI invocation with one environment override.
+pub fn with_env<'a>(
+    args: &'a [&'a str],
+    key: &'a str,
+    value: impl AsRef<std::ffi::OsStr>,
+) -> Input<'a> {
+    Input::WithEnv(args, key, value.as_ref().to_owned())
 }
