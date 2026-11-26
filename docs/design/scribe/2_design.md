@@ -2981,10 +2981,12 @@ field's line. The pass sends the model only the Daniel turns that fire a
 trigger (with tag, trigger and matched words) and those tags' `criteria`
 and `not`; when none fires it requests no claims. The store checks each
 claim's turn again under its lock against the config then on disk and
-stores the recomputed `admitted`. Route `agent` is accepted in config but
-captures nothing; route `write` writes the entry itself since step (b2)
+stores the recomputed `admitted`. At that step route `agent` was accepted in
+config but captured nothing, and `from` took only `daniel`; both are refused
+as `config_invalid` now (see the capture config above; STD-14@1). Route
+`write` writes the entry itself since step (b2)
 ([§11.6](#116-idea-capture-after-finding-is-gone)). Because a tag without rules is never
-captured and `from` takes only `daniel`, the pass no longer opens
+captured and `from` then took only `daniel`, the pass stopped opening
 assistant-turn candidates; stored ones still approve. Removing the
 `finding` and `remind` tags, the leftover assistant-candidate code and the
 §4.7 and §5.3 wording is step (a2).
@@ -3214,7 +3216,8 @@ append are not counted.
 
 *Built (step c2):* the trigger is `issue_trigger::fire` over the rules
 `TagTable::issue_capture` returns: `[tags.issue.capture]` when configured,
-else the shipped ones (route `agent`, the triggers in §11.2's table), which
+else the shipped ones (at that step route `agent`, now refused in config; the
+triggers in §11.2's table), which
 the pass never takes, and `issue` stays out of the tag table. It matches
 Daniel's own words only: a harness line or `/scribe` line is no turn, and
 pasted, fenced, indented, quoted and `#scribe` lines are left out, as for
@@ -4286,8 +4289,9 @@ items are left out; off-page items are included, labelled.
 
 **Removed in [§15.9](#159-phases) phase 1.** The pass no longer writes
 `working` or `projects` items, so nothing below runs; stored items load and
-print as before, and `promote_working_sessions` loads with a warning. The
-text is kept as the record of what was built.
+print as before. `promote_working_sessions` loaded with a `config_deprecated`
+warning until ORB-28930 removed it under STD-14@1; it is refused as
+`config_invalid` now. The text is kept as the record of what was built.
 
 When a `working` item's occurrences span **three or more distinct
 sessions** (the same count as rule (b), its own config key
@@ -5394,8 +5398,9 @@ max_open = 10                     # open claims this tag may hold
 
 - **`description`, `aliases`, `stale_after_days`.** Unchanged.
 - **`from`** (new values). Says whose turns the catcher reads:
-  - `user`: today's `daniel`, which stays accepted as an alias for the
-    30-day compatibility window, with a warning.
+  - `user`: the user's typed turns. The old value `daniel` read as `user`
+    with a warning until ORB-28931 removed that alias under STD-14@1; it is
+    refused as `config_invalid` now.
   - `assistant`: the assistant's turns.
   - `both`.
 
@@ -5737,8 +5742,9 @@ memory/
 - These `[memory]` keys go: `enabled`, `personal`, `decay_days`,
   `now_undated_days`, `now_after_days`, `page_chars`, `recent_sessions`,
   `promote_working_sessions`, `[memory.sections]` and `[memory.promote]`.
-- A config that sets one of them loads with a warning (`config_deprecated`)
-  for the 30-day window, then is refused (`config_invalid`).
+- A config that sets one of them is refused at once as `config_invalid`.
+  A `config_deprecated` warning shipped first and was removed under STD-14@1
+  (ORB-28930), so no warning window remains.
 - Every user gets the same shape, budgets and rules.
 - The brief is gated only by the interactive check. A store with no memory
   files yet prints the memory parts as `(none)`.
@@ -6316,7 +6322,7 @@ here.
   `scribe brief` (`crates/scribe/src/commands/brief.rs`).
 - **Phase 2: partly built.** Built: `[user]` and `[instructions]`
   (`crates/scribe-core/src/config/voice.rs`); `from` takes `user`, `assistant`
-  or `both`, and `daniel` reads as `user` with a warning
+  or `both`, and `daniel` is refused as `config_invalid` (STD-14@1)
   (`crates/scribe-core/src/config/tags.rs`); `max_open`; `AuthorKind::User`
   with `daniel` as an alias (`crates/scribe-store/src/contracts/record.rs`);
   no `issue` noun in the CLI. Open: the personal name remains in the plugin
