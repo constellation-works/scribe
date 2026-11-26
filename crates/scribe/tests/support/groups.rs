@@ -128,9 +128,22 @@ pub(super) fn session_start_with_cwd(
 }
 
 pub(super) fn close_plugin(f: &Fixture, tool: &str, input: Value) -> Value {
+    close_plugin_with_crew(f, tool, input, Some("haiku"))
+}
+
+pub(super) fn close_plugin_with_crew(
+    f: &Fixture,
+    tool: &str,
+    input: Value,
+    crew: Option<&str>,
+) -> Value {
+    let mut config = json!({"root": f.root(), "transcripts": f.home().join(".claude/projects")});
+    if let Some(crew) = crew {
+        config["group_summary_crew"] = json!(crew);
+    }
     let envelope = json!({"schema_version": 1, "tool": format!("scribe.{tool}"), "input": input,
         "context": {"workspace_root": "/nonexistent", "agent": "claude", "model": null,
-          "config": {"root": f.root(), "transcripts": f.home().join(".claude/projects"), "group_summary_crew": "haiku"},
+          "config": config,
           "task_id": null, "job_run_id": null}});
     let out = f.check(
         Cli(&["plugin", "call"]),

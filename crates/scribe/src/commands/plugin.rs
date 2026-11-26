@@ -547,6 +547,7 @@ fn group_close(input: &Value, config: &Value, apply: bool) -> PluginReply {
                 config
                     .get("group_summary_crew")
                     .and_then(Value::as_str)
+                    .filter(|crew| !crew.trim().is_empty())
                     .unwrap_or("haiku")
             );
             PluginReply::Data(value)
