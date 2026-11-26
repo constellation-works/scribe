@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, why the consistency scan and the Stop hook call no model, and why the store file adapter keeps its filesystem lint expectations statement-scoped under STD-02 R6 and R35.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, why the consistency scan and the Stop hook call no model, and why the store file adapter keeps its filesystem lint expectations statement-scoped under STD-02 R6 and R35, why the standards sync adopts STD-02@10, STD-12@4 and STD-14@1 with each deferred gate recorded per rule, and why pre-release migrations and file-store archives stay until Daniel exports them.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904, ORB-28921]
 ---
 
 # scribe — Decisions
@@ -5624,3 +5624,114 @@ Differences a user can see:
   exhaustive.
 - `rustix`'s `termios` feature and the crate's own `rustix` dependency are gone: the
   kit asks the terminal its width.
+
+## Scribe adopts STD-02@10, STD-12@4 and STD-14@1 at canon 663451f
+
+**Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
+**Code anchors:** `AGENTS.md` managed block; `docs/standards/` (vendored, read-only; `check.sh`)
+
+### Context
+
+The canon at `663451f` publishes STD-02@10 (R48–R49 from @9, R50–R52 from @10), STD-12@4 (source style) and STD-14@1 (no legacy support before a repository's first release tag). Scribe had pinned STD-02@8 and adopted neither STD-12 nor STD-14. Scribe has no release tag: `git tag --list` and `git ls-remote --tags origin` return nothing on 2026-11-26.
+
+### Decision
+
+Adopt STD-02@10, STD-12@4 and STD-14@1, keeping the previous set (STD-01@4, STD-03@2, STD-04@2, STD-05@1, STD-11@3). The vendored copies and the managed block come from `standards.sync` at `663451f`. A rule whose gate does not exist yet is a deviation, recorded in the next two entries. The STD-02@10 rules are assessed below.
+
+| Rule | State at adoption | Evidence at a1984d3 | Follow-up |
+|---|---|---|---|
+| STD-02@10 §R48, output one file per command | not met | `crates/scribe/src/output/` has `payload.rs`, `render.rs`, `printable.rs`, `usage.rs` and `color.rs` directly under `output/` | ORB-28927 (proposed) |
+| §R49, a noun is one file or a directory past three verbs | not met | `commands/group.rs`, `memory.rs`, `proposal.rs` and `tag.rs` hold 4 to 8 variants each in one file; `commands/session/mod.rs:63–107,111,169,204,310` (`SessionCommand` variants, `ListArgs`, `ShowArgs`, `list`, `show`) and `commands/hook/mod.rs:117–137,156–176` (`HookCommand` variants and its verb dispatch) keep their verbs in `mod.rs` | ORB-28926 (proposed), first four flat nouns |
+| §R50, a function past about 60 lines is checked (review-only) | heuristic | 259 functions past 60 code lines (`clippy::too_many_lines` at threshold 60, `--all-targets`, tests included); one `allow` at `apps/session/rebuild.rs:895` | no gate; reassess after the R49 moves |
+| §R51, at most seven parameters, no `allow` | not met; counted deviation below | 15 attribute lines naming `clippy::too_many_arguments` in 7 files; clippy at threshold 7 reports no unsuppressed site | ORB-28929 (backlog) |
+| §R52, no variant copied under a longer name (review-only) | candidates | `commands/hook/group_add.rs:37` `run` delegates to the test-only `run_with_transcript_reader` (`:60`); `apps/session/pass/mod.rs:209` `write_pass_window` calls `write_window` (`:236`) with `expected_switch` set to `None` | proposed, not filed: fold the variants into a context struct |
+
+Path reading: §R49 names `src/command/`. Scribe's CLI is `src/commands/`, which this entry reads as the same role. The rename waits (see the next entry, STD-12 §R1).
+
+### Consequences
+
+- Cost: `make ci-fast`, `make ci-lint` and `make goldens` pass with this change, and `sh docs/standards/check.sh` passes. No Rust source changes.
+- Cost: the rules marked not met stay unchecked until their tasks land. ORB-28926, ORB-28927 and ORB-28929 carry the moves and the parameter work.
+
+## STD-12@4 gates deferred at adoption are recorded per rule
+
+**Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
+**Code anchors:** `Makefile` `fmt-check` and `clippy`; `rustfmt.toml`; `clippy.toml`; `Cargo.toml` `[workspace.lints]`; `scripts/` (no source-style script yet)
+
+### Context
+
+STD-12's checks name one gate per rule, and its Adopting v1 clause lets an existing project record a gate it has not yet added as a deviation. The counts come from one evidence run on 2026-11-26: clippy with a temporary config under `.orbit/tmp/` (not committed), counting unique file:line:col sites, and text matches where marked.
+
+### Decision
+
+Each MUST rule below without its gate is deviated from as recorded: `STD-12@4 §Rn`, its status, and its follow-up. Existing checks stay active. Already met: §R3 and §R11 (`make fmt-check`; `rustfmt.toml` holds only `edition` and `max_width = 100`) and §R18 (`missing_docs` at warn, run with `-D warnings` by `make ci-lint`).
+
+§R20 and §R23 have a cited adoption deviation until ORB-28950 enables their lints. The cleanup tasks (ORB-28939 config; ORB-28941 to ORB-28949 disjoint source batches) do not claim either rule is enforced, and no duplicate gate task is filed. §R21 and §R22 use the separate template style-gate path. §R24 and §R25 are review-only, as are STD-02@10 §R50 and §R52.
+
+| Rule | Gate (checks.md) | Status | Evidence | Follow-up |
+|---|---|---|---|---|
+| STD-12@4 §R1, singular names | CI name check | deferred | about 30 plural `.rs` names (`repository/tags.rs`, `db/locks.rs`, `runtime/errors.rs`) and plural directories `apps/`, `commands/`, `contracts/`, `entries/`, `providers/`, `rules/`, `sessions/`, `groups/` | proposed rename task, kept out of the first move |
+| STD-12@4 §R2 (gate §R14), one-letter bindings | `clippy::min_ident_chars` with `allowed-idents-below-min-chars = []` | deferred | 2976 sites | proposed task, sized by count: enable the lint and fix per crate |
+| STD-12@4 §R4 (gate §R12), blank line between items | `scripts/check-source-style.sh` | deferred | script absent; not measured | build the script in the Rust template, then adopt |
+| STD-12@4 §R5 (gate §R13), line width | the same script, width check | deferred | 642 lines over 100 characters by text match, before the string and URL exemption | as §R4 |
+| STD-12@4 §R15, no glob imports | `clippy::wildcard_imports` and `clippy::enum_glob_use` | deferred | 0 reported sites; 48 text matches, all covered by the lints' default exemptions | enable both lints; no code change |
+| STD-12@4 §R16, one module per `use` | `scripts/check-source-style.sh` | deferred | 21 `use` lines with a brace group holding `::` (text match, not verified) | script in the template |
+| STD-12@4 §R19, `rustfmt::skip` comment | `scripts/check-source-style.sh` | deferred | 0 uses | script in the template; no code change |
+| STD-12@4 §R20, top-level item order | `clippy::arbitrary_source_item_ordering` with the STD-12 groupings in `clippy.toml` | deferred; cited adoption deviation until ORB-28950 | 311 sites (first: `crates/scribe-store/src/lib.rs:73`) | ORB-28939 (config), ORB-28941 to ORB-28949 (disjoint source batches), ORB-28950 (final enablement) |
+| STD-12@4 §R21, type adjacent to its impls | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
+| STD-12@4 §R22, order inside an impl | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
+| STD-12@4 §R23, struct literal field order | `clippy::inconsistent_struct_constructor` with `check-inconsistent-struct-field-initializers = true` | deferred; cited adoption deviation until ORB-28950 | 30 sites | ORB-28939 (config), ORB-28941 to ORB-28949 (disjoint source batches), ORB-28950 (final enablement) |
+| STD-12@4 §R26, no `super::super` | `scripts/check-source-style.sh` | deferred | 11 text matches: 9 code paths and 2 comments | ORB-28928 (backlog) |
+
+### Consequences
+
+- Cost: each row's rule is unchecked in CI until its gate lands. Reviewers check them by hand meanwhile.
+- Cost: the counts come from one run and will move as the code does. Rows marked not measured have no count yet.
+- Cost: the captain's measurement for §R20 and §R23 is 341 primary diagnostic locations in 158 files (311 and 30 above), taken with both canon lints verified on 1.96.0 fixtures. Those rules stay unchecked until ORB-28950.
+
+## Pre-release migrations and file-store archives stay until Daniel exports them (STD-14@1 §R1)
+
+**Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction** (export requirement from the store design)
+**Code anchors:** `AGENTS.md` persisted-shape rule; `crates/scribe-store/src/db/mod.rs` `MIGRATIONS`; `crates/scribe/src/commands/store.rs` (`store migrate`); `crates/scribe-store/src/lib.rs:49` (the archives)
+
+### Context
+
+AGENTS.md says "A persisted-shape change appends a database migration in `db/mod.rs`", and the store spec says a persisted-shape change is a database migration. STD-14@1 §R1 says that before the first release tag, a superseded format's migration, importer or shim is deleted, and §R2 says live code reads and writes only the current shape. The two conflict for any change that supersedes a stored shape.
+
+Daniel's export requirement is in the store design. The file-store archives (`pre-sqlite-*`, `pre-issue-*`) are imported once into archive tables. The archives entry rejects deleting them without importing, because that "loses the only copy of the pre-migration text Daniel may still want to read or export." `scribe export` writes none of the archive tables (`specs/store.md`, §Export).
+
+### Decision
+
+Resolve the conflict as a recorded deviation, not by deleting code now:
+
+1. The migration rule in AGENTS.md stays. The `MIGRATIONS` chain, the archive import behind `store migrate`, and the legacy readers they call stay. This deviates from STD-14@1 §R1 and §R2 for the reason that deleting them would leave Daniel's existing `scribe.db` stores unopenable or the archive text unreadable, and no export yet covers the archive tables.
+2. No superseded store code or archive is removed until all three hold: Daniel approves the removal; an export writes the archive tables and every row the removed code reads, and Daniel keeps that export; and the removal is its own task.
+3. Reassess at the first release tag. STD-14@1 §R2 then makes these duties mandatory, and the deviation ends there.
+
+### Consequences
+
+- Cost: pre-release code carries migration, archive and legacy-reader paths that STD-14 would delete, until the export and approval. No code changes in this sync.
+- ORB-28767 (proposed, held) keeps the boundary review of the legacy readers and the one-time importer (STD-02 §R44). Its "keep all supported readers" criterion is consistent with this deviation. It should cite this entry and STD-14@1 §R1, not STD-02@8 §R44 alone.
+- ORB-28629 (existing) covers only the obsolete root audit importer, per the kickoff. It does not cover the archive tables or the `MIGRATIONS` chain.
+- ORB-28144 (existing, model-config migration) has model-settings compatibility scope to reconcile with ORB-28930 before either removes a config input.
+- Proposed, not filed: "export the file-store archive tables, then retire the archive importer and the `MIGRATIONS` chain (STD-14@1 §R1)", gated on Daniel's approval.
+- ORB-28930 (superseded memory CLI and config inputs) and ORB-28931 (catcher spellings) are reused as the kickoff proposed. Before removing either, check for stored values; any value the removed code still reads joins the export gate.
+
+## STD-02@10 §R51: the 15 suppression sites are a counted deviation
+
+**Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
+**Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs`, `apps/session/pass/mod.rs`, `apps/entry/verbs.rs`, `apps/memory/verbs.rs:628`, `apps/session/rules/pass.rs`, `apps/session/pass/run/workflow.rs`, `crates/scribe/tests/support/goldens.rs`
+
+### Context
+
+STD-02@10 §R51 bars more than seven parameters, receiver counted, and any `allow` or `expect` of `clippy::too_many_arguments`. A repository with existing offenders runs the gate as a count that may only fall, and records that count as a deviation.
+
+### Decision
+
+Record `STD-02@10 §R51` with the count: 15 attribute lines naming `clippy::too_many_arguments` in 7 files, found by `rg`. Clippy at threshold 7 reports no unsuppressed site. The count may only fall; ORB-28929 removes the suppressions. ORB-28929 counted 14, and the current count is 15 lines.
+
+The gate is active through clippy's default threshold of 7. `clippy.toml` does not set `too-many-arguments-threshold` explicitly; setting it is part of ORB-28929.
+
+### Consequences
+
+- Cost: the 15 suppressions, and the functions behind them (`apps/memory/verbs.rs:629` `plan_refresh_commit` takes about 13 parameters by text count), stand until ORB-28929 lands.

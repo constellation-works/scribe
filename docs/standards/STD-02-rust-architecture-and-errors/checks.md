@@ -22,6 +22,8 @@ The gate that enforces each rule in [STD-02](STD-02.md), or `review-only`. Ship 
 | R45 | review-only; the unit map R43 requires lists one application unit per subject, and the dependency-direction check (R6) holds their order |
 | R46 | review-only; a project MAY add provider program and SDK crate names to its dependency-direction check |
 | R47 | review-only |
+| R48 | review-only |
+| R49 | review-only |
 | R8 | review-only (optionally `unreachable_pub = "warn"`, not in Orbit's baseline) |
 | R9 | review-only (Orbit does not gate it; see *Deviations* in [`STD-02.md`](STD-02.md#deviations)) |
 | R10 | review-only; an optional grep for `.contains(` on `stderr`, error `to_string()` or message values in classification code is a useful review aid |
@@ -32,6 +34,8 @@ The gate that enforces each rule in [STD-02](STD-02.md), or `review-only`. Ship 
 | R36 | Adoptable lint `clippy::fn_params_excessive_bools` with `max-fn-params-bools = 1` catches two or more `bool`s on one function; a single mode `bool` is review-only (at `0` the lint also fires on setters and other data `bool`s) |
 | R37 | Default-on `clippy::wrong_self_convention`, `clippy::len_without_is_empty` and `clippy::should_implement_trait` (+ `-D warnings`) catch part of it; the rest is review-only |
 | R38 | Default-on `clippy::ptr_arg` and `clippy::from_over_into`; adoptable `clippy::clone_on_ref_ptr`, `clippy::rc_buffer`, `clippy::needless_pass_by_value`; clones that only end a borrow are review-only |
+| R51 | `clippy::too_many_arguments` at warn, with `too-many-arguments-threshold = 7` in `clippy.toml` |
+| R52 | review-only |
 | R26 | review-only; a unit test per error constructor can assert that the resolved inputs appear in the message |
 | R27 | Adoptable lints `clippy::wildcard_enum_match_arm` and `clippy::match_wildcard_for_single_variants` (see [Adoptable additions](#adoptable-additions-beyond-orbits-baseline)); not in Orbit's baseline |
 | R28 | A load-time test per bounded key (an out-of-range value is refused at load, naming the key); adoptable lints `clippy::cast_possible_truncation`, `clippy::cast_sign_loss`, `clippy::cast_possible_wrap` for the `as` ban; not in Orbit's baseline |
@@ -45,6 +49,7 @@ The gate that enforces each rule in [STD-02](STD-02.md), or `review-only`. Ship 
 | R16 | Round-trip tests on persisted fixtures (old document deserializes; removed key warns; write → read → write is byte-stable); grep ban on `serde(default = "…now")` |
 | R17 | Retired-path guard in the dependency-direction check; otherwise review-only |
 | R18 | review-only |
+| R50 | review-only |
 | R19 | Orphan-module check (every `src/**/tests/*.rs` declared in its `tests/mod.rs`) |
 | R20 | review-only |
 | R21 | review-only |

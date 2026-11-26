@@ -2,6 +2,11 @@
 
 Version history of [STD-02](STD-02.md). Adopting repos pin the `version:` in its frontmatter as `STD-02@<version>`; a version changes only when a rule is added, removed or changed in meaning.
 
+- **10** (2026-11-26): New rule, a heuristic: a function past about 60 code lines SHOULD be checked for phases and split along them (review-only) (scribe standard-27).
+  - New rule, a MUST: a function takes at most seven parameters, the receiver counted; Clippy gate at threshold 7 (scribe standard-27).
+  - New rule, a SHOULD: a function is not copied under a longer name to pass one more value (review-only) (scribe standard-27).
+- **9** (2026-11-26): R48 added (CLI output is one file per top-level command; code shared by two or more commands lives under `output/common/`, in files named for what they hold) (scribe standard-23, ORB-28671)
+  - R49 added (a command noun with more than three verbs is a directory with one file per verb; code shared by two or more nouns lives under `command/common/`) (scribe standard-23, ORB-28671)
 - **Editorial (2026-11-25, version unchanged):** `checks.md` gains the copyable gate for R43: the *Architecture-map check* section points at the Rust CLI template's `scripts/check-architecture-map.sh` (constellation-works/rust-cli-template#37, 7a018d7) and states how the architecture doc must be written for it. No rule changed (ORB-28053).
 - **8** (2026-11-25): R6 changed (adds `clippy.toml` `disallowed-types`/`disallowed-methods` as the rung between item visibility and source grep, removes superseded grep bans, and adds the baseline list in `checks.md`) (scribe standard-16)
 - **7** (2026-11-25): R43 changed (the architecture doc's unit map is machine-checked: a missing crate or top-level module, a documented path that does not exist, or a unit without a doc comment fails the structure gate; a copyable script follows once the template's has landed) (scribe standard-15, ORB-28029, ORB-28053)
