@@ -9,56 +9,24 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/session_activity.rs"]
+mod subject;
 mod support;
 
+use crate::support::command::Exit::{Capture, Success};
 use serde_json::Value;
+use subject::*;
 use support::{Fixture, text};
-
-const SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-
-/// Run with the `[redact] env` variable the fixture config names, so a
-/// write may go ahead.
-fn run(fx: &Fixture, args: &[&str]) -> std::process::Output {
-    fx.cmd(args)
-        .env("GITHUB_TOKEN", "fixture-token-value-1234")
-        .output()
-        .unwrap()
-}
-
-fn ok(fx: &Fixture, args: &[&str]) -> std::process::Output {
-    let out = run(fx, args);
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{args:?}: {}",
-        text(&out.stderr)
-    );
-    out
-}
-
-fn json(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).unwrap_or_else(|e| panic!("{e}: {}", text(bytes)))
-}
-
-fn audit(fx: &Fixture) -> Vec<Value> {
-    support::audit_lines(&fx.root())
-}
-
-/// The record as its file reads (`scribe export`).
-fn record_bytes(fx: &Fixture) -> Vec<u8> {
-    support::record_text(&fx.root(), SESSION)
-        .expect("the record")
-        .into_bytes()
-}
 
 #[test]
 fn deactivate_hides_the_session_records_why_and_audits_once() {
-    let fx = Fixture::new();
-    fx.seed();
-    let before = json(&ok(&fx, &["session", "show", SESSION, "--json"]).stdout);
+    let fx = Fixture::seeded();
+    let before = json(
+        &fx.check(&["session", "show", SESSION, "--json"], Success)
+            .stdout,
+    );
 
-    let out = ok(
-        &fx,
+    let out = fx.check(
         &[
             "session",
             "deactivate",
@@ -71,6 +39,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
             "decisions-2",
             "--json",
         ],
+        Success,
     );
     let doc = json(&out.stdout);
     assert!(out.stderr.is_empty(), "{}", text(&out.stderr));
@@ -94,7 +63,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
     let raw = support::audit_text(&fx.root());
     assert!(!raw.contains("merge policy"), "no argument values: {raw}");
 
-    let listed = json(&ok(&fx, &["session", "list", "--json"]).stdout);
+    let listed = json(&fx.check(&["session", "list", "--json"], Success).stdout);
     assert!(
         !listed["sessions"]
             .as_array()
@@ -106,8 +75,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
 
     // A repeat: the record unchanged, `nothing changed`, no audit line.
     let bytes = record_bytes(&fx);
-    let out = ok(
-        &fx,
+    let out = fx.check(
         &[
             "session",
             "deactivate",
@@ -117,6 +85,7 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
             "--reason",
             "again",
         ],
+        Success,
     );
     assert!(
         text(&out.stderr).contains("nothing changed"),
@@ -130,15 +99,14 @@ fn deactivate_hides_the_session_records_why_and_audits_once() {
 
 #[test]
 fn activate_pins_and_a_pinned_session_deactivated_by_hand_is_unpinned() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let activate = |extra: &[&str]| {
         let args = [
             &["session", "activate", SESSION, "--author", "opus"][..],
             extra,
         ]
         .concat();
-        ok(&fx, &args)
+        fx.check(&args, Success)
     };
 
     let out = activate(&["--json"]);
@@ -154,8 +122,7 @@ fn activate_pins_and_a_pinned_session_deactivated_by_hand_is_unpinned() {
     assert_eq!(doc["active_change"]["cite"], Value::Null);
     assert_eq!(audit(&fx).len(), 1);
 
-    let out = ok(
-        &fx,
+    let out = fx.check(
         &[
             "session",
             "deactivate",
@@ -166,6 +133,7 @@ fn activate_pins_and_a_pinned_session_deactivated_by_hand_is_unpinned() {
             "gone after all",
             "--json",
         ],
+        Success,
     );
     let doc = json(&out.stdout);
     assert_eq!(doc["active"], false);
@@ -192,8 +160,7 @@ fn activate_pins_and_a_pinned_session_deactivated_by_hand_is_unpinned() {
 
 #[test]
 fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let bytes = record_bytes(&fx);
     let segment = format!("session:{SESSION}#1");
     let long = "x".repeat(301);
@@ -255,7 +222,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
             "session", "activate", SESSION, "--author", "opus", "--pin", "--unpin", "--json",
         ][..],
     ] {
-        let out = run(&fx, args);
+        let out = fx.check(args, Capture);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -266,8 +233,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
     }
     assert_eq!(record_bytes(&fx), bytes);
 
-    let out = run(
-        &fx,
+    let out = fx.check(
         &[
             "session",
             "deactivate",
@@ -278,6 +244,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
             "x",
             "--json",
         ],
+        Capture,
     );
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json(&out.stderr)["code"], "session_not_found");
@@ -285,8 +252,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
     // The cite form of a whole session is accepted.
     let cite = format!("session:{SESSION}");
     let doc = json(
-        &ok(
-            &fx,
+        &fx.check(
             &[
                 "session",
                 "deactivate",
@@ -297,6 +263,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
                 "x",
                 "--json",
             ],
+            Success,
         )
         .stdout,
     );
@@ -308,8 +275,7 @@ fn bad_arguments_are_usage_errors_and_an_unknown_session_is_not_found() {
 #[test]
 fn a_session_reference_is_kept_as_typed_and_a_lookup_of_a_session_is_not_found() {
     let fx = Fixture::new();
-    ok(
-        &fx,
+    fx.check(
         &[
             "entry",
             "add",
@@ -321,8 +287,9 @@ fn a_session_reference_is_kept_as_typed_and_a_lookup_of_a_session_is_not_found()
             "session:abcd",
             "Use the stable API",
         ],
+        Success,
     );
-    let listed = ok(&fx, &["entry", "list", "--related", "session:abcd"]);
+    let listed = fx.check(&["entry", "list", "--related", "session:abcd"], Success);
     assert!(
         text(&listed.stdout).contains("Use the stable API"),
         "{}",
@@ -356,7 +323,7 @@ fn a_session_reference_is_kept_as_typed_and_a_lookup_of_a_session_is_not_found()
             "session_not_on",
         ),
     ] {
-        let out = run(&fx, args);
+        let out = fx.check(args, Capture);
         assert_eq!(
             out.status.code(),
             Some(1),

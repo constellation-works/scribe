@@ -1,8 +1,13 @@
 //! Distribution scaffolding through the installed binary surface, on temp projects.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "support/init.rs"]
+mod subject;
 mod support;
+
+use crate::support::command::Exit::Code;
 use serde_json::{Value, json};
+use subject::install;
 use support::{Fixture, text};
 
 #[test]
@@ -36,19 +41,7 @@ fn init_embeds_skill_preserves_unrelated_config_and_is_idempotent() {
         )
         .unwrap();
         support::make_private(&hooks);
-        let run = || {
-            f.cmd(&[
-                "init",
-                "--provider",
-                provider,
-                "--target",
-                target.to_str().unwrap(),
-                "--json",
-            ])
-            .env("PATH", &path)
-            .output()
-            .unwrap()
-        };
+        let run = || install(&f, provider, &target, &path, true);
         let first = run();
         assert!(first.status.success(), "{}", text(&first.stderr));
         let report: Value = serde_json::from_slice(&first.stdout).unwrap();
@@ -156,19 +149,7 @@ fn init_upgrades_a_single_file_receipt_and_preflights_reference_conflicts() {
     std::fs::write(&receipt, legacy.to_string()).unwrap();
     support::make_private(&receipt);
     let path = f.fake_program("codex", "#!/bin/sh\nexit 0\n");
-    let run = || {
-        f.cmd(&[
-            "init",
-            "--provider",
-            "codex",
-            "--target",
-            target.to_str().unwrap(),
-            "--json",
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap()
-    };
+    let run = || install(&f, "codex", &target, &path, true);
     let snapshot = || {
         support::snapshot(&target)
             .into_iter()
@@ -229,18 +210,7 @@ fn init_reports_an_unsupported_receipt_format_before_its_shape() {
             .collect::<Vec<_>>()
     };
     let before = snapshot();
-    let refused = f
-        .cmd(&[
-            "init",
-            "--provider",
-            "codex",
-            "--target",
-            target.to_str().unwrap(),
-            "--json",
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
+    let refused = install(&f, "codex", &target, &path, true);
     assert_eq!(refused.status.code(), Some(1));
     let stderr = text(&refused.stderr);
     assert!(stderr.contains("init_conflict"), "{stderr}");
@@ -257,39 +227,26 @@ fn init_refuses_missing_runtime_unknown_provider_and_symlinked_artifacts() {
     let f = Fixture::new();
     let target = f.elsewhere("project");
     f.create_private_dir_all(&target);
-    let missing = f.run(&[
-        "init",
-        "--provider",
-        "codex",
-        "--target",
-        target.to_str().unwrap(),
-    ]);
-    assert_eq!(missing.status.code(), Some(2));
+    let missing = f.check(
+        &["--provider", "codex", "--target", target.to_str().unwrap()],
+        Code(2),
+    );
     assert!(text(&missing.stderr).contains("not executable on PATH"));
     assert!(!target.join(".codex").exists());
-    let invalid = f.run(&[
-        "init",
-        "--provider",
-        "unknown",
-        "--target",
-        target.to_str().unwrap(),
-    ]);
-    assert_eq!(invalid.status.code(), Some(2));
+    f.check(
+        &[
+            "--provider",
+            "unknown",
+            "--target",
+            target.to_str().unwrap(),
+        ],
+        Code(2),
+    );
     let path = f.fake_program("codex", "#!/bin/sh\nexit 0\n");
     let outside = f.elsewhere("outside");
     f.create_private_dir_all(&outside);
     std::os::unix::fs::symlink(&outside, target.join(".agents")).unwrap();
-    let denied = f
-        .cmd(&[
-            "init",
-            "--provider",
-            "codex",
-            "--target",
-            target.to_str().unwrap(),
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
+    let denied = install(&f, "codex", &target, &path, false);
     assert_eq!(denied.status.code(), Some(1));
     assert!(std::fs::read_dir(&outside).unwrap().next().is_none());
 }

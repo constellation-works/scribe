@@ -5,87 +5,15 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/plugin.rs"]
+mod subject;
 mod support;
+
+use subject::*;
 
 #[path = "../../../plugin/.orbit-plugin/tests/conformance.rs"]
 mod conformance;
-
-use serde_json::{Value, json};
-use std::ffi::OsString;
-use std::io::Write;
-use std::process::{Output, Stdio};
-use support::{Fixture, text};
-
-const CLAUDE: &str = "#!/bin/sh\n\
-    echo call >> \"$HOME/claude-calls\"\n\
-    cat > /dev/null\n\
-    printf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"\",\"structured_output\":{\"status\":\"answered\",\"answer\":\"Squash.\",\"claims\":[{\"text\":\"squash\",\"quote\":\"squash-merge agent PRs;\",\"cite\":\"preferences-2\"}],\"conflicts\":[]}}'\n";
-
-struct Setup {
-    fx: Fixture,
-    path: OsString,
-}
-
-impl Setup {
-    fn new() -> Self {
-        let fx = Fixture::new();
-        fx.seed();
-        let path = fx.fake_program("claude", CLAUDE);
-        Self { fx, path }
-    }
-
-    /// Run `plugin call` with `envelope` on stdin. `SCRIBE_ROOT` is removed:
-    /// the tool's store comes from the envelope alone.
-    fn call(&self, envelope: &[u8]) -> Output {
-        let mut cmd = self.fx.cmd(&["plugin", "call"]);
-        cmd.env_remove("SCRIBE_ROOT")
-            .env("PATH", &self.path)
-            // The fixture's config.toml names GITHUB_TOKEN under [redact] env;
-            // memory-refresh-apply builds the redactor and refuses
-            // (redact_env_unset) when a configured name has no value.
-            .env("GITHUB_TOKEN", "ghp_testtoken1234567890")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = support::ChildGuard::new(cmd.spawn().unwrap());
-        child
-            .child()
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(envelope)
-            .unwrap();
-        child.finish()
-    }
-
-    /// The reply envelope for `tool` with `input` and `config`; exit 0 and
-    /// one line, whatever the outcome.
-    fn reply(&self, tool: &str, input: Value, config: Value) -> Value {
-        let envelope = json!({
-            "schema_version": 1, "tool": tool, "input": input,
-            "context": {"workspace_root": "/nonexistent", "agent": "claude", "model": null,
-                        "config": config, "task_id": null, "job_run_id": null}
-        });
-        self.reply_raw(envelope.to_string().as_bytes())
-    }
-
-    fn reply_raw(&self, envelope: &[u8]) -> Value {
-        let out = self.call(envelope);
-        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-        let stdout = text(&out.stdout);
-        assert_eq!(stdout.lines().count(), 1, "{stdout}");
-        serde_json::from_str(&stdout).unwrap()
-    }
-
-    fn root_config(&self) -> Value {
-        json!({"root": self.fx.root().to_str().unwrap(), "task_workspaces": []})
-    }
-}
-
-fn error_code(reply: &Value) -> &str {
-    assert_eq!(reply["ok"], false, "{reply}");
-    reply["error"]["code"].as_str().unwrap()
-}
+use serde_json::json;
 
 #[test]
 fn unknown_tools_are_refused() {

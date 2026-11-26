@@ -4,34 +4,16 @@
 //! shipped tag set.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/tag_capture.rs"]
+mod subject;
 mod support;
 
+use crate::support::command::Exit::Code;
+use crate::support::command::{Json, Text};
 use serde_json::{Value, json};
-use support::{Fixture, make_private, snapshot, text};
-
-fn config(fx: &Fixture, toml: &str) -> std::path::PathBuf {
-    let root = fx.root();
-    if !root.exists() {
-        fx.create_private_dir_all(&root);
-    }
-    let file = root.join("config.toml");
-    std::fs::write(&file, toml).unwrap();
-    make_private(&file);
-    file
-}
-
-fn show(fx: &Fixture, tag: &str) -> Value {
-    serde_json::from_slice(&fx.ok(&["tag", "show", tag, "--json"]).stdout).unwrap()
-}
-
-const SHIPPED_TRIGGERS: [&str; 6] = [
-    "always",
-    "never",
-    "should not",
-    "from now on",
-    "I prefer",
-    "by default",
-];
+use subject::*;
+use support::command::Exit::{Capture, Success};
+use support::{Fixture, snapshot, text};
 
 #[test]
 fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
@@ -65,7 +47,7 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
     assert_eq!(standard["capture"]["max_open"], 10);
     assert_eq!(standard["action"]["require_quote"], true);
     assert_eq!(
-        fx.run(&["tag", "show", "idea", "--json"]).status.code(),
+        fx.check(&["show", "idea", "--json"], Capture).status.code(),
         Some(1)
     );
     // A tag that catches nothing has no cap.
@@ -79,7 +61,7 @@ fn with_no_capture_config_tag_show_prints_the_shipped_defaults() {
     config(&fx, "");
 
     // Plain: one `<field>\t<value>\t<origin>` line each.
-    let plain = text(&fx.ok(&["tag", "show", "preferences"]).stdout);
+    let plain = fx.check(&["show", "preferences"], Text);
     assert!(
         plain.lines().any(|l| l == "route\tpropose\tshipped"),
         "{plain}"
@@ -108,7 +90,7 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
     expected["capture"]["criteria"] = after["capture"]["criteria"].clone();
     expected["capture"]["origin"]["criteria"] = after["capture"]["origin"]["criteria"].clone();
     assert_eq!(after, expected);
-    let plain = text(&fx.ok(&["tag", "show", "preferences"]).stdout);
+    let plain = fx.check(&["show", "preferences"], Text);
     assert!(
         plain.lines().any(|l| l
             == format!(
@@ -141,16 +123,14 @@ fn overriding_one_field_changes_only_that_field_with_its_file_and_line() {
 
 #[test]
 fn tag_show_is_read_only_and_unknown_tags_are_refused() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     // The first open of scribe.db (an unknown tag's refusal opens it) leaves
     // an empty `scribe.db-wal`.
-    fx.run(&["tag", "show", "nonesuch", "--json"]);
+    fx.check(&["show", "nonesuch", "--json"], Capture);
     let before = snapshot(&fx.root());
-    fx.ok(&["tag", "show", "preferences"]);
-    fx.ok(&["tag", "show", "preferences", "--json"]);
-    let out = fx.run(&["tag", "show", "nonesuch", "--json"]);
-    assert_eq!(out.status.code(), Some(1));
+    fx.check(&["show", "preferences"], Success);
+    fx.check(&["show", "preferences", "--json"], Success);
+    let out = fx.check(&["show", "nonesuch", "--json"], Code(1));
     let err: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(err["code"], "tag_not_found", "{err}");
     assert_eq!(snapshot(&fx.root()), before, "no write, no lock, no audit");
@@ -191,7 +171,7 @@ fn bad_capture_fields_are_refused_as_config_invalid() {
     ] {
         let fx = Fixture::new();
         config(&fx, toml);
-        let out = fx.run(&["tag", "show", "preferences", "--json"]);
+        let out = fx.check(&["show", "preferences", "--json"], Capture);
         assert_eq!(out.status.code(), Some(1), "{toml}");
         let err: Value = serde_json::from_slice(&out.stderr).unwrap();
         assert_eq!(err["code"], "config_invalid", "{toml}: {err}");
@@ -214,7 +194,7 @@ fn a_new_tag_takes_capture_rules_from_config_and_no_issue_tag_ships() {
     assert_eq!(rituals["capture"]["criteria"], Value::Null);
     assert_eq!(rituals["capture"]["origin"]["criteria"]["source"], "none");
 
-    let listed: Value = serde_json::from_slice(&fx.ok(&["tag", "list", "--json"]).stdout).unwrap();
+    let listed: Value = fx.check(&["list", "--json"], Json);
     let routes: Vec<(String, Value)> = listed["tags"]
         .as_array()
         .unwrap()
@@ -227,18 +207,8 @@ fn a_new_tag_takes_capture_rules_from_config_and_no_issue_tag_ships() {
         !routes.iter().any(|(name, _)| name == "issue"),
         "no issue tag ships: {routes:?}"
     );
-    let out = Fixture::new().run(&["tag", "show", "issue", "--json"]);
+    let out = Fixture::new().check(&["show", "issue", "--json"], Capture);
     assert_eq!(out.status.code(), Some(1));
-}
-
-fn listed(fx: &Fixture) -> Value {
-    serde_json::from_slice(&fx.ok(&["tag", "list", "--json"]).stdout).unwrap()
-}
-
-fn reads(fx: &Fixture) {
-    fx.ok(&["tag", "list"]);
-    fx.ok(&["entry", "list", "--json"]);
-    fx.ok(&["search", "preference", "--json"]);
 }
 
 #[test]
@@ -280,7 +250,7 @@ fn declaring_a_new_tag_keeps_all_shipped_tags_and_their_defaults() {
     );
     assert_eq!(remind["configured"], true);
     assert_eq!(remind["source"], "config");
-    assert!(text(&fx.ok(&["tag", "list"]).stderr).is_empty());
+    assert!(text(&fx.check(&["list"], Success).stderr).is_empty());
 
     let shown = show(&fx, "preferences");
     assert_eq!(shown["stale_after_days"], 180);
@@ -339,7 +309,7 @@ fn a_config_claim_of_a_shipped_word_stays_readable_and_warns() {
     let fx = Fixture::new();
     config(&fx, "[tags.rituals]\naliases = [\"pref\"]\n");
     reads(&fx);
-    let list = fx.ok(&["tag", "list", "--json"]);
+    let list = fx.check(&["list", "--json"], Success);
     let stderr = text(&list.stderr);
     assert!(
         stderr.contains("shipped tag preferences alias pref is claimed by config tag rituals"),
@@ -358,7 +328,7 @@ fn a_config_claim_of_a_shipped_word_stays_readable_and_warns() {
 
     config(&fx, "[tags.rituals]\naliases = [\"standard\"]\n");
     reads(&fx);
-    let list = fx.ok(&["tag", "list"]);
+    let list = fx.check(&["list"], Success);
     let stderr = text(&list.stderr);
     assert!(
         stderr.contains("shipped tag standard is claimed by config tag rituals"),
@@ -372,8 +342,7 @@ fn a_config_claim_of_a_shipped_word_stays_readable_and_warns() {
         &fx,
         "[tags.rituals]\naliases = [\"pref\"]\n[tags.habits]\naliases = [\"pref\"]\n",
     );
-    let refused = fx.run(&["tag", "list", "--json"]);
-    assert_eq!(refused.status.code(), Some(1));
+    let refused = fx.check(&["list", "--json"], Code(1));
     let err: Value = serde_json::from_slice(&refused.stderr).unwrap();
     assert_eq!(err["code"], "config_invalid", "{err}");
     assert!(err["error"].as_str().unwrap().contains("'pref'"), "{err}");
@@ -387,7 +356,7 @@ fn the_mac_preferences_and_remind_config_reads_as_the_shipped_preferences_tag() 
         "[tags.preferences]\naliases = [\"preference\", \"pref\"]\n\n[tags.remind]\naction = true\n",
     );
     reads(&fx);
-    assert!(text(&fx.ok(&["tag", "list"]).stderr).is_empty());
+    assert!(text(&fx.check(&["list"], Success).stderr).is_empty());
     let tags = listed(&fx);
     let names: Vec<&str> = tags["tags"]
         .as_array()

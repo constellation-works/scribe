@@ -9,9 +9,9 @@
 // subset of it.
 #![allow(dead_code)]
 
+pub mod command;
 pub mod pass;
 pub mod replay;
-
 use scribe_core::testing::StoreTestReads;
 use scribe_core::testing::ViewTestReads;
 use std::path::{Path, PathBuf};
@@ -58,6 +58,13 @@ impl Fixture {
             .expect("create temp dir");
         std::fs::create_dir(dir.path().join("home")).expect("create fake home");
         Self { dir }
+    }
+
+    /// A fresh fixture populated with the checked-in store.
+    pub fn seeded() -> Self {
+        let fixture = Self::new();
+        fixture.seed();
+        fixture
     }
 
     /// The data directory the binary is pointed at.
@@ -110,23 +117,6 @@ impl Fixture {
         cmd
     }
 
-    /// Run to completion and capture everything.
-    pub fn run(&self, args: &[&str]) -> Output {
-        self.cmd(args).output().expect("run binary")
-    }
-
-    /// Run and require exit 0.
-    pub fn ok(&self, args: &[&str]) -> Output {
-        let out = self.run(args);
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "{args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        out
-    }
-
     /// Write an executable script `bin/<name>` in the fixture, outside the
     /// home and the data root, and return a `PATH` that finds it first.
     #[cfg(unix)]
@@ -138,7 +128,12 @@ impl Fixture {
         std::fs::write(&path, script).expect("write fake program");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
             .expect("make fake program executable");
-        let mut var = bin.into_os_string();
+        self.program_path()
+    }
+
+    #[cfg(unix)]
+    pub fn program_path(&self) -> std::ffi::OsString {
+        let mut var = self.elsewhere("bin").into_os_string();
         var.push(":/usr/bin:/bin");
         var
     }

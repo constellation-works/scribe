@@ -46,11 +46,17 @@ build:
 # Gates
 # ---------------------------------------------------------------------------
 
+# Cargo fmt follows module declarations. Topic files included in an integration
+# target keep its public libtest names and need a separate rustfmt invocation.
+TEST_CASES := $(filter-out crates/scribe/tests/support/%,$(wildcard crates/scribe/tests/*/*.rs crates/scribe/tests/*/*/*.rs))
+
 fmt:
 	$(CARGO) fmt --all
+	rustfmt $(TEST_CASES)
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
+	rustfmt --check $(TEST_CASES)
 
 # Source-only structure checks: the architecture map (STD-02 R43), dependency
 # direction (STD-02 R1-R6), unit-test module reachability (STD-02 R19),
