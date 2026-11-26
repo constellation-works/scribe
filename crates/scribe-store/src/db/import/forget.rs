@@ -32,6 +32,95 @@ const AUDIT_STANDARD_KEYS: &[&str] = &[
     "duration_ms",
 ];
 
+/// Domain separation prefix for salted SHA-256 digests stored in
+/// `pending_archive_forgets` before phase 8.
+const ARCHIVE_FORGET_DOMAIN: &[u8] = b"scribe-archive-forget-v1\0";
+
+/// The words a forget erases: cleartext, plus the salted digests a forget
+/// recorded before phase 8 for archives it had not cleaned yet.
+struct TextMatcher {
+    texts: Vec<String>,
+    digests: Option<DigestMatcher>,
+}
+
+impl TextMatcher {
+    fn texts(texts: Vec<String>) -> Self {
+        Self {
+            texts,
+            digests: None,
+        }
+    }
+
+    fn digests(salt: &str, digests: &[docs::TextDigest], db: &Path) -> Result<Self> {
+        Ok(Self {
+            texts: Vec::new(),
+            digests: Some(DigestMatcher::new(salt, digests, db)?),
+        })
+    }
+
+    fn matches(&self, haystack: &str) -> bool {
+        self.texts.iter().any(|t| haystack.contains(t.as_str()))
+            || self
+                .digests
+                .as_ref()
+                .is_some_and(|d| d.matches_str(haystack))
+    }
+}
+
+/// Matches text against the salted SHA-256 digests (`{len, sha256}`) a
+/// forget recorded, before phase 8, for archives it had not cleaned yet:
+/// the archive import replays them on the imported records.
+struct DigestMatcher {
+    prefix: Sha256,
+    digests_by_len: BTreeMap<usize, Vec<[u8; 32]>>,
+}
+
+impl DigestMatcher {
+    fn new(salt: &str, digests: &[docs::TextDigest], db_path: &Path) -> Result<Self> {
+        let mut digests_by_len: BTreeMap<usize, Vec<[u8; 32]>> = BTreeMap::new();
+        for d in digests {
+            let bytes = decode_hex_32(&d.sha256).ok_or_else(|| {
+                Error::corrupt(db_path, "pending archive forget digest is not 64 hex chars")
+            })?;
+            digests_by_len.entry(d.len).or_default().push(bytes);
+        }
+        for group in digests_by_len.values_mut() {
+            group.sort();
+            group.dedup();
+        }
+        Ok(Self {
+            prefix: salted_prefix(salt),
+            digests_by_len,
+        })
+    }
+
+    fn matches_str(&self, haystack: &str) -> bool {
+        for (&len, targets) in &self.digests_by_len {
+            if len == 0 || haystack.len() < len {
+                continue;
+            }
+            for (start, _) in haystack.char_indices() {
+                let Some(end) = start.checked_add(len) else {
+                    break;
+                };
+                if end > haystack.len() {
+                    break;
+                }
+                if !haystack.is_char_boundary(end) {
+                    continue;
+                }
+                let mut hasher = self.prefix.clone();
+                hasher.update(&haystack.as_bytes()[start..end]);
+                let digest: [u8; 32] = hasher.finalize().into();
+                if targets.binary_search(&digest).is_ok() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 pub(super) fn scrub_pending_entry(
     conn: &Connection,
     db: &Path,
@@ -514,41 +603,6 @@ fn forget_claims(claims: &mut Vec<Value>, id: &str) {
     }
 }
 
-/// The words a forget erases: cleartext, plus the salted digests a forget
-/// recorded before phase 8 for archives it had not cleaned yet.
-struct TextMatcher {
-    texts: Vec<String>,
-    digests: Option<DigestMatcher>,
-}
-
-impl TextMatcher {
-    fn texts(texts: Vec<String>) -> Self {
-        Self {
-            texts,
-            digests: None,
-        }
-    }
-
-    fn digests(salt: &str, digests: &[docs::TextDigest], db: &Path) -> Result<Self> {
-        Ok(Self {
-            texts: Vec::new(),
-            digests: Some(DigestMatcher::new(salt, digests, db)?),
-        })
-    }
-
-    fn matches(&self, haystack: &str) -> bool {
-        self.texts.iter().any(|t| haystack.contains(t.as_str()))
-            || self
-                .digests
-                .as_ref()
-                .is_some_and(|d| d.matches_str(haystack))
-    }
-}
-
-/// Domain separation prefix for salted SHA-256 digests stored in
-/// `pending_archive_forgets` before phase 8.
-const ARCHIVE_FORGET_DOMAIN: &[u8] = b"scribe-archive-forget-v1\0";
-
 fn salted_prefix(salt: &str) -> Sha256 {
     let mut hasher = Sha256::new();
     hasher.update(ARCHIVE_FORGET_DOMAIN);
@@ -573,60 +627,6 @@ fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
         *slot = (hi << 4) | lo;
     }
     Some(out)
-}
-
-/// Matches text against the salted SHA-256 digests (`{len, sha256}`) a
-/// forget recorded, before phase 8, for archives it had not cleaned yet:
-/// the archive import replays them on the imported records.
-struct DigestMatcher {
-    prefix: Sha256,
-    digests_by_len: BTreeMap<usize, Vec<[u8; 32]>>,
-}
-
-impl DigestMatcher {
-    fn new(salt: &str, digests: &[docs::TextDigest], db_path: &Path) -> Result<Self> {
-        let mut digests_by_len: BTreeMap<usize, Vec<[u8; 32]>> = BTreeMap::new();
-        for d in digests {
-            let bytes = decode_hex_32(&d.sha256).ok_or_else(|| {
-                Error::corrupt(db_path, "pending archive forget digest is not 64 hex chars")
-            })?;
-            digests_by_len.entry(d.len).or_default().push(bytes);
-        }
-        for group in digests_by_len.values_mut() {
-            group.sort();
-            group.dedup();
-        }
-        Ok(Self {
-            prefix: salted_prefix(salt),
-            digests_by_len,
-        })
-    }
-
-    fn matches_str(&self, haystack: &str) -> bool {
-        for (&len, targets) in &self.digests_by_len {
-            if len == 0 || haystack.len() < len {
-                continue;
-            }
-            for (start, _) in haystack.char_indices() {
-                let Some(end) = start.checked_add(len) else {
-                    break;
-                };
-                if end > haystack.len() {
-                    break;
-                }
-                if !haystack.is_char_boundary(end) {
-                    continue;
-                }
-                let mut hasher = self.prefix.clone();
-                hasher.update(&haystack.as_bytes()[start..end]);
-                let digest: [u8; 32] = hasher.finalize().into();
-                if targets.binary_search(&digest).is_ok() {
-                    return true;
-                }
-            }
-        }
-        false
-    }
 }
 
 fn push_non_empty(out: &mut Vec<String>, text: &str) {

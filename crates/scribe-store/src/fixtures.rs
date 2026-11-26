@@ -8,12 +8,16 @@ use crate::session::{Segment, SegmentOrigin, SegmentState, SessionRecord, Sessio
 use time::OffsetDateTime;
 use time::macros::datetime;
 
+/// The fixtures' reference instant.
+pub const T0: OffsetDateTime = datetime!(2026-11-01 10:00:00 UTC);
+
 /// An active entry `id` created at `created`, in project `scribe`.
 pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
     let id: crate::entry::EntryId = id.parse().unwrap();
+    let tag = id.tag().clone();
     Entry {
-        tag: id.tag().clone(),
         id,
+        tag,
         status: EntryStatus::Active,
         project: "scribe".parse().unwrap(),
         topics: crate::record::Topics::default(),
@@ -27,7 +31,6 @@ pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
         inactive_since: None,
         said: String::from("#scribe preferences: something"),
         content_from: ContentFrom::Instruction,
-        retirement_reason: None,
         cite: Some(Cite {
             session: "s-1".parse().unwrap(),
             message: None,
@@ -36,9 +39,13 @@ pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
             line: 1,
             cwd: String::from("/work"),
         }),
+        retirement_reason: None,
         superseded_by: None,
         review_after: None,
         quote: None,
+        handoff_mode: None,
+        decision: None,
+        item: None,
         window: None,
         evidence: None,
         as_of: None,
@@ -46,9 +53,6 @@ pub fn entry(id: &str, created: OffsetDateTime) -> Entry {
         instruction: None,
         removal_instruction: None,
         stated_by: None,
-        handoff_mode: None,
-        decision: None,
-        item: None,
         outcome: None,
         content: String::from("something"),
     }
@@ -104,6 +108,3 @@ pub fn segment(n: u32, state: SegmentState, at: OffsetDateTime, text: &str) -> S
         text: text.to_owned(),
     }
 }
-
-/// The fixtures' reference instant.
-pub const T0: OffsetDateTime = datetime!(2026-11-01 10:00:00 UTC);

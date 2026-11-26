@@ -16,6 +16,168 @@
     reason = "test-support helpers stage and inspect store directories directly on disk"
 )]
 
+/// Store internals of `audit` that scribe-core's store tests reach.
+pub mod audit {
+    pub use crate::repository::audit::{AuditEvent, AuditStatus, IssueAudit, decode_formatted};
+}
+
+pub mod redact {
+    //! The redaction fixtures and field lists the redactor's tests share: the
+    //! store's (`tests/redact.rs`) and scribe-core's, which build the redactor
+    //! from a `Config`.
+
+    use crate::fixtures::{T0, entry, session};
+    use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
+    pub use crate::redact::{entry_fields, proposal_fields, session_fields};
+    use crate::session::{SessionRecord, Term};
+
+    /// A configured secret's value.
+    pub const SECRET: &str = "sk-live-0123456789abcdef";
+
+    /// A proposal with every free-text field set, so all are listed.
+    pub fn proposal() -> Proposal {
+        Proposal {
+            id: "p-1".parse().unwrap(),
+            kind: ProposalKind::Supersedes,
+            older: "preferences-1".parse().unwrap(),
+            candidate: Some(crate::EntryCandidate {
+                tag: "preferences".parse().unwrap(),
+                role: crate::Speaker::User,
+                quote: String::new(),
+                context: Some(String::new()),
+                statement: Some(String::new()),
+                subject: Some(String::new()),
+                evidence: Some(String::new()),
+                cite: entry("preferences-1", T0).cite.unwrap(),
+                project: crate::Project::sanitized("scribe"),
+                provider: crate::Label::sanitized("claude-code", "claude-code"),
+                host: crate::Label::sanitized("host", "host"),
+                admitted: Some(crate::Admitted {
+                    trigger: String::from("I prefer"),
+                    matched: String::new(),
+                    criteria: Some(String::new()),
+                }),
+            }),
+            newer: Some("preferences-2".parse().unwrap()),
+            reason: String::new(),
+            quotes: vec![
+                Quote {
+                    entry: "preferences-1".parse().unwrap(),
+                    text: String::new(),
+                },
+                Quote {
+                    entry: "preferences-2".parse().unwrap(),
+                    text: String::new(),
+                },
+            ],
+            state: ProposalState::Open,
+            opened_at: T0,
+            settled_at: None,
+            settled_by: None,
+            author: crate::record::Author::consistency(),
+            updated_by: None,
+            settled_author: None,
+            closed_reason: None,
+            instruction: Some(crate::Instruction {
+                session: "s-1".parse().unwrap(),
+                message: String::from("m-1"),
+                at: T0,
+                quote: Some(String::new()),
+            }),
+        }
+    }
+
+    /// A session record with one term, so the term's fields are listed.
+    pub fn session_with_term() -> SessionRecord {
+        let mut s = session("s-1", T0);
+        s.active_change = Some(crate::session::ActiveChange {
+            at: T0,
+            by: crate::record::Author::user(),
+            route: crate::session::ActiveRoute::Manual,
+            reason: String::new(),
+            cite: None,
+        });
+        s.terms.push(Term {
+            term: String::new(),
+            said: String::new(),
+            message: String::from("m-1"),
+        });
+        s
+    }
+
+    /// An outcome with both free-text fields set, so both are listed. No
+    /// stored entry holds both (each state allows one); the redactor's field
+    /// list does not depend on the state.
+    pub fn outcome() -> crate::Outcome {
+        crate::Outcome {
+            state: crate::OutcomeState::Parked,
+            reason: Some(String::new()),
+            task: Some(String::new()),
+        }
+    }
+
+    /// Set an entry's decision and open item, with every free-text field.
+    pub fn entry_records(entry: &mut crate::Entry) {
+        let agent: crate::AuthorName = "0-chief".parse().unwrap();
+        entry.decision = Some(crate::Decision {
+            decided_by: agent.clone(),
+            rationale: Some(String::new()),
+            reason_quote: Some(String::new()),
+            options: vec![String::new()],
+            recommended: None,
+            supersedes: None,
+            settles: None,
+        });
+        entry.item = Some(crate::OpenItem {
+            asked_by: agent.clone(),
+            options: vec![String::new()],
+            recommended: None,
+            why: Some(String::new()),
+            blocked: String::new(),
+            answer_in: crate::AnswerIn::Any,
+            answer: Some(crate::ItemAnswer {
+                words: String::new(),
+                session: "s-1".parse().unwrap(),
+                at: T0,
+                recorded_by: agent.clone(),
+            }),
+            closed: Some(crate::ItemClosure {
+                at: T0,
+                by: agent,
+                decision: None,
+                note: String::new(),
+            }),
+        });
+    }
+}
+
+/// Store internals of `codec` that scribe-core's store tests reach.
+pub mod codec {
+    pub use crate::db::codec::{encode_entry, encode_session};
+}
+
+/// Store internals of `db` that scribe-core's store tests reach.
+pub mod db {
+    /// Store internals of `db::docs` that scribe-core's store tests reach.
+    pub mod docs {
+        pub use crate::db::docs::{put_audit, put_entry, serialized};
+    }
+    pub use crate::db::{
+        DB_FILE, REMOVE_GROUP_CAPTURE_SCHEMA, db_error, execute, memory_view, meta,
+        open_new_writer, open_writer, pending_read,
+    };
+}
+
+/// Store internals of `memory` that scribe-core's store tests reach.
+pub mod memory {
+    pub use crate::repository::memory::CRASH_AFTER_COMMIT;
+}
+
+/// Store internals of `write` that scribe-core's store tests reach.
+pub mod write {
+    pub use crate::db::write::{AUDIT_SPOOL_DIR, BEFORE_SPOOL_DRAIN};
+}
+
 use crate::group::Group;
 use crate::message::{MessageSearch, NewMessage};
 use crate::{
@@ -25,6 +187,31 @@ use crate::{
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
+
+/// The body of [`session_text`]'s record: every header section filled.
+pub const SESSION_BODY: &str =
+    "## Summary\nsum\n\n## Goals\ngoal\n\n## Outcome\nout\n\n## Next\n- one\n- two\n";
+
+/// The records [`seed`] writes.
+#[derive(Default)]
+pub struct Seed {
+    /// The session records.
+    pub sessions: Vec<crate::SessionRecord>,
+    /// The switch state.
+    pub control: crate::session::ControlState,
+    /// The entries.
+    pub entries: Vec<crate::Entry>,
+    /// The claims.
+    pub claims: Vec<crate::proposal::Proposal>,
+    /// The store tags.
+    pub tags: Vec<crate::StoreTag>,
+    /// The marks.
+    pub marks: Vec<crate::MarkRecord>,
+    /// The pickups.
+    pub pickups: Vec<crate::Pickup>,
+    /// The audit lines, each with its format.
+    pub audit: Vec<(u32, crate::AuditEvent)>,
+}
 
 /// The store reads and writes the tests call by their pre-2c-4c names.
 /// Each is one delegation to a repository.
@@ -354,168 +541,6 @@ impl StoreTestInternals for Store {
     }
 }
 
-/// Store internals of `audit` that scribe-core's store tests reach.
-pub mod audit {
-    pub use crate::repository::audit::{AuditEvent, AuditStatus, IssueAudit, decode_formatted};
-}
-
-pub mod redact {
-    //! The redaction fixtures and field lists the redactor's tests share: the
-    //! store's (`tests/redact.rs`) and scribe-core's, which build the redactor
-    //! from a `Config`.
-
-    use crate::fixtures::{T0, entry, session};
-    use crate::proposal::{Proposal, ProposalKind, ProposalState, Quote};
-    pub use crate::redact::{entry_fields, proposal_fields, session_fields};
-    use crate::session::{SessionRecord, Term};
-
-    /// A configured secret's value.
-    pub const SECRET: &str = "sk-live-0123456789abcdef";
-
-    /// A proposal with every free-text field set, so all are listed.
-    pub fn proposal() -> Proposal {
-        Proposal {
-            id: "p-1".parse().unwrap(),
-            kind: ProposalKind::Supersedes,
-            older: "preferences-1".parse().unwrap(),
-            newer: Some("preferences-2".parse().unwrap()),
-            reason: String::new(),
-            quotes: vec![
-                Quote {
-                    entry: "preferences-1".parse().unwrap(),
-                    text: String::new(),
-                },
-                Quote {
-                    entry: "preferences-2".parse().unwrap(),
-                    text: String::new(),
-                },
-            ],
-            state: ProposalState::Open,
-            opened_at: T0,
-            settled_at: None,
-            settled_by: None,
-            author: crate::record::Author::consistency(),
-            updated_by: None,
-            settled_author: None,
-            closed_reason: None,
-            instruction: Some(crate::Instruction {
-                session: "s-1".parse().unwrap(),
-                message: String::from("m-1"),
-                at: T0,
-                quote: Some(String::new()),
-            }),
-            candidate: Some(crate::EntryCandidate {
-                tag: "preferences".parse().unwrap(),
-                role: crate::Speaker::User,
-                quote: String::new(),
-                context: Some(String::new()),
-                statement: Some(String::new()),
-                subject: Some(String::new()),
-                evidence: Some(String::new()),
-                cite: entry("preferences-1", T0).cite.unwrap(),
-                project: crate::Project::sanitized("scribe"),
-                provider: crate::Label::sanitized("claude-code", "claude-code"),
-                host: crate::Label::sanitized("host", "host"),
-                admitted: Some(crate::Admitted {
-                    trigger: String::from("I prefer"),
-                    matched: String::new(),
-                    criteria: Some(String::new()),
-                }),
-            }),
-        }
-    }
-
-    /// A session record with one term, so the term's fields are listed.
-    pub fn session_with_term() -> SessionRecord {
-        let mut s = session("s-1", T0);
-        s.active_change = Some(crate::session::ActiveChange {
-            at: T0,
-            by: crate::record::Author::user(),
-            route: crate::session::ActiveRoute::Manual,
-            reason: String::new(),
-            cite: None,
-        });
-        s.terms.push(Term {
-            term: String::new(),
-            said: String::new(),
-            message: String::from("m-1"),
-        });
-        s
-    }
-
-    /// An outcome with both free-text fields set, so both are listed. No
-    /// stored entry holds both (each state allows one); the redactor's field
-    /// list does not depend on the state.
-    pub fn outcome() -> crate::Outcome {
-        crate::Outcome {
-            state: crate::OutcomeState::Parked,
-            reason: Some(String::new()),
-            task: Some(String::new()),
-        }
-    }
-
-    /// Set an entry's decision and open item, with every free-text field.
-    pub fn entry_records(entry: &mut crate::Entry) {
-        let agent: crate::AuthorName = "0-chief".parse().unwrap();
-        entry.decision = Some(crate::Decision {
-            decided_by: agent.clone(),
-            rationale: Some(String::new()),
-            reason_quote: Some(String::new()),
-            options: vec![String::new()],
-            recommended: None,
-            supersedes: None,
-            settles: None,
-        });
-        entry.item = Some(crate::OpenItem {
-            asked_by: agent.clone(),
-            options: vec![String::new()],
-            recommended: None,
-            why: Some(String::new()),
-            blocked: String::new(),
-            answer_in: crate::AnswerIn::Any,
-            answer: Some(crate::ItemAnswer {
-                words: String::new(),
-                session: "s-1".parse().unwrap(),
-                at: T0,
-                recorded_by: agent.clone(),
-            }),
-            closed: Some(crate::ItemClosure {
-                at: T0,
-                by: agent,
-                decision: None,
-                note: String::new(),
-            }),
-        });
-    }
-}
-
-/// Store internals of `codec` that scribe-core's store tests reach.
-pub mod codec {
-    pub use crate::db::codec::{encode_entry, encode_session};
-}
-
-/// Store internals of `db` that scribe-core's store tests reach.
-pub mod db {
-    pub use crate::db::{
-        DB_FILE, REMOVE_GROUP_CAPTURE_SCHEMA, db_error, execute, memory_view, meta,
-        open_new_writer, open_writer, pending_read,
-    };
-    /// Store internals of `db::docs` that scribe-core's store tests reach.
-    pub mod docs {
-        pub use crate::db::docs::{put_audit, put_entry, serialized};
-    }
-}
-
-/// Store internals of `memory` that scribe-core's store tests reach.
-pub mod memory {
-    pub use crate::repository::memory::CRASH_AFTER_COMMIT;
-}
-
-/// Store internals of `write` that scribe-core's store tests reach.
-pub mod write {
-    pub use crate::db::write::{AUDIT_SPOOL_DIR, BEFORE_SPOOL_DRAIN};
-}
-
 /// A temporary directory that is owner-only whatever the umask, as a store
 /// directory must be (STD-05 R9). `tempfile` leaves the mode to the umask.
 pub fn private_tempdir() -> tempfile::TempDir {
@@ -547,27 +572,6 @@ pub fn on_disk(root: &std::path::Path, needle: &str) -> bool {
         }
     }
     false
-}
-
-/// The records [`seed`] writes.
-#[derive(Default)]
-pub struct Seed {
-    /// The session records.
-    pub sessions: Vec<crate::SessionRecord>,
-    /// The switch state.
-    pub control: crate::session::ControlState,
-    /// The entries.
-    pub entries: Vec<crate::Entry>,
-    /// The claims.
-    pub claims: Vec<crate::proposal::Proposal>,
-    /// The store tags.
-    pub tags: Vec<crate::StoreTag>,
-    /// The marks.
-    pub marks: Vec<crate::MarkRecord>,
-    /// The pickups.
-    pub pickups: Vec<crate::Pickup>,
-    /// The audit lines, each with its format.
-    pub audit: Vec<(u32, crate::AuditEvent)>,
 }
 
 /// A store at `root` (created owner-only if missing) holding `seed`'s
@@ -665,7 +669,3 @@ next_open: 0
 {body}"
     )
 }
-
-/// The body of [`session_text`]'s record: every header section filled.
-pub const SESSION_BODY: &str =
-    "## Summary\nsum\n\n## Goals\ngoal\n\n## Outcome\nout\n\n## Next\n- one\n- two\n";

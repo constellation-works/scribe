@@ -34,6 +34,12 @@ pub(crate) mod proposals;
 pub(crate) mod sessions;
 pub(crate) mod tags;
 
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::ReadOnly {}
+    impl Sealed for super::ReadWrite {}
+}
+
 use crate::Store;
 pub use crate::db::{
     CaptureState, ClaudeSeenIds, CloseHeader, GroupRows, MemberWindow, ReadGroupRows, RowError,
@@ -42,6 +48,32 @@ pub use crate::db::{FileOp, HistoryRow, MemoryCommit, PendingRow, Revision};
 use crate::error::{Error, Result};
 pub use memory::{MemoryFiles, MemoryJournal, MemoryRows};
 use std::marker::PhantomData;
+
+macro_rules! repositories {
+    ($($(#[$doc:meta])* $name:ident => $repo:ident;)*) => {
+        impl<'s> Snapshot<'s> {
+            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadOnly> {
+                $repo { store: self.store, access: PhantomData }
+            })*
+        }
+        impl<'s> Tx<'s> {
+            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadWrite> {
+                $repo { store: self.store, access: PhantomData }
+            })*
+        }
+        $(
+            $(#[$doc])*
+            ///
+            /// Its reads take any [`Access`]; its writes need [`ReadWrite`],
+            /// the capability only a [`Tx`] gives.
+            #[derive(Clone, Copy, Debug)]
+            pub struct $repo<'s, A: Access = ReadOnly> {
+                store: &'s Store,
+                access: PhantomData<A>,
+            }
+        )*
+    };
+}
 
 impl Store {
     /// A read-only view of the store: no lock and no write.
@@ -111,12 +143,6 @@ pub struct Tx<'s> {
 /// from a [`Tx`]. Sealed, so no other capability exists.
 pub trait Access: sealed::Sealed + Clone + Copy + std::fmt::Debug {}
 
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::ReadOnly {}
-    impl Sealed for super::ReadWrite {}
-}
-
 /// The capability of a [`Snapshot`]'s repositories: their reads only. A
 /// record write is not callable on them, so a caller handed a read cannot
 /// start a write of its own outside the use case's transaction and audit.
@@ -160,32 +186,6 @@ pub enum ReadWrite {}
 
 impl Access for ReadOnly {}
 impl Access for ReadWrite {}
-
-macro_rules! repositories {
-    ($($(#[$doc:meta])* $name:ident => $repo:ident;)*) => {
-        impl<'s> Snapshot<'s> {
-            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadOnly> {
-                $repo { store: self.store, access: PhantomData }
-            })*
-        }
-        impl<'s> Tx<'s> {
-            $($(#[$doc])* #[must_use] pub fn $name(&self) -> $repo<'s, ReadWrite> {
-                $repo { store: self.store, access: PhantomData }
-            })*
-        }
-        $(
-            $(#[$doc])*
-            ///
-            /// Its reads take any [`Access`]; its writes need [`ReadWrite`],
-            /// the capability only a [`Tx`] gives.
-            #[derive(Clone, Copy, Debug)]
-            pub struct $repo<'s, A: Access = ReadOnly> {
-                store: &'s Store,
-                access: PhantomData<A>,
-            }
-        )*
-    };
-}
 
 repositories! {
     /// Entries: notes, findings, handoffs, decisions and open items.

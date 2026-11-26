@@ -35,6 +35,11 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
+pub use crate::session::SessionForget;
+
+/// The directory of advisory lock files under the root.
+pub const LOCKS_DIR: &str = "locks";
+
 impl<A: Access> Sessions<'_, A> {
     /// Every session scribe knows: records, unreadable rows, numbers,
     /// switches and tombstones.
@@ -736,9 +741,6 @@ impl Store {
     }
 }
 
-/// The directory of advisory lock files under the root.
-pub const LOCKS_DIR: &str = "locks";
-
 /// Every session scribe knows, from wherever they live
 /// ([`crate::repository::Sessions::loaded`]).
 #[derive(Debug, Default)]
@@ -768,8 +770,6 @@ impl LoadedSessions {
         Some(Err(self.skipped.swap_remove(i).1.error))
     }
 }
-
-pub use crate::session::SessionForget;
 
 /// What [`crate::repository::Sessions::erase`] erased of a session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -1,79 +1,3 @@
-use crate::error::Error;
-use std::time::Duration;
-
-#[test]
-fn a_second_lock_times_out_and_names_the_holder() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".lock");
-    // The holder is another thread: a thread that asks again for a lock it
-    // holds is refused at once (`store_lock_reentrant`), not timed out.
-    let (held, release) = std::sync::mpsc::channel::<()>();
-    let (ready, taken) = std::sync::mpsc::channel::<()>();
-    let holder_path = path.clone();
-    let holder = std::thread::spawn(move || {
-        let _held =
-            cw_fs::Lock::acquire(&holder_path, "first writer", Duration::from_secs(1)).unwrap();
-        ready.send(()).unwrap();
-        release.recv().unwrap();
-    });
-    taken.recv().unwrap();
-    let err: Error = cw_fs::Lock::acquire(&path, "second writer", Duration::from_millis(60))
-        .unwrap_err()
-        .into();
-    held.send(()).unwrap();
-    holder.join().unwrap();
-    let Error::Locked { holder, .. } = err else {
-        panic!("expected Locked, got {err:?}");
-    };
-    assert!(
-        holder.contains("first writer") && holder.contains(&std::process::id().to_string()),
-        "holder should name the label and pid, got {holder:?}"
-    );
-}
-
-#[test]
-fn a_released_lock_names_no_holder_to_a_later_timeout() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".lock");
-    drop(cw_fs::Lock::acquire(&path, "first writer", Duration::from_secs(1)).unwrap());
-    // A holder that has not written its record yet.
-    let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-    other.try_lock().unwrap();
-    let err: Error = cw_fs::Lock::acquire(&path, "second writer", Duration::from_millis(60))
-        .unwrap_err()
-        .into();
-    let Error::Locked { holder, .. } = err else {
-        panic!("expected Locked, got {err:?}");
-    };
-    assert_eq!(holder, "an unknown process");
-}
-
-#[test]
-fn the_kit_s_refusals_keep_the_store_s_codes() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("record.json");
-    std::fs::write(&path, vec![b'x'; 8]).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let too_large: Error = cw_fs::read(&path, cw_fs::Cap::bytes(4)).unwrap_err().into();
-    assert_eq!(too_large.code(), "store_too_large", "{too_large:?}");
-    let not_regular: Error = cw_fs::inspect_file(dir.path()).unwrap_err().into();
-    assert_eq!(not_regular.code(), "store_not_regular", "{not_regular:?}");
-    let lock = dir.path().join(".lock");
-    let _held = cw_fs::Lock::acquire(&lock, "first", Duration::from_secs(1)).unwrap();
-    let again: Error = cw_fs::Lock::acquire(&lock, "again", Duration::from_secs(1))
-        .unwrap_err()
-        .into();
-    assert_eq!(again.code(), "store_lock_reentrant", "{again:?}");
-    let missing: Error = cw_fs::read(&dir.path().join("none"), cw_fs::Cap::bytes(4))
-        .unwrap_err()
-        .into();
-    assert_eq!(missing.code(), "io_error", "{missing:?}");
-}
-
 #[cfg(unix)]
 mod private_state {
     //! STD-05 R7–R9 through the kit: the store's codes and sentences, and
@@ -226,4 +150,80 @@ mod private_state {
         assert!(!files::inspect_root(&root).unwrap());
         assert!(files::list_root(&root).unwrap().is_empty());
     }
+}
+
+use crate::error::Error;
+use std::time::Duration;
+
+#[test]
+fn a_second_lock_times_out_and_names_the_holder() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".lock");
+    // The holder is another thread: a thread that asks again for a lock it
+    // holds is refused at once (`store_lock_reentrant`), not timed out.
+    let (held, release) = std::sync::mpsc::channel::<()>();
+    let (ready, taken) = std::sync::mpsc::channel::<()>();
+    let holder_path = path.clone();
+    let holder = std::thread::spawn(move || {
+        let _held =
+            cw_fs::Lock::acquire(&holder_path, "first writer", Duration::from_secs(1)).unwrap();
+        ready.send(()).unwrap();
+        release.recv().unwrap();
+    });
+    taken.recv().unwrap();
+    let err: Error = cw_fs::Lock::acquire(&path, "second writer", Duration::from_millis(60))
+        .unwrap_err()
+        .into();
+    held.send(()).unwrap();
+    holder.join().unwrap();
+    let Error::Locked { holder, .. } = err else {
+        panic!("expected Locked, got {err:?}");
+    };
+    assert!(
+        holder.contains("first writer") && holder.contains(&std::process::id().to_string()),
+        "holder should name the label and pid, got {holder:?}"
+    );
+}
+
+#[test]
+fn a_released_lock_names_no_holder_to_a_later_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".lock");
+    drop(cw_fs::Lock::acquire(&path, "first writer", Duration::from_secs(1)).unwrap());
+    // A holder that has not written its record yet.
+    let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    other.try_lock().unwrap();
+    let err: Error = cw_fs::Lock::acquire(&path, "second writer", Duration::from_millis(60))
+        .unwrap_err()
+        .into();
+    let Error::Locked { holder, .. } = err else {
+        panic!("expected Locked, got {err:?}");
+    };
+    assert_eq!(holder, "an unknown process");
+}
+
+#[test]
+fn the_kit_s_refusals_keep_the_store_s_codes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("record.json");
+    std::fs::write(&path, vec![b'x'; 8]).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let too_large: Error = cw_fs::read(&path, cw_fs::Cap::bytes(4)).unwrap_err().into();
+    assert_eq!(too_large.code(), "store_too_large", "{too_large:?}");
+    let not_regular: Error = cw_fs::inspect_file(dir.path()).unwrap_err().into();
+    assert_eq!(not_regular.code(), "store_not_regular", "{not_regular:?}");
+    let lock = dir.path().join(".lock");
+    let _held = cw_fs::Lock::acquire(&lock, "first", Duration::from_secs(1)).unwrap();
+    let again: Error = cw_fs::Lock::acquire(&lock, "again", Duration::from_secs(1))
+        .unwrap_err()
+        .into();
+    assert_eq!(again.code(), "store_lock_reentrant", "{again:?}");
+    let missing: Error = cw_fs::read(&dir.path().join("none"), cw_fs::Cap::bytes(4))
+        .unwrap_err()
+        .into();
+    assert_eq!(missing.code(), "io_error", "{missing:?}");
 }

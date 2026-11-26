@@ -7,6 +7,10 @@ use crate::{Error, Related};
 use cw_sqlite::rusqlite::{self, OptionalExtension, params};
 use time::OffsetDateTime;
 
+const MEMBERS: &str = "SELECT gm.session FROM group_members gm WHERE gm.group_id = ?1
+                   AND NOT EXISTS (SELECT 1 FROM sessions s
+                       WHERE s.provider_session = gm.session AND s.forgotten IS NOT NULL)";
+
 /// A group's row as a close reads it ([`ReadGroupRows::header`]).
 #[derive(Debug)]
 pub struct CloseHeader {
@@ -123,7 +127,3 @@ impl GroupRows<'_> {
             .map_err(|e| self.fail(e))
     }
 }
-
-const MEMBERS: &str = "SELECT gm.session FROM group_members gm WHERE gm.group_id = ?1
-                   AND NOT EXISTS (SELECT 1 FROM sessions s
-                       WHERE s.provider_session = gm.session AND s.forgotten IS NOT NULL)";

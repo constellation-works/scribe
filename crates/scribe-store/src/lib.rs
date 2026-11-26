@@ -63,10 +63,15 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 mod contracts;
-// The entry and handoff shapes, as modules: callers name them by path
-// (`scribe_store::entry::Entry`, `scribe_store::handoff::MAX_CHARS`).
-pub use contracts::{entry, handoff, provider, record};
-pub use provider::Provider;
+mod db;
+pub mod digest;
+pub mod error;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures;
+mod redact;
+pub mod repository;
+#[cfg(feature = "test-support")]
+mod seed;
 /// The session shapes (the store's contracts) and the log check the store
 /// applies to every record it reads or writes (`db/log.rs`), at one path:
 /// `scribe_store::session::SessionRecord`, `scribe_store::session::check_log`.
@@ -74,20 +79,12 @@ pub mod session {
     pub use crate::contracts::session::*;
     pub use crate::db::log::{LogError, check_log};
 }
-// The group shapes at the path the store's code names them by.
-use contracts::group;
-// The message shapes at the path the store's code names them by.
-use contracts::message;
-mod db;
-pub mod digest;
-pub mod error;
-mod redact;
-pub use db::documents::{ExportCounts, ExportFormat};
-pub use db::locks::SessionLock;
-pub use db::write::{ImportFacts, Imported};
-pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
-pub mod repository;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
 pub use contracts::action::Pickup;
+pub use contracts::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
+pub use contracts::group::number as group_number;
 pub use contracts::group::{ClaudeSeen, Group, LastGroup, NewGroup, Seat, SeatHold};
 pub use contracts::mark::{AGENT_HANDOFF, MAX_ATTEMPTS, MODEL_FAILED, MarkRecord, MarkState};
 pub use contracts::memory::{
@@ -100,16 +97,18 @@ pub use contracts::proposal::{
     INSTRUCTED_SAID_PREFIX, Proposal, ProposalError, ProposalId, ProposalKind, ProposalState,
     Quote, SUBJECT_CHARS,
 };
-// The proposal shapes at the path the store's code names them by.
-pub use contracts::audit::{AUDIT_FILE, AuditEvent, AuditStatus, IssueAudit};
-pub use contracts::group::number as group_number;
-use contracts::proposal;
 use contracts::tag;
 pub use contracts::tag::{
     ActionTag, CAPTURE_TEXT_CHARS, CaptureFrom, CaptureRoute, CaptureRules, FINDING_TAG, Rule,
     RuleOrigin, StoreTag, TagDef, TagError, TagTable,
 };
+pub use db::documents::{ExportCounts, ExportFormat};
+pub use db::locks::SessionLock;
+pub use db::write::{ImportFacts, Imported};
+pub use db::{ClaudeCapturePosition, ClaudeGroupCapture, DB_FILE};
 pub use error::{Error, Result, WriteRefusal, forgotten_refusal, refusal};
+pub use provider::Provider;
+pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
 pub use repository::entries::EntryList;
 pub use repository::memory::{
     MILESTONES_DIR, MemoryShown, MemoryStep, MemoryView, MemoryWritten, NOW_DIR, PROFILE_FILE,
@@ -120,12 +119,19 @@ pub use repository::sessions::{
     LOCKS_DIR, LoadedSessions, SessionErasure, SessionForget, SessionRow,
 };
 pub use repository::{Snapshot, Tx};
-#[cfg(any(test, feature = "test-support"))]
-pub mod fixtures;
-#[cfg(feature = "test-support")]
-mod seed;
 
-pub use redact::{MIN_SECRET_CHARS, REDACTED_FIELDS, Redactor};
+// The entry and handoff shapes, as modules: callers name them by path
+// (`scribe_store::entry::Entry`, `scribe_store::handoff::MAX_CHARS`).
+pub use contracts::{entry, handoff, provider, record};
+
+// The group shapes at the path the store's code names them by.
+use contracts::group;
+
+// The message shapes at the path the store's code names them by.
+use contracts::message;
+
+// The proposal shapes at the path the store's code names them by.
+use contracts::proposal;
 
 // The store's own tests reach the audit record shape at its old path.
 #[cfg(test)]
@@ -186,6 +192,12 @@ const RECORD_EXT: &str = ".md";
 /// How long a writer waits for another writer before refusing (STD-03 R7):
 /// `cw-sqlite`'s lock wait on `scribe.db`, and the per-session locks' wait.
 pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(10);
+
+/// The shortest prefix accepted for id resolution, in characters.
+pub(crate) const MIN_PREFIX: usize = crate::session::MIN_ID_PREFIX;
+
+/// The most candidates an `id_ambiguous` refusal names.
+pub(crate) const MAX_CANDIDATES: usize = 10;
 
 /// A record file a listing left out because it did not parse.
 #[derive(Debug)]
@@ -253,12 +265,6 @@ fn visible(names: Vec<String>) -> impl Iterator<Item = String> {
     names.into_iter().filter(|n| !n.starts_with('.'))
 }
 
-/// The shortest prefix accepted for id resolution, in characters.
-pub(crate) const MIN_PREFIX: usize = crate::session::MIN_ID_PREFIX;
-
-/// The most candidates an `id_ambiguous` refusal names.
-pub(crate) const MAX_CANDIDATES: usize = 10;
-
 /// The index in `ids` of `input`: the id equal to it, else the one id it is
 /// a prefix of (at least [`MIN_PREFIX`] characters). `None` means nothing
 /// matched; the caller builds its noun's not-found error, which names the id
@@ -325,7 +331,5 @@ fn ambiguous_id<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> E
     refusal(WriteRefusal::IdAmbiguous, message)
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing;
 #[cfg(test)]
 mod tests;

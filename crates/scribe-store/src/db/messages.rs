@@ -16,6 +16,19 @@ use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+/// What a message write does when the `(session, message)` row exists. It
+/// also fixes the row's provenance: [`Replace`](Self::Replace) writes a
+/// pass's turn, [`KeepExisting`](Self::KeepExisting) a group-only one.
+#[derive(Clone, Copy)]
+enum MessageConflict {
+    /// A pass's turn takes the row: content is replaced and group-only
+    /// provenance is cleared, so a turn kept on group consent becomes
+    /// session-consented content once a pass records it.
+    Replace,
+    /// A group-only turn never touches an existing row.
+    KeepExisting,
+}
+
 /// Merge the FTS5 index after a forget removes messages.
 pub(crate) fn optimize_fts(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
@@ -80,19 +93,6 @@ pub(crate) fn insert_group_only_in<'a>(
         redactor,
         MessageConflict::KeepExisting,
     )
-}
-
-/// What a message write does when the `(session, message)` row exists. It
-/// also fixes the row's provenance: [`Replace`](Self::Replace) writes a
-/// pass's turn, [`KeepExisting`](Self::KeepExisting) a group-only one.
-#[derive(Clone, Copy)]
-enum MessageConflict {
-    /// A pass's turn takes the row: content is replaced and group-only
-    /// provenance is cleared, so a turn kept on group consent becomes
-    /// session-consented content once a pass records it.
-    Replace,
-    /// A group-only turn never touches an existing row.
-    KeepExisting,
 }
 
 fn write_messages<'a>(

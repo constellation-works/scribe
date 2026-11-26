@@ -22,8 +22,6 @@ pub(crate) mod locks;
 pub(crate) mod log;
 pub(crate) mod write;
 
-/// A `scribe.db` connection, as the store's writers hold it.
-pub(crate) type Conn = Connection;
 mod groups;
 mod memory;
 mod messages;
@@ -83,18 +81,6 @@ const MIGRATIONS: &[Step] = &[
     Step::sql(groups::V19),
     Step::sql(archive::V20),
 ];
-
-/// Version 1: create the initial tables and record the database's store id.
-fn migrate_v1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute_batch(V1)?;
-    let created = now();
-    let path = tx.path().map_or_else(|| Path::new(DB_FILE), Path::new);
-    tx.execute(
-        "INSERT INTO meta (id, store_id, created) VALUES (1, ?1, ?2)",
-        (store_id(path, &created), &created),
-    )?;
-    Ok(())
-}
 
 /// Version 17 ships typed records and replaces the trial's tag registrations.
 const V17: &str = "
@@ -493,6 +479,50 @@ WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);
 /// Version 10 marks completion of the schema-8 WAL cleanup barrier.
 const V10: &str = "SELECT 1;";
 
+/// Restore the schema-10 shape before exercising migrations from an older version.
+#[cfg(any(test, feature = "test-support"))]
+pub const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
+DROP TABLE group_claude_seen;
+DROP TABLE group_claude_progress;
+DROP TABLE deferred_ancestry;
+DROP INDEX group_open_slug;
+ALTER TABLE groups DROP COLUMN slug;
+DROP TRIGGER handoffs_clear_group_summary;
+DROP TRIGGER messages_clear_group_summary;
+ALTER TABLE messages DROP COLUMN group_only;
+ALTER TABLE group_members DROP COLUMN restarted;
+ALTER TABLE group_members DROP COLUMN turn_cursor;
+ALTER TABLE group_members DROP COLUMN joined;
+ALTER TABLE groups DROP COLUMN summary;
+";
+
+/// A `scribe.db` connection, as the store's writers hold it.
+pub(crate) type Conn = Connection;
+
+/// What `scribe export --as jsonl` read from `scribe.db`, with which record
+/// kinds already live there.
+#[derive(Default)]
+pub(crate) struct DbExport {
+    /// Whether the session tables live in `scribe.db`.
+    pub sessions_moved: bool,
+    /// Whether the document tables live in `scribe.db`.
+    pub docs_moved: bool,
+    /// Rows from whichever kinds live in `scribe.db`, in table then row order.
+    pub rows: Vec<(&'static str, serde_json::Value)>,
+}
+
+/// Version 1: create the initial tables and record the database's store id.
+fn migrate_v1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(V1)?;
+    let created = now();
+    let path = tx.path().map_or_else(|| Path::new(DB_FILE), Path::new);
+    tx.execute(
+        "INSERT INTO meta (id, store_id, created) VALUES (1, ?1, ?2)",
+        (store_id(path, &created), &created),
+    )?;
+    Ok(())
+}
+
 /// The newest schema version this build reads and writes.
 pub(super) fn schema() -> u32 {
     u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX)
@@ -629,18 +659,6 @@ pub(super) fn truncate_wal_of(root: &Path, wait: Duration) -> Result<()> {
     }
 }
 
-/// What `scribe export --as jsonl` read from `scribe.db`, with which record
-/// kinds already live there.
-#[derive(Default)]
-pub(crate) struct DbExport {
-    /// Whether the session tables live in `scribe.db`.
-    pub sessions_moved: bool,
-    /// Whether the document tables live in `scribe.db`.
-    pub docs_moved: bool,
-    /// Rows from whichever kinds live in `scribe.db`, in table then row order.
-    pub rows: Vec<(&'static str, serde_json::Value)>,
-}
-
 /// Read every moved table's rows for `scribe export --as jsonl`, read-only.
 pub(crate) fn read_export(
     root: &Path,
@@ -727,23 +745,6 @@ pub(super) fn is_forgotten(conn: &Connection, id: &crate::SessionId) -> rusqlite
         |row| row.get(0),
     )
 }
-
-/// Restore the schema-10 shape before exercising migrations from an older version.
-#[cfg(any(test, feature = "test-support"))]
-pub const REMOVE_GROUP_CAPTURE_SCHEMA: &str = "
-DROP TABLE group_claude_seen;
-DROP TABLE group_claude_progress;
-DROP TABLE deferred_ancestry;
-DROP INDEX group_open_slug;
-ALTER TABLE groups DROP COLUMN slug;
-DROP TRIGGER handoffs_clear_group_summary;
-DROP TRIGGER messages_clear_group_summary;
-ALTER TABLE messages DROP COLUMN group_only;
-ALTER TABLE group_members DROP COLUMN restarted;
-ALTER TABLE group_members DROP COLUMN turn_cursor;
-ALTER TABLE group_members DROP COLUMN joined;
-ALTER TABLE groups DROP COLUMN summary;
-";
 
 /// The schema version and store id of the database under `root`, for
 /// tests; `None` when there is no database.

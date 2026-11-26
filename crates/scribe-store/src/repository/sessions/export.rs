@@ -7,6 +7,28 @@ use crate::{CONTROL_FILE, RECORD_EXT, SESSIONS_DIR, Store, WriteRefusal};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// Every session table `scribe export --as jsonl` writes (phase 6), with
+/// its row order.
+const SESSION_EXPORT_TABLES: &[(&str, &str)] = &[
+    ("sessions", "id"),
+    ("segments", "session, n"),
+    ("session_links", "session, position"),
+    ("session_terms", "session, position"),
+    ("codex_cursors", "session"),
+    ("rebuild_checkpoints", "session"),
+];
+
+/// Every document table `scribe export --as jsonl` writes (phase 7), with
+/// its row order.
+const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
+    ("entries", "tag, n"),
+    ("claims", "n"),
+    ("agent_tags", "name"),
+    ("marks", "position"),
+    ("pickups", "position"),
+    ("audit", "id"),
+];
+
 impl Store {
     /// `scribe export`: write every record to `target`, a directory that is
     /// missing or empty, created owner-only. Reads the store only: no lock,
@@ -126,28 +148,6 @@ impl Store {
         Ok(out)
     }
 }
-
-/// Every session table `scribe export --as jsonl` writes (phase 6), with
-/// its row order.
-const SESSION_EXPORT_TABLES: &[(&str, &str)] = &[
-    ("sessions", "id"),
-    ("segments", "session, n"),
-    ("session_links", "session, position"),
-    ("session_terms", "session, position"),
-    ("codex_cursors", "session"),
-    ("rebuild_checkpoints", "session"),
-];
-
-/// Every document table `scribe export --as jsonl` writes (phase 7), with
-/// its row order.
-const DOC_EXPORT_TABLES: &[(&str, &str)] = &[
-    ("entries", "tag, n"),
-    ("claims", "n"),
-    ("agent_tags", "name"),
-    ("marks", "position"),
-    ("pickups", "position"),
-    ("audit", "id"),
-];
 
 /// Create `target` owner-only, or accept it empty.
 ///

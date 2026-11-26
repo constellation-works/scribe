@@ -108,86 +108,6 @@ WHERE position IN (
 );
 ";
 
-/// Drop a forgotten session's seat membership, clear derived summaries, and
-/// restart any restored holder's capture window. A seat that still has members
-/// keeps its role and chain.
-pub(super) fn erase_session_rows(
-    conn: &Connection,
-    path: &Path,
-    id: &SessionId,
-    now: OffsetDateTime,
-) -> Result<usize> {
-    let Some(removed) = remove_seat_member(conn, path, "forget a group member in", id, now)? else {
-        return Ok(0);
-    };
-    conn.execute(
-        "UPDATE groups SET summary = NULL WHERE id = ?1",
-        [removed.group],
-    )
-    .map_err(|e| db_error("forget a group member in", path, e))?;
-    Ok(removed.removed)
-}
-
-struct RemovedMember {
-    group: i64,
-    removed: usize,
-}
-
-/// Remove `session` from its seat, prune an empty seat, and restart any
-/// restored holder's capture window when `session` held the seat.
-fn remove_seat_member(
-    conn: &Connection,
-    path: &Path,
-    action: &'static str,
-    session: &SessionId,
-    now: OffsetDateTime,
-) -> Result<Option<RemovedMember>> {
-    let fail = |e| db_error(action, path, e);
-    let member: Option<(i64, String, bool)> = conn
-        .query_row(
-            &format!(
-                "SELECT m.group_id, m.seat, {HOLDS_SEAT}
-                 FROM group_members m WHERE m.session = ?1"
-            ),
-            [session.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        .map_err(fail)?;
-    let Some((group, seat, held)) = member else {
-        return Ok(None);
-    };
-    let removed = conn
-        .execute(
-            "DELETE FROM group_members WHERE session = ?1",
-            [session.as_str()],
-        )
-        .map_err(fail)?;
-    conn.execute(
-        "DELETE FROM group_seats WHERE group_id = ?1 AND name = ?2
-         AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ?1 AND seat = ?2)",
-        params![group, seat],
-    )
-    .map_err(fail)?;
-    if held {
-        // The departing member held the seat, so the member it displaced holds
-        // it again. Turns that member typed in between were never authorized:
-        // restart its consent window now. Its cursor goes too, since a cursor
-        // would make every later turn count as new whatever its timestamp, and
-        // no hook may have moved it past the displacement interval. The mark
-        // keeps an explicit backfill inside the restarted window too.
-        conn.execute(
-            "UPDATE group_members SET joined = ?3, turn_cursor = NULL, restarted = 1
-             WHERE group_id = ?1 AND seat = ?2 AND position = (
-                 SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
-             )",
-            params![group, seat, stamp(now)],
-        )
-        .map_err(fail)?;
-    }
-    Ok(Some(RemovedMember { group, removed }))
-}
-
 /// The handoff lookup follows the session reference and ranks active handoffs across
 /// the whole seat. A single SELECT keeps metadata, chains and handoffs in one snapshot.
 const ROSTER: &str = "
@@ -204,85 +124,18 @@ LEFT JOIN handoffs h ON h.session = m.session
 WHERE ?1 IS NULL OR g.id = ?1
 ORDER BY g.id DESC, s.name, m.position";
 
-fn roster(conn: &Connection, version: u32, path: &Path, number: Option<i64>) -> Result<Vec<Group>> {
-    let fail = |e| db_error("read groups from", path, e);
-    let summary = if version >= 11 { "g.summary" } else { "NULL" };
-    let slug = if version >= 12 { "g.slug" } else { "NULL" };
-    let sql = ROSTER.replace("{summary}", summary).replace("{slug}", slug);
-    let mut query = conn.prepare(&sql).map_err(fail)?;
-    let mut rows = query.query([number]).map_err(fail)?;
-    let mut groups: Vec<Group> = Vec::new();
-    let mut newest = None;
-    while let Some(row) = rows.next().map_err(fail)? {
-        let id = format!("g-{}", row.get::<_, i64>(0).map_err(fail)?);
-        if groups.last().is_none_or(|g| g.id != id) {
-            let related: String = row.get(7).map_err(fail)?;
-            groups.push(Group {
-                id,
-                slug: row.get(15).map_err(fail)?,
-                title: row.get(1).map_err(fail)?,
-                kind: row.get(2).map_err(fail)?,
-                project: row.get(3).map_err(fail)?,
-                opened: row.get(4).map_err(fail)?,
-                closed: row.get(5).map_err(fail)?,
-                summary: row.get(14).map_err(fail)?,
-                opener: row.get(6).map_err(fail)?,
-                related: serde_json::from_str(&related).map_err(|e| Error::corrupt(path, e))?,
-                seats: Vec::new(),
-            });
-        }
-        let Some(name) = row.get::<_, Option<String>>(8).map_err(fail)? else {
-            continue;
-        };
-        if let Some(group) = groups.last_mut() {
-            if group.seats.last().is_none_or(|s| s.name != name) {
-                newest = None;
-                group.seats.push(Seat {
-                    name,
-                    role: row.get(9).map_err(fail)?,
-                    transcripts: Vec::new(),
-                    newest_handoff: None,
-                });
-            }
-            let session: String = row.get(10).map_err(fail)?;
-            if let Some(seat) = group.seats.last_mut() {
-                if seat.transcripts.last().map(SessionId::as_str) != Some(&session) {
-                    seat.transcripts
-                        .push(session.parse().map_err(|e| Error::corrupt(path, e))?);
-                }
-                if let Some(created) = row.get::<_, Option<String>>(12).map_err(fail)? {
-                    let at = OffsetDateTime::parse(&created, &Rfc3339)
-                        .map_err(|e| Error::corrupt(path, e))?;
-                    let key = (at, row.get::<_, i64>(13).map_err(fail)?);
-                    if newest.is_none_or(|prior| key > prior) {
-                        newest = Some(key);
-                        seat.newest_handoff = row.get(11).map_err(fail)?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(groups)
-}
+/// A membership row (alias `m`) holds its seat only while it is the seat's newest
+/// position. A session that a later member replaced keeps its row as history but
+/// holds nothing. Seat lookup and turn capture both use this one rule.
+const HOLDS_SEAT: &str = "m.position = (
+               SELECT MAX(m2.position)
+               FROM group_members m2
+               WHERE m2.group_id = m.group_id AND m2.seat = m.seat
+           )";
 
-/// Seat `session` in group `n` under `seat`, a member seat the caller
-/// chose so that a join never displaces anyone.
-fn seat_member(
-    conn: &Connection,
-    n: i64,
-    session: &SessionId,
-    seat: &str,
-    now: OffsetDateTime,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')",
-        params![n, seat],
-    )?;
-    conn.execute(
-        "INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)",
-        params![n, seat, session.as_str(), stamp(now)],
-    )?;
-    Ok(())
+struct RemovedMember {
+    group: i64,
+    removed: usize,
 }
 
 impl Store {
@@ -468,32 +321,6 @@ impl Store {
     }
 }
 
-fn write_captured_turns(
-    conn: &Connection,
-    path: &Path,
-    session: &SessionId,
-    turns: Vec<&NewMessage>,
-    redactor: &Redactor,
-) -> Result<usize> {
-    if turns.is_empty() {
-        return Ok(0);
-    }
-    let inserted = super::insert_group_only_in(
-        conn,
-        path,
-        std::time::Instant::now(),
-        turns.into_iter(),
-        redactor,
-    )?;
-    conn.execute(
-        "INSERT INTO sessions(provider_session, has_record, has_switch)
-         VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
-        [session.as_str()],
-    )
-    .map_err(|e| db_error("store group turns in", path, e))?;
-    Ok(inserted)
-}
-
 /// A member's capture row in an open group ([`ReadGroupRows::capture_state`]).
 #[derive(Debug, PartialEq, Eq)]
 pub struct CaptureState {
@@ -506,147 +333,6 @@ pub struct CaptureState {
     pub since: OffsetDateTime,
     /// Its capture cursor.
     pub cursor: Option<String>,
-}
-
-fn capture_state(
-    conn: &Connection,
-    version: u32,
-    path: &Path,
-    session: &SessionId,
-) -> Result<Option<CaptureState>> {
-    let fail = |e| db_error("read group capture state from", path, e);
-    let joined = if version >= 11 {
-        ("m.joined", "m.turn_cursor")
-    } else {
-        ("g.opened", "NULL")
-    };
-    // Capture belongs to the seat holder only: while a later member holds the
-    // seat, a replaced member stores no new turns.
-    let row: Option<(i64, String, Option<String>, bool)> = conn.query_row(
-        &format!("SELECT m.position, {}, {}, {HOLDS_SEAT} FROM group_members m
-         JOIN groups g ON g.id = m.group_id
-         WHERE m.session = ?1 AND g.closed IS NULL AND NOT EXISTS (
-             SELECT 1 FROM sessions s WHERE s.provider_session = m.session AND s.forgotten IS NOT NULL
-         )", joined.0, joined.1),
-        [session.as_str()],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    ).optional().map_err(fail)?;
-    row.map(|(position, joined, cursor, holds)| {
-        let since =
-            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(path, e))?;
-        Ok(CaptureState {
-            position,
-            holds,
-            since,
-            cursor,
-        })
-    })
-    .transpose()
-}
-
-/// A membership row (alias `m`) holds its seat only while it is the seat's newest
-/// position. A session that a later member replaced keeps its row as history but
-/// holds nothing. Seat lookup and turn capture both use this one rule.
-const HOLDS_SEAT: &str = "m.position = (
-               SELECT MAX(m2.position)
-               FROM group_members m2
-               WHERE m2.group_id = m.group_id AND m2.seat = m.seat
-           )";
-
-/// The seat the session holds now.
-fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
-    conn.query_row(
-        &format!(
-            "SELECT m.group_id, m.seat, s.role
-         FROM group_members m
-         JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
-         WHERE m.session = ?1 AND {HOLDS_SEAT}"
-        ),
-        [session.as_str()],
-        |r| {
-            Ok(SeatHold {
-                group: format!("g-{}", r.get::<_, i64>(0)?),
-                seat: r.get(1)?,
-                role: r.get(2)?,
-            })
-        },
-    )
-    .optional()
-}
-
-/// Whether the session has ever been a member. `session` is unique across the
-/// store, so a historical row blocks a second insert for that session.
-fn has_membership(conn: &Connection, session: &SessionId) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM group_members WHERE session = ?1)",
-        [session.as_str()],
-        |r| r.get(0),
-    )
-}
-
-fn open_project_group(conn: &Connection, slug: &str) -> rusqlite::Result<Option<i64>> {
-    conn.query_row(
-        "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
-        [slug],
-        |r| r.get(0),
-    )
-    .optional()
-}
-
-fn project_group_membership(
-    conn: &Connection,
-    session: &SessionId,
-) -> rusqlite::Result<Option<(i64, String)>> {
-    conn.query_row(
-        "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.session=?1",
-        [session.as_str()],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )
-    .optional()
-}
-
-fn insert_project_group(
-    conn: &Connection,
-    slug: &str,
-    project: &Project,
-    now: OffsetDateTime,
-    opener: &SessionId,
-) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id",
-        params![slug, project.as_str(), stamp(now), opener.as_str()],
-        |r| r.get(0),
-    )
-}
-
-fn has_open_groups(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM groups WHERE closed IS NULL)",
-        [],
-        |r| r.get(0),
-    )
-}
-
-fn newest_open_seat(
-    conn: &Connection,
-    session: &SessionId,
-) -> rusqlite::Result<Option<(i64, String, String, String)>> {
-    conn.query_row(
-        "SELECT g.id, s.name, s.role, m.author
-         FROM groups g
-         JOIN group_seats s ON s.group_id = g.id
-         JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
-         WHERE g.closed IS NULL
-           AND m.session = ?1
-           AND m.position = (
-               SELECT MAX(m2.position)
-               FROM group_members m2
-               WHERE m2.group_id = s.group_id AND m2.seat = s.name
-           )",
-        [session.as_str()],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    )
-    .optional()
 }
 
 /// Group rows in a write step ([`crate::repository::Groups::rows`]).
@@ -1113,6 +799,320 @@ impl GroupRows<'_> {
     pub fn clear_progress(&self, position: i64) -> Rows<()> {
         claude::clear_progress(self.conn, position).map_err(|e| self.fail(e))
     }
+}
+
+/// Drop a forgotten session's seat membership, clear derived summaries, and
+/// restart any restored holder's capture window. A seat that still has members
+/// keeps its role and chain.
+pub(super) fn erase_session_rows(
+    conn: &Connection,
+    path: &Path,
+    id: &SessionId,
+    now: OffsetDateTime,
+) -> Result<usize> {
+    let Some(removed) = remove_seat_member(conn, path, "forget a group member in", id, now)? else {
+        return Ok(0);
+    };
+    conn.execute(
+        "UPDATE groups SET summary = NULL WHERE id = ?1",
+        [removed.group],
+    )
+    .map_err(|e| db_error("forget a group member in", path, e))?;
+    Ok(removed.removed)
+}
+
+/// Remove `session` from its seat, prune an empty seat, and restart any
+/// restored holder's capture window when `session` held the seat.
+fn remove_seat_member(
+    conn: &Connection,
+    path: &Path,
+    action: &'static str,
+    session: &SessionId,
+    now: OffsetDateTime,
+) -> Result<Option<RemovedMember>> {
+    let fail = |e| db_error(action, path, e);
+    let member: Option<(i64, String, bool)> = conn
+        .query_row(
+            &format!(
+                "SELECT m.group_id, m.seat, {HOLDS_SEAT}
+                 FROM group_members m WHERE m.session = ?1"
+            ),
+            [session.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(fail)?;
+    let Some((group, seat, held)) = member else {
+        return Ok(None);
+    };
+    let removed = conn
+        .execute(
+            "DELETE FROM group_members WHERE session = ?1",
+            [session.as_str()],
+        )
+        .map_err(fail)?;
+    conn.execute(
+        "DELETE FROM group_seats WHERE group_id = ?1 AND name = ?2
+         AND NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = ?1 AND seat = ?2)",
+        params![group, seat],
+    )
+    .map_err(fail)?;
+    if held {
+        // The departing member held the seat, so the member it displaced holds
+        // it again. Turns that member typed in between were never authorized:
+        // restart its consent window now. Its cursor goes too, since a cursor
+        // would make every later turn count as new whatever its timestamp, and
+        // no hook may have moved it past the displacement interval. The mark
+        // keeps an explicit backfill inside the restarted window too.
+        conn.execute(
+            "UPDATE group_members SET joined = ?3, turn_cursor = NULL, restarted = 1
+             WHERE group_id = ?1 AND seat = ?2 AND position = (
+                 SELECT MAX(position) FROM group_members WHERE group_id = ?1 AND seat = ?2
+             )",
+            params![group, seat, stamp(now)],
+        )
+        .map_err(fail)?;
+    }
+    Ok(Some(RemovedMember { group, removed }))
+}
+
+fn roster(conn: &Connection, version: u32, path: &Path, number: Option<i64>) -> Result<Vec<Group>> {
+    let fail = |e| db_error("read groups from", path, e);
+    let summary = if version >= 11 { "g.summary" } else { "NULL" };
+    let slug = if version >= 12 { "g.slug" } else { "NULL" };
+    let sql = ROSTER.replace("{summary}", summary).replace("{slug}", slug);
+    let mut query = conn.prepare(&sql).map_err(fail)?;
+    let mut rows = query.query([number]).map_err(fail)?;
+    let mut groups: Vec<Group> = Vec::new();
+    let mut newest = None;
+    while let Some(row) = rows.next().map_err(fail)? {
+        let id = format!("g-{}", row.get::<_, i64>(0).map_err(fail)?);
+        if groups.last().is_none_or(|g| g.id != id) {
+            let related: String = row.get(7).map_err(fail)?;
+            groups.push(Group {
+                id,
+                slug: row.get(15).map_err(fail)?,
+                title: row.get(1).map_err(fail)?,
+                kind: row.get(2).map_err(fail)?,
+                project: row.get(3).map_err(fail)?,
+                opened: row.get(4).map_err(fail)?,
+                closed: row.get(5).map_err(fail)?,
+                summary: row.get(14).map_err(fail)?,
+                opener: row.get(6).map_err(fail)?,
+                related: serde_json::from_str(&related).map_err(|e| Error::corrupt(path, e))?,
+                seats: Vec::new(),
+            });
+        }
+        let Some(name) = row.get::<_, Option<String>>(8).map_err(fail)? else {
+            continue;
+        };
+        if let Some(group) = groups.last_mut() {
+            if group.seats.last().is_none_or(|s| s.name != name) {
+                newest = None;
+                group.seats.push(Seat {
+                    name,
+                    role: row.get(9).map_err(fail)?,
+                    transcripts: Vec::new(),
+                    newest_handoff: None,
+                });
+            }
+            let session: String = row.get(10).map_err(fail)?;
+            if let Some(seat) = group.seats.last_mut() {
+                if seat.transcripts.last().map(SessionId::as_str) != Some(&session) {
+                    seat.transcripts
+                        .push(session.parse().map_err(|e| Error::corrupt(path, e))?);
+                }
+                if let Some(created) = row.get::<_, Option<String>>(12).map_err(fail)? {
+                    let at = OffsetDateTime::parse(&created, &Rfc3339)
+                        .map_err(|e| Error::corrupt(path, e))?;
+                    let key = (at, row.get::<_, i64>(13).map_err(fail)?);
+                    if newest.is_none_or(|prior| key > prior) {
+                        newest = Some(key);
+                        seat.newest_handoff = row.get(11).map_err(fail)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(groups)
+}
+
+/// Seat `session` in group `n` under `seat`, a member seat the caller
+/// chose so that a join never displaces anyone.
+fn seat_member(
+    conn: &Connection,
+    n: i64,
+    session: &SessionId,
+    seat: &str,
+    now: OffsetDateTime,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO group_seats(group_id,name,role) VALUES (?1,?2,'member')",
+        params![n, seat],
+    )?;
+    conn.execute(
+        "INSERT INTO group_members(group_id,seat,session,author,joined) VALUES (?1,?2,?3,'user',?4)",
+        params![n, seat, session.as_str(), stamp(now)],
+    )?;
+    Ok(())
+}
+
+fn write_captured_turns(
+    conn: &Connection,
+    path: &Path,
+    session: &SessionId,
+    turns: Vec<&NewMessage>,
+    redactor: &Redactor,
+) -> Result<usize> {
+    if turns.is_empty() {
+        return Ok(0);
+    }
+    let inserted = super::insert_group_only_in(
+        conn,
+        path,
+        std::time::Instant::now(),
+        turns.into_iter(),
+        redactor,
+    )?;
+    conn.execute(
+        "INSERT INTO sessions(provider_session, has_record, has_switch)
+         VALUES (?1, 0, 0) ON CONFLICT(provider_session) DO NOTHING",
+        [session.as_str()],
+    )
+    .map_err(|e| db_error("store group turns in", path, e))?;
+    Ok(inserted)
+}
+
+fn capture_state(
+    conn: &Connection,
+    version: u32,
+    path: &Path,
+    session: &SessionId,
+) -> Result<Option<CaptureState>> {
+    let fail = |e| db_error("read group capture state from", path, e);
+    let joined = if version >= 11 {
+        ("m.joined", "m.turn_cursor")
+    } else {
+        ("g.opened", "NULL")
+    };
+    // Capture belongs to the seat holder only: while a later member holds the
+    // seat, a replaced member stores no new turns.
+    let row: Option<(i64, String, Option<String>, bool)> = conn.query_row(
+        &format!("SELECT m.position, {}, {}, {HOLDS_SEAT} FROM group_members m
+         JOIN groups g ON g.id = m.group_id
+         WHERE m.session = ?1 AND g.closed IS NULL AND NOT EXISTS (
+             SELECT 1 FROM sessions s WHERE s.provider_session = m.session AND s.forgotten IS NOT NULL
+         )", joined.0, joined.1),
+        [session.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(fail)?;
+    row.map(|(position, joined, cursor, holds)| {
+        let since =
+            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(path, e))?;
+        Ok(CaptureState {
+            position,
+            holds,
+            since,
+            cursor,
+        })
+    })
+    .transpose()
+}
+
+/// The seat the session holds now.
+fn held_seat(conn: &Connection, session: &SessionId) -> rusqlite::Result<Option<SeatHold>> {
+    conn.query_row(
+        &format!(
+            "SELECT m.group_id, m.seat, s.role
+         FROM group_members m
+         JOIN group_seats s ON s.group_id = m.group_id AND s.name = m.seat
+         WHERE m.session = ?1 AND {HOLDS_SEAT}"
+        ),
+        [session.as_str()],
+        |r| {
+            Ok(SeatHold {
+                group: format!("g-{}", r.get::<_, i64>(0)?),
+                seat: r.get(1)?,
+                role: r.get(2)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// Whether the session has ever been a member. `session` is unique across the
+/// store, so a historical row blocks a second insert for that session.
+fn has_membership(conn: &Connection, session: &SessionId) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM group_members WHERE session = ?1)",
+        [session.as_str()],
+        |r| r.get(0),
+    )
+}
+
+fn open_project_group(conn: &Connection, slug: &str) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM groups WHERE slug=?1 AND closed IS NULL",
+        [slug],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+fn project_group_membership(
+    conn: &Connection,
+    session: &SessionId,
+) -> rusqlite::Result<Option<(i64, String)>> {
+    conn.query_row(
+        "SELECT m.group_id, COALESCE(g.slug, 'g-' || g.id) FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.session=?1",
+        [session.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
+fn insert_project_group(
+    conn: &Connection,
+    slug: &str,
+    project: &Project,
+    now: OffsetDateTime,
+    opener: &SessionId,
+) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "INSERT INTO groups(title,kind,project,opened,opener,related,slug) VALUES (?1,'project',?2,?3,?4,'[]',?1) RETURNING id",
+        params![slug, project.as_str(), stamp(now), opener.as_str()],
+        |r| r.get(0),
+    )
+}
+
+fn has_open_groups(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM groups WHERE closed IS NULL)",
+        [],
+        |r| r.get(0),
+    )
+}
+
+fn newest_open_seat(
+    conn: &Connection,
+    session: &SessionId,
+) -> rusqlite::Result<Option<(i64, String, String, String)>> {
+    conn.query_row(
+        "SELECT g.id, s.name, s.role, m.author
+         FROM groups g
+         JOIN group_seats s ON s.group_id = g.id
+         JOIN group_members m ON m.group_id = s.group_id AND m.seat = s.name
+         WHERE g.closed IS NULL
+           AND m.session = ?1
+           AND m.position = (
+               SELECT MAX(m2.position)
+               FROM group_members m2
+               WHERE m2.group_id = s.group_id AND m2.seat = s.name
+           )",
+        [session.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .optional()
 }
 
 #[cfg(test)]
