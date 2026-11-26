@@ -7,13 +7,28 @@ use crate::voice::{ModelUse, UserName};
 #[test]
 fn config_reads_the_user_name_and_per_use_instructions() {
     let config = Config::parse(
-        "[user]\nname = \" Sam \"\n\n[instructions]\nask = \"Answer for {user}.\"\nsession = \"\"\"\nKeep the record.\nBriefly.\n\"\"\"\n",
+        "[user]\nname = \" Sam \"\n\n[instructions]\nask = \"Answer for {user}.\"\nsession = \"\"\"\nKeep the record.\nBriefly.\n\"\"\"\nsession_header = \"Shorten for {user}.\"\nprofile = \"Emphasize {user}'s systems work.\"\ngroup_summary = \"Summarize outcomes for {user}.\"\n",
     )
     .unwrap();
     assert_eq!(config.user.name(), Some("Sam"));
     assert_eq!(
         config.voice(ModelUse::Session).instructions.as_deref(),
         Some("Keep the record.\nBriefly.")
+    );
+    assert_eq!(
+        config
+            .voice(ModelUse::SessionHeader)
+            .instructions
+            .as_deref(),
+        Some("Shorten for {user}.")
+    );
+    assert_eq!(
+        config.voice(ModelUse::Profile).instructions.as_deref(),
+        Some("Emphasize {user}'s systems work.")
+    );
+    assert_eq!(
+        config.instructions.group_summary(),
+        Some("Summarize outcomes for {user}.")
     );
     let defaults = Config::parse("").unwrap();
     assert_eq!(defaults.user, UserName::default());
@@ -34,6 +49,7 @@ fn config_refuses_a_bad_name_or_instruction() {
             "instructions.ask must not be empty",
         ),
         ("[instructions]\nreferent = \"x\"\n", "unknown field"),
+        ("[instructions]\nmemory_pairs = \"x\"\n", "unknown field"),
         ("[instructions]\nask = \"a\\u0007b\"\n", "control"),
         (long_text.as_str(), "at most 4000"),
     ] {

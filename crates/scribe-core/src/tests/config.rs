@@ -125,6 +125,12 @@ fn an_unknown_key_or_bad_value_is_refused_naming_it() {
     let err = Config::parse("[tags.a]\naliases = [\"b\"]\n[tags.b]\n").unwrap_err();
     assert!(err.message.contains("'b'"), "{err}");
     assert!(!err.to_string().contains('\n'), "one line: {err}");
+    let err = Config::parse("[memory]\ndecay_days = 60\n").unwrap_err();
+    assert!(err.message.contains("memory"), "{err}");
+    assert_eq!(err.line, Some(1));
+    let err = Config::parse("[instructions]\nmemory_pairs = \"x\"\n").unwrap_err();
+    assert!(err.message.contains("memory_pairs"), "{err}");
+    assert_eq!(err.line, Some(2));
 }
 
 #[test]

@@ -254,7 +254,7 @@ fn memory_show_and_brief_write_nothing() {
 }
 
 #[test]
-fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
+fn a_newer_store_and_obsolete_memory_inputs_are_refused() {
     let s = memory_setup();
     s.scribe("/scribe on");
     pass_on(&s);
@@ -273,14 +273,33 @@ fn a_newer_store_is_refused_and_memory_settings_are_deprecated() {
     );
     std::fs::write(&control, text_now).unwrap();
 
-    // A command that loads the config warns and goes on.
-    s.config("[memory]\ndecay_days = 60\n");
-    let out = s.run(&["tag", "list"], b"");
+    // Obsolete `--page` flag is rejected through the normal CLI error path.
+    let page_flag = s.run_any(&["memory", "show", "--page"], b"");
+    assert_eq!(page_flag.status.code(), Some(2));
     assert!(
-        text(&out.stderr).contains("memory.decay_days is deprecated (config_deprecated)"),
+        text(&page_flag.stderr).contains("--page"),
         "{}",
-        text(&out.stderr)
+        text(&page_flag.stderr)
     );
+
+    // Obsolete `[memory]` and `instructions.memory_pairs` keys are refused as `config_invalid`.
+    for (toml, key) in [
+        ("[memory]\ndecay_days = 60\n", "memory"),
+        ("[instructions]\nmemory_pairs = \"x\"\n", "memory_pairs"),
+    ] {
+        s.config(toml);
+        let out = s.run_any(&["tag", "list", "--json"], b"");
+        assert_eq!(out.status.code(), Some(1), "{toml}");
+        let err = text(&out.stderr);
+        assert!(err.contains("config_invalid"), "{toml}: {err}");
+        assert!(err.contains(key), "{toml}: {err}");
+    }
+
+    // Supported `[instructions]` settings continue to load cleanly.
+    s.config(
+        "[instructions]\nsession = \"Keep {user}'s record.\"\nsession_header = \"Shorten for {user}.\"\nprofile = \"Emphasize {user}'s work.\"\ngroup_summary = \"Emphasize outcomes.\"\n",
+    );
+    s.run(&["tag", "list", "--json"], b"");
 }
 
 #[test]

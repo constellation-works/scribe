@@ -4,8 +4,8 @@
 //! date, and the caps are fixed because the page goes into every interactive
 //! session.
 //!
-//! - The memory block is opaque text the caller supplies: today the memory
-//!   page (`scribe memory show --page`). It is its own top block, so the
+//! - The memory block is opaque text the caller supplies: the memory
+//!   block (`scribe memory show`). It is its own top block, so the
 //!   design's Profile, Now and Milestones replace it without touching the
 //!   sections below.
 //! - Open items: the open and answered items across projects, open first

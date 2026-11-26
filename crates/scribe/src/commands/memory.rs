@@ -166,10 +166,6 @@ pub(crate) struct ShowArgs {
     /// Show this stored profile revision instead
     #[arg(long, value_name = "N", conflicts_with = "id")]
     revision: Option<i64>,
-
-    /// Deprecated alias of `memory show` with no id: the memory block
-    #[arg(long, conflicts_with_all = ["id", "revision"], hide = true)]
-    page: bool,
 }
 
 /// Arguments to `memory rules`: none.
@@ -224,15 +220,11 @@ pub(crate) struct ApplyArgs {}
 
 /// Run one `memory` verb.
 pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliError> {
-    let mut page = false;
     let command = match command {
-        MemoryCommand::Show(args) => {
-            page = args.page;
-            Command::Show {
-                revision: args.revision,
-                id: args.id,
-            }
-        }
+        MemoryCommand::Show(args) => Command::Show {
+            revision: args.revision,
+            id: args.id,
+        },
         MemoryCommand::Rules(RulesArgs {}) => {
             return Ok(Output::Show {
                 record: Record::MemoryRules(Box::new(MemoryRulesPayload::new())),
@@ -275,11 +267,11 @@ pub(super) fn run(command: MemoryCommand, ctx: &Context) -> Result<Output, CliEr
             }
         }
     };
-    Ok(output(exec(ctx, command)?, ctx, page))
+    Ok(output(exec(ctx, command)?, ctx))
 }
 
-/// The output of `outcome`. `page` is `memory show --page`.
-fn output(outcome: Outcome, ctx: &Context, page: bool) -> Output {
+/// The output of `outcome`.
+fn output(outcome: Outcome, ctx: &Context) -> Output {
     match outcome {
         Outcome::Show(shown) => match *shown {
             Shown::Revision(revision) => Output::Show {
@@ -292,17 +284,12 @@ fn output(outcome: Outcome, ctx: &Context, page: bool) -> Output {
             Shown::Item(shown) => Output::Show {
                 record: Record::Memory(Box::new(MemoryPayload::from_shown(&shown))),
             },
-            Shown::Block(view) => {
-                let mut block = MemoryBlockPayload::from_view(&view, ctx.root());
-                if page {
-                    block.warnings.push(String::from(
-                        "warning: memory show --page is deprecated (usage_deprecated): run memory show with no id",
-                    ));
-                }
-                Output::Show {
-                    record: Record::MemoryBlock(Box::new(block)),
-                }
-            }
+            Shown::Block(view) => Output::Show {
+                record: Record::MemoryBlock(Box::new(MemoryBlockPayload::from_view(
+                    &view,
+                    ctx.root(),
+                ))),
+            },
         },
         Outcome::Acked(item, changed) => {
             Output::written(Record::Memory(Box::new(MemoryPayload::now(&item))), changed)

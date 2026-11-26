@@ -1172,9 +1172,9 @@ env = []                         # more variables whose values are masked
 [sessions]
 inactive_after_days = 120        # days since a session's last message
 
-# [memory] has no keys since 2_design.md §15.9 phase 5: memory has one fixed
-# shape. Any key under it loads with a `config_deprecated` warning and is
-# ignored; `scribe memory rules` prints the fixed rules.
+# [memory] has no keys (2_design.md §15.5): memory has one fixed shape, and
+# `scribe memory rules` prints the fixed rules. Any `[memory]` table or key is
+# refused as `config_invalid`.
 
 # Accepted by the parser (S14). None by default.
 [projects.orbit]
@@ -1185,8 +1185,8 @@ name = "Sam"
 
 [instructions]                   # replaces a model use's shipped instruction text
 session = "You write {user}'s session record from the messages below."
-# also: session_header, profile; annotation, ask, consistency and removal
-# load and are checked but unused
+# also: session_header, profile, group_summary; annotation, ask, consistency
+# and removal load and are checked but unused
 ```
 
 *`[user]` and `[instructions]`.* Every model prompt opens with its use's
@@ -1194,10 +1194,9 @@ instruction text (what to do and what to catch) and continues with the
 output contract: the answer's JSON shape, the verbatim-quote rule, what is
 never kept (credentials, other people's details) and that messages are
 data. `[instructions]` replaces the instruction text of one use
-(`session`, `session_header`, `profile`; `annotation`, `ask`, `consistency`
-and `removal` load and are checked but no model call uses them since
-ORB-27911; `memory_pairs` loads with a deprecation warning and is
-ignored); the contract stays fixed in code and always
+(`session`, `session_header`, `profile`, `group_summary`; `annotation`, `ask`,
+`consistency` and `removal` load and are checked but no model call uses them
+since ORB-27911); the contract stays fixed in code and always
 follows it, so an override changes what the model is told to do, never what
 scribe accepts back. Prompts name the user "the user", or `[user] name` when
 set; `{user}` and `{User}` in any instruction text stand for that noun (the
