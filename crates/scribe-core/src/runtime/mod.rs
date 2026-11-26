@@ -75,8 +75,8 @@ pub trait Transcripts {
     /// The port's error.
     type Error: PortError;
 
-    /// The Claude Code transcripts directory, when there is one.
-    fn dir(&self) -> Option<PathBuf>;
+    /// The `provider` transcripts directory, when there is one.
+    fn dir(&self, provider: Provider) -> Option<PathBuf>;
 
     /// Every `provider` transcript on this host, by session id.
     ///
