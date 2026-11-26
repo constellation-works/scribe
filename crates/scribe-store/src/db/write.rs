@@ -44,6 +44,9 @@ use std::rc::Rc;
 use std::time::Duration;
 use time::OffsetDateTime;
 
+/// Spooled audit lines, one file each, under the root.
+pub const AUDIT_SPOOL_DIR: &str = "audit-spool";
+
 /// A spooled audit line: its file name, its format and the event.
 pub(crate) type Spooled = (String, u32, AuditEvent);
 
@@ -82,9 +85,6 @@ pub struct Imported {
     /// Archived records imported.
     pub archived: usize,
 }
-
-/// Spooled audit lines, one file each, under the root.
-pub const AUDIT_SPOOL_DIR: &str = "audit-spool";
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {

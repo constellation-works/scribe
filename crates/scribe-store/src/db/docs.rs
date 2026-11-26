@@ -207,6 +207,36 @@ const AUDIT: &[(&str, Col)] = &[
     ("duration_ms", Col::Int),
 ];
 
+/// An entry row that did not decode, by its id.
+#[derive(Debug)]
+pub(crate) struct BadEntry {
+    /// `<root>/scribe.db#entries/<id>`.
+    pub path: PathBuf,
+    /// Its id, when that much reads.
+    pub id: Option<EntryId>,
+    /// Always [`Error::Corrupt`], naming the row.
+    pub error: Error,
+}
+
+/// An erased text or legacy source token's UTF-8 byte length and SHA-256
+/// digest (64 lowercase hex characters), keyed with its obligation's salt.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TextDigest {
+    pub len: usize,
+    pub sha256: String,
+}
+
+/// One committed entry-forget archive erasure waiting for post-commit
+/// completion across legacy archives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingArchiveForget {
+    pub id: i64,
+    pub entry: EntryId,
+    pub salt: String,
+    pub digests: Vec<TextDigest>,
+}
+
 /// Where a row lives, for an error: `<root>/scribe.db#<table>/<key>`.
 fn row_path(db: &Path, table: &str, key: &str) -> PathBuf {
     PathBuf::from(format!("{}#{table}/{key}", db.display()))
@@ -339,17 +369,6 @@ pub(crate) fn read<T>(
         f(conn, version, path).map(Some)
     })?;
     Ok(found)
-}
-
-/// An entry row that did not decode, by its id.
-#[derive(Debug)]
-pub(crate) struct BadEntry {
-    /// `<root>/scribe.db#entries/<id>`.
-    pub path: PathBuf,
-    /// Its id, when that much reads.
-    pub id: Option<EntryId>,
-    /// Always [`Error::Corrupt`], naming the row.
-    pub error: Error,
 }
 
 /// Every entry, by id; a row that does not decode is a [`BadEntry`].
@@ -819,25 +838,6 @@ pub(crate) fn spooled_names(conn: &Connection, db: &Path) -> Result<Vec<String>>
         .map_err(err)?;
     let rows = select.query_map([], |row| row.get(0)).map_err(err)?;
     rows.collect::<rusqlite::Result<Vec<String>>>().map_err(err)
-}
-
-/// An erased text or legacy source token's UTF-8 byte length and SHA-256
-/// digest (64 lowercase hex characters), keyed with its obligation's salt.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TextDigest {
-    pub len: usize,
-    pub sha256: String,
-}
-
-/// One committed entry-forget archive erasure waiting for post-commit
-/// completion across legacy archives.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PendingArchiveForget {
-    pub id: i64,
-    pub entry: EntryId,
-    pub salt: String,
-    pub digests: Vec<TextDigest>,
 }
 
 fn is_hex64(s: &str) -> bool {

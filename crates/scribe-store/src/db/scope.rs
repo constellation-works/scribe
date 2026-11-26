@@ -38,16 +38,6 @@ thread_local! {
     static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
 }
 
-/// The connection of the write in progress under `root` on this thread.
-pub(crate) fn active(root: &Path) -> Option<Rc<SqliteWriter>> {
-    ACTIVE.with(|a| {
-        a.borrow()
-            .as_ref()
-            .filter(|a| a.root == root)
-            .map(|a| Rc::clone(&a.conn))
-    })
-}
-
 /// Holds `conn` as this thread's write connection for `root` until dropped.
 pub(crate) struct Scope {
     previous: Option<Active>,
@@ -185,6 +175,16 @@ impl Drop for Tx<'_> {
             tracing::warn!(%error, "a scribe.db rollback failed");
         }
     }
+}
+
+/// The connection of the write in progress under `root` on this thread.
+pub(crate) fn active(root: &Path) -> Option<Rc<SqliteWriter>> {
+    ACTIVE.with(|a| {
+        a.borrow()
+            .as_ref()
+            .filter(|a| a.root == root)
+            .map(|a| Rc::clone(&a.conn))
+    })
 }
 
 /// Begin the outermost transaction of a store write: `BEGIN IMMEDIATE`,

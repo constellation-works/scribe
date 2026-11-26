@@ -21,6 +21,8 @@ use std::path::Path;
 use std::time::Instant;
 use time::OffsetDateTime;
 
+const SELECT_REVISION: &str = "SELECT n, created, content, file_sha256 FROM profile_revisions";
+
 /// One file operation of a journal: write `path` (relative to `memory/`) to
 /// `content`, or remove it when `content` is `None`. Applying one twice
 /// leaves the same file.
@@ -154,128 +156,6 @@ pub struct MemoryDb {
     pub open_journal: bool,
     /// The database was opened as a read-only copy.
     pub read_only_copy: bool,
-}
-
-fn parse_time(path: &Path, text: &str) -> Result<OffsetDateTime> {
-    OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
-        .map_err(|e| Error::corrupt(path, e))
-}
-
-fn revision_row(path: &Path, row: (i64, String, String, Option<String>)) -> Result<Revision> {
-    Ok(Revision {
-        n: row.0,
-        created: parse_time(path, &row.1)?,
-        content: row.2,
-        file_sha256: row.3,
-    })
-}
-
-const SELECT_REVISION: &str = "SELECT n, created, content, file_sha256 FROM profile_revisions";
-
-fn read_view(conn: &Connection, version: u32, path: &Path) -> Result<MemoryDb> {
-    let fail = |e| db_error("read", path, e);
-    if version == 0 {
-        return Ok(MemoryDb::default());
-    }
-    let one = |sql: &str| -> Result<Option<Revision>> {
-        conn.query_row(sql, [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .optional()
-        .map_err(fail)?
-        .map(|row| revision_row(path, row))
-        .transpose()
-    };
-    let latest = one(&format!("{SELECT_REVISION} ORDER BY n DESC LIMIT 1"))?;
-    let closed = one(&format!(
-        "{SELECT_REVISION} WHERE file_sha256 IS NOT NULL ORDER BY n DESC LIMIT 1"
-    ))?;
-    let open_journal = version >= 2
-        && conn
-            .query_row(
-                "SELECT EXISTS (SELECT 1 FROM memory_journal WHERE done = 0)",
-                [],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(fail)?;
-    Ok(MemoryDb {
-        latest,
-        closed,
-        open_journal,
-        read_only_copy: false,
-    })
-}
-
-/// Read `f` from the database under `root` read-only through `cw-sqlite`.
-/// A missing or empty database reads as `T::default()`.
-pub(super) fn read<T: Default>(
-    root: &Path,
-    f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
-) -> Result<(T, bool)> {
-    let path = root.join(DB_FILE);
-    // Inside a store write on this thread, read what it has written so far.
-    if let Some(writer) = super::scope::active(root) {
-        return Ok((f(&writer, writer.version(), &path)?, false));
-    }
-    let started = Instant::now();
-    let reader = match super::database(root, crate::DEFAULT_LOCK_WAIT).read() {
-        Ok(reader) => reader,
-        Err(cw_sqlite::Error::Missing { .. }) => return Ok((T::default(), false)),
-        Err(e) => return Err(super::from_sqlite_error(e, started)),
-    };
-    Ok((f(&reader, reader.version(), &path)?, reader.immutable()))
-}
-
-/// The profile revisions and journal state, read-only.
-pub fn memory_view(root: &Path) -> Result<MemoryDb> {
-    let (mut view, copy) = read(root, read_view)?;
-    view.read_only_copy = copy;
-    Ok(view)
-}
-
-/// Revision `n`, read-only.
-pub(crate) fn revision_at(root: &Path, n: i64) -> Result<Option<Revision>> {
-    let (found, _) = read(root, |conn, version, path| {
-        if version == 0 {
-            return Ok(None);
-        }
-        conn.query_row(&format!("{SELECT_REVISION} WHERE n = ?1"), [n], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .optional()
-        .map_err(|e| db_error("read", path, e))?
-        .map(|row| revision_row(path, row))
-        .transpose()
-    })?;
-    Ok(found)
-}
-
-/// The pending candidates of `session`, read-only; none without a
-/// database or before schema 1.
-pub fn pending_read(root: &Path, session: &SessionId) -> Result<Vec<Pending>> {
-    let (found, _) = read(root, |conn, version, path| {
-        if version == 0 {
-            return Ok(Vec::new());
-        }
-        pending_rows(conn, session).map_err(|e| db_error("read", path, e))
-    })?;
-    Ok(found)
-}
-
-fn pending_rows(conn: &Connection, session: &SessionId) -> rusqlite::Result<Vec<Pending>> {
-    let mut select = conn.prepare(
-        "SELECT id, message, subject, text FROM now_pending WHERE session = ?1 ORDER BY id",
-    )?;
-    let rows = select.query_map([session.as_str()], |row| {
-        Ok(Pending {
-            id: row.get(0)?,
-            session: session.clone(),
-            message: row.get(1)?,
-            subject: row.get(2)?,
-            text: row.get(3)?,
-        })
-    })?;
-    rows.collect()
 }
 
 /// The writer's view of the memory tables, on an open writer connection.
@@ -549,6 +429,126 @@ impl<'a> Writer<'a> {
         }
         Ok(out)
     }
+}
+
+fn parse_time(path: &Path, text: &str) -> Result<OffsetDateTime> {
+    OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
+        .map_err(|e| Error::corrupt(path, e))
+}
+
+fn revision_row(path: &Path, row: (i64, String, String, Option<String>)) -> Result<Revision> {
+    Ok(Revision {
+        n: row.0,
+        created: parse_time(path, &row.1)?,
+        content: row.2,
+        file_sha256: row.3,
+    })
+}
+
+fn read_view(conn: &Connection, version: u32, path: &Path) -> Result<MemoryDb> {
+    let fail = |e| db_error("read", path, e);
+    if version == 0 {
+        return Ok(MemoryDb::default());
+    }
+    let one = |sql: &str| -> Result<Option<Revision>> {
+        conn.query_row(sql, [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .optional()
+        .map_err(fail)?
+        .map(|row| revision_row(path, row))
+        .transpose()
+    };
+    let latest = one(&format!("{SELECT_REVISION} ORDER BY n DESC LIMIT 1"))?;
+    let closed = one(&format!(
+        "{SELECT_REVISION} WHERE file_sha256 IS NOT NULL ORDER BY n DESC LIMIT 1"
+    ))?;
+    let open_journal = version >= 2
+        && conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM memory_journal WHERE done = 0)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(fail)?;
+    Ok(MemoryDb {
+        latest,
+        closed,
+        open_journal,
+        read_only_copy: false,
+    })
+}
+
+/// Read `f` from the database under `root` read-only through `cw-sqlite`.
+/// A missing or empty database reads as `T::default()`.
+pub(super) fn read<T: Default>(
+    root: &Path,
+    f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
+) -> Result<(T, bool)> {
+    let path = root.join(DB_FILE);
+    // Inside a store write on this thread, read what it has written so far.
+    if let Some(writer) = super::scope::active(root) {
+        return Ok((f(&writer, writer.version(), &path)?, false));
+    }
+    let started = Instant::now();
+    let reader = match super::database(root, crate::DEFAULT_LOCK_WAIT).read() {
+        Ok(reader) => reader,
+        Err(cw_sqlite::Error::Missing { .. }) => return Ok((T::default(), false)),
+        Err(e) => return Err(super::from_sqlite_error(e, started)),
+    };
+    Ok((f(&reader, reader.version(), &path)?, reader.immutable()))
+}
+
+/// The profile revisions and journal state, read-only.
+pub fn memory_view(root: &Path) -> Result<MemoryDb> {
+    let (mut view, copy) = read(root, read_view)?;
+    view.read_only_copy = copy;
+    Ok(view)
+}
+
+/// Revision `n`, read-only.
+pub(crate) fn revision_at(root: &Path, n: i64) -> Result<Option<Revision>> {
+    let (found, _) = read(root, |conn, version, path| {
+        if version == 0 {
+            return Ok(None);
+        }
+        conn.query_row(&format!("{SELECT_REVISION} WHERE n = ?1"), [n], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .optional()
+        .map_err(|e| db_error("read", path, e))?
+        .map(|row| revision_row(path, row))
+        .transpose()
+    })?;
+    Ok(found)
+}
+
+/// The pending candidates of `session`, read-only; none without a
+/// database or before schema 1.
+pub fn pending_read(root: &Path, session: &SessionId) -> Result<Vec<Pending>> {
+    let (found, _) = read(root, |conn, version, path| {
+        if version == 0 {
+            return Ok(Vec::new());
+        }
+        pending_rows(conn, session).map_err(|e| db_error("read", path, e))
+    })?;
+    Ok(found)
+}
+
+fn pending_rows(conn: &Connection, session: &SessionId) -> rusqlite::Result<Vec<Pending>> {
+    let mut select = conn.prepare(
+        "SELECT id, message, subject, text FROM now_pending WHERE session = ?1 ORDER BY id",
+    )?;
+    let rows = select.query_map([session.as_str()], |row| {
+        Ok(Pending {
+            id: row.get(0)?,
+            session: session.clone(),
+            message: row.get(1)?,
+            subject: row.get(2)?,
+            text: row.get(3)?,
+        })
+    })?;
+    rows.collect()
 }
 
 /// Stage `commit` in a transaction the caller opened (`conn`): its rows,

@@ -36,18 +36,7 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-/// How a field is stored.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Col {
-    /// A string, as TEXT.
-    Text,
-    /// A bool, as 0 or 1.
-    Bool,
-    /// A whole number, as INTEGER.
-    Int,
-    /// A list or an object, as its JSON text.
-    Json,
-}
+pub(crate) use crate::error::forgotten_refusal;
 
 /// A record's frontmatter fields, as columns of `sessions`. `id`, `links`,
 /// `terms` and `log` have their own homes; the body sections are
@@ -105,6 +94,167 @@ const SEGMENT: &[(&str, Col)] = &[
 
 /// The body sections, after the [`RECORD`] columns.
 const BODY: [&str; 3] = ["summary", "goals", "next"];
+
+/// How a field is stored.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Col {
+    /// A string, as TEXT.
+    Text,
+    /// A bool, as 0 or 1.
+    Bool,
+    /// A whole number, as INTEGER.
+    Int,
+    /// A list or an object, as its JSON text.
+    Json,
+}
+
+/// A session row that did not decode.
+#[derive(Debug)]
+pub(crate) struct BadRow {
+    /// Its provider session id, when that much reads.
+    pub id: Option<SessionId>,
+    /// `<root>/scribe.db#s-<n>`.
+    pub path: PathBuf,
+    /// Always [`Error::Corrupt`], naming the row.
+    pub error: Error,
+}
+
+/// What the session tables hold, as the store's types.
+#[derive(Debug, Default)]
+pub(crate) struct Sessions {
+    /// Every record, with its row number, in row order; a row that does
+    /// not decode is an error naming it.
+    pub records: Vec<std::result::Result<(NonZeroU64, SessionRecord), BadRow>>,
+    /// Every session's row number, a header-only row's too.
+    pub numbers: BTreeMap<SessionId, NonZeroU64>,
+    /// Every switch and Codex cursor.
+    pub control: ControlState,
+    /// When each forgotten session was forgotten.
+    pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
+}
+
+/// A forgotten row's short id and forget time, for archive cleanup.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tombstone {
+    pub number: NonZeroU64,
+    pub at: OffsetDateTime,
+}
+
+/// What [`forget`] erased.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Erased {
+    /// Its `messages` rows deleted.
+    pub messages: usize,
+    /// Its segment rows deleted.
+    pub segments: usize,
+    /// Whether it was switched on, and is now off.
+    pub was_on: bool,
+}
+
+/// One write transaction on the session tables (`BEGIN IMMEDIATE`), so the
+/// store's write paths need no SQLite types. Dropped without
+/// [`SessionTx::commit`], it rolls back.
+pub(crate) struct SessionTx<'c> {
+    tx: super::scope::Tx<'c>,
+    path: PathBuf,
+    started: std::time::Instant,
+}
+
+impl<'c> SessionTx<'c> {
+    /// Begin on a writer connection for the database under `root`: inside a
+    /// store write, a savepoint of its transaction.
+    pub(crate) fn begin(conn: &'c Connection, root: &Path) -> Result<Self> {
+        let path = db_path(root);
+        let tx = super::scope::Tx::begin(conn, &path, "write sessions to")?;
+        let started = tx.started();
+        Ok(Self { tx, path, started })
+    }
+
+    fn fail(&self, e: rusqlite::Error) -> Error {
+        super::write_error("write sessions to", &self.path, self.started, e)
+    }
+
+    /// Every switch and Codex cursor.
+    pub(crate) fn control(&self) -> Result<ControlState> {
+        control(&self.tx, &self.path)
+    }
+
+    /// Write a record whole; returns its row number.
+    pub(crate) fn put_record(&self, record: &SessionRecord) -> Result<i64> {
+        put_record(&self.tx, &self.path, record)
+    }
+
+    /// Write the switches and cursors that changed.
+    pub(crate) fn put_control(&self, before: &ControlState, after: &ControlState) -> Result<()> {
+        put_control(&self.tx, &self.path, before, after)
+    }
+
+    /// Keep a rebuild checkpoint; `false` when `id` has no row. A forgotten
+    /// session keeps none: its words were erased, so nothing re-persists them.
+    pub(crate) fn put_checkpoint(
+        &self,
+        id: &SessionId,
+        text: &str,
+        now: OffsetDateTime,
+    ) -> Result<bool> {
+        if is_forgotten(&self.tx, id).map_err(|e| self.fail(e))? {
+            return Err(forgotten_refusal(id, "nothing is written to it"));
+        }
+        Ok(put_checkpoint(&self.tx, id, text, now).map_err(|e| self.fail(e))? > 0)
+    }
+
+    /// Drop a rebuild checkpoint.
+    pub(crate) fn drop_checkpoint(&self, id: &SessionId) -> Result<()> {
+        drop_checkpoint(&self.tx, id).map_err(|e| self.fail(e))
+    }
+
+    /// Upsert a window's messages, each redacted first, in this
+    /// transaction. Returns how many rows changed.
+    pub(crate) fn upsert_messages(
+        &self,
+        messages: &[crate::message::NewMessage],
+        redactor: &crate::Redactor,
+    ) -> Result<usize> {
+        super::upsert_in(&self.tx, &self.path, self.started, messages, redactor)
+    }
+
+    /// Stage a memory commit's rows and journal in this transaction.
+    pub(crate) fn stage_memory(
+        &self,
+        commit: &super::MemoryCommit,
+        now: OffsetDateTime,
+    ) -> Result<(Option<super::Journal>, usize)> {
+        super::memory::stage(&self.tx, &self.path, self.started, commit, now)
+    }
+
+    /// Commit.
+    pub(crate) fn commit(self) -> Result<()> {
+        self.tx.commit()
+    }
+}
+
+impl crate::Store {
+    /// Set one session record field, `title` or `project`, to `value`, in
+    /// the write under way; returns how many rows changed (0 when the session
+    /// has no record or was forgotten).
+    pub(crate) fn set_session_field(
+        &self,
+        id: &SessionId,
+        field: crate::session::SessionField,
+        value: &str,
+    ) -> Result<usize> {
+        self.write_step(|| {
+            let conn = super::open_writer(self.root(), self.lock_wait)?;
+            let path = self.root().join(DB_FILE);
+            let sql = match field {
+                crate::session::SessionField::Project => "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
+                crate::session::SessionField::Title => "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
+            };
+            conn.execute(sql, (id.as_str(), value))
+                .map_err(|e| db_error("update session in", &path, e))
+        })
+    }
+}
 
 pub(super) fn quoted(name: &str) -> String {
     format!("\"{name}\"")
@@ -169,31 +319,6 @@ fn row_path(db: &Path, n: i64) -> PathBuf {
     PathBuf::from(format!("{}#s-{n}", db.display()))
 }
 
-/// A session row that did not decode.
-#[derive(Debug)]
-pub(crate) struct BadRow {
-    /// Its provider session id, when that much reads.
-    pub id: Option<SessionId>,
-    /// `<root>/scribe.db#s-<n>`.
-    pub path: PathBuf,
-    /// Always [`Error::Corrupt`], naming the row.
-    pub error: Error,
-}
-
-/// What the session tables hold, as the store's types.
-#[derive(Debug, Default)]
-pub(crate) struct Sessions {
-    /// Every record, with its row number, in row order; a row that does
-    /// not decode is an error naming it.
-    pub records: Vec<std::result::Result<(NonZeroU64, SessionRecord), BadRow>>,
-    /// Every session's row number, a header-only row's too.
-    pub numbers: BTreeMap<SessionId, NonZeroU64>,
-    /// Every switch and Codex cursor.
-    pub control: ControlState,
-    /// When each forgotten session was forgotten.
-    pub forgotten: BTreeMap<SessionId, OffsetDateTime>,
-}
-
 /// Whether the sessions live in the database: schema 3 or newer and a
 /// `record_kinds` row for them.
 pub(crate) fn moved(conn: &Connection, version: u32) -> rusqlite::Result<bool> {
@@ -231,13 +356,6 @@ pub(crate) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
         load(conn, version, path).map(Some)
     })?;
     Ok(found)
-}
-
-/// A forgotten row's short id and forget time, for archive cleanup.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Tombstone {
-    pub number: NonZeroU64,
-    pub at: OffsetDateTime,
 }
 
 /// Forgotten session ids, without loading session payloads.
@@ -434,19 +552,6 @@ pub(crate) fn forgotten(
         out.insert(id, Tombstone { number, at });
     }
     Ok(out)
-}
-
-pub(crate) use crate::error::forgotten_refusal;
-
-/// What [`forget`] erased.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Erased {
-    /// Its `messages` rows deleted.
-    pub messages: usize,
-    /// Its segment rows deleted.
-    pub segments: usize,
-    /// Whether it was switched on, and is now off.
-    pub was_on: bool,
 }
 
 /// A joined session can be known before it writes its first captured turn.
@@ -946,109 +1051,4 @@ fn export_select(table: &str, order: &str, version: u32) -> String {
         );
     }
     format!("SELECT * FROM {table} ORDER BY {order}")
-}
-
-/// One write transaction on the session tables (`BEGIN IMMEDIATE`), so the
-/// store's write paths need no SQLite types. Dropped without
-/// [`SessionTx::commit`], it rolls back.
-pub(crate) struct SessionTx<'c> {
-    tx: super::scope::Tx<'c>,
-    path: PathBuf,
-    started: std::time::Instant,
-}
-
-impl<'c> SessionTx<'c> {
-    /// Begin on a writer connection for the database under `root`: inside a
-    /// store write, a savepoint of its transaction.
-    pub(crate) fn begin(conn: &'c Connection, root: &Path) -> Result<Self> {
-        let path = db_path(root);
-        let tx = super::scope::Tx::begin(conn, &path, "write sessions to")?;
-        let started = tx.started();
-        Ok(Self { tx, path, started })
-    }
-
-    fn fail(&self, e: rusqlite::Error) -> Error {
-        super::write_error("write sessions to", &self.path, self.started, e)
-    }
-
-    /// Every switch and Codex cursor.
-    pub(crate) fn control(&self) -> Result<ControlState> {
-        control(&self.tx, &self.path)
-    }
-
-    /// Write a record whole; returns its row number.
-    pub(crate) fn put_record(&self, record: &SessionRecord) -> Result<i64> {
-        put_record(&self.tx, &self.path, record)
-    }
-
-    /// Write the switches and cursors that changed.
-    pub(crate) fn put_control(&self, before: &ControlState, after: &ControlState) -> Result<()> {
-        put_control(&self.tx, &self.path, before, after)
-    }
-
-    /// Keep a rebuild checkpoint; `false` when `id` has no row. A forgotten
-    /// session keeps none: its words were erased, so nothing re-persists them.
-    pub(crate) fn put_checkpoint(
-        &self,
-        id: &SessionId,
-        text: &str,
-        now: OffsetDateTime,
-    ) -> Result<bool> {
-        if is_forgotten(&self.tx, id).map_err(|e| self.fail(e))? {
-            return Err(forgotten_refusal(id, "nothing is written to it"));
-        }
-        Ok(put_checkpoint(&self.tx, id, text, now).map_err(|e| self.fail(e))? > 0)
-    }
-
-    /// Drop a rebuild checkpoint.
-    pub(crate) fn drop_checkpoint(&self, id: &SessionId) -> Result<()> {
-        drop_checkpoint(&self.tx, id).map_err(|e| self.fail(e))
-    }
-
-    /// Upsert a window's messages, each redacted first, in this
-    /// transaction. Returns how many rows changed.
-    pub(crate) fn upsert_messages(
-        &self,
-        messages: &[crate::message::NewMessage],
-        redactor: &crate::Redactor,
-    ) -> Result<usize> {
-        super::upsert_in(&self.tx, &self.path, self.started, messages, redactor)
-    }
-
-    /// Stage a memory commit's rows and journal in this transaction.
-    pub(crate) fn stage_memory(
-        &self,
-        commit: &super::MemoryCommit,
-        now: OffsetDateTime,
-    ) -> Result<(Option<super::Journal>, usize)> {
-        super::memory::stage(&self.tx, &self.path, self.started, commit, now)
-    }
-
-    /// Commit.
-    pub(crate) fn commit(self) -> Result<()> {
-        self.tx.commit()
-    }
-}
-
-impl crate::Store {
-    /// Set one session record field, `title` or `project`, to `value`, in
-    /// the write under way; returns how many rows changed (0 when the session
-    /// has no record or was forgotten).
-    pub(crate) fn set_session_field(
-        &self,
-        id: &SessionId,
-        field: crate::session::SessionField,
-        value: &str,
-    ) -> Result<usize> {
-        self.write_step(|| {
-            let conn = super::open_writer(self.root(), self.lock_wait)?;
-            let path = self.root().join(DB_FILE);
-            let sql = match field {
-                crate::session::SessionField::Project => "UPDATE sessions SET project=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
-                crate::session::SessionField::Title => "UPDATE sessions SET title=?2 WHERE provider_session=?1 AND has_record=1 AND forgotten IS NULL",
-            };
-            conn.execute(sql, (id.as_str(), value))
-                .map_err(|e| db_error("update session in", &path, e))
-        })
-    }
 }

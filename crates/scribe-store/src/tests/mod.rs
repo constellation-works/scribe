@@ -9,11 +9,15 @@
     reason = "store unit tests stage files, permissions and synchronization channels directly"
 )]
 
+mod audit;
+
+mod digest;
+
+mod files;
+
+mod migrated;
+
+mod redact;
+
 pub(crate) use crate::fixtures::{T0, entry, session};
 pub(crate) use crate::testing::private_tempdir;
-
-mod audit;
-mod digest;
-mod files;
-mod migrated;
-mod redact;

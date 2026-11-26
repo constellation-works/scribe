@@ -72,6 +72,10 @@ pub const REDACTED_FIELDS: &[&str] = &[
 /// shred every record, and no real credential is that short.
 pub const MIN_SECRET_CHARS: usize = 8;
 
+/// The shortest tail after a credential prefix that counts as a credential.
+/// Shorter look-alikes (a word, a truncated example) are left alone.
+const MIN_SHAPE_TAIL: usize = 8;
+
 /// Masks configured secret values in free text.
 #[derive(Clone, Default)]
 pub struct Redactor {
@@ -169,10 +173,6 @@ impl Redactor {
         self.mask_all(proposal_fields(proposal));
     }
 }
-
-/// The shortest tail after a credential prefix that counts as a credential.
-/// Shorter look-alikes (a word, a truncated example) are left alone.
-const MIN_SHAPE_TAIL: usize = 8;
 
 /// Whether `byte` may sit inside a credential token of the given alphabet.
 fn is_shape_char(byte: u8, alphabet: &[u8]) -> bool {

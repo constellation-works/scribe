@@ -28,6 +28,17 @@ use crate::{RECORD_EXT, SessionId, Skipped, Store, WriteRefusal};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
+pub use crate::MEMORY_DIR;
+
+/// The `now` items' directory under [`MEMORY_DIR`].
+pub const NOW_DIR: &str = "now";
+
+/// The milestones' directory under [`MEMORY_DIR`].
+pub const MILESTONES_DIR: &str = "milestones";
+
+/// The profile's file under [`MEMORY_DIR`].
+pub const PROFILE_FILE: &str = "profile.md";
+
 impl<A: Access> Memory<'_, A> {
     /// The memory's profile, `now` items and milestones.
     ///
@@ -90,17 +101,6 @@ impl Memory<'_, ReadWrite> {
         self.store.scrub_copies(journal)
     }
 }
-
-pub use crate::MEMORY_DIR;
-
-/// The `now` items' directory under [`MEMORY_DIR`].
-pub const NOW_DIR: &str = "now";
-
-/// The milestones' directory under [`MEMORY_DIR`].
-pub const MILESTONES_DIR: &str = "milestones";
-
-/// The profile's file under [`MEMORY_DIR`].
-pub const PROFILE_FILE: &str = "profile.md";
 
 /// Memory as a read sees it.
 #[derive(Debug, Default)]
@@ -186,52 +186,6 @@ thread_local! {
     /// Tests: fail the next memory write after its journal commits and
     /// before any file is touched, as a crash there would.
     pub static CRASH_AFTER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-fn sha256(text: &str) -> String {
-    crate::digest::prompt_sha256(text)
-}
-
-fn now_op(path: &Path, item: &NowItem) -> Result<FileOp> {
-    Ok(FileOp {
-        path: format!("{NOW_DIR}/{}{RECORD_EXT}", item.stem),
-        content: Some(codec::encode_now(path, item)?),
-    })
-}
-
-fn milestone_op(path: &Path, item: &Milestone) -> Result<FileOp> {
-    Ok(FileOp {
-        path: format!("{MILESTONES_DIR}/{}{RECORD_EXT}", item.stem),
-        content: Some(codec::encode_milestone(path, item)?),
-    })
-}
-
-fn remove_op(dir: &str, stem: &Stem) -> FileOp {
-    FileOp {
-        path: format!("{dir}/{stem}{RECORD_EXT}"),
-        content: None,
-    }
-}
-
-/// `memory_not_found` for `input` under the data root `root`.
-pub fn not_found(input: &str, root: &Path) -> Error {
-    refusal(
-        WriteRefusal::MemoryNotFound,
-        format!(
-            "no memory file {input} under {}; run 'scribe memory show'",
-            root.join(MEMORY_DIR).display()
-        ),
-    )
-}
-
-/// `input` without a `now/` or `milestones/` prefix or `.md` suffix.
-pub fn bare(input: &str) -> &str {
-    let input = input.trim();
-    let input = input
-        .strip_prefix("now/")
-        .or_else(|| input.strip_prefix("milestones/"))
-        .unwrap_or(input);
-    input.strip_suffix(RECORD_EXT).unwrap_or(input)
 }
 
 impl Store {
@@ -958,4 +912,50 @@ impl MemoryRows<'_> {
     pub fn digest(&self, text: &str) -> String {
         sha256(text)
     }
+}
+
+fn sha256(text: &str) -> String {
+    crate::digest::prompt_sha256(text)
+}
+
+fn now_op(path: &Path, item: &NowItem) -> Result<FileOp> {
+    Ok(FileOp {
+        path: format!("{NOW_DIR}/{}{RECORD_EXT}", item.stem),
+        content: Some(codec::encode_now(path, item)?),
+    })
+}
+
+fn milestone_op(path: &Path, item: &Milestone) -> Result<FileOp> {
+    Ok(FileOp {
+        path: format!("{MILESTONES_DIR}/{}{RECORD_EXT}", item.stem),
+        content: Some(codec::encode_milestone(path, item)?),
+    })
+}
+
+fn remove_op(dir: &str, stem: &Stem) -> FileOp {
+    FileOp {
+        path: format!("{dir}/{stem}{RECORD_EXT}"),
+        content: None,
+    }
+}
+
+/// `memory_not_found` for `input` under the data root `root`.
+pub fn not_found(input: &str, root: &Path) -> Error {
+    refusal(
+        WriteRefusal::MemoryNotFound,
+        format!(
+            "no memory file {input} under {}; run 'scribe memory show'",
+            root.join(MEMORY_DIR).display()
+        ),
+    )
+}
+
+/// `input` without a `now/` or `milestones/` prefix or `.md` suffix.
+pub fn bare(input: &str) -> &str {
+    let input = input.trim();
+    let input = input
+        .strip_prefix("now/")
+        .or_else(|| input.strip_prefix("milestones/"))
+        .unwrap_or(input);
+    input.strip_suffix(RECORD_EXT).unwrap_or(input)
 }
