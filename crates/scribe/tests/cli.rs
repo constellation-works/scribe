@@ -3,11 +3,15 @@
 //! STD-05 R7–R9). Most run against a copy of `tests/fixtures/store`.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/cli.rs"]
+mod subject;
 mod support;
 
-use std::io::{BufRead, BufReader};
-use std::process::Stdio;
-use support::{ChildGuard, Fixture, text};
+use crate::support::command::Exit::Code;
+use crate::support::command::Text;
+use subject::environment;
+use support::command::Exit::{Capture, Success};
+use support::{Fixture, text};
 
 const OPEN_SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
 
@@ -29,7 +33,7 @@ fn an_empty_store_lists_nothing_on_stdout_and_says_why_on_stderr() {
     // entries.
     let fx = Fixture::new();
     for (args, _) in &LISTS[..3] {
-        let out = fx.ok(args);
+        let out = fx.check(args, Success);
         assert!(out.stdout.is_empty(), "{args:?}");
         let stderr = text(&out.stderr);
         assert_eq!(stderr.lines().count(), 1, "{args:?}: {stderr}");
@@ -38,7 +42,7 @@ fn an_empty_store_lists_nothing_on_stdout_and_says_why_on_stderr() {
             "names the store: {stderr}"
         );
     }
-    let tags = text(&fx.ok(&["tag", "list"]).stdout);
+    let tags = fx.check(&["tag", "list"], Text);
     let names: Vec<&str> = tags
         .lines()
         .map(|l| l.split('\t').next().unwrap())
@@ -65,7 +69,7 @@ fn an_empty_json_list_is_the_envelope_with_no_records() {
         let mut args = args.to_vec();
         args.push("--json");
         assert_eq!(
-            json(&fx.ok(&args).stdout),
+            json(&fx.check(&args, Success).stdout),
             serde_json::json!({*key: [], "total": 0, "truncated": false, "warnings": []}),
             "{args:?}"
         );
@@ -74,15 +78,17 @@ fn an_empty_json_list_is_the_envelope_with_no_records() {
 
 #[test]
 fn a_filter_that_matches_nothing_names_what_was_searched() {
-    let fx = Fixture::new();
-    fx.seed();
-    let out = fx.ok(&["entry", "list", "--tag", "nothing", "--status", "active"]);
+    let fx = Fixture::seeded();
+    let out = fx.check(
+        &["entry", "list", "--tag", "nothing", "--status", "active"],
+        Success,
+    );
     assert!(out.stdout.is_empty());
     assert_eq!(
         text(&out.stderr).trim_end(),
         "no entries match --tag nothing --status active"
     );
-    let out = fx.ok(&["session", "list", "--topic", "absent"]);
+    let out = fx.check(&["session", "list", "--topic", "absent"], Success);
     assert_eq!(
         text(&out.stderr).trim_end(),
         "no sessions match --topic absent"
@@ -91,12 +97,11 @@ fn a_filter_that_matches_nothing_names_what_was_searched() {
 
 #[test]
 fn every_filter_selects_what_it_names() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let ids = |args: &[&str]| -> Vec<String> {
         let mut args = args.to_vec();
         args.push("--json");
-        let doc = json(&fx.ok(&args).stdout);
+        let doc = json(&fx.check(&args, Success).stdout);
         let key = if args[0] == "entry" {
             "entries"
         } else {
@@ -138,9 +143,8 @@ fn every_filter_selects_what_it_names() {
 #[test]
 fn a_limited_list_says_it_was_cut_in_the_payload_and_on_stderr() {
     // STD-01 R34 (and R12: the notice reaches stderr in every mode).
-    let fx = Fixture::new();
-    fx.seed();
-    let out = fx.ok(&["entry", "list", "--limit", "2", "--json"]);
+    let fx = Fixture::seeded();
+    let out = fx.check(&["entry", "list", "--limit", "2", "--json"], Success);
     let doc = json(&out.stdout);
     assert_eq!(doc["entries"].as_array().map(Vec::len), Some(2));
     assert_eq!(doc["total"], 4);
@@ -151,11 +155,11 @@ fn a_limited_list_says_it_was_cut_in_the_payload_and_on_stderr() {
         text(&out.stderr)
     );
 
-    let out = fx.ok(&["session", "list", "--limit", "1"]);
+    let out = fx.check(&["session", "list", "--limit", "1"], Success);
     assert_eq!(text(&out.stdout).lines().count(), 1);
     assert!(text(&out.stderr).contains("1 of 2"));
 
-    let out = fx.ok(&["entry", "list", "--limit", "4", "--json"]);
+    let out = fx.check(&["entry", "list", "--limit", "4", "--json"], Success);
     assert_eq!(json(&out.stdout)["truncated"], false);
     assert!(out.stderr.is_empty(), "an uncut list has no notice");
 }
@@ -163,12 +167,16 @@ fn a_limited_list_says_it_was_cut_in_the_payload_and_on_stderr() {
 #[test]
 fn piped_output_is_one_undecorated_line_per_record() {
     // STD-01 R9, R12: no escapes, no header, N records → N lines; stderr silent.
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     for ((args, _), (rows, fields)) in LISTS.iter().zip([(4, 8), (2, 7), (2, 9), (7, 10)]) {
-        let mut cmd = fx.cmd(args);
-        cmd.env("CLICOLOR_FORCE", "1").env("TERM", "xterm-256color");
-        let out = cmd.output().unwrap();
+        let out = environment(
+            &fx,
+            args,
+            &[
+                ("CLICOLOR_FORCE", Some("1")),
+                ("TERM", Some("xterm-256color")),
+            ],
+        );
         let stdout = text(&out.stdout);
         assert_eq!(stdout.lines().count(), rows, "{args:?}: {stdout}");
         assert!(!stdout.contains('\x1b'), "no ANSI escapes off a terminal");
@@ -189,11 +197,15 @@ fn piped_output_is_one_undecorated_line_per_record() {
 
 #[test]
 fn an_explicit_table_off_a_terminal_has_a_header_and_no_color_or_truncation() {
-    let fx = Fixture::new();
-    fx.seed();
-    let mut cmd = fx.cmd(&["entry", "list", "--format", "table"]);
-    cmd.env("CLICOLOR_FORCE", "1").env("COLUMNS", "20");
-    let stdout = text(&cmd.output().unwrap().stdout);
+    let fx = Fixture::seeded();
+    let stdout = text(
+        &environment(
+            &fx,
+            &["entry", "list", "--format", "table"],
+            &[("CLICOLOR_FORCE", Some("1")), ("COLUMNS", Some("20"))],
+        )
+        .stdout,
+    );
     assert_eq!(stdout.lines().count(), 5);
     assert!(stdout.starts_with("ID"));
     assert!(!stdout.contains('\x1b'));
@@ -203,9 +215,8 @@ fn an_explicit_table_off_a_terminal_has_a_header_and_no_color_or_truncation() {
 #[test]
 fn json_list_and_show_are_typed_documents() {
     // STD-01 R7, R10, R11.
-    let fx = Fixture::new();
-    fx.seed();
-    let doc = json(&fx.ok(&["entry", "list", "--json"]).stdout);
+    let fx = Fixture::seeded();
+    let doc = json(&fx.check(&["entry", "list", "--json"], Success).stdout);
     let list = doc["entries"]
         .as_array()
         .expect("a list carries an entries array");
@@ -223,16 +234,25 @@ fn json_list_and_show_are_typed_documents() {
     );
     assert!(last["review_after"].is_null());
 
-    let show = json(&fx.ok(&["entry", "show", "decisions-2", "--json"]).stdout);
+    let show = json(
+        &fx.check(&["entry", "show", "decisions-2", "--json"], Success)
+            .stdout,
+    );
     assert!(show.is_object(), "one record is a JSON object");
     assert_eq!(
         show["content"],
         "squash-merge agent PRs;\nkeep merge commits for releases"
     );
-    let pref = json(&fx.ok(&["entry", "show", "preferences-1", "--json"]).stdout);
+    let pref = json(
+        &fx.check(&["entry", "show", "preferences-1", "--json"], Success)
+            .stdout,
+    );
     assert_eq!(pref["review_after"], "2027-03-30");
 
-    let session = json(&fx.ok(&["session", "show", OPEN_SESSION, "--json"]).stdout);
+    let session = json(
+        &fx.check(&["session", "show", OPEN_SESSION, "--json"], Success)
+            .stdout,
+    );
     assert_eq!(session["on"], true);
     assert_eq!(session["due"], true);
     assert_eq!(
@@ -245,7 +265,7 @@ fn json_list_and_show_are_typed_documents() {
         "by agent PR I mean any PR a crew opens"
     );
 
-    let proposals = json(&fx.ok(&["proposal", "list", "--json"]).stdout);
+    let proposals = json(&fx.check(&["proposal", "list", "--json"], Success).stdout);
     let ids: Vec<&str> = proposals["proposals"]
         .as_array()
         .unwrap()
@@ -255,7 +275,7 @@ fn json_list_and_show_are_typed_documents() {
     assert_eq!(ids, ["p-1", "p-2"], "sorted by id, not file order");
     assert_eq!(proposals["proposals"][1]["settled_by"]["line"], 1);
 
-    let tags = json(&fx.ok(&["tag", "list", "--json"]).stdout);
+    let tags = json(&fx.check(&["tag", "list", "--json"], Success).stdout);
     let tag = |name| {
         tags["tags"]
             .as_array()
@@ -271,15 +291,13 @@ fn json_list_and_show_are_typed_documents() {
 #[test]
 fn the_format_environment_variable_applies_and_a_bad_value_falls_back() {
     // STD-01 R8.
-    let fx = Fixture::new();
-    fx.seed();
-    let mut cmd = fx.cmd(&["entry", "list"]);
-    cmd.env("SCRIBE_FORMAT", "json");
-    assert!(text(&cmd.output().unwrap().stdout).starts_with('{'));
+    let fx = Fixture::seeded();
+    assert!(
+        text(&environment(&fx, &["entry", "list"], &[("SCRIBE_FORMAT", Some("json"))]).stdout)
+            .starts_with('{')
+    );
 
-    let mut cmd = fx.cmd(&["entry", "list"]);
-    cmd.env("SCRIBE_FORMAT", "yaml");
-    let out = cmd.output().unwrap();
+    let out = environment(&fx, &["entry", "list"], &[("SCRIBE_FORMAT", Some("yaml"))]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         text(&out.stdout).lines().count(),
@@ -287,10 +305,16 @@ fn the_format_environment_variable_applies_and_a_bad_value_falls_back() {
         "falls back to the piped form"
     );
 
-    let mut cmd = fx.cmd(&["entry", "list", "--format", "table"]);
-    cmd.env("SCRIBE_FORMAT", "json");
     assert!(
-        text(&cmd.output().unwrap().stdout).starts_with("ID"),
+        text(
+            &environment(
+                &fx,
+                &["entry", "list", "--format", "table"],
+                &[("SCRIBE_FORMAT", Some("json"))]
+            )
+            .stdout
+        )
+        .starts_with("ID"),
         "the flag wins"
     );
 }
@@ -298,8 +322,7 @@ fn the_format_environment_variable_applies_and_a_bad_value_falls_back() {
 #[test]
 fn a_missing_record_fails_with_exit_one_and_says_how_to_find_ids() {
     // STD-01 R19, R20, R21.
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     for (args, start, hint) in [
         (
             &["entry", "show", "decisions-7"][..],
@@ -312,7 +335,7 @@ fn a_missing_record_fails_with_exit_one_and_says_how_to_find_ids() {
             "session list",
         ),
     ] {
-        let out = fx.run(args);
+        let out = fx.check(args, Capture);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert!(out.stdout.is_empty());
         let stderr = text(&out.stderr);
@@ -325,13 +348,12 @@ fn a_missing_record_fails_with_exit_one_and_says_how_to_find_ids() {
 #[test]
 fn in_json_mode_an_error_is_one_json_object_on_stderr() {
     let fx = Fixture::new();
-    let out = fx.run(&["entry", "show", "decisions-7", "--json"]);
-    assert_eq!(out.status.code(), Some(1));
+    let out = fx.check(&["entry", "show", "decisions-7", "--json"], Code(1));
     assert!(out.stdout.is_empty());
     let err = json(&out.stderr);
     assert_eq!(err["code"], "entry_not_found");
     assert!(err["error"].as_str().unwrap().contains("decisions-7"));
-    let out = fx.run(&["session", "show", "s-9-missing", "--json"]);
+    let out = fx.check(&["session", "show", "s-9-missing", "--json"], Capture);
     assert_eq!(json(&out.stderr)["code"], "session_not_found");
 }
 
@@ -358,7 +380,7 @@ fn usage_errors_exit_two() {
         &["entry"],
         &["tag"],
     ] {
-        let out = fx.run(args);
+        let out = fx.check(args, Capture);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -372,8 +394,7 @@ fn usage_errors_exit_two() {
 #[test]
 fn a_usage_error_in_json_mode_is_a_json_object() {
     let fx = Fixture::new();
-    let out = fx.run(&["--json", "entry", "list", "--bogus"]);
-    assert_eq!(out.status.code(), Some(2));
+    let out = fx.check(&["--json", "entry", "list", "--bogus"], Code(2));
     assert_eq!(json(&out.stderr)["code"], "usage_error");
 }
 
@@ -383,551 +404,10 @@ fn a_closed_stdout_ends_the_process_quietly_with_exit_zero() {
     // than a pipe buffer, so the binary is still writing when the reader goes.
     let fx = Fixture::new();
     support::write_entries(&fx.root(), 3000);
-    let mut child = ChildGuard::new(
-        fx.cmd(&["entry", "list"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut first = String::new();
-    BufReader::new(child.child().stdout.take().unwrap())
-        .read_line(&mut first)
-        .unwrap();
+    let (first, out) = fx.check(&["entry", "list"], subject::CloseReader);
     assert!(first.starts_with("preferences-"), "{first}");
-    // The reader was dropped above, closing the pipe.
-    let out = child.finish();
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stderr.is_empty(), "stderr: {}", text(&out.stderr));
 }
 
-#[test]
-fn the_data_directory_defaults_under_home_and_is_never_guessed() {
-    let fx = Fixture::new();
-    support::copy_private(&support::fixture_store(), &fx.home().join(".scribe"));
-    let mut cmd = fx.cmd(&["entry", "list"]);
-    cmd.env_remove("SCRIBE_ROOT");
-    let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(text(&out.stdout).lines().count(), 4, "read ~/.scribe");
-
-    let mut cmd = fx.cmd(&["entry", "list"]);
-    cmd.env_remove("SCRIBE_ROOT").env_remove("HOME");
-    let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(text(&out.stderr).contains("--root"), "says how to fix it");
-}
-
-#[test]
-fn the_root_flag_beats_the_environment_and_nothing_else_is_touched() {
-    // STD-01 R28: a scoped invocation reads only inside its scope.
-    let fx = Fixture::new();
-    let other = fx.elsewhere("other");
-    support::copy_private(&support::fixture_store(), &other);
-    let other_arg = other.to_str().unwrap();
-    let out = fx.ok(&["--root", other_arg, "entry", "list"]);
-    assert_eq!(text(&out.stdout).lines().count(), 4);
-    assert!(!fx.root().exists(), "SCRIBE_ROOT was not used");
-    let home: Vec<_> = std::fs::read_dir(fx.home()).unwrap().collect();
-    assert!(home.is_empty(), "HOME was touched: {home:?}");
-}
-
-#[test]
-fn no_command_writes_anything_not_even_an_audit_line() {
-    // STD-01 R31: every command in this slice reads.
-    let fx = Fixture::new();
-    fx.seed();
-    // The first open creates the persisted, empty `-wal` beside scribe.db.
-    fx.ok(&["tag", "list"]);
-    let before = support::snapshot(&fx.root());
-    for args in all_reads() {
-        fx.ok(&args);
-    }
-    assert_eq!(support::snapshot(&fx.root()), before);
-    assert!(!fx.root().join("audit.jsonl").exists());
-    assert!(!fx.root().join(".lock").exists(), "reads take no lock");
-}
-
-/// Every command, in every mode, against the fixture.
-fn all_reads() -> Vec<Vec<&'static str>> {
-    let commands: [&[&str]; 6] = [
-        &["entry", "list"],
-        &["entry", "show", "decisions-2"],
-        &["session", "list"],
-        &["session", "show", OPEN_SESSION],
-        &["proposal", "list"],
-        &["tag", "list"],
-    ];
-    let modes: [&[&str]; 3] = [&[], &["--format", "table"], &["--json"]];
-    let mut all = Vec::new();
-    for command in commands {
-        for mode in modes {
-            all.push([command, mode].concat());
-        }
-    }
-    all
-}
-
-#[test]
-fn every_listed_id_is_accepted_back_by_show() {
-    // STD-01 R32: identifiers round-trip, from both the JSON and piped forms.
-    let fx = Fixture::new();
-    fx.seed();
-    for (noun, key) in [("entry", "entries"), ("session", "sessions")] {
-        let doc = json(&fx.ok(&[noun, "list", "--json"]).stdout);
-        for record in doc[key].as_array().unwrap() {
-            let id = record["id"].as_str().unwrap();
-            let mut shown = json(&fx.ok(&[noun, "show", id, "--json"]).stdout);
-            if noun == "session" {
-                // A list carries no log or handoffs; show adds them, and only them.
-                let log = shown.as_object_mut().unwrap().remove("log");
-                assert!(log.is_some_and(|l| l.is_array()), "{id}");
-                assert!(record.get("log").is_none(), "{id}");
-                let handoffs = shown.as_object_mut().unwrap().remove("handoffs");
-                assert!(handoffs.is_some_and(|h| h.is_array()), "{id}");
-                assert!(record.get("handoffs").is_none(), "{id}");
-            }
-            assert_eq!(&shown, record);
-        }
-        let piped = text(&fx.ok(&[noun, "list"]).stdout);
-        for line in piped.lines() {
-            fx.ok(&[noun, "show", line.split('\t').next().unwrap()]);
-        }
-    }
-}
-
-#[test]
-fn a_corrupt_record_is_skipped_with_a_warning_naming_the_file() {
-    // docs/design/scribe/4_decisions.md, "One malformed record makes its
-    // file corrupt": a list goes on without it; showing it fails.
-    let fx = Fixture::new();
-    fx.seed();
-    // Hand-edited rows: an author that is no author, and Daniel's entry
-    // without the turn it cites.
-    support::sql(
-        &fx.root(),
-        "UPDATE entries SET author = '[]' WHERE id = 'decisions-2'; \
-         UPDATE entries SET cite = NULL WHERE id = 'preferences-1';",
-    );
-    let out = fx.ok(&["entry", "list"]);
-    assert_eq!(text(&out.stdout).lines().count(), 2);
-    let stderr = text(&out.stderr);
-    assert_eq!(stderr.lines().count(), 2, "{stderr}");
-    assert!(stderr.contains("decisions-2"), "{stderr}");
-    assert!(stderr.contains("preferences-1"), "{stderr}");
-
-    let doc = json(&fx.ok(&["entry", "list", "--json"]).stdout);
-    assert_eq!(doc["total"], 2);
-    assert_eq!(doc["warnings"].as_array().map(Vec::len), Some(2));
-    assert_eq!(doc["warnings"][0]["code"], "store_corrupt");
-
-    let tags = json(&fx.ok(&["tag", "list", "--json"]).stdout);
-    assert_eq!(
-        tags["warnings"].as_array().map(Vec::len),
-        Some(2),
-        "tag counts skip it too"
-    );
-
-    let out = fx.run(&["entry", "show", "decisions-2", "--json"]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = json(&out.stderr);
-    assert_eq!(err["code"], "store_corrupt");
-    assert!(
-        err["error"].as_str().unwrap().contains("decisions-2"),
-        "{err}"
-    );
-}
-
-#[test]
-fn a_record_from_a_newer_build_is_refused_whole_and_left_alone() {
-    // STD-03 R10: not skipped like a corrupt file; this build cannot read
-    // the store safely.
-    let fx = Fixture::new();
-    fx.seed();
-    // `control.json` is the stamp every read of scribe.db checks.
-    for (file, args) in [
-        ("control.json", &["session", "list", "--json"][..]),
-        ("control.json", &["proposal", "list", "--json"][..]),
-    ] {
-        let path = fx.root().join(file);
-        let original = std::fs::read_to_string(&path).unwrap();
-        let newer = original.replacen("\"format\": 31", "\"format\": 999", 1);
-        assert_ne!(newer, original, "{file}");
-        std::fs::write(&path, &newer).unwrap();
-        let out = fx.run(args);
-        assert_eq!(out.status.code(), Some(1), "{file}");
-        assert_eq!(json(&out.stderr)["code"], "store_too_new", "{file}");
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            newer,
-            "not rewritten"
-        );
-        std::fs::write(&path, original).unwrap();
-    }
-    // A database a newer build migrated.
-    support::sql(&fx.root(), "PRAGMA user_version = 999;");
-    let db = fx.root().join("scribe.db");
-    let before = std::fs::read(&db).unwrap();
-    for args in [
-        &["entry", "list", "--json"][..],
-        &[
-            "tag",
-            "add",
-            "probe",
-            "--author",
-            "opus",
-            "--description",
-            "a probe",
-            "--json",
-        ][..],
-    ] {
-        let out = fx.run(args);
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert_eq!(json(&out.stderr)["code"], "store_too_new", "{args:?}");
-    }
-    assert_eq!(std::fs::read(&db).unwrap(), before, "not rewritten");
-}
-
-#[test]
-fn an_invalid_config_is_refused_naming_the_file_and_line() {
-    let fx = Fixture::new();
-    fx.seed();
-    std::fs::write(
-        fx.root().join("config.toml"),
-        "[models]\nask = \"x\"\nanswer = 1\n",
-    )
-    .unwrap();
-    let out = fx.run(&["tag", "list", "--json"]);
-    assert_eq!(out.status.code(), Some(1));
-    let err = json(&out.stderr);
-    assert_eq!(err["code"], "config_invalid");
-    let message = err["error"].as_str().unwrap();
-    assert!(
-        message.contains("config.toml") && message.contains("line 3"),
-        "{message}"
-    );
-}
-
-#[test]
-fn logs_go_to_stderr_and_leave_stdout_as_pure_payload() {
-    // STD-01 R12, STD-02 R15.
-    let fx = Fixture::new();
-    fx.seed();
-    let mut cmd = fx.cmd(&["entry", "list", "--json"]);
-    cmd.env("SCRIBE_LOG", "debug");
-    let out = cmd.output().unwrap();
-    let _: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is only JSON");
-    assert!(!out.stderr.is_empty(), "debug logs should appear on stderr");
-}
-
-#[cfg(unix)]
-mod unix {
-    //! Modes, links and read-only state (STD-01 R31, STD-05 R7–R9).
-    use super::support::{Fixture, make_private, snapshot, text};
-    use std::fs::{self, Permissions};
-    use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::path::Path;
-
-    fn chmod(path: &Path, mode: u32) {
-        fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
-    }
-
-    #[test]
-    fn a_store_writable_by_others_is_refused_with_a_chmod_fix() {
-        // STD-05 R9, and STD-02 R26: the message carries a runnable remedy.
-        let fx = Fixture::new();
-        fx.seed();
-        let root = fx.root();
-        for (path, loose, fix) in [
-            (root.clone(), 0o770, "chmod 700"),
-            (root.join("scribe.db"), 0o660, "chmod 600"),
-            (root.join("control.json"), 0o666, "chmod 600"),
-        ] {
-            chmod(&path, loose);
-            let args: &[&str] = if path.ends_with("control.json") {
-                &["session", "list"]
-            } else {
-                &["entry", "list"]
-            };
-            let out = fx.run(args);
-            chmod(&path, if path.is_dir() { 0o700 } else { 0o600 });
-            assert_eq!(out.status.code(), Some(1), "{}", path.display());
-            let stderr = text(&out.stderr);
-            assert!(
-                stderr.contains(fix) && stderr.contains(path.to_str().unwrap()),
-                "{stderr}"
-            );
-        }
-        chmod(&root, 0o770);
-        let out = fx.run(&["tag", "list", "--json"]);
-        chmod(&root, 0o700);
-        assert_eq!(super::json(&out.stderr)["code"], "store_permissions");
-    }
-
-    #[test]
-    fn a_store_readable_by_others_is_refused_with_a_chmod_fix() {
-        // STD-05 R8, R9: owner-only, so group and other read bits are refused
-        // too. Each refusal names the chmod that fixes it.
-        let fx = Fixture::new();
-        fx.seed();
-        let root = fx.root();
-        for (path, loose, fix) in [
-            (root.clone(), 0o755, "chmod 700"),
-            (root.join("scribe.db"), 0o644, "chmod 600"),
-            (root.join("config.toml"), 0o640, "chmod 600"),
-        ] {
-            chmod(&path, loose);
-            let out = if path.ends_with("config.toml") {
-                fx.run(&["tag", "list", "--json"])
-            } else {
-                fx.run(&["entry", "list"])
-            };
-            chmod(&path, if path.is_dir() { 0o700 } else { 0o600 });
-            assert_eq!(out.status.code(), Some(1), "{}", path.display());
-            let stderr = text(&out.stderr);
-            assert!(
-                stderr.contains(fix) && stderr.contains(path.to_str().unwrap()),
-                "{stderr}"
-            );
-        }
-        chmod(&root, 0o755);
-        let out = fx.run(&["tag", "list", "--json"]);
-        chmod(&root, 0o700);
-        assert_eq!(super::json(&out.stderr)["code"], "store_permissions");
-    }
-
-    #[test]
-    fn a_linked_database_or_file_is_refused_and_its_target_left_alone() {
-        // STD-05 R7, R9.
-        let fx = Fixture::new();
-        fx.seed();
-        let db = fx.root().join("scribe.db");
-        let target = fx.elsewhere("scribe.db");
-        fs::rename(&db, &target).unwrap();
-        symlink(&target, &db).unwrap();
-        let before = fs::read(&target).unwrap();
-        for args in [
-            &["entry", "list", "--json"][..],
-            &["entry", "show", "decisions-2", "--json"][..],
-            &["session", "list", "--json"][..],
-            &["tag", "list", "--json"][..],
-        ] {
-            let out = fx.run(args);
-            assert_eq!(out.status.code(), Some(1), "{args:?}");
-            assert_eq!(
-                super::json(&out.stderr)["code"],
-                "store_symlink",
-                "{args:?}"
-            );
-        }
-        assert_eq!(fs::read(&target).unwrap(), before);
-        fs::remove_file(&db).unwrap();
-        fs::rename(&target, &db).unwrap();
-
-        let config = fx.root().join("config.toml");
-        let elsewhere = fx.elsewhere("config.toml");
-        fs::rename(&config, &elsewhere).unwrap();
-        symlink(&elsewhere, &config).unwrap();
-        let out = fx.run(&["tag", "list", "--json"]);
-        assert_eq!(super::json(&out.stderr)["code"], "store_symlink");
-    }
-
-    /// Make every directory under `dir` read-only (0500) and every file
-    /// 0400, or restore 0700/0600.
-    fn set_tree(dir: &Path, read_only: bool) {
-        for item in fs::read_dir(dir).unwrap() {
-            let path = item.unwrap().path();
-            if path.is_dir() {
-                set_tree(&path, read_only);
-            } else if read_only {
-                chmod(&path, 0o400);
-            } else {
-                make_private(&path);
-            }
-        }
-        if read_only {
-            chmod(dir, 0o500);
-        } else {
-            make_private(dir);
-        }
-    }
-
-    #[test]
-    fn every_command_works_against_a_read_only_store_and_changes_nothing() {
-        // STD-01 R31: reads take no lock and write nothing.
-        let fx = Fixture::new();
-        fx.seed();
-        let root = fx.root();
-        set_tree(&root, true);
-        let before = snapshot(&root);
-        let outs: Vec<_> = super::all_reads()
-            .into_iter()
-            .map(|args| {
-                let out = fx.run(&args);
-                (args, out)
-            })
-            .collect();
-        let after = snapshot(&root);
-        // Restore before asserting, so the fixture can always clean up.
-        set_tree(&root, false);
-        for (args, out) in outs {
-            assert_eq!(
-                out.status.code(),
-                Some(0),
-                "{args:?}: {}",
-                text(&out.stderr)
-            );
-            assert!(!out.stdout.is_empty(), "{args:?}");
-        }
-        assert_eq!(after, before);
-    }
-}
-
-const INACTIVE_SESSION: &str = "3d5e7f90-1a2b-4c3d-8e9f-0a1b2c3d4e05";
-
-#[test]
-fn show_prints_the_log_contents_and_one_segment_by_number_or_cite() {
-    let fx = Fixture::new();
-    fx.seed();
-    let table = |args: &[&str]| text(&fx.ok(&[args, &["--format", "table"]].concat()).stdout);
-
-    let header = table(&["session", "show", OPEN_SESSION]);
-    assert!(header.contains("## Log\n  1  sealed"), "{header}");
-    assert!(header.contains("Telling the release crew"), "{header}");
-    assert!(
-        !header.contains("Drafted the note"),
-        "no text without --log"
-    );
-    assert!(!header.contains("## Outcome"), "{header}");
-
-    let full = table(&["session", "show", OPEN_SESSION, "--log"]);
-    assert!(
-        full.contains("### 1. Merge policy for agent PRs\nSquash-merge"),
-        "{full}"
-    );
-    assert!(
-        full.contains("### 2. Telling the release crew\nDrafted the note"),
-        "{full}"
-    );
-
-    let cite = format!("session:{OPEN_SESSION}#2");
-    let suffix = format!("{OPEN_SESSION}#2");
-    let by_flag = json(
-        &fx.ok(&["session", "show", OPEN_SESSION, "--segment", "2", "--json"])
-            .stdout,
-    );
-    for id in [&cite, &suffix] {
-        let doc = json(&fx.ok(&["session", "show", id, "--json"]).stdout);
-        assert_eq!(doc, by_flag, "{id}");
-    }
-    let log = by_flag["log"].as_array().unwrap();
-    assert_eq!(log.len(), 1);
-    assert_eq!(log[0]["n"], 2);
-    assert_eq!(log[0]["state"], "open");
-    assert!(
-        log[0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("Drafted the note")
-    );
-    assert_eq!(by_flag["outcome"], "", "kept in the payload, empty");
-    let one = table(&["session", "show", &cite]);
-    assert!(one.contains("### 2. Telling the release crew"), "{one}");
-    assert!(!one.contains("### 1."), "{one}");
-
-    let all = json(&fx.ok(&["session", "show", OPEN_SESSION, "--json"]).stdout);
-    assert_eq!(all["log"].as_array().map(Vec::len), Some(2));
-}
-
-#[test]
-fn an_unknown_or_contradictory_segment_is_refused() {
-    let fx = Fixture::new();
-    fx.seed();
-    let missing = format!("session:{OPEN_SESSION}#3");
-    for args in [
-        &["session", "show", OPEN_SESSION, "--segment", "3", "--json"][..],
-        &["session", "show", &missing, "--json"][..],
-    ] {
-        let out = fx.run(args);
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert_eq!(json(&out.stderr)["code"], "segment_not_found", "{args:?}");
-        assert!(out.stdout.is_empty());
-    }
-    let both = format!("{OPEN_SESSION}#1");
-    for args in [
-        &["session", "show", &both, "--segment", "2", "--json"][..],
-        &["session", "show", "session:x#0", "--json"][..],
-    ] {
-        let out = fx.run(args);
-        assert_eq!(out.status.code(), Some(2), "{args:?}");
-        assert_eq!(json(&out.stderr)["code"], "usage_error", "{args:?}");
-    }
-}
-
-#[test]
-fn an_inactive_session_is_listed_only_on_request_and_shown_by_id() {
-    let fx = Fixture::new();
-    fx.seed();
-    let ids = |doc: &serde_json::Value| -> Vec<String> {
-        doc["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|s| s["id"].as_str().unwrap().to_owned())
-            .collect()
-    };
-    let out = fx.ok(&["session", "list", "--json"]);
-    let shown = json(&out.stdout);
-    assert!(!ids(&shown).contains(&INACTIVE_SESSION.to_owned()));
-    assert_eq!(shown["total"], 2);
-    assert!(text(&out.stderr).contains("--include-inactive"));
-
-    let out = fx.ok(&["session", "list", "--include-inactive", "--json"]);
-    let all = json(&out.stdout);
-    assert!(ids(&all).contains(&INACTIVE_SESSION.to_owned()));
-    assert_eq!(all["total"], 3);
-    assert!(out.stderr.is_empty());
-
-    let doc = json(
-        &fx.ok(&["session", "show", INACTIVE_SESSION, "--json"])
-            .stdout,
-    );
-    assert_eq!(doc["active"], false);
-    assert_eq!(doc["active_change"]["route"], "removed");
-    assert_eq!(doc["active_change"]["by"]["kind"], "scribe");
-}
-
-#[test]
-fn a_format_three_session_a_migration_moved_reads_and_a_read_writes_nothing() {
-    // STD-03 R10: the fixture's format-3 session was upgraded as the
-    // phase-7 `store migrate` moved it into scribe.db; it reads as it did.
-    let fx = Fixture::new();
-    fx.seed();
-    // The first open creates the persisted, empty `-wal` beside scribe.db.
-    fx.ok(&["tag", "list"]);
-    let before = support::snapshot(&fx.root());
-    let doc = json(
-        &fx.ok(&[
-            "session",
-            "show",
-            "0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01",
-            "--json",
-        ])
-        .stdout,
-    );
-    assert_eq!(doc["active"], true);
-    let log = doc["log"].as_array().unwrap();
-    assert_eq!(log.len(), 1);
-    assert_eq!(log[0]["origin"], "upgrade");
-    assert_eq!(log[0]["state"], "sealed");
-    assert!(
-        log[0]["text"]
-            .as_str()
-            .unwrap()
-            .ends_with("control and proposals stay JSON."),
-        "the old outcome is kept in the segment"
-    );
-    let entry = json(&fx.ok(&["entry", "show", "decisions-1", "--json"]).stdout);
-    assert_eq!(entry["author"]["kind"], "user");
-    assert_eq!(support::snapshot(&fx.root()), before);
-}
+include!("cli/store_access.rs");

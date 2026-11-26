@@ -1,10 +1,8 @@
 //! Drive the actual prepare/apply CLI or plugin tools with fixed activity
 //! results. The fixture joins per-window reports for assertions about a run.
-
-use super::{ChildGuard, Fixture};
+use super::Fixture;
 use serde_json::{Value, json};
-use std::io::Write;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 #[derive(Debug)]
 pub struct ActivityFailure {
@@ -21,22 +19,11 @@ impl ActivityFailure {
     }
 }
 
-pub fn call(command: &mut Command, input: &Value) -> Output {
-    let child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut guard = ChildGuard::new(child);
-    guard
-        .child()
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.to_string().as_bytes())
-        .unwrap();
-    guard.finish()
+fn call(fixture: &Fixture, command: &mut Command, input: &Value) -> Output {
+    fixture.check(
+        command,
+        super::command::Exit::Capture.stdin(input.to_string().as_bytes()),
+    )
 }
 
 pub fn cli_step(
@@ -57,6 +44,7 @@ pub fn cli_step(
         );
     }
     let output = call(
+        fixture,
         fixture
             .cmd(&["session", &format!("pass-{step}"), "--json"])
             .envs(env.iter().copied()),
@@ -90,6 +78,7 @@ pub fn plugin_tool(
     let mut command = fixture.cmd(&["plugin", "call"]);
     command.env_remove("SCRIBE_ROOT").envs(env.iter().copied());
     let reply = call(
+        fixture,
         &mut command,
         &json!({
             "schema_version": 1, "tool": format!("scribe.{tool}"),

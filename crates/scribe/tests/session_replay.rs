@@ -16,33 +16,19 @@
 //! the synthetic one.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/session_replay.rs"]
+mod subject;
 mod support;
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use support::replay::{self, Key, Mode};
+use subject::*;
+use support::command::Exit::Success;
+use support::replay::{
+    self, Mode,
+    redact::{Key, redact_recording},
+};
 use support::{Fixture, copy_private};
-
-fn synthetic() -> PathBuf {
-    replay::recordings_dir().join("synthetic-rebuild")
-}
-
-fn recordings() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(replay::recordings_dir())
-        .unwrap()
-        .map(|item| item.unwrap().path())
-        .filter(|path| path.join("fixture.json").is_file())
-        .collect();
-    dirs.sort();
-    dirs
-}
-
-/// A writable copy of `recording` in `fx`.
-fn copy(fx: &Fixture, recording: &Path) -> PathBuf {
-    let to = fx.elsewhere("recording");
-    copy_private(recording, &to);
-    to
-}
 
 #[test]
 fn every_checked_in_recording_rebuilds_from_its_replayed_model_answers() {
@@ -130,9 +116,7 @@ fn the_synthetic_recording_reproduces_each_historical_rebuild_failure() {
         assert_eq!(segment["origin"], "rebuild");
         assert_eq!(segment["state"], "sealed");
     }
-    let shown = run
-        .fx
-        .ok(&["session", "show", &meta.session, "--log", "--json"]);
+    let shown = run.fx.check(&[&meta.session, "--log", "--json"], Success);
     let shown: Value = serde_json::from_slice(&shown.stdout).unwrap();
     for segment in shown["log"].as_array().unwrap() {
         assert!(chars(&segment["text"]) <= 900, "{segment}");
@@ -196,25 +180,6 @@ fn an_exhausted_recording_fails_the_replay() {
     assert_eq!(run.output.status.code(), Some(1));
 }
 
-/// Every file under `root`, relative, with its bytes.
-fn tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    support::snapshot(root)
-        .into_iter()
-        .filter(|(path, _, _)| path.is_file())
-        .map(|(path, bytes, _)| (path.strip_prefix(root).unwrap().to_path_buf(), bytes))
-        .collect()
-}
-
-/// The redaction key: one line on stdin, which `scripts/redact-recording.sh`
-/// writes. It is never in argv or the environment (STD-05 R12).
-fn redaction_key_from_stdin() -> String {
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .expect("read the redaction key from stdin");
-    line.trim_end_matches(['\r', '\n']).to_owned()
-}
-
 /// The redaction tool. Without `SCRIBE_REDACT_FROM` it redacts the synthetic
 /// recording into a temp directory and checks what the redaction keeps; with
 /// it, it redacts the recording it names, to `SCRIBE_REDACT_TO`, under the
@@ -227,7 +192,7 @@ fn redact_a_recording() {
         let to = std::env::var_os("SCRIBE_REDACT_TO").expect("SCRIBE_REDACT_TO");
         let key = redaction_key_from_stdin();
         assert!(!key.is_empty(), "the redaction key on stdin is empty");
-        replay::redact_recording(&from, Path::new(&to), &Key::new(&key))
+        redact_recording(&from, Path::new(&to), &Key::new(&key))
             .unwrap_or_else(|e| panic!("redaction refused: {e}"));
         return;
     }
@@ -254,14 +219,14 @@ fn redact_a_recording() {
     }
 
     let to = fx.elsewhere("redacted");
-    replay::redact_recording(&from, &to, &key).unwrap();
+    redact_recording(&from, &to, &key).unwrap();
 
     // Deterministic: the same key gives the same bytes, another key others.
     let again = fx.elsewhere("again");
-    replay::redact_recording(&from, &again, &key).unwrap();
+    redact_recording(&from, &again, &key).unwrap();
     assert_eq!(tree(&to), tree(&again));
     let other = fx.elsewhere("other");
-    replay::redact_recording(&from, &other, &Key::new("another-key")).unwrap();
+    redact_recording(&from, &other, &Key::new("another-key")).unwrap();
     assert_ne!(tree(&to), tree(&other));
 
     // Every file keeps its name and byte length; the free text is gone.
@@ -347,7 +312,7 @@ fn redaction_refuses_a_destination_inside_its_source() {
     copy_private(&synthetic(), &from);
     // A long component keeps an accidental recursive copy bounded.
     let to = from.join("n".repeat(180));
-    let result = replay::redact_recording(&from, &to, &Key::new("nested-path"));
+    let result = redact_recording(&from, &to, &Key::new("nested-path"));
     let error = result.expect_err("a nested output must be refused");
     assert!(error.contains("must be outside source"), "{error}");
     assert!(!to.exists(), "refusal must happen before creating output");

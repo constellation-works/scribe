@@ -9,7 +9,8 @@ with no live model, so the outcome does not depend on what the model
 returns on the day
 ([2_design.md §5.6](../2_design.md#56-rebuilding-a-record)).
 
-Code: `crates/scribe/tests/support/replay.rs` (harness and redaction),
+Code: `crates/scribe/tests/support/replay.rs` (harness),
+`crates/scribe/tests/support/replay/redact.rs` (redaction),
 `crates/scribe/tests/session_replay.rs` (the tests),
 `crates/scribe/tests/fixtures/replay/` (the recordings),
 `scripts/redact-recording.sh` (the redaction tool). None of it is part of

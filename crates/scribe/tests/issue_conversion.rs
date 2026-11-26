@@ -4,61 +4,32 @@
 //! `archive_records` like any other file.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/issue_conversion.rs"]
+mod subject;
 mod support;
 
+use crate::support::command::Input::Cli;
 use serde_json::Value;
+use subject::*;
+use support::command::Exit::{Capture, Success};
 use support::{Fixture, make_private, text};
-
-const ISSUE: &str = include_str!("fixtures/issue-store/issue-1.md");
-const SESSION: &str = "session:7e2d4c1a-9b3f-4e8d-a6c5-1f0e2d3c4b5a";
-
-fn json(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).unwrap()
-}
-
-/// Leave `pre-issue-2026-11-22/issue-1.md`, the archive an issue
-/// conversion left before phase 8.
-fn place_archive(fx: &Fixture) -> std::path::PathBuf {
-    let dir = fx.root().join("pre-issue-2026-11-22");
-    fx.create_private_dir_all(&dir);
-    let file = dir.join("issue-1.md");
-    std::fs::write(&file, ISSUE).unwrap();
-    make_private(&file);
-    dir
-}
-
-fn a_write(fx: &Fixture, words: &str) {
-    // The fixture's config redacts `GITHUB_TOKEN`, so a write needs a value.
-    let out = fx
-        .cmd(&[
-            "entry",
-            "add",
-            "--tag",
-            "preferences",
-            "--author",
-            "opus",
-            words,
-        ])
-        .env("GITHUB_TOKEN", "test-github-token-1234")
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", text(&out.stderr));
-}
 
 #[test]
 fn a_pre_issue_archive_is_imported_as_is_and_makes_no_issue_entry() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let dir = place_archive(&fx);
     a_write(&fx, "Keep the API stable.");
 
     // No conversion: the issue record is archived whole, and no entry
     // is made of it.
     assert!(!dir.exists(), "the write imported and removed the archive");
-    let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
+    let listed = json(
+        &fx.check(&["list", "--tag", "issue", "--json"], Success)
+            .stdout,
+    );
     assert_eq!(listed["total"], 0, "{listed}");
     assert!(
-        fx.run(&["entry", "show", "issue-1", "--json"])
+        fx.check(&["show", "issue-1", "--json"], Capture)
             .status
             .code()
             != Some(0),
@@ -97,8 +68,7 @@ fn a_pre_issue_archive_is_imported_as_is_and_makes_no_issue_entry() {
 
 #[test]
 fn a_leftover_issues_directory_is_archived_not_converted() {
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let dir = fx.root().join("issues");
     fx.create_private_dir_all(&dir);
     let file = dir.join("issue-1.md");
@@ -106,7 +76,10 @@ fn a_leftover_issues_directory_is_archived_not_converted() {
     make_private(&file);
     a_write(&fx, "Keep the API stable.");
     assert!(!file.exists(), "the write imported the leftover file");
-    let listed = json(&fx.ok(&["entry", "list", "--tag", "issue", "--json"]).stdout);
+    let listed = json(
+        &fx.check(&["list", "--tag", "issue", "--json"], Success)
+            .stdout,
+    );
     assert_eq!(listed["total"], 0, "no conversion: {listed}");
     let archived: i64 = rusqlite::Connection::open(fx.root().join("scribe.db"))
         .unwrap()
@@ -128,7 +101,7 @@ fn the_issue_noun_and_search_kind_are_unknown() {
         &["issue", "add", "--help"],
         &["search", "rate limit", "--kind", "issue"],
     ] {
-        let out = fx.run(args);
+        let out = fx.check(Cli(args), Capture);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -142,10 +115,13 @@ fn the_issue_noun_and_search_kind_are_unknown() {
 fn a_route_agent_issue_table_warns_and_catches_nothing() {
     let fx = Fixture::new();
     fx.config("[tags.issue.capture]\nroute = \"agent\"\ntriggers = [\"root cause\"]\n");
-    let stderr = text(&fx.ok(&["tag", "list"]).stderr);
+    let stderr = text(&fx.check(Cli(&["tag", "list"]), Success).stderr);
     assert!(stderr.contains("route \"agent\""), "{stderr}");
     assert!(stderr.contains("specs/catchers.md"), "{stderr}");
-    let shown = json(&fx.ok(&["tag", "show", "issue", "--json"]).stdout);
+    let shown = json(
+        &fx.check(Cli(&["tag", "show", "issue", "--json"]), Success)
+            .stdout,
+    );
     assert!(shown["capture"]["route"].is_null(), "{shown}");
     assert!(shown["capture"]["triggers"].is_null(), "{shown}");
 }

@@ -2,98 +2,17 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "support/codex.rs"]
+mod subject;
 mod support;
+
+use crate::support::command::Input::Cli;
+use crate::support::command::Json;
+use crate::support::command::with_env;
 use serde_json::{Value, json};
-use std::{
-    io::Write,
-    path::PathBuf,
-    process::{Output, Stdio},
-};
+use subject::*;
+use support::command::Exit::{Capture, Success};
 use support::{Fixture, text};
-
-const ID: &str = "11111111-2222-4333-8444-555555555555";
-
-struct Codex {
-    path: PathBuf,
-    rows: Vec<Value>,
-}
-impl Codex {
-    fn new(f: &Fixture) -> Self {
-        let dir = f.home().join(".codex/sessions/2026/11/12");
-        f.create_private_dir_all(&dir);
-        let path = dir.join(format!("rollout-2026-11-12T00-00-00-{ID}.jsonl"));
-        Self {
-            path,
-            rows: vec![
-                json!({"type":"session_meta","payload":{"id":ID,"source":"vscode","thread_source":"user","cwd":f.home()}}),
-            ],
-        }
-    }
-    fn typed(&mut self, id: &str, turn: &str, body: &str) {
-        self.rows.push(json!({"type":"response_item","timestamp":"2026-11-12T00:00:00Z","payload":{"type":"message","id":id,"role":"user","content":[{"type":"input_text","text":body}],"internal_chat_message_metadata_passthrough":{"turn_id":turn,"content_item_kinds":["user.text"],"content_item_metadata":[{"provenance":{"type":"user"}}]}}}));
-    }
-    fn write(&self) {
-        std::fs::write(
-            &self.path,
-            self.rows
-                .iter()
-                .map(|r| format!("{r}\n"))
-                .collect::<String>(),
-        )
-        .unwrap();
-        support::make_private(&self.path);
-    }
-    fn payload(&self, event: &str, turn: &str, prompt: &str) -> Value {
-        json!({"hook_event_name":event,"session_id":ID,"transcript_path":self.path,"turn_id":turn,"cwd":"/synthetic/project","prompt":prompt})
-    }
-    fn hook(&self, f: &Fixture, event: &str, turn: &str, prompt: &str) -> Output {
-        let verb = match event {
-            "UserPromptSubmit" => "user-prompt-submit",
-            "Stop" => "stop",
-            "SessionEnd" => "session-end",
-            _ => panic!("fixture event"),
-        };
-        let mut c = f
-            .cmd(&["--provider", "codex", "hook", verb])
-            .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        c.stdin
-            .take()
-            .unwrap()
-            .write_all(self.payload(event, turn, prompt).to_string().as_bytes())
-            .unwrap();
-        let o = c.wait_with_output().unwrap();
-        assert!(o.status.success(), "{}", text(&o.stderr));
-        o
-    }
-}
-
-fn entries(f: &Fixture) -> Vec<Value> {
-    serde_json::from_slice::<Value>(&f.ok(&["entry", "list", "--json"]).stdout).unwrap()["entries"]
-        .as_array()
-        .unwrap()
-        .clone()
-}
-
-fn fake_model(f: &Fixture) -> std::ffi::OsString {
-    f.fake_program("codex", r##"#!/usr/bin/python3
-import json,sys,pathlib,os
-h=pathlib.Path(os.environ['HOME'])
-args=sys.argv[1:]
-with (h/'model-calls.jsonl').open('a') as out: out.write(json.dumps({'args':args,'env':dict(os.environ),'cwd':os.getcwd()})+'\n')
-schema=json.loads(pathlib.Path(args[args.index('--output-schema')+1]).read_text())
-assert 'open' in schema.get('required',[]) or 'open' not in schema.get('properties',{})
-sys.stdin.read()
-answer={'title':'Compact widgets','summary':'Chose compact widgets.','goals':'Choose widgets','next':[],'topics':['widgets'],'related':[],'terms':[],'open':{'heading':'Widget choice','text':'Chose compact widgets.','topics':['widgets'],'related':[]},'new':[]}
-print(json.dumps({'type':'thread.started','thread_id':'synthetic'}))
-print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(answer)}}))
-print(json.dumps({'type':'turn.completed','usage':{}}))
-"##)
-}
 
 #[test]
 fn verified_skill_opt_in_capture_pass_citations_off_and_provider_isolation() {
@@ -163,17 +82,15 @@ fn verified_skill_opt_in_capture_pass_citations_off_and_provider_isolation() {
     );
     let passed = cli_pass(&f);
     assert_eq!(passed["passes"][0]["result"], "written");
-    let record: Value =
-        serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
+    let record: Value = f.check(Cli(&["session", "show", ID, "--json"]), Json);
     assert_eq!(record["provider"], "codex");
     assert_eq!(model_calls(&f), 0);
-    let hits: Value =
-        serde_json::from_slice(&f.ok(&["search", "compact widgets", "--json"]).stdout).unwrap();
+    let hits: Value = f.check(Cli(&["search", "compact widgets", "--json"]), Json);
     assert!(!hits["hits"].as_array().unwrap().is_empty());
     c.typed("off", "next", "$scribe off");
     c.write();
     c.hook(&f, "UserPromptSubmit", "next", "$scribe off");
-    let no_pass = f.ok(&["session", "pass", "--json"]);
+    let no_pass = f.check(Cli(&["session", "pass", "--json"]), Success);
     assert_eq!(
         serde_json::from_slice::<Value>(&no_pass.stdout).unwrap()["passes"],
         json!([])
@@ -184,14 +101,7 @@ fn verified_skill_opt_in_capture_pass_citations_off_and_provider_isolation() {
         .home()
         .join(".claude/projects/synthetic/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl");
     f.create_private_dir_all(claude.parent().unwrap());
-    let mut cmd = f
-        .cmd(&["hook", "user-prompt-submit"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    cmd.stdin.take().unwrap().write_all(json!({"session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","transcript_path":claude,"cwd":"/synthetic","prompt":"/scribe on"}).to_string().as_bytes()).unwrap();
-    assert!(cmd.wait_with_output().unwrap().status.success());
+    f.check(Cli(&["hook", "user-prompt-submit"]), Success.stdin(json!({"session_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","transcript_path":claude,"cwd":"/synthetic","prompt":"/scribe on"}).to_string().as_bytes()));
     let state: Value = support::control(&f.root());
     assert_eq!(state["sessions"][ID]["on"], false);
     assert_eq!(
@@ -253,56 +163,28 @@ fn subagents_unsafe_paths_and_missing_identity_never_record() {
     assert!(!support::has_control(&f.root()));
 }
 
-fn widget_answer(_: &Value, _: bool) -> Result<Value, support::pass::ActivityFailure> {
-    Ok(json!({
-        "title":"Compact widgets", "summary":"Chose compact widgets.", "goals":"Choose widgets",
-        "next":[], "topics":["widgets"], "related":[], "terms":[],
-        "open":{"heading":"Widget choice","text":"Chose compact widgets.","topics":["widgets"],"related":[]},
-        "new":[]
-    }))
-}
-
-fn cli_pass(f: &Fixture) -> Value {
-    support::pass::run(
-        |step, input| support::pass::cli_step(f, &[], step, input),
-        json!({"sessions": [ID]}),
-        widget_answer,
-    )
-    .unwrap()
-}
-
-fn plugin_pass(f: &Fixture) -> Value {
-    let config =
-        json!({"root": f.root(), "codex_home": f.home().join(".codex"), "transcripts": ""});
-    support::pass::run(
-        |step, input| support::pass::plugin_step(f, &[], step, input, &config),
-        json!({}),
-        widget_answer,
-    )
-    .unwrap()
-}
-
 #[test]
 fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root() {
     let f = Fixture::new();
     let mut c = Codex::new(&f);
     c.typed("words", "t", "Choose compact widgets.");
     c.write();
-    let out = f.ok(&[
-        "--provider",
-        "codex",
-        "transcript",
-        "list",
-        "--since",
-        "2026-01-01",
-        "--min-turns",
-        "1",
-        "--json",
-    ]);
+    let out = f.check(
+        &[
+            "transcript",
+            "list",
+            "--since",
+            "2026-01-01",
+            "--min-turns",
+            "1",
+            "--json",
+        ],
+        Success,
+    );
     let listed: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(listed["total"], 1);
     assert!(!f.root().exists(), "discovery must not opt in or write");
-    let preview = f.ok(&["--provider", "codex", "transcript", "show", ID, "--json"]);
+    let preview = f.check(&["transcript", "show", ID, "--json"], Success);
     assert_eq!(
         serde_json::from_slice::<Value>(&preview.stdout).unwrap()["user_turns"],
         1
@@ -321,8 +203,7 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
     c.path = moved;
     c.hook(&f, "SessionEnd", "live", "");
     assert_eq!(plugin_pass(&f)["passes"][0]["result"], "written");
-    let record: Value =
-        serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
+    let record: Value = f.check(Cli(&["session", "show", ID, "--json"]), Json);
     assert_eq!(record["provider"], "codex");
     assert_eq!(record["status"], "final");
     assert_eq!(model_calls(&f), 0);
@@ -330,8 +211,7 @@ fn discovery_is_read_only_and_archive_final_pass_uses_optional_plugin_codex_root
 
 #[test]
 fn controls_links_settlements_and_invalid_instructions_do_not_block_later_off() {
-    let f = Fixture::new();
-    f.seed();
+    let f = Fixture::seeded();
     let mut c = Codex::new(&f);
     c.typed("old-settle", "old", "#scribe forget decisions-2");
     c.typed(
@@ -341,8 +221,7 @@ fn controls_links_settlements_and_invalid_instructions_do_not_block_later_off() 
     );
     c.write();
     c.hook(&f, "Stop", "active", "");
-    let old: Value =
-        serde_json::from_slice(&f.ok(&["entry", "show", "decisions-2", "--json"]).stdout).unwrap();
+    let old: Value = f.check(Cli(&["entry", "show", "decisions-2", "--json"]), Json);
     assert!(old["content"].as_str().unwrap().contains("squash"));
     c.typed("status", "status-turn", "$scribe status");
     c.write();
@@ -351,14 +230,12 @@ fn controls_links_settlements_and_invalid_instructions_do_not_block_later_off() 
     c.typed("retire", "settle", "#scribe retire decisions-2");
     c.write();
     c.hook(&f, "Stop", "settle", "");
-    let entry: Value =
-        serde_json::from_slice(&f.ok(&["entry", "show", "decisions-2", "--json"]).stdout).unwrap();
+    let entry: Value = f.check(Cli(&["entry", "show", "decisions-2", "--json"]), Json);
     assert_eq!(entry["status"], "retired");
     c.typed("forget", "forget-turn", "#scribe forget decisions-2");
     c.write();
     c.hook(&f, "Stop", "forget-turn", "");
-    let entry: Value =
-        serde_json::from_slice(&f.ok(&["entry", "show", "decisions-2", "--json"]).stdout).unwrap();
+    let entry: Value = f.check(Cli(&["entry", "show", "decisions-2", "--json"]), Json);
     assert_eq!(entry["content"], "");
     c.typed("bad", "last", "#scribe unknown-tag: refused instruction");
     c.typed("off", "last", "/scribe off");
@@ -384,8 +261,7 @@ fn codex_windows_seal_resume_and_rebuild() {
     let first = cli_pass(&f);
     assert_eq!(first["passes"][0]["result"], "written");
     assert_eq!(first["passes"][0]["windows"], 3);
-    let record: Value =
-        serde_json::from_slice(&f.ok(&["session", "show", ID, "--log", "--json"]).stdout).unwrap();
+    let record: Value = f.check(Cli(&["session", "show", ID, "--log", "--json"]), Json);
     assert_eq!(record["log"].as_array().unwrap().len(), 3);
     assert_eq!(record["log"][0]["state"], "sealed");
     let again = cli_pass(&f);
@@ -410,8 +286,7 @@ fn codex_windows_seal_resume_and_rebuild() {
     );
     let report: Value = serde_json::from_slice(&rebuilt.stdout).unwrap();
     assert_eq!(report["passes"][0]["windows"], 3, "{report}");
-    let record: Value =
-        serde_json::from_slice(&f.ok(&["session", "show", ID, "--json"]).stdout).unwrap();
+    let record: Value = f.check(Cli(&["session", "show", ID, "--json"]), Json);
     assert_eq!(record["provider"], "codex");
     assert_eq!(record["rebuilt_by"]["name"], "sol");
     assert_eq!(model_calls(&f), 0, "no flow spawns codex");
@@ -436,8 +311,7 @@ fn unsupported_transcripts_return_nonblocking_refusal_for_ordinary_prompts() {
 
 #[test]
 fn whitespace_preserves_original_prompt_hash_lines_and_message_citation() {
-    let f = Fixture::new();
-    f.seed();
+    let f = Fixture::seeded();
     let before = entries(&f);
     let mut c = Codex::new(&f);
     // A line-start capture form folds into the annotation marker
@@ -467,8 +341,7 @@ fn whitespace_preserves_original_prompt_hash_lines_and_message_citation() {
         "{}",
         text(&out.stdout)
     );
-    let listed: Value =
-        serde_json::from_slice(&f.ok(&["proposal", "list", "--json"]).stdout).unwrap();
+    let listed: Value = f.check(Cli(&["proposal", "list", "--json"]), Json);
     let p1 = listed["proposals"]
         .as_array()
         .unwrap()
@@ -495,30 +368,7 @@ fn packaged_launcher_finds_user_binary_without_cargo_on_gui_path() {
     let mut c = Codex::new(&f);
     c.typed("on", "t", "$scribe on");
     c.write();
-    let bin = f.home().join(".cargo/bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    std::os::unix::fs::symlink(support::BIN, bin.join("scribe")).unwrap();
-    let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/codex/bin/scribe-hook");
-    let mut child = std::process::Command::new("/bin/sh")
-        .arg(script)
-        .arg("stop")
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("HOME", f.home())
-        .env("SCRIBE_ROOT", f.root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(c.payload("Stop", "t", "").to_string().as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
+    let out = packaged_stop(&f, &c.payload("Stop", "t", ""));
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("scribe: on"));
 }
@@ -530,20 +380,23 @@ fn explicit_codex_catalog_stamps_provider_with_agent_authorship() {
     c.typed("choice", "t", "We choose compact widgets.");
     c.write();
     let path = fake_model(&f);
-    let out = f
-        .cmd(&[
-            "--provider",
-            "codex",
-            "session",
-            "catalog",
-            ID,
-            "--author",
-            "sol",
-            "--json",
-        ])
-        .env("PATH", &path)
-        .output()
-        .unwrap();
+    let out = f.check(
+        with_env(
+            &[
+                "--provider",
+                "codex",
+                "session",
+                "catalog",
+                ID,
+                "--author",
+                "sol",
+                "--json",
+            ],
+            "PATH",
+            &path,
+        ),
+        Capture,
+    );
     assert!(
         out.status.success(),
         "{} {}",
@@ -556,77 +409,6 @@ fn explicit_codex_catalog_stamps_provider_with_agent_authorship() {
 }
 
 // --- annotations: `#scribe` inside a sentence, handed over at Stop (§14) ---
-
-const MARKED: &str = "I always want short status updates #scribe preferences";
-
-impl Codex {
-    /// [`Codex::hook`] with `PATH` set to `path`, where a fake `codex`
-    /// logs any model call.
-    fn hook_with(
-        &self,
-        f: &Fixture,
-        event: &str,
-        turn: &str,
-        prompt: &str,
-        path: &std::ffi::OsStr,
-    ) -> Output {
-        let verb = match event {
-            "UserPromptSubmit" => "user-prompt-submit",
-            "Stop" => "stop",
-            _ => panic!("fixture event"),
-        };
-        let mut c = f
-            .cmd(&["--provider", "codex", "hook", verb])
-            .env("GITHUB_TOKEN", "synthetic-fixture-token-value")
-            .env("PATH", path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        c.stdin
-            .take()
-            .unwrap()
-            .write_all(self.payload(event, turn, prompt).to_string().as_bytes())
-            .unwrap();
-        let o = c.wait_with_output().unwrap();
-        assert!(o.status.success(), "{}", text(&o.stderr));
-        o
-    }
-
-    /// An assistant reply in the rollout.
-    fn reply(&mut self, id: &str, body: &str) {
-        self.rows.push(json!({"type":"response_item","timestamp":"2026-11-12T00:00:01Z","payload":{"type":"message","id":id,"role":"assistant","content":[{"type":"output_text","text":body}]}}));
-    }
-}
-
-/// A fake `codex` whose every call fails, logging each call.
-fn failing_codex(f: &Fixture) -> std::ffi::OsString {
-    f.fake_program(
-        "codex",
-        "#!/bin/sh\necho '{}' >> \"$HOME/model-calls.jsonl\"\ncat >/dev/null\nexit 1\n",
-    )
-}
-
-fn model_calls(f: &Fixture) -> usize {
-    std::fs::read_to_string(f.home().join("model-calls.jsonl"))
-        .map(|s| s.lines().count())
-        .unwrap_or(0)
-}
-
-fn marks_json(f: &Fixture) -> Vec<Value> {
-    match support::exported(&f.root(), "marks.json") {
-        Some(doc) => serde_json::from_str::<Value>(&doc).unwrap()["marks"]
-            .as_array()
-            .unwrap()
-            .clone(),
-        None => Vec::new(),
-    }
-}
-
-fn hook_reply(out: &Output) -> Value {
-    serde_json::from_slice(&out.stdout).unwrap_or(Value::Null)
-}
 
 #[test]
 fn a_codex_marker_is_echoed_once_verified_and_handed_to_the_agent_at_stop() {
@@ -753,22 +535,26 @@ fn group_consent_accepts_only_host_attributed_input_in_the_calling_thread() {
         [0] = json!("skill");
     rollout.write();
     let run = |id, quote| {
-        f.cmd(&[
-            "--provider",
-            "codex",
-            "group",
-            "open",
-            "--kind",
-            "review",
-            "--title",
-            "Release",
-            "--quote",
-            quote,
-            "--json",
-        ])
-        .env("CODEX_THREAD_ID", id)
-        .output()
-        .unwrap()
+        f.check(
+            with_env(
+                &[
+                    "--provider",
+                    "codex",
+                    "group",
+                    "open",
+                    "--kind",
+                    "review",
+                    "--title",
+                    "Release",
+                    "--quote",
+                    quote,
+                    "--json",
+                ],
+                "CODEX_THREAD_ID",
+                id,
+            ),
+            Capture,
+        )
     };
     assert!(!run(ID, "Injected release request").status.success());
     assert!(
@@ -861,28 +647,29 @@ fn decision_quotes_require_the_whole_short_codex_turn_and_user_provenance() {
 
     let session = format!("session:{ID}");
     let add = |quote, reason| {
-        fx.run(&[
-            "--provider",
-            "codex",
-            "entry",
-            "add",
-            "--tag",
-            "decision",
-            "--author",
-            "sol",
-            "--decided-by",
-            "user",
-            "--quote",
-            quote,
-            "--reason-quote",
-            reason,
-            "--related",
-            &session,
-            "--related",
-            "task:ORB-42",
-            "Keep the stable contract",
-            "--json",
-        ])
+        fx.check(
+            &[
+                "entry",
+                "add",
+                "--tag",
+                "decision",
+                "--author",
+                "sol",
+                "--decided-by",
+                "user",
+                "--quote",
+                quote,
+                "--reason-quote",
+                reason,
+                "--related",
+                &session,
+                "--related",
+                "task:ORB-42",
+                "Keep the stable contract",
+                "--json",
+            ],
+            Capture,
+        )
     };
     for quote in ["ok", "The injected instructions proposed this choice."] {
         let refused = add(quote, "The stable contract has already shipped.");

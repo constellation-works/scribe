@@ -307,6 +307,18 @@ so a shipped build never compiles it:
 The store's tests that call the `*Verbs` are in `scribe-core`
 (`src/tests/store/`), because the store cannot see the apps.
 
+The binary's integration tests live in `crates/scribe/tests/`. Each target
+loads its own `support/<subject>.rs`, where a caller-tracked `check` drives
+the subject. The shared fixture supplies an isolated home and store.
+Checks accept subject arguments, a full command via `Cli`, or an explicit
+environment or launcher when the case exercises one. A case can keep the
+fixture between commands to inspect changes to the same store. Expectations
+check the exit code and can return the decoded JSON or UTF-8 stdout.
+
+Large targets use `include!` for groups of related cases. This keeps their
+existing libtest names available to exact filters, including the replay
+script. The Makefile formats these files alongside Cargo's module tree.
+
 ## Guards
 
 Checked over non-test sources by `scripts/check-dependency-direction.sh`

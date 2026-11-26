@@ -95,7 +95,7 @@ opens no claim under any route, and may name any tag, catcher or not.
 ## Example catchers
 
 These are documentation, not shipped config. Paste one into `config.toml`
-to use it. `crates/scribe/tests/session_pass.rs` reads each block below
+to use it. `crates/scribe/tests/session_pass/catchers.rs` reads each block below
 from this page and runs it through a pass, so the examples stay working.
 
 ```toml

@@ -1,295 +1,20 @@
 //! Exercise the shipped forget routes and search the persisted bytes.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/erasure.rs"]
+mod subject;
 mod support;
 
-use rusqlite::{Connection, OpenFlags};
+use crate::support::command::Input::Cli;
+use rusqlite::Connection;
 use scribe_core::RebuildVerbs;
-use scribe_core::message::NewMessage;
-use scribe_core::testing::StoreTestReads;
 use scribe_core::testing::ViewTestReads;
-use scribe_core::{Redactor, Speaker, Store};
-use serde_json::{Value, json};
-use std::fs;
-use std::io::Write as _;
-use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
-use support::{ChildGuard, Fixture, make_private, seed_records, text};
-use time::OffsetDateTime;
+use scribe_core::{Redactor, Store};
+use serde_json::json;
+use subject::*;
+use support::command::Exit::Success;
+use support::{Fixture, seed_records};
 use time::format_description::well_known::Rfc3339;
-use time::macros::datetime;
-
-const SOURCE: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-const USER: &str = "50ffac20-d430-4d20-a54d-0f6b2afcf5be";
-const AT: OffsetDateTime = datetime!(2026-11-02 20:00 UTC);
-const KEPT: &str = "keep-unrelated-archive-8bc43";
-const ARCHIVE: &str = "pre-sqlite-2026-10-01";
-
-/// Include even files that are hidden, have no known suffix, or contain
-/// binary data. Report the paths, so a new copy identifies its own surface.
-fn copies(root: &Path, marker: &str) -> Vec<PathBuf> {
-    let mut hits = Vec::new();
-    let mut dirs = vec![root.to_path_buf()];
-    while let Some(dir) = dirs.pop() {
-        for item in fs::read_dir(dir).unwrap() {
-            let item = item.unwrap();
-            let kind = item.file_type().unwrap();
-            let path = item.path();
-            if kind.is_dir() {
-                dirs.push(path);
-            } else {
-                assert!(kind.is_file(), "unexpected file type: {}", path.display());
-                if contains(&path, marker) {
-                    hits.push(path.strip_prefix(root).unwrap().to_path_buf());
-                }
-            }
-        }
-    }
-    hits.sort();
-    hits
-}
-
-fn contains(path: &Path, marker: &str) -> bool {
-    fs::read(path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
-        .windows(marker.len())
-        .any(|bytes| bytes == marker.as_bytes())
-}
-
-fn put(fx: &Fixture, path: &Path, body: &str) {
-    fx.create_private_dir_all(path.parent().unwrap());
-    fs::write(path, body).unwrap();
-    make_private(path);
-}
-
-fn json_output(out: &Output) -> Value {
-    serde_json::from_slice(&out.stdout).unwrap()
-}
-
-fn transcript(fx: &Fixture, instructions: &[String]) -> PathBuf {
-    let path = fx
-        .home()
-        .join(format!(".claude/projects/-work-scribe/{USER}.jsonl"));
-    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
-    let lines: String = instructions
-        .iter()
-        .enumerate()
-        .map(|(n, words)| {
-            let turn = json!({
-                "type": "user", "uuid": format!("u-{n}"), "timestamp": now,
-                "cwd": "/work/scribe", "entrypoint": "claude-desktop",
-                "message": {"role": "user", "content": words},
-            });
-            format!("{turn}\n")
-        })
-        .collect();
-    put(fx, &path, &lines);
-    path
-}
-
-fn run_submit(fx: &Fixture, prompt: &str) -> Output {
-    let payload = json!({
-        "session_id": USER, "transcript_path": transcript(fx, &[]),
-        "cwd": "/work/scribe", "permission_mode": "default",
-        "hook_event_name": "UserPromptSubmit", "prompt": prompt,
-    });
-    let mut child = ChildGuard::new(
-        fx.cmd(&["hook", "user-prompt-submit"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    child
-        .child()
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(payload.to_string().as_bytes())
-        .unwrap();
-    child.finish()
-}
-
-fn submit(fx: &Fixture, prompt: &str) -> String {
-    let out = run_submit(fx, prompt);
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    json_output(&out)["systemMessage"]
-        .as_str()
-        .unwrap()
-        .to_owned()
-}
-
-fn entry_forget_args<'a>(id: &'a str, instruction: &'a str) -> [&'a str; 10] {
-    [
-        "entry",
-        "forget",
-        id,
-        "--author",
-        "opus",
-        "--session",
-        USER,
-        "--instruction",
-        instruction,
-        "--confirm",
-    ]
-}
-
-/// Whether any record `scribe.db` archived holds `marker`.
-fn archived_has(fx: &Fixture, marker: &str) -> bool {
-    let n: i64 = db(fx)
-        .query_row(
-            "SELECT count(*) FROM archive_records WHERE instr(record, ?1) > 0",
-            [marker],
-            |row| row.get(0),
-        )
-        .unwrap();
-    n > 0
-}
-
-fn export(fx: &Fixture, dir: &Path, format: &str) {
-    fx.ok(&["export", dir.to_str().unwrap(), "--as", format]);
-}
-
-fn sweep(fx: &Fixture, markers: &[&str]) {
-    // Look on disk before any later command has a chance to repair it.
-    let check = || {
-        for marker in markers {
-            let found = copies(&fx.root(), marker);
-            assert!(found.is_empty(), "{marker} remains in {found:?}");
-        }
-    };
-    check();
-    // Exports are snapshots owned by their caller. Sweep fresh exports to
-    // catch renderers that expose text no longer visible in normal reads.
-    for format in ["markdown", "jsonl"] {
-        export(fx, &fx.root().join(format!("export-{format}")), format);
-    }
-    check();
-}
-
-struct EntrySeed {
-    n: usize,
-    id: String,
-    old: String,
-    edited: String,
-    quote: String,
-}
-
-impl EntrySeed {
-    fn new(n: usize) -> Self {
-        Self {
-            n,
-            id: format!("preferences-{n}"),
-            old: format!("erase-original-entry-{n}-51d7e"),
-            edited: format!("erase-edited-entry-{n}-b16ee"),
-            quote: format!("erase-claim-quote-{n}-cf72a"),
-        }
-    }
-
-    fn markers(&self) -> [&str; 3] {
-        [&self.old, &self.edited, &self.quote]
-    }
-}
-
-/// A format-31 entry an agent wrote, so `entry update` may change it.
-fn agent_entry(n: usize, content: &str) -> String {
-    let text = support::entry_text(n, content);
-    let mut out = Vec::new();
-    for line in text.lines() {
-        out.push(if line.starts_with("author:") {
-            "author: {kind: agent, name: opus}".to_owned()
-        } else if line.starts_with("said:") {
-            "said: ''".to_owned()
-        } else if line.starts_with("content_from:") {
-            "content_from: {kind: agent}".to_owned()
-        } else if line.starts_with("cite:") {
-            "cite: null".to_owned()
-        } else {
-            line.to_owned()
-        });
-    }
-    out.join("\n") + "\n"
-}
-
-/// Stage a store with live entries and the archive a phase-7 move left of
-/// them (old text), then let the next write import the archive and an edit
-/// make the live copy differ. Current audit writers store ids only.
-fn seed_entries(fx: &Fixture, entries: &[EntrySeed]) {
-    let texts: Vec<String> = entries
-        .iter()
-        .map(|seed| agent_entry(seed.n, &seed.old))
-        .collect();
-    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    seed_records(&fx.root(), &refs);
-
-    let archive = fx.root().join(ARCHIVE);
-    let mut claims = Vec::new();
-    let mut audit = String::new();
-    for (i, (seed, text)) in entries.iter().zip(&texts).enumerate() {
-        // The archived body ends in a newline; the audit line's free text
-        // holds the same words without it, and the forget still erases it.
-        put(
-            fx,
-            &archive.join(format!("entries/preferences/{}.md", seed.id)),
-            text,
-        );
-        claims.push(json!({
-            "id": format!("p-{}", i + 1), "kind": "stale", "older": seed.id,
-            "reason": "An obsolete preference",
-            "quotes": [{"entry": seed.id, "text": seed.quote}],
-            "state": "open", "opened_at": "2026-11-02T20:00:00Z",
-            "newer": null, "settled_at": null, "settled_by": null,
-        }));
-        audit.push_str(&legacy_audit(&seed.id, &seed.old));
-    }
-    audit.push_str(&legacy_audit("preferences-99", KEPT));
-    put(fx, &archive.join("audit.jsonl"), &audit);
-    put(
-        fx,
-        &archive.join("proposals.json"),
-        &json!({"format": 1, "proposals": claims}).to_string(),
-    );
-    for seed in entries {
-        fx.ok(&[
-            "entry",
-            "update",
-            &seed.id,
-            "--author",
-            "opus",
-            "--content",
-            &seed.edited,
-        ]);
-        assert!(archived_has(fx, &seed.old));
-        assert!(archived_has(fx, &seed.quote));
-        assert!(contains(&fx.root().join("scribe.db"), &seed.edited));
-    }
-    assert!(!archive.exists(), "the write imported the archive");
-}
-
-fn legacy_audit(target: &str, marker: &str) -> String {
-    let line = json!({
-        "format": 5, "at": "2026-11-02T20:00:00Z", "command": "hook stop",
-        "status": "success", "target": target, "detail": marker, "duration_ms": 1,
-    });
-    format!("{line}\n")
-}
-
-fn db(fx: &Fixture) -> Connection {
-    Connection::open_with_flags(
-        fx.root().join("scribe.db"),
-        OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .unwrap()
-}
-
-fn pending(fx: &Fixture) -> i64 {
-    db(fx)
-        .query_row("SELECT count(*) FROM pending_archive_forgets", [], |row| {
-            row.get(0)
-        })
-        .unwrap()
-}
 
 fn entry_routes() {
     for via_hook in [false, true] {
@@ -306,7 +31,7 @@ fn entry_routes() {
             let prompt = format!("#scribe forget {}", entry.id);
             assert!(submit(&fx, &prompt).contains("forgot"));
         } else {
-            fx.ok(&args);
+            fx.check(Cli(&args), Success);
         }
         assert_eq!(pending(&fx), 0);
         sweep(&fx, &entry.markers());
@@ -324,24 +49,7 @@ fn concurrent_entries() {
         .each_ref()
         .map(|entry| format!("forget {} for good", entry.id));
     transcript(&fx, &words);
-    let children = entries
-        .each_ref()
-        .into_iter()
-        .zip(&words)
-        .map(|(entry, words)| {
-            ChildGuard::new(
-                fx.cmd(&entry_forget_args(&entry.id, words))
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    for child in children {
-        let out = child.finish();
-        assert!(out.status.success(), "{}", text(&out.stderr));
-    }
+    forget_concurrently(&fx, &entries, &words);
     assert_eq!(pending(&fx), 0);
     sweep(
         &fx,
@@ -353,24 +61,6 @@ fn concurrent_entries() {
     assert!(archived_has(&fx, KEPT));
 }
 
-fn write_turn(store: &Store, marker: &str, message: &str) {
-    assert_eq!(
-        store
-            .write_messages(
-                &[NewMessage {
-                    session: SOURCE.parse().unwrap(),
-                    message: message.to_owned(),
-                    role: Speaker::User,
-                    at: AT,
-                    text: marker.to_owned(),
-                }],
-                &Redactor::default()
-            )
-            .unwrap(),
-        1,
-    );
-}
-
 fn session_route() {
     const RECORD: &str = "erase-session-record-95bde";
     const CHECKPOINT: &str = "erase-rebuild-checkpoint-40c70";
@@ -378,8 +68,7 @@ fn session_route() {
     const CLAIM: &str = "erase-session-claim-a9dbd";
     let fx = Fixture::new();
     let rel = format!("sessions/2026/11/{SOURCE}.md");
-    let source = Fixture::new();
-    source.seed();
+    let source = Fixture::seeded();
     let legacy = support::record_text(&source.root(), SOURCE)
         .unwrap()
         .replace(
@@ -415,7 +104,7 @@ fn session_route() {
         &archive.join(format!("sessions/2026/11/.{SOURCE}.rebuild.md")),
         &legacy.replace(RECORD, CHECKPOINT),
     );
-    let imported = json_output(&fx.ok(&["store", "migrate", "--json"]));
+    let imported = json_output(&fx.check(Cli(&["store", "migrate", "--json"]), Success));
     assert_eq!(imported["archives"], 1, "{imported}");
     let store = Store::open(fx.root());
     write_turn(&store, TURN, "private-turn");
@@ -461,15 +150,18 @@ fn memory_route(with_linked_turn: bool) {
             "---\ndate: 2026-12-01\nkind: deadline\nsources: [{SOURCE}]\nupdated: 2026-11-02T20:00:00Z\n---\n# Release ships\n\n{BODY}\n",
         ),
     );
-    fx.ok(&[
-        "memory",
-        "ack",
-        STEM,
-        "--session",
-        SOURCE,
-        "--author",
-        "opus",
-    ]);
+    fx.check(
+        Cli(&[
+            "memory",
+            "ack",
+            STEM,
+            "--session",
+            SOURCE,
+            "--author",
+            "opus",
+        ]),
+        Success,
+    );
     assert!(contains(&fx.root().join("scribe.db-wal"), BODY));
     // A live item can have past text in history and a linked source turn.
     let writer = Connection::open(fx.root().join("scribe.db")).unwrap();
@@ -496,7 +188,10 @@ fn memory_route(with_linked_turn: bool) {
     for marker in &markers {
         assert!(!copies(&fx.root(), marker).is_empty());
     }
-    fx.ok(&["memory", "forget", STEM, "--author", "opus", "--confirm"]);
+    fx.check(
+        Cli(&["memory", "forget", STEM, "--author", "opus", "--confirm"]),
+        Success,
+    );
     sweep(&fx, &markers);
 }
 
@@ -535,15 +230,17 @@ fn imported_issue_route() {
     put(&fx, &archive.join("issue-1.md"), &source);
     put(&fx, &archive.join("issue-2.md"), &neighbor);
     // The next write imports the archive like any other.
-    fx.ok(&[
-        "entry",
-        "update",
-        "issue-2",
-        "--author",
-        "opus",
-        "--content",
-        CORRECTED,
-    ]);
+    fx.check(
+        &[
+            "update",
+            "issue-2",
+            "--author",
+            "opus",
+            "--content",
+            CORRECTED,
+        ],
+        Success,
+    );
     assert!(!archive.exists(), "the write imported the archive");
     assert!(archived_has(&fx, CAUSE));
     assert!(archived_has(&fx, KEPT));
@@ -556,7 +253,7 @@ fn imported_issue_route() {
         archived_has(&fx, KEPT),
         "the unrelated archived issue stays"
     );
-    let unrelated = json_output(&fx.ok(&["entry", "show", "issue-1", "--json"]));
+    let unrelated = json_output(&fx.check(&["show", "issue-1", "--json"], Success));
     assert_eq!(unrelated["content"], "kept live issue");
 }
 

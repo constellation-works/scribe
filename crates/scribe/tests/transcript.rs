@@ -3,11 +3,17 @@
 //! a transcript that is not there.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/transcript.rs"]
+mod subject;
 mod support;
 
+use crate::support::command::Exit::Code;
+use crate::support::command::Input::Cli;
+use crate::support::command::{Json, Text};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
-use support::{Fixture, text};
+use support::Fixture;
+use support::command::Exit::Success;
 
 const SESSION: &str = "c0ffee00-1111-4222-8333-444455556666";
 
@@ -45,16 +51,18 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
     let before = support::snapshot(&root);
     // Owner read-only: the store refuses group and other bits (STD-05 R9).
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500)).unwrap();
-    let listed = fx.ok(&[
-        "transcript",
-        "list",
-        "--since",
-        "2026-10-01",
-        "--min-turns",
-        "1",
-        "--json",
-    ]);
-    let shown = fx.ok(&["transcript", "show", "c0ff", "--json"]);
+    let listed = fx.check(
+        &[
+            "list",
+            "--since",
+            "2026-10-01",
+            "--min-turns",
+            "1",
+            "--json",
+        ],
+        Success,
+    );
+    let shown = fx.check(&["show", "c0ff", "--json"], Success);
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(support::snapshot(&root), before, "a read writes nothing");
 
@@ -68,15 +76,17 @@ fn list_and_show_read_a_read_only_root_and_a_missing_catalog_is_not_found() {
     let show = serde_json::from_slice::<serde_json::Value>(&shown.stdout).unwrap();
     assert_eq!(show["user_first_turns"].as_array().unwrap().len(), 1);
 
-    let missing = fx.run(&[
-        "session",
-        "catalog",
-        "no-such-session",
-        "--author",
-        "opus",
-        "--json",
-    ]);
-    assert_eq!(missing.status.code(), Some(1), "{}", text(&missing.stderr));
+    let missing = fx.check(
+        Cli(&[
+            "session",
+            "catalog",
+            "no-such-session",
+            "--author",
+            "opus",
+            "--json",
+        ]),
+        Code(1),
+    );
     let err = serde_json::from_slice::<serde_json::Value>(&missing.stderr).unwrap();
     assert_eq!(err["code"], "transcript_not_found");
     assert!(
@@ -123,15 +133,17 @@ fn list_skips_a_transcript_whose_mtime_is_before_since() {
     write_one(old_id, 1_790_812_800); // 2026-10-01, before --since 2026-11-01
     write_one(new_id, 1_794_700_800); // 2026-11-15, on/after --since
 
-    let listed = fx.ok(&[
-        "transcript",
-        "list",
-        "--since",
-        "2026-11-01",
-        "--min-turns",
-        "1",
-        "--json",
-    ]);
+    let listed = fx.check(
+        &[
+            "list",
+            "--since",
+            "2026-11-01",
+            "--min-turns",
+            "1",
+            "--json",
+        ],
+        Success,
+    );
     let list = serde_json::from_slice::<serde_json::Value>(&listed.stdout).unwrap();
     let sessions: Vec<&str> = list["transcripts"]
         .as_array()
@@ -175,13 +187,11 @@ fn exact_provider_id_reads_transcript_when_an_unrelated_group_roster_is_corrupt(
     .unwrap();
     support::make_private(&path);
 
-    let broken_roster = fx.run(&["group", "list", "--json"]);
-    assert_eq!(broken_roster.status.code(), Some(1));
+    let broken_roster = fx.check(Cli(&["group", "list", "--json"]), Code(1));
     let error: serde_json::Value = serde_json::from_slice(&broken_roster.stderr).unwrap();
     assert_eq!(error["code"], "store_corrupt");
 
-    let shown = fx.run(&["transcript", "show", ID, "--json"]);
-    assert_eq!(shown.status.code(), Some(0), "{}", text(&shown.stderr));
+    let shown = fx.check(&["show", ID, "--json"], Success);
     let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert_eq!(shown["session"], ID);
     assert_eq!(shown["user_first_turns"].as_array().unwrap().len(), 1);
@@ -190,8 +200,7 @@ fn exact_provider_id_reads_transcript_when_an_unrelated_group_roster_is_corrupt(
 #[test]
 fn cataloged_transcript_alias_round_trips_and_json_keeps_provider_id() {
     const ID: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-    let fx = Fixture::new();
-    fx.seed();
+    let fx = Fixture::seeded();
     let project = fx.home().join(".claude/projects/-work");
     std::fs::create_dir_all(&project).unwrap();
     let path = project.join(format!("{ID}.jsonl"));
@@ -207,9 +216,8 @@ fn cataloged_transcript_alias_round_trips_and_json_keeps_provider_id() {
     )
     .unwrap();
     support::make_private(&path);
-    let plain = text(&fx.ok(&["transcript", "show", ID]).stdout);
+    let plain = fx.check(&["show", ID], Text);
     assert!(plain.starts_with("s-3\t"), "{plain}");
-    let shown: serde_json::Value =
-        serde_json::from_slice(&fx.ok(&["transcript", "show", "s-3", "--json"]).stdout).unwrap();
+    let shown: serde_json::Value = fx.check(&["show", "s-3", "--json"], Json);
     assert_eq!(shown["session"], ID);
 }

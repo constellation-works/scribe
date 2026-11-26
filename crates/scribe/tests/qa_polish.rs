@@ -11,62 +11,18 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/qa_polish.rs"]
+mod subject;
 mod support;
 
-use serde_json::Value;
-use std::process::Output;
-use support::{Fixture, text};
-
-const SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
-
-/// With the `[redact] env` variable the fixture config names set, so a write
-/// may go ahead.
-fn run(fx: &Fixture, args: &[&str]) -> Output {
-    fx.cmd(args)
-        .env("GITHUB_TOKEN", "fixture-token-value-1234")
-        .output()
-        .unwrap()
-}
-
-fn ok(fx: &Fixture, args: &[&str]) -> Output {
-    let out = run(fx, args);
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{args:?}: {}",
-        text(&out.stderr)
-    );
-    out
-}
-
-fn json(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).unwrap_or_else(|e| panic!("{e}: {}", text(bytes)))
-}
-
-/// Run `args` with `--json`, require `exit`, and return the error object.
-fn failure(fx: &Fixture, args: &[&str], exit: i32) -> Value {
-    let mut all = args.to_vec();
-    all.push("--json");
-    let out = run(fx, &all);
-    assert_eq!(
-        out.status.code(),
-        Some(exit),
-        "{args:?}: {}",
-        text(&out.stderr)
-    );
-    assert!(out.stdout.is_empty(), "{args:?}: stdout is payload only");
-    json(&out.stderr)
-}
-
-fn seeded() -> Fixture {
-    let fx = Fixture::new();
-    fx.seed();
-    fx
-}
+use crate::support::command::Exit::{Code, Success};
+use crate::support::command::with_env;
+use subject::*;
+use support::text;
 
 #[test]
 fn a_json_usage_error_keeps_the_missing_argument_name() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let err = failure(&fx, &["entry", "add", "--tag", "preferences"], 2);
     assert_eq!(err["code"], "usage_error");
     let message = err["error"].as_str().unwrap();
@@ -80,7 +36,7 @@ fn a_json_usage_error_keeps_the_missing_argument_name() {
 
 #[test]
 fn a_cite_must_name_a_record_that_exists() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let base = [
         "session",
         "deactivate",
@@ -104,12 +60,15 @@ fn a_cite_must_name_a_record_that_exists() {
         assert!(err["error"].as_str().unwrap().contains("--cite"), "{bad}");
     }
     // Nothing was stored by the refused attempts.
-    let shown = json(&ok(&fx, &["session", "show", SESSION, "--json"]).stdout);
+    let shown = json(
+        &fx.check(&["session", "show", SESSION, "--json"], Success)
+            .stdout,
+    );
     assert_eq!(shown["active"], true);
 
     let mut args = base.to_vec();
     args.extend(["--cite", "session:0f8e#1"]);
-    let stored = json(&ok(&fx, &[&args[..], &["--json"]].concat()).stdout);
+    let stored = json(&fx.check(&[&args[..], &["--json"]].concat(), Success).stdout);
     assert_eq!(
         stored["active_change"]["cite"], "session:0f8e7a52-3c1d-4b6e-9a2f-5d4c3b2a1e01#1",
         "a cite is stored in full"
@@ -118,9 +77,8 @@ fn a_cite_must_name_a_record_that_exists() {
 
 #[test]
 fn an_entry_id_is_a_valid_cite() {
-    let fx = seeded();
-    let out = ok(
-        &fx,
+    let fx = support::Fixture::seeded();
+    let out = fx.check(
         &[
             "session",
             "deactivate",
@@ -133,13 +91,14 @@ fn an_entry_id_is_a_valid_cite() {
             "decisions-1",
             "--json",
         ],
+        Success,
     );
     assert_eq!(json(&out.stdout)["active_change"]["cite"], "decisions-1");
 }
 
 #[test]
 fn a_too_short_prefix_is_a_usage_error_for_every_noun() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     for args in [
         &["session", "show", "7c"][..],
         &[
@@ -167,7 +126,7 @@ fn a_too_short_prefix_is_a_usage_error_for_every_noun() {
 
 #[test]
 fn every_not_found_error_names_the_id_and_the_path_searched() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let root = fx.root();
     let root = root.to_str().unwrap();
     let write = ["--author", "opus", "--reason", "x"];
@@ -220,20 +179,22 @@ fn every_not_found_error_names_the_id_and_the_path_searched() {
 
 #[test]
 fn a_missing_transcript_names_the_id_and_the_directory() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let projects = fx.elsewhere("claude/projects");
     std::fs::create_dir_all(&projects).unwrap();
-    let out = fx
-        .cmd(&[
-            "transcript",
-            "show",
-            "deadbeef-0000-4000-8000-000000000000",
-            "--json",
-        ])
-        .env("CLAUDE_CONFIG_DIR", fx.elsewhere("claude"))
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let out = fx.check(
+        with_env(
+            &[
+                "transcript",
+                "show",
+                "deadbeef-0000-4000-8000-000000000000",
+                "--json",
+            ],
+            "CLAUDE_CONFIG_DIR",
+            fx.elsewhere("claude"),
+        ),
+        Code(1),
+    );
     let err = json(&out.stderr);
     assert_eq!(err["code"], "transcript_not_found");
     let message = err["error"].as_str().unwrap();
@@ -243,9 +204,8 @@ fn a_missing_transcript_names_the_id_and_the_directory() {
 
 #[test]
 fn the_table_detail_view_separates_a_long_label_from_its_value() {
-    let fx = seeded();
-    ok(
-        &fx,
+    let fx = support::Fixture::seeded();
+    fx.check(
         &[
             "entry",
             "add",
@@ -255,9 +215,9 @@ fn the_table_detail_view_separates_a_long_label_from_its_value() {
             "opus",
             "squash merges",
         ],
+        Success,
     );
-    ok(
-        &fx,
+    fx.check(
         &[
             "entry",
             "retire",
@@ -267,10 +227,11 @@ fn the_table_detail_view_separates_a_long_label_from_its_value() {
             "--reason",
             "obsolete",
         ],
+        Success,
     );
-    let out = ok(
-        &fx,
+    let out = fx.check(
         &["entry", "show", "preferences-2", "--format", "table"],
+        Success,
     );
     let shown = text(&out.stdout);
     let line = shown
@@ -286,7 +247,7 @@ fn the_table_detail_view_separates_a_long_label_from_its_value() {
 
 #[test]
 fn adding_an_existing_tag_says_it_exists() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let args = [
         "tag",
         "add",
@@ -296,7 +257,7 @@ fn adding_an_existing_tag_says_it_exists() {
         "--description",
         "qa notes",
     ];
-    ok(&fx, &args);
+    fx.check(&args, Success);
     let err = failure(&fx, &args, 1);
     assert_eq!(err["code"], "tag_conflict");
     let message = err["error"].as_str().unwrap();
@@ -344,7 +305,7 @@ fn adding_an_existing_tag_says_it_exists() {
 
 #[test]
 fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let err = without_secret(
         &fx,
         &[
@@ -359,8 +320,7 @@ fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
     );
     assert_eq!(err["code"], "tag_not_found");
 
-    ok(
-        &fx,
+    fx.check(
         &[
             "tag",
             "add",
@@ -370,6 +330,7 @@ fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
             "--description",
             "qa notes",
         ],
+        Success,
     );
     let err = without_secret(
         &fx,
@@ -388,7 +349,7 @@ fn an_unknown_tag_update_target_is_reported_before_an_unset_redact_name() {
 
 #[test]
 fn an_invalid_entry_topic_patch_is_reported_before_an_unset_redact_name() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let mut args = vec!["entry", "update", "decisions-1", "--author", "opus"];
     args.extend([
         "--add-topic",
@@ -408,22 +369,9 @@ fn an_invalid_entry_topic_patch_is_reported_before_an_unset_redact_name() {
     assert_eq!(err["code"], "invalid_topics");
 }
 
-/// The fixture config names `GITHUB_TOKEN` in `[redact] env`; running without
-/// it set is the unresolved-name case.
-fn without_secret(fx: &Fixture, args: &[&str]) -> Value {
-    let mut all = args.to_vec();
-    all.push("--json");
-    let out = fx.cmd(&all).output().unwrap();
-    assert!(out.stdout.is_empty(), "{args:?}: {}", text(&out.stdout));
-    // The refusal is logged on stderr before the error object, its last line.
-    let stderr = text(&out.stderr);
-    let last = stderr.lines().last().unwrap_or_default();
-    serde_json::from_str(last).unwrap_or_else(|e| panic!("{e}: {stderr}"))
-}
-
 #[test]
 fn a_bad_argument_is_reported_before_an_unset_redact_name() {
-    let fx = seeded();
+    let fx = support::Fixture::seeded();
     let cases: Vec<(Vec<&str>, &str)> = vec![
         (
             vec!["entry", "add", "--tag", "nope", "--author", "opus", "text"],
@@ -541,6 +489,12 @@ fn a_bad_argument_is_reported_before_an_unset_redact_name() {
         ],
     );
     assert_eq!(err["code"], "redact_env_unset");
-    let list = json(&ok(&fx, &["entry", "list", "--tag", "preferences", "--json"]).stdout);
+    let list = json(
+        &fx.check(
+            &["entry", "list", "--tag", "preferences", "--json"],
+            Success,
+        )
+        .stdout,
+    );
     assert_eq!(list["total"], 1, "no entry was written");
 }
