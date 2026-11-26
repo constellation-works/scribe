@@ -360,6 +360,56 @@ for comment_banned in \
   fi
 done
 
+# Cargo keys each declaration by its table as well as by its name: the same key
+# in [dependencies], [build-dependencies] or two target tables is two dependencies
+# (ORB-28908). A banned package fails wherever its declaration sits, in either
+# order; legal reuse passes; a crate cycle closed only by a reused key is cited
+# at the declaration that closes it.
+n_reuse=0
+for banned_reuse in \
+  $'[dependencies]\nrusqlite = "0.43"\n\n[build-dependencies]\nrusqlite = { version = "1", package = "serde" }\n' \
+  $'[build-dependencies]\nrusqlite = { version = "1", package = "serde" }\n\n[dependencies]\nrusqlite = "0.43"\n' \
+  $'[target.\'cfg(unix)\'.dependencies]\nrusqlite = "0.43"\n\n[target.\'cfg(windows)\'.dependencies]\nrusqlite = { version = "1", package = "serde" }\n' \
+  $'[target.\'cfg(windows)\'.dependencies]\nrusqlite = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nrusqlite = "0.43"\n' \
+  $'[dependencies.rusqlite]\nversion = "0.43"\n\n[build-dependencies.rusqlite]\nversion = "1"\npackage = "serde"\n' \
+  $'[build-dependencies]\nrusqlite = { version = "1", package = "serde" }\n\n[dependencies.rusqlite]\nversion = "0.43"\n' \
+  $'[dependencies]\nrusqlite = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nrusqlite = "0.43"\n'; do
+  n_reuse=$((n_reuse + 1))
+  reused=$(tree "reuse-banned-$n_reuse")
+  printf '[package]\nname = "scribe"\n\n%s' "$banned_reuse" >"$reused/crates/scribe/Cargo.toml"
+  expect fail check-dependency-direction.sh "$reused" "a banned package under a reused key ($n_reuse)"
+  if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+    echo "check-gates: FAIL: missing banned-crate diagnostic for a reused key ($n_reuse)" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+for legal_reuse in \
+  $'[dependencies]\nserde = "1"\n\n[build-dependencies]\nserde = { version = "1", package = "serde_json" }\n' \
+  $'[dependencies.serde]\nversion = "1"\n\n[build-dependencies.serde]\nversion = "1"\npackage = "serde_json"\n' \
+  $'[target.\'cfg(unix)\'.dependencies]\nserde = "1"\n\n[target.\'cfg(windows)\'.dependencies]\nserde = { version = "1", package = "serde_json" }\n' \
+  $'[dependencies]\nserde = { version = "1", package = "serde_json" }\n\n[target.\'cfg(unix)\'.dependencies]\nserde = "1"\n' \
+  $'[dependencies]\nserde = "1"\n\n[dev-dependencies]\nrusqlite = "0.43"\n'; do
+  n_reuse=$((n_reuse + 1))
+  legal=$(tree "reuse-legal-$n_reuse")
+  printf '[package]\nname = "scribe"\n\n%s' "$legal_reuse" >"$legal/crates/scribe/Cargo.toml"
+  expect pass check-dependency-direction.sh "$legal" "a reused key with legal packages, or a dev-only banned one ($n_reuse)"
+done
+for core_reuse in \
+  $'[dependencies]\nscribe = { version = "1", package = "serde" }\n\n[build-dependencies]\nscribe = { path = "../scribe" }\n' \
+  $'[target.\'cfg(windows)\'.dependencies]\nscribe = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nscribe = { path = "../scribe" }\n'; do
+  n_reuse=$((n_reuse + 1))
+  cyc_reuse=$(tree "cycle-reused-$n_reuse")
+  printf '[package]\nname = "scribe-core"\n\n%s' "$core_reuse" >"$cyc_reuse/crates/scribe-core/Cargo.toml"
+  expect fail check-dependency-direction.sh "$cyc_reuse" "a crate cycle closed by a reused key ($n_reuse)"
+  edge_line=$(grep -n 'path = "../scribe"' "$cyc_reuse/crates/scribe-core/Cargo.toml" | cut -d: -f1)
+  if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:$edge_line" "$work/out"; then
+    echo "check-gates: FAIL: the cycle diagnostic does not cite the declaration at line $edge_line ($n_reuse)" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
 # 2. Top-level module cycles inside a crate (direct, relative super::, grouped, 3-node)
 #    plus clean acyclic twins and comment/string non-cycles.
 cyc_top_ok=$(tree cycle-top-clean)
