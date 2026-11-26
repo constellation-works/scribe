@@ -1596,7 +1596,7 @@ exits 0.
   the pending ones into the record it writes, so a link added while the
   model ran is never lost.
 - **Writes** (S2). Every file except `audit.jsonl` is replaced whole by
-  `fsio::write_atomic`: a temp file in the same directory, `fsync`, rename,
+  `cw_fs::write_atomic`: a temp file in the same directory, `fsync`, rename,
   `fsync` of the directory, in its write's transaction. Lock acquisition gives up after
   10 seconds with `store_locked`, naming the holder.
 - **Redaction** (S2). Before a write, `Redactor` replaces each live

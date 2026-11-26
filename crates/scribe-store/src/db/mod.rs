@@ -28,7 +28,7 @@ pub(super) mod archive;
 pub(crate) mod codec;
 pub(super) mod docs;
 pub(crate) mod documents;
-pub mod fsio;
+pub(crate) mod files;
 pub(crate) mod import;
 pub(crate) mod locks;
 pub(crate) mod log;
@@ -535,9 +535,9 @@ fn paths(root: &Path) -> [PathBuf; 3] {
 /// open to others; `Ok(false)` when the database does not exist.
 fn inspect(root: &Path) -> Result<bool> {
     let [db, wal, shm] = paths(root);
-    fsio::inspect_file(&wal)?;
-    fsio::inspect_file(&shm)?;
-    fsio::inspect_file(&db)
+    cw_fs::inspect_file(&wal)?;
+    cw_fs::inspect_file(&shm)?;
+    Ok(cw_fs::inspect_file(&db)?)
 }
 
 /// A read-write connection: the database created owner-only if missing,
@@ -556,7 +556,7 @@ pub fn open_writer(root: &Path, wait: Duration) -> Result<Rc<Connection>> {
 pub fn open_new_writer(root: &Path, wait: Duration) -> Result<Connection> {
     let path = root.join(DB_FILE);
     if !inspect(root)? {
-        fsio::create_private_file(&path)?;
+        files::create_empty(&path)?;
     }
     let mut conn = Connection::open_with_flags(
         &path,

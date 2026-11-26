@@ -112,6 +112,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cw-base"
+version = "0.1.0"
+source = "git+https://github.com/constellation-works/satellites?rev=9c9cc998720f0a75041be3451c14fbaf80f29dc8#9c9cc998720f0a75041be3451c14fbaf80f29dc8"
+dependencies = [
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "cw-fs"
+version = "0.1.0"
+source = "git+https://github.com/constellation-works/satellites?rev=9c9cc998720f0a75041be3451c14fbaf80f29dc8#9c9cc998720f0a75041be3451c14fbaf80f29dc8"
+dependencies = [
+ "cw-base",
+ "rustix",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -395,6 +415,7 @@ dependencies = [
 name = "scribe-core"
 version = "0.3.0"
 dependencies = [
+ "cw-fs",
  "rusqlite",
  "rustix",
  "scribe-core",
@@ -413,8 +434,8 @@ dependencies = [
 name = "scribe-store"
 version = "0.3.0"
 dependencies = [
+ "cw-fs",
  "rusqlite",
- "rustix",
  "serde",
  "serde_json",
  "sha2",

@@ -393,17 +393,25 @@ ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crat
 # mechanism (2_design.md §15.7): only db/ names rusqlite (testing.rs, the
 # test-support shim, hands tests a connection), every other store module
 # reaches scribe.db through it, and the crate policies keep rusqlite out of
-# every other crate. db/fsio.rs, mechanism only, names nothing else of the
+# every other crate. The file layer is the kit's cw-fs (ORB-28612): the store
+# names it, scribe-core's project scaffold (apps/admin/init.rs) names it, and
+# no other crate does. db/files.rs, its adapter, names nothing else of the
 # store but its error type.
 while IFS= read -r -d '' path; do
   case "$path" in "$STORE"/db/* | "$STORE"/testing.rs) continue ;; esac
   ban "$path" '(^|[^[:alnum:]_])rusqlite([^[:alnum:]_]|$)' "${path#crates/}: only scribe-store's db/ uses rusqlite"
 done < <(find "$STORE" -name '*.rs' -not -path '*/tests/*' -print0)
-fsio_hits=$(grep -nE '(crate|super)::' "$STORE/db/fsio.rs" | grep -vE '^[0-9]+:[[:space:]]*//' | grep -v 'crate::error::' || true)
-if [[ -n "$fsio_hits" ]]; then
-  echo "$fsio_hits" >&2
-  err "scribe-store/src/db/fsio.rs: fsio imports nothing of the store but its error"
+files_hits=$(grep -nE '(crate|super)::' "$STORE/db/files.rs" | grep -vE '^[0-9]+:[[:space:]]*//' | grep -v 'crate::error::' || true)
+if [[ -n "$files_hits" ]]; then
+  echo "$files_hits" >&2
+  err "scribe-store/src/db/files.rs: the cw-fs adapter imports nothing of the store but its error"
 fi
+# cw-fs reaches the data root through the store's modules; in the core only
+# the project scaffold names it, and the binary and the tools never do.
+while IFS= read -r -d '' path; do
+  case "$path" in "$CORE"/apps/admin/init.rs) continue ;; esac
+  ban "$path" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "${path#crates/}: only the store and the project scaffold (apps/admin/init.rs) use cw-fs"
+done < <(find "$CORE" "$CLI" "$TOOLS" -name '*.rs' -not -path '*/tests/*' -print0)
 # contracts/ holds record shapes only: it imports nothing from db/ or
 # repository/, as a path or inside a grouped import, and decides nothing
 # (no `check_*` function).
@@ -482,6 +490,8 @@ for retired in \
   crates/scribe-store/src/init.rs \
   crates/scribe-store/src/db.rs \
   crates/scribe-store/src/fsio.rs \
+  crates/scribe-store/src/db/fsio.rs \
+  crates/scribe-store/src/tests/fsio.rs \
   crates/scribe-store/src/write.rs \
   crates/scribe-store/src/codec.rs \
   crates/scribe-store/src/archive.rs \

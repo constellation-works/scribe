@@ -18,6 +18,7 @@ use super::memory::{MemoryFiles, MemoryRows, MemoryStep};
 use super::{Access, ReadWrite};
 use crate::WriteRefusal;
 use crate::db::MemoryCommit;
+use crate::db::files;
 use crate::db::sessions::{self as rows, SessionTx};
 use crate::db::{self, codec};
 use crate::error::refusal;
@@ -25,7 +26,7 @@ use crate::error::{Error, Result};
 use crate::message::NewMessage;
 use crate::{
     CONTROL_FILE, ControlState, DB_FILE, MemoryWritten, RECORD_EXT, Redactor, Related,
-    SESSIONS_DIR, SessionId, SessionRecord, Skipped, Store, fsio,
+    SESSIONS_DIR, SessionId, SessionRecord, Skipped, Store,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
@@ -852,10 +853,10 @@ impl Store {
     /// binary: the stamp is all that file holds. Read as plain JSON.
     pub(crate) fn check_stamp(&self) -> Result<()> {
         let path = self.root.join(CONTROL_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+        if !self.root_exists()? || !cw_fs::inspect_file(&path)? {
             return Ok(());
         }
-        codec::check_stamp(&path, &fsio::read(&path)?)
+        codec::check_stamp(&path, &files::read(&path)?)
     }
 
     /// Every rebuild checkpoint file of a file store,
@@ -863,20 +864,20 @@ impl Store {
     pub(crate) fn checkpoint_files(&self) -> Result<Vec<(SessionId, PathBuf)>> {
         let mut out = Vec::new();
         let dir = self.root.join(SESSIONS_DIR);
-        if !fsio::inspect_subdir(&dir)? {
+        if !cw_fs::inspect_dir(&dir)? {
             return Ok(out);
         }
-        for year in fsio::list_dir(&dir)? {
+        for year in cw_fs::list(&dir)? {
             let year_dir = dir.join(&year);
-            if !fsio::inspect_subdir(&year_dir)? {
+            if !cw_fs::inspect_dir(&year_dir)? {
                 continue;
             }
-            for month in fsio::list_dir(&year_dir)? {
+            for month in cw_fs::list(&year_dir)? {
                 let month_dir = year_dir.join(&month);
-                if !fsio::inspect_subdir(&month_dir)? {
+                if !cw_fs::inspect_dir(&month_dir)? {
                     continue;
                 }
-                for name in fsio::list_dir(&month_dir)? {
+                for name in cw_fs::list(&month_dir)? {
                     let Some(id) = name
                         .strip_prefix('.')
                         .and_then(|n| n.strip_suffix(".rebuild.md"))
@@ -884,7 +885,7 @@ impl Store {
                         continue;
                     };
                     let path = month_dir.join(&name);
-                    if let (Ok(id), true) = (id.parse(), fsio::inspect_file(&path)?) {
+                    if let (Ok(id), true) = (id.parse(), cw_fs::inspect_file(&path)?) {
                         out.push((id, path));
                     }
                 }
@@ -984,11 +985,11 @@ impl Store {
                 .flat_map(Path::components)
             {
                 dir.push(part);
-                if !fsio::inspect_subdir(&dir)? {
-                    fsio::create_private_dir(&dir)?;
+                if !cw_fs::inspect_dir(&dir)? {
+                    cw_fs::create_private_dir(&dir)?;
                 }
             }
-            fsio::write_atomic(&path, bytes)?;
+            cw_fs::write_atomic(&path, bytes)?;
             files.push(rel);
             Ok(())
         };
@@ -1160,11 +1161,15 @@ fn prepare_target(target: &Path) -> Result<()> {
             if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent).map_err(|e| Error::io("create", parent, e))?;
             }
-            fsio::create_private_dir(target)
+            Ok(cw_fs::create_private_dir(target)?)
         }
         Err(e) => Err(Error::io("inspect", target, e)),
         Ok(meta) if meta.is_dir() => {
-            if !fsio::list_dir(target)?.is_empty() {
+            if std::fs::read_dir(target)
+                .map_err(|e| Error::io("list", target, e))?
+                .next()
+                .is_some()
+            {
                 return Err(refusal(
                     WriteRefusal::ExportTargetExists,
                     format!(

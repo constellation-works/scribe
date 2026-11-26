@@ -6,16 +6,16 @@
 //! The per-session locks are lock files in `locks/`, held across model
 //! calls, which no SQLite transaction may be.
 
+use crate::Store;
 use crate::repository::sessions::encode_checkpoint;
 use crate::{Result, SessionId, SessionRecord};
-use crate::{Store, fsio};
 use time::OffsetDateTime;
 
 /// Serializes rebuilders of one session without holding the store lock over
 /// model calls. The OS releases it on interruption.
 #[derive(Debug)]
 pub struct SessionLock {
-    _lock: fsio::LockGuard,
+    _lock: cw_fs::Lock,
 }
 
 impl Store {
@@ -28,7 +28,7 @@ impl Store {
     pub fn session_lock(&self, name: &str, what: &str) -> Result<SessionLock> {
         let path = self.lock_path(name)?;
         Ok(SessionLock {
-            _lock: fsio::LockGuard::acquire(&path, what, self.lock_wait)?,
+            _lock: cw_fs::Lock::acquire(&path, what, self.lock_wait)?,
         })
     }
 
@@ -44,7 +44,7 @@ impl Store {
     pub fn lock_codex_ingestion(&self, id: &SessionId) -> Result<SessionLock> {
         let path = self.lock_path(&format!("codex-{id}.lock"))?;
         Ok(SessionLock {
-            _lock: fsio::LockGuard::acquire(&path, "codex ingestion", self.lock_wait)?,
+            _lock: cw_fs::Lock::acquire(&path, "codex ingestion", self.lock_wait)?,
         })
     }
 }

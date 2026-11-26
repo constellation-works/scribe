@@ -13,13 +13,18 @@ members = [
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
-# 1.89 stabilized `File::lock`/`File::try_lock`, which the store's advisory
-# lock uses instead of a third-party crate.
+# 1.89 stabilized `File::try_lock`, which cw-fs's advisory lock uses; the kit
+# states the same floor.
 rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/constellation-works/scribe"
 
 [workspace.dependencies]
+# The cw-kit (https://github.com/constellation-works/satellites): file access
+# for a private data directory (cw-fs). No release is published yet, so the
+# workspace pins one commit of the satellites `agent-main` for every kit
+# crate; moving the pin is a change of its own.
+cw-fs = { git = "https://github.com/constellation-works/satellites", rev = "9c9cc998720f0a75041be3451c14fbaf80f29dc8" }
 scribe-store = { path = "crates/scribe-store" }
 scribe-tools = { path = "crates/scribe-tools" }
 scribe-core = { path = "crates/scribe-core" }
@@ -32,8 +37,9 @@ clap = { version = "4", default-features = false, features = ["std", "derive", "
 # the BM25 message search, with no system library. Used by
 # scribe-core::store::db only (scripts/check-dependency-direction.sh).
 rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
-# Unix only: the process's effective uid, for the store ownership check
-# (STD-05 R9). std has no safe `geteuid`; tempfile already builds rustix.
+# Unix only: the process's effective uid, for the project scaffold's owner
+# check (STD-05 R9) and the beneath-a-root opens. std has no safe `geteuid`;
+# tempfile already builds rustix.
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

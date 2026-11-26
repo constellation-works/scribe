@@ -185,6 +185,30 @@ pub enum Error {
         /// The owner-only mode to set: `700` for a directory, `600` for a file.
         fix: &'static str,
     },
+    /// A store file is not a regular file: a directory, a FIFO, a device, a
+    /// socket, or a lock file with a second hard link (STD-05 R7).
+    #[error("refusing {}: it is {found}, not a regular file", path.display())]
+    NotRegular {
+        /// The entry.
+        path: PathBuf,
+        /// What it is, in words.
+        found: String,
+    },
+    /// A store file is larger than the store reads (STD-02 R31).
+    #[error("refusing {}: it is larger than {cap} bytes", path.display())]
+    TooLarge {
+        /// The file.
+        path: PathBuf,
+        /// The most bytes the store reads from it.
+        cap: u64,
+    },
+    /// A thread asked for a lock it already holds; waiting would only wait
+    /// out its own deadline.
+    #[error("refusing to lock {}: this thread already holds it", path.display())]
+    Reentrant {
+        /// The lock file.
+        path: PathBuf,
+    },
 }
 
 impl Error {
@@ -210,6 +234,9 @@ impl Error {
             Self::Symlink { .. } => "store_symlink",
             Self::ForeignOwner { .. } => "store_foreign_owner",
             Self::Permissions { .. } => "store_permissions",
+            Self::NotRegular { .. } => "store_not_regular",
+            Self::TooLarge { .. } => "store_too_large",
+            Self::Reentrant { .. } => "store_lock_reentrant",
         }
     }
 
@@ -230,6 +257,46 @@ impl Error {
             action,
             path: path.into(),
             source,
+        }
+    }
+}
+
+/// What the kit's file layer failed or refused with, as the store's own
+/// variants, so each keeps its stable code ([`Error::code`]) and its sentence.
+/// `cw_fs::Error` is exhaustive: a variant the kit adds breaks this match.
+impl From<cw_fs::Error> for Error {
+    fn from(error: cw_fs::Error) -> Self {
+        match error {
+            cw_fs::Error::Io {
+                action,
+                path,
+                source,
+            } => Self::Io {
+                action,
+                path,
+                source,
+            },
+            cw_fs::Error::Locked {
+                path,
+                holder,
+                waited,
+            } => Self::Locked {
+                path,
+                holder: holder
+                    .map_or_else(|| String::from("an unknown process"), |h| h.to_string()),
+                waited_ms: waited.as_millis(),
+            },
+            cw_fs::Error::Symlink { path } => Self::Symlink { path },
+            cw_fs::Error::ForeignOwner { path, owner, uid } => {
+                Self::ForeignOwner { path, owner, uid }
+            }
+            cw_fs::Error::Permissions { path, mode, fix } => Self::Permissions { path, mode, fix },
+            cw_fs::Error::NotRegular { path, found } => Self::NotRegular {
+                path,
+                found: found.to_string(),
+            },
+            cw_fs::Error::TooLarge { path, cap } => Self::TooLarge { path, cap },
+            cw_fs::Error::Reentrant { path } => Self::Reentrant { path },
         }
     }
 }

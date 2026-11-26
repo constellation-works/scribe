@@ -369,7 +369,7 @@ The note domain is deleted in S1 and replaced by:
 | `search` | tokenizing and BM25 ranking over entries and session units ([§6.2](#62-retrieval-model-free)) | none |
 | `consistency` | candidate pairing, staleness, proposal validation | none |
 | `models` | the `Models` port (a trait) and the typed requests/responses for each use | none |
-| `store` | the `Store` facade over `format`, `audit`, `fsio`, `redact`; the only disk access | disk |
+| `store` | the `Store` facade over `format`, `audit`, the kit's `cw-fs`, `redact`; the only disk access | disk |
 
 The CLI crate adds `commands/{entry,session,proposal,tag,consistency,plugin}.rs`
 and `commands/hook/` (one file per event), plus two
@@ -429,7 +429,7 @@ serves every workspace on the host. The plugin's config key `root` (default
 ```
 
 Every file except `audit.jsonl` is replaced whole through
-`fsio::write_atomic` under `.lock`; nothing is appended or edited in place.
+`cw_fs::write_atomic` under `.lock`; nothing is appended or edited in place.
 A `#scribe` creates one new entry file; a session pass replaces one session
 file.
 Reads take no lock and write nothing (STD-01 R31), so `ask` works on a
@@ -6017,7 +6017,7 @@ with phase 4):
 
 **What SQLite replaces.**
 
-- **Lock and atomic writes.** The store lock (`fsio::LockGuard`, `.lock`)
+- **Lock and atomic writes.** The store lock (`cw_fs::Lock`, `.lock`)
   and the whole-file atomic rewrite of every document give way to SQLite
   transactions. Hooks in concurrent sessions take `BEGIN IMMEDIATE` with a
   `busy_timeout` equal to today's `lock_wait`, and a timeout is still
@@ -6051,7 +6051,7 @@ model calls, which no SQLite transaction may be:
   rebuild` (`Store::lock_rebuild`).
 
 Both stay as OS advisory lock files in a `locks/` directory of the root
-(`fsio::LockGuard` stays for them alone). They hold no data. The rebuild
+(`cw_fs::Lock` stays for them alone). They hold no data. The rebuild
 checkpoint `.<id>.rebuild.md` (a partial rebuilt record) becomes a
 `rebuild_checkpoints` row from phase 6.
 

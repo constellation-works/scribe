@@ -98,3 +98,112 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
     }
     File::open(path)
 }
+
+/// What [`inspect_owned`] found at a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owned {
+    /// Nothing is there.
+    Missing,
+    /// It has the asked-for type, belongs to this user and no other user
+    /// can write it.
+    Fits,
+    /// It is a link, or not the asked-for type.
+    WrongType,
+    /// It belongs to another user or another user can write it.
+    Foreign,
+}
+
+/// Inspect `path` without following a link: whether it is a directory
+/// (`directory`) or a regular file of this user that no other user can
+/// write. On non-unix hosts ownership is not checked.
+///
+/// This is the rule for a project's own files (`scribe init`), which others
+/// may read; it is not the store's owner-only rule, which `cw-fs` applies.
+///
+/// # Errors
+///
+/// When the path cannot be inspected for a reason other than its absence.
+pub fn inspect_owned(path: &Path, directory: bool) -> io::Result<Owned> {
+    let meta = match symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Owned::Missing),
+        Err(e) => return Err(e),
+    };
+    if meta.file_type().is_symlink()
+        || (directory && !meta.is_dir())
+        || (!directory && !meta.is_file())
+    {
+        return Ok(Owned::WrongType);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.uid() != rustix::process::geteuid().as_raw() || meta.mode() & 0o022 != 0 {
+            return Ok(Owned::Foreign);
+        }
+    }
+    Ok(Owned::Fits)
+}
+
+/// Read the regular file at `path` beneath `root` without following a link
+/// in any component, refusing one that is foreign-owned, writable by others
+/// or larger than `limit` bytes. `None` when a component is missing.
+///
+/// A project's own file read beneath its root: `cw-fs` leaves
+/// descriptor-relative reads out of the kit, and its capped read demands the
+/// store's owner-only mode, which a project file does not have.
+///
+/// # Errors
+///
+/// When `path` is not beneath `root`, a component is a link, the file fails
+/// the checks above, or it cannot be read.
+#[cfg(unix)]
+pub fn read_bounded_beneath(root: &Path, path: &Path, limit: u64) -> io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt;
+    let relative = path.strip_prefix(root).map_err(io::Error::other)?;
+    let parts: Vec<_> = relative.components().collect();
+    if parts
+        .iter()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(io::Error::other("non-normal path"));
+    }
+    let file = match open_beneath(root, &parts) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file()
+        || meta.uid() != rustix::process::geteuid().as_raw()
+        || meta.mode() & 0o022 != 0
+    {
+        return Err(io::Error::other(
+            "opened file is foreign-owned, writable by others or not regular",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Err(io::Error::other(format!("file exceeds {limit} bytes")));
+    }
+    Ok(Some(bytes))
+}
+
+/// [`read_bounded_beneath`] off Unix: project initialization needs it.
+///
+/// # Errors
+///
+/// Always.
+#[cfg(not(unix))]
+pub fn read_bounded_beneath(
+    _root: &Path,
+    _path: &Path,
+    _limit: u64,
+) -> io::Result<Option<Vec<u8>>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "safe project initialization requires Unix",
+    ))
+}

@@ -262,7 +262,7 @@ Until then:
 ```
 lib.rs               Store::open, read() -> Snapshot, write(|tx| …); the public contract modules
 db/                  the connection, schema and migrations, row access per table;
-                     fsio, locks, atomic writes, the codec, the archive import, the log check
+                     files (the store's use of cw-fs), locks, the codec, the archive import, the log check
 repository/          one per record: entries, sessions, messages, proposals, tags,
                      groups, memory, marks, pickups, audit
 contracts/           record shapes
@@ -309,7 +309,8 @@ Invariants:
   `check_*`, a limit or constant that belongs to a flow (window sizes, retry
   counts), or anything that reads the clock.
 - `contracts` imports nothing from `db/` or `repository/`. Only `db/` uses
-  `rusqlite`. `db/fsio` imports nothing else from the store.
+  `rusqlite`. `db/files` imports nothing else from the store; the file layer
+  itself is the kit's `cw-fs` (ORB-28612).
 - `Store` stays one concrete type. A trait is added when a second backend
   exists.
 - Project scaffolding is not persistence. It is the `admin` app's
@@ -474,7 +475,7 @@ holds:
   `scribe_core`, and nothing calls `Store::write`;
 - in `scribe-tools`, nothing reads the clock or draws randomness;
 - in the store: `contracts/` imports no `db` or `repository`, reads no
-  clock and has no `fn check_`; only `db/` uses `rusqlite`; `db/fsio.rs`
+  clock and has no `fn check_`; only `db/` uses `rusqlite`; `db/files.rs`
   names nothing of the store but its error; the store reads no environment
   variable and discovers no path;
 - the deleted paths (`scribe-domain`, `cases/`, the binary's moved files)

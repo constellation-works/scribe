@@ -18,6 +18,7 @@
 //!   fields and lose every other field. Unrelated records are kept.
 
 use crate::db::archive::{self as rows, ArchiveRow};
+use crate::db::files;
 use crate::db::{self, Conn as Connection, DB_FILE, docs};
 use crate::entry::{Entry, EntryId};
 use crate::error::{Error, Result};
@@ -25,7 +26,7 @@ use crate::proposal::Proposal;
 use crate::session::SessionId;
 use crate::{
     AUDIT_FILE, CONTROL_FILE, ENTRIES_DIR, MARKS_FILE, PICKUPS_FILE, PROPOSALS_FILE, RECORD_EXT,
-    SESSIONS_DIR, Store, fsio,
+    SESSIONS_DIR, Store,
 };
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -76,9 +77,9 @@ impl Store {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
-        for name in fsio::list_dir(&self.root)? {
+        for name in files::list_root(&self.root)? {
             if (name.starts_with(MOVED_PREFIX) || name.starts_with(ISSUE_PREFIX))
-                && fsio::inspect_subdir(&self.root.join(&name))?
+                && cw_fs::inspect_dir(&self.root.join(&name))?
             {
                 out.push(name);
             }
@@ -125,7 +126,7 @@ impl Store {
         let mut files = Vec::new();
         let top = match only {
             Some(only) => only.to_vec(),
-            None => fsio::list_dir(dir)?,
+            None => cw_fs::list(dir)?,
         };
         for item in top {
             collect(&dir.join(&item), &item, &mut files)?;
@@ -135,7 +136,7 @@ impl Store {
         let mut expected: BTreeMap<String, usize> = BTreeMap::new();
         for rel in &files {
             let path = dir.join(rel);
-            let bytes = fsio::read(&path)?;
+            let bytes = files::read_archived(&path)?;
             let kind = classify(rel, issue);
             if kind == "audit" {
                 for (n, line) in bytes.split(|b| *b == b'\n').enumerate() {
@@ -184,7 +185,7 @@ impl Store {
         let base = format!("{MOVED_PREFIX}{}", moved_date(now));
         let mut name = base.clone();
         let mut n = 2;
-        while rows::imported(conn, &db, &name)? || fsio::inspect_subdir(&self.root.join(&name))? {
+        while rows::imported(conn, &db, &name)? || cw_fs::inspect_dir(&self.root.join(&name))? {
             name = format!("{base}.{n}");
             n += 1;
         }
@@ -221,16 +222,16 @@ impl Store {
     /// in `scribe.db`: every file, then every directory, deepest first.
     pub(crate) fn remove_archive(&self, path: &Path) -> Result<()> {
         if !is_dir(path)? {
-            return if fsio::inspect_file(path)? {
-                fsio::remove_private(path)
+            return if cw_fs::inspect_file(path)? {
+                files::remove(path)
             } else {
                 Ok(())
             };
         }
-        if !fsio::inspect_subdir(path)? {
+        if !cw_fs::inspect_dir(path)? {
             return Ok(());
         }
-        for name in fsio::list_dir(path)? {
+        for name in cw_fs::list(path)? {
             self.remove_archive(&path.join(name))?;
         }
         std::fs::remove_dir(path).map_err(|e| Error::io("remove", path, e))
@@ -246,12 +247,12 @@ fn collect(path: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
         return Ok(());
     }
     if is_dir(path)? {
-        if fsio::inspect_subdir(path)? {
-            for name in fsio::list_dir(path)? {
+        if cw_fs::inspect_dir(path)? {
+            for name in cw_fs::list(path)? {
                 collect(&path.join(&name), &format!("{rel}/{name}"), out)?;
             }
         }
-    } else if fsio::inspect_file(path)? {
+    } else if cw_fs::inspect_file(path)? {
         out.push(rel.to_owned());
     }
     Ok(())

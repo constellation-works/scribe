@@ -5,9 +5,10 @@
 
 use super::Tags;
 use super::{Access, ReadWrite};
+use crate::db::files;
 use crate::db::{self, docs};
 use crate::error::{Error, Result};
-use crate::{CONFIG_FILE, Store, StoreTag, fsio};
+use crate::{CONFIG_FILE, Store, StoreTag};
 
 impl<A: Access> Tags<'_, A> {
     /// The text of `config.toml` and its path, or `None` when there is
@@ -55,10 +56,10 @@ pub(crate) const TAGS_FILE: &str = "tags.json";
 impl Store {
     pub(crate) fn config_text(&self) -> Result<Option<(std::path::PathBuf, String)>> {
         let path = self.root.join(CONFIG_FILE);
-        if !self.root_exists()? || !fsio::inspect_file(&path)? {
+        if !self.root_exists()? || !cw_fs::inspect_file(&path)? {
             return Ok(None);
         }
-        let bytes = fsio::read(&path)?;
+        let bytes = files::read(&path)?;
         let text = std::str::from_utf8(&bytes).map_err(|e| Error::corrupt(&path, e))?;
         Ok(Some((path, text.to_owned())))
     }

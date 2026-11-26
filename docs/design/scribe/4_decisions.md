@@ -1,7 +1,7 @@
 ---
 title: scribe — Decisions
 owner: claude
-last_updated: 2026-11-24
+last_updated: 2026-11-26
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -11,7 +11,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612]
 ---
 
 # scribe — Decisions
@@ -5158,3 +5158,51 @@ it as an unknown key, so a config that sets it there fails to load. Existing
   `mark list` keeps listing it.
 - The session pass, catalog, rebuild, memory refresh and group close still
   call models; they wait for Daniel's direction on Orbit jobs.
+
+## The file layer is the cw-kit's cw-fs
+
+**Recorded:** 2026-11-26 · ORB-28612
+**Code anchors:** `crates/scribe-store/src/db/files.rs`, `crates/scribe-core/src/apps/admin/init.rs`, `crates/scribe-tools/src/fs.rs::read_bounded_beneath`
+**Supersedes in part:** the code anchors of [Store state is owner-only and checked on every load](#store-state-is-owner-only-and-checked-on-every-load), [Store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit) and the entries that name `fsio.rs`: the rules they record stand; the mechanism moved.
+
+### Context
+
+`db/fsio.rs` (479 lines) held atomic write, never-replace create, the owner-only
+checks, the advisory lock and the Finder-file rule. The cw-kit design
+(constellation `docs/design/cw-kit/2_design.md`, §cw-fs)
+took those mechanisms from scribe and four other projects into one crate,
+pinned here at one satellites commit.
+
+### Decision
+
+scribe's store calls `cw-fs` and keeps no copy of a file mechanism. What stays
+scribe's own, and why:
+
+- **Read caps.** The kit reads only with a cap the caller states. The store
+  states 64 MiB for a record, document, stamp, memory file, config or spooled
+  audit line, and 1 GiB for a file of a legacy archive (`db/files.rs`).
+- **The root may be a link** ([Store state is owner-only](#store-state-is-owner-only-and-checked-on-every-load)). The kit refuses a link at the
+  directory it is asked about, so the store resolves a link at the root alone
+  and asks the kit about the directory it names. Nothing inside the root is
+  followed.
+- **Project scaffold files** (`scribe init`) are read beneath the project root
+  without following a link, and judged "not writable by others", not owner-only.
+  The kit leaves descriptor-relative reads out and its read demands owner-only,
+  so `read_bounded_beneath` and `inspect_owned` live on in `scribe-tools`' `fs.rs`
+  beside `open_beneath`, which they now use.
+- **Error codes.** The kit's errors become the store's own variants, each keeping
+  its code and sentence; the three refusals scribe did not have (`store_not_regular`,
+  `store_too_large`, `store_lock_reentrant`) are new codes.
+
+### Consequences
+
+- A file over its cap is refused (`store_too_large`) where it was read whole.
+- A store file that is a directory, FIFO or device is `store_not_regular`; it was
+  accepted by the mode check and failed later as `io_error`.
+- A thread that asks for a store lock it already holds is refused at once
+  (`store_lock_reentrant`) where it waited out the lock wait (`store_locked`).
+- A lock file with a second hard link is refused (`store_not_regular`).
+- The holder of a timed-out lock is named only while its process is alive; the
+  holder record in the lock file is one JSON line, not `pid N (label) since T`.
+- `list` and `remove` check the directory they work in, so a directory inside the
+  store open to group or other is refused by a listing that did not check it.

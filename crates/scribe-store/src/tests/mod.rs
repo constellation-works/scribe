@@ -8,6 +8,6 @@ pub(crate) use crate::testing::private_tempdir;
 
 mod audit;
 mod digest;
-mod fsio;
+mod files;
 mod migrated;
 mod redact;
