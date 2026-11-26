@@ -35,7 +35,7 @@ use clap::{Args, Subcommand};
 #[cfg(test)]
 pub(crate) use scribe_core::RunLimits;
 use scribe_core::composition::Context;
-use scribe_core::{DateRange, Skipped};
+use scribe_core::{AuthorKind, DateRange, Skipped};
 use time::Date;
 
 pub(crate) use consistency::ConsistencyCommand;
@@ -182,6 +182,27 @@ impl DateArgs {
             out.push(format!("--until {}", scribe_core::DateRange::day(until)));
         }
         out
+    }
+}
+
+/// The channel an entry was written through, or a proposal opened through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(in crate::commands) enum AuthorKindArg {
+    // The user, through a typed #scribe line or an approval.
+    User,
+    // An agent, through a CLI write verb.
+    Agent,
+    // scribe itself, through its session pass or consistency routine.
+    Scribe,
+}
+
+impl From<AuthorKindArg> for AuthorKind {
+    fn from(kind: AuthorKindArg) -> Self {
+        match kind {
+            AuthorKindArg::User => Self::User,
+            AuthorKindArg::Agent => Self::Agent,
+            AuthorKindArg::Scribe => Self::Scribe,
+        }
     }
 }
 

@@ -26,7 +26,7 @@ use crate::{error::CliError, output::Output};
 use clap::Subcommand;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use scribe_core::composition::Context;
-use scribe_core::{AuthorKind, EntryStatus, ItemState};
+use scribe_core::{EntryStatus, ItemState};
 
 #[cfg(test)]
 pub(super) use output::criteria;
@@ -75,27 +75,6 @@ pub(crate) enum EntryCommand {
     /// Close an open item once carried out, with its decision or a note
     #[command(after_help = close::CLOSE_EXAMPLES)]
     Close(CloseArgs),
-}
-
-/// The channels an entry can be written through.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum EntryAuthorKind {
-    // A #scribe line the user typed.
-    User,
-    // A CLI write verb.
-    Agent,
-    // The session pass, capturing an idea itself.
-    Scribe,
-}
-
-impl From<EntryAuthorKind> for AuthorKind {
-    fn from(kind: EntryAuthorKind) -> Self {
-        match kind {
-            EntryAuthorKind::User => Self::User,
-            EntryAuthorKind::Agent => Self::Agent,
-            EntryAuthorKind::Scribe => Self::Scribe,
-        }
-    }
 }
 
 /// An RFC 3339 instant.
