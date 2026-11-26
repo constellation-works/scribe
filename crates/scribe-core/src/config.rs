@@ -301,7 +301,7 @@ impl Config {
         // `models.referent` named the form-3 referent call, removed with
         // §14 step 2 (2_design.md §14.6). A config that sets it still loads
         // for the 30-day compatibility window.
-        let mut warnings: Vec<String> = [
+        let warnings: Vec<String> = [
             (raw.models.referent.is_some(), "models.referent"),
             (raw.codex.models.referent.is_some(), "codex.models.referent"),
         ]
@@ -313,19 +313,6 @@ impl Config {
             )
         })
         .collect();
-        // Memory has one fixed shape with no switches (2_design.md §15.5):
-        // every `[memory]` key loads with a warning for the 30-day
-        // compatibility window, and is then refused.
-        for key in raw.memory.keys() {
-            warnings.push(format!(
-                "config key memory.{key} is deprecated (config_deprecated): memory has one fixed shape with no switches; remove it"
-            ));
-        }
-        if raw.instructions.memory_pairs.is_some() {
-            warnings.push(String::from(
-                "config key instructions.memory_pairs is deprecated (config_deprecated): memory consolidation is removed; remove it",
-            ));
-        }
         // `[models] consistency` and `annotation` (and the codex twins) name
         // no model since ORB-27911 step 2a: accepted, checked and ignored.
         let ignored: Vec<String> = [
@@ -447,9 +434,6 @@ struct RawConfig {
     redact: RawRedact,
     #[serde(default)]
     projects: BTreeMap<String, RawProject>,
-    /// Deprecated: every key is read only to warn that it is unused.
-    #[serde(default)]
-    memory: toml::Table,
     #[serde(default)]
     user: RawUser,
     #[serde(default)]
@@ -478,8 +462,6 @@ struct RawInstructions {
     /// Accepted, checked and ignored: the consistency scan calls no model
     /// (ORB-27911 step 2a).
     consistency: Option<String>,
-    /// Deprecated: read only to warn that it is unused.
-    memory_pairs: Option<String>,
     profile: Option<String>,
     /// Guidance for Orbit group close summaries.
     group_summary: Option<String>,

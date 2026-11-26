@@ -1059,7 +1059,6 @@ stem. JSON is `{"id", "kind", "date", "now_kind", "title", "text",
 date; fields that do not apply are `null`). `memory show --revision <n>`
 prints a stored profile revision: plain and table its text, JSON
 `{"revision", "created", "text"}`; an unknown one is `revision_not_found`.
-`--page` is a deprecated alias of the block.
 
 `memory ack <stem> --session <id> --author <name>` marks a `now` item
 raised in that session (`memory_not_now` for a milestone); the same
@@ -1224,8 +1223,8 @@ side's quotes, an unknown or repeated pair, an unknown label), the batches
 of ten the model failed (numbered from 1 apart from the others), each
 newer item merged into an older one, each older item superseded, each
 `now` item promoted by rule (b) after the merges, and each item changed to
-complete a promotion a crash cut short. Pairs are judged only while
-`[memory] enabled`. Plain and table add the rows `merged <item> memory
+complete a promotion a crash cut short. Pairs were judged only while
+`[memory] enabled` existed. Plain and table add the rows `merged <item> memory
 <into> <item>`, `superseded <item> memory <item> <by>`, `promoted <item>
 <rule> <item> <to>`, `completed <id> memory - -` and `failed
 memory-batch-<n> <code> - -`. Each item whose file changed writes one audit
