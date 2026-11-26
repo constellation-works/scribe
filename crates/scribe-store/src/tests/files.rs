@@ -164,6 +164,62 @@ mod private_state {
     }
 
     #[test]
+    fn removal_through_a_linked_ancestor_is_refused() {
+        // `memory` inside the store is itself a link to an outside
+        // owner-only directory holding a real `now` and a file. The file's
+        // immediate parent is a real directory, so only a check of every
+        // component below the root refuses the removal.
+        let dir = crate::testing::private_tempdir();
+        let real = dir.path().join("real");
+        cw_fs::create_private_dir(&real).unwrap();
+        let root = dir.path().join("root");
+        symlink(&real, &root).unwrap();
+
+        let outside = dir.path().join("outside");
+        cw_fs::create_private_dir(&outside).unwrap();
+        cw_fs::create_private_dir(&outside.join("now")).unwrap();
+        let target = outside.join("now").join("keep.md");
+        fs::write(&target, b"precious").unwrap();
+        fs::set_permissions(&target, Permissions::from_mode(0o600)).unwrap();
+        symlink(&outside, real.join("memory")).unwrap();
+
+        let err = files::remove(&root, &root.join("memory/now/keep.md")).unwrap_err();
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        assert_eq!(err.code(), "store_symlink");
+        assert_eq!(fs::read(&target).unwrap(), b"precious");
+
+        // The same with a root that is not a link.
+        let err = files::remove(&real, &real.join("memory/now/keep.md")).unwrap_err();
+        assert!(matches!(err, Error::Symlink { .. }), "got {err:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"precious");
+
+        // A `..` below the root would leave it through a real directory;
+        // it is refused, and the outside file stays.
+        let escape = real.join("../outside/now/keep.md");
+        assert!(files::remove(&real, &escape).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"precious");
+    }
+
+    #[test]
+    fn removal_through_real_directories_still_removes() {
+        let dir = crate::testing::private_tempdir();
+        let real = dir.path().join("real");
+        cw_fs::create_private_dir(&real).unwrap();
+        let root = dir.path().join("root");
+        symlink(&real, &root).unwrap();
+        cw_fs::create_private_dir(&real.join("memory")).unwrap();
+        cw_fs::create_private_dir(&real.join("memory").join("now")).unwrap();
+
+        for (store_root, name) in [(&root, "linked.md"), (&real, "plain.md")] {
+            let file = real.join("memory").join("now").join(name);
+            fs::write(&file, b"{}").unwrap();
+            fs::set_permissions(&file, Permissions::from_mode(0o600)).unwrap();
+            files::remove(store_root, &store_root.join("memory/now").join(name)).unwrap();
+            assert!(!file.exists(), "{name} should be removed");
+        }
+    }
+
+    #[test]
     fn a_missing_root_is_absent_and_a_created_database_file_is_private() {
         let dir = crate::testing::private_tempdir();
         let root = dir.path().join("none");
