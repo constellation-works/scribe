@@ -1,41 +1,27 @@
-//! The `admin` app: the store's and a project's upkeep — `scribe init`,
-//! `scribe store migrate` and `scribe export` (2_design.md §15).
+//! The `store` app: the upkeep of the one persisted resource and its way out,
+//! `scribe store migrate` and `scribe export` (2_design.md §15). Both act on
+//! the store (`scribe.db` and the archives beside it), so they share one
+//! application unit and one entry point (STD-02@8 §R45; ORB-28770). Migrate
+//! imports a file store's archives into the store; export writes every record
+//! kind out of it. Neither reads another app's rules.
 //!
-//! Each command is one call to the store or the project installer. Until
-//! migration step 3 the plugin's routine dispatch stays in the binary,
-//! which composes a second store from the envelope's root; its tools reach
-//! the session, consistency and memory apps through their handlers.
+//! Each command is one call to the store. `store migrate` refuses through the
+//! app's rules before the store imports anything.
 
-mod init;
 mod migrate;
 pub mod rules;
 
-pub use init::{
-    InitFile, InitReport, init_project, init_project_with_skill_files, integration_hooks,
-};
 #[cfg(any(test, feature = "test-support"))]
 pub use migrate::MigrateTestWrites;
 
 use crate::composition::Context;
 use crate::runtime::audit::{Audit, AuditMeta, AuditSubject, Audited, Line, guarded};
 use crate::runtime::errors::CommandError;
-use crate::{ExportCounts, ExportFormat, Imported, Provider};
+use crate::{ExportCounts, ExportFormat, Imported};
 use std::path::{Path, PathBuf};
 
-/// An `admin` command.
+/// A `store` command: `store migrate`, or `export`.
 pub enum Command<'i> {
-    /// `init`: install the skill, its files and the provider's hooks in
-    /// `target`, pointing the hooks at the running executable.
-    Init {
-        /// The project directory.
-        target: &'i Path,
-        /// The provider whose hooks are installed.
-        provider: Provider,
-        /// The skill's `SKILL.md`.
-        skill: &'i str,
-        /// The skill's other files: a skill-relative path and its text.
-        skill_files: &'i [(&'i str, &'i str)],
-    },
     /// `store migrate`: import a file store's archives, dated when it runs.
     Migrate,
     /// `export`: write every record kind into `dir` as `format`.
@@ -55,10 +41,6 @@ impl Command<'_> {
     #[must_use]
     pub fn audit(&self) -> Option<AuditMeta> {
         match self {
-            Self::Init { .. } => Some(AuditMeta {
-                command: "init",
-                stepwise: false,
-            }),
             Self::Migrate => Some(AuditMeta {
                 command: "store migrate",
                 stepwise: false,
@@ -68,7 +50,7 @@ impl Command<'_> {
         }
     }
 
-    /// The record and agent this command names: none, since the admin
+    /// The record and agent this command names: none, since the store
     /// commands name theirs in their audit lines.
     #[must_use]
     pub fn subject(&self, _ctx: &Context) -> AuditSubject {
@@ -76,10 +58,8 @@ impl Command<'_> {
     }
 }
 
-/// What an `admin` command returns.
+/// What a `store` command returns.
 pub enum Outcome {
-    /// What `init` installed.
-    Initialized(Box<InitReport>),
     /// What `store migrate` imported.
     Migrated(Box<Imported>),
     /// What `export` wrote.
@@ -96,39 +76,21 @@ pub struct ExportWritten {
     pub format: ExportFormat,
 }
 
-/// Why an `admin` command did not run.
+/// Why a `store` command did not run.
 pub type Error = crate::Error;
 
 /// Run `command` inside the audit guard when [`Command::audit`] declares
-/// one. `init` first checks
-/// the selected runtime is on `PATH` and resolves the running executable,
-/// which its hooks point at. Admin is the top of the app order, so no app
-/// calls it and it has no `run` of its own.
+/// one. The store is below the binary and calls no other app, so it has no
+/// `run` of its own.
 ///
 /// # Errors
 ///
-/// A store error, a refused or failed install, a runtime missing from
-/// `PATH`, or an executable path that cannot be read or is not UTF-8.
+/// `migrate_blocked` and the store's read and write errors for `migrate`;
+/// the store's export errors for `export`.
 pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError> {
     let audit = Audit::declared(command.audit(), || command.subject(ctx));
     guarded(ctx, audit, || {
         Ok(match command {
-            Command::Init {
-                target,
-                provider,
-                skill,
-                skill_files,
-            } => {
-                ctx.require_runtime()?;
-                let binary = crate::composition::current_exe()?;
-                Outcome::Initialized(Box::new(init::init_project_with_skill_files(
-                    target,
-                    provider,
-                    &binary,
-                    skill,
-                    skill_files,
-                )?))
-            }
             Command::Migrate => {
                 Outcome::Migrated(Box::new(migrate::migrate(ctx.store(), ctx.now())?))
             }
@@ -141,16 +103,12 @@ pub fn exec(ctx: &Context, command: Command<'_>) -> Result<Outcome, CommandError
     })
 }
 
-/// `init` writes its line only when it changed a file, naming the provider;
-/// `store migrate` one, naming the records.
+/// `store migrate` writes one line, naming the records. `export` writes
+/// nothing to the store: never audited.
 impl Audited for Outcome {
     fn lines(&self) -> Vec<Line> {
         match self {
-            Self::Initialized(report) => {
-                Line::written(Some(report.provider.to_string()), report.changed)
-            }
             Self::Migrated(_) => vec![Line::success(Some(String::from("store:records")))],
-            // `export` writes nothing to the store: never audited.
             Self::Exported(_) => vec![Line::success(None)],
         }
     }

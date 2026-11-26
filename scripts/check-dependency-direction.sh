@@ -207,7 +207,7 @@ done
 # imports only apps earlier in it, and only through what that app's mod.rs
 # exports (`crate::apps::entry::Item`), never a flow file
 # (`crate::apps::entry::flow::…`). A new app fails until it is given a place.
-APP_ORDER='tag mark memory entry proposal session group search brief consistency hook admin'
+APP_ORDER='tag mark memory entry proposal session transcript group search brief consistency hook init store'
 for shared in common shared util; do
   [[ -e "$CORE/apps/$shared" ]] && err "apps/$shared: code two apps need goes to the lower one, to runtime or to the tools"
 done
@@ -474,7 +474,7 @@ ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crat
 # sets journal_mode, synchronous, busy_timeout, user_version, secure_delete,
 # PersistWal or wal_checkpoint itself. The file layer is the kit's cw-fs
 # (ORB-28612): the store names it, scribe-core's project scaffold
-# (apps/admin/init.rs) names it, and no other crate does. db/files.rs, its
+# (apps/init/install.rs) names it, and no other crate does. db/files.rs, its
 # adapter, names nothing else of the store but its error type.
 while IFS= read -r -d '' path; do
   case "$path" in "$STORE"/db/*) continue ;; esac
@@ -490,8 +490,8 @@ fi
 # cw-fs reaches the data root through the store's modules; in the core only
 # the project scaffold names it, and the binary and the tools never do.
 while IFS= read -r -d '' path; do
-  case "$path" in "$CORE"/apps/admin/init.rs) continue ;; esac
-  ban "$path" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "${path#crates/}: only the store and the project scaffold (apps/admin/init.rs) use cw-fs"
+  case "$path" in "$CORE"/apps/init/install.rs) continue ;; esac
+  ban "$path" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "${path#crates/}: only the store and the project scaffold (apps/init/install.rs) use cw-fs"
 done < <(find "$CORE" "$CLI" "$TOOLS" -name '*.rs' -not -path '*/tests/*' -print0)
 ban "$CORE" '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "only scribe-store's db/ uses cw-sqlite"
 ban "$CLI"  '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "only scribe-store's db/ uses cw-sqlite"

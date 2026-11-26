@@ -106,12 +106,7 @@ impl Step {
             Outcome::RebuildPrepared(prepared) => serde_json::to_value(prepared),
             Outcome::RebuildApplied(applied) => serde_json::to_value(applied),
             Outcome::RebuildFinished(finished) => serde_json::to_value(finished),
-            Outcome::Listed(_)
-            | Outcome::Shown(_)
-            | Outcome::Passed(_)
-            | Outcome::Activity(_)
-            | Outcome::Transcripts(_)
-            | Outcome::Transcript(_) => {
+            Outcome::Listed(_) | Outcome::Shown(_) | Outcome::Passed(_) | Outcome::Activity(_) => {
                 unreachable!("a job step returns its corresponding outcome")
             }
         };

@@ -29,7 +29,7 @@ scribe  ->  scribe-core  ->  scribe-store
 | Crate | Owns | Internal dependencies | Banned |
 |-------|------|-----------------------|--------|
 | `scribe` (binary) | Argument declarations, the grouped root help, the mapping from arguments to an app's `Command`, rendering and exit codes. The only stdout, stderr and terminal access. It declares no audit and decides nothing about a record. | `scribe-core` only | `rusqlite`, `cw-sqlite` |
-| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/admin/init.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
+| `scribe-core` | The apps (`apps/<app>/`), the `runtime/` they run against, composition (`composition.rs`), the config (`config.rs`) and, for now, the model adapters (`providers/`). Only `apps/init/install.rs` names `cw-fs` (the project scaffold's atomic writes and lock). | `scribe-store`, `scribe-tools` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite` |
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock) and its SQLite open, configuration, migration and WAL-checkpoint layer is the kit's `cw-sqlite` (using `cw-sqlite`'s re-exported `rusqlite`); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile` |
 
@@ -73,7 +73,8 @@ environment variable, or branches on a record's state.
 |---|---|
 | `entry` | `entry` |
 | `group` | `group` |
-| `session`, `transcript` | `session` |
+| `session` | `session` |
+| `transcript` | `transcript` |
 | `mark` | `mark` |
 | `proposal` | `proposal` |
 | `memory` | `memory` |
@@ -82,14 +83,16 @@ environment variable, or branches on a record's state.
 | `brief` | `brief` |
 | `consistency` | `consistency` |
 | `hook` | `hook` |
-| `init`, `store`, `export` | `admin` |
+| `init` | `init` |
+| `store`, `export` | `store` |
 
 `plugin call` serves the Orbit plugin's tools. Its routine and workflow tools
 (`session-pass-prepare`, `session-pass-apply`, `session-pass-fail`,
 `consistency-scan`, `memory-refresh-prepare`,
 `memory-refresh-apply`, `group-close-prepare`, `group-close-apply`) have no
 flow of their own. The handler resolves the envelope's root with `Context::at`
-and calls the app's `exec` (or command handler that owns the work).
+and calls the app's `exec` (or command handler that owns the work). `plugin` is
+the Orbit backend's transport, not a subject, so it has no app of its own.
 
 ## `scribe-core`
 
@@ -163,12 +166,13 @@ Apps import each other in one order, lowest first, and only through what the
 lower app's `mod.rs` exports, never one of its flow files:
 
 ```
-tag < mark < memory < entry < proposal < session < group < search < brief < consistency < hook < admin
+tag < mark < memory < entry < proposal < session < transcript < group < search < brief < consistency < hook < init < store
 ```
 
-`proposal` calls `entry`; `session` calls `entry` and `proposal`; `group`
-calls `session`; `brief` calls `memory`; `consistency` calls `proposal` and
-`session`; `hook` calls all of them. Code two apps need goes to the lower
+`proposal` calls `entry`; `session` calls `entry` and `proposal`;
+`transcript` calls `session` and `tag`; `group` calls `session`; `brief` calls
+`memory`; `consistency` calls `proposal` and `session`; `hook` calls all of
+them; `init` and `store` call no app. Code two apps need goes to the lower
 one, to `runtime` if it is about the context (ids, errors, audit), or to
 `scribe-tools` if it is about transcripts, windows, markers or payloads.
 There is no common, shared or util app. A relative `super::`
@@ -353,7 +357,7 @@ cannot express. "Module" includes any file added later.
   `user_version`, `secure_delete`, `PersistWal` or `wal_checkpoint` itself;
   `db/files.rs` names nothing of the store but its error; no module of the
   store re-implements a file mechanism: `cw-fs` is the file layer, and only
-  the store and `apps/admin/init.rs` name it; `db/codec.rs` and
+  the store and `apps/init/install.rs` name it; `db/codec.rs` and
   `repository/audit.rs` do no file I/O; `contracts/` imports no `db` or
   `repository`, has no `check_*` function and reads no clock.
 - **The tools:** only `fs.rs` names `std::fs`; nothing names `scribe_core`,

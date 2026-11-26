@@ -3,11 +3,13 @@
 //! Every write makes the same import on its own; this verb lets the user
 //! choose the moment and is refused while a session is switched on, while
 //! a rebuild checkpoint waits, or when there is nothing to import.
+//! The `store` app's outcomes as output, `export`'s included.
 
 use crate::error::CliError;
-use crate::output::Output;
+use crate::output::{ExportPayload, MigratePayload, Output, Record};
 use clap::{Args, Subcommand};
-use scribe_core::apps::admin::{Command, exec};
+use scribe_core::ExportFormat;
+use scribe_core::apps::store::{Command, Outcome, exec};
 use scribe_core::composition::Context;
 
 pub(super) const EXAMPLES: &str = "\
@@ -39,7 +41,58 @@ pub(super) fn run(command: StoreCommand, ctx: &Context) -> Result<Output, CliErr
     match command {
         StoreCommand::Migrate(MigrateArgs {}) => {
             let command = Command::Migrate;
-            Ok(super::admin::output(exec(ctx, command)?))
+            Ok(output(exec(ctx, command)?))
+        }
+    }
+}
+
+/// A `store` outcome as its output: `store migrate`'s records written, and
+/// `export`'s directory and counts.
+pub(in crate::commands) fn output(outcome: Outcome) -> Output {
+    match outcome {
+        Outcome::Migrated(moved) => {
+            let moved = *moved;
+            Output::written(
+                Record::StoreMigrate(Box::new(MigratePayload {
+                    sessions: moved.sessions,
+                    switches: moved.switches,
+                    cursors: moved.cursors,
+                    moved_to: moved.moved_to,
+                    entries: moved.entries,
+                    claims: moved.claims,
+                    tags: moved.tags,
+                    marks: moved.marks,
+                    pickups: moved.pickups,
+                    audit_lines: moved.audit_lines,
+                    audit_torn: moved.audit_torn,
+                    archives: moved.archives,
+                    archived: moved.archived,
+                })),
+                true,
+            )
+        }
+        Outcome::Exported(written) => {
+            let written = *written;
+            let exported = written.exported;
+            Output::Show {
+                record: Record::Export(Box::new(ExportPayload {
+                    dir: written.dir.display().to_string(),
+                    format: match written.format {
+                        ExportFormat::Markdown => "markdown",
+                        ExportFormat::Jsonl => "jsonl",
+                    },
+                    sessions: exported.sessions,
+                    entries: exported.entries,
+                    claims: exported.claims,
+                    audit_lines: exported.audit_lines,
+                    files: exported.files,
+                    skipped: exported
+                        .skipped
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect(),
+                })),
+            }
         }
     }
 }

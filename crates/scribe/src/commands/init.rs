@@ -1,9 +1,8 @@
 //! Install the binary-embedded generic skill and selected provider hooks.
 
-use super::admin;
 use crate::{error::CliError, output::Output};
 use clap::Args;
-use scribe_core::apps::admin::{Command, exec};
+use scribe_core::apps::init::{Command, Outcome, exec};
 use scribe_core::composition::Context;
 use std::path::PathBuf;
 
@@ -45,5 +44,12 @@ pub(super) fn run(args: InitArgs, ctx: &Context) -> Result<Output, CliError> {
         skill: SKILL,
         skill_files: SKILL_FILES,
     };
-    Ok(admin::output(exec(ctx, command)?))
+    Ok(output(exec(ctx, command)?))
+}
+
+/// `init`'s outcome as its output.
+fn output(outcome: Outcome) -> Output {
+    match outcome {
+        Outcome::Initialized(report) => Output::Init(*report),
+    }
 }

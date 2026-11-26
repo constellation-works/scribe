@@ -1,4 +1,4 @@
-//! The admin app's rules: the `store migrate` refusals (`migrate_blocked`), as pure functions over
+//! The store app's rules: the `store migrate` refusals (`migrate_blocked`), as pure functions over
 //! facts the store has already read. The store reads each fact lazily and
 //! calls its check at the point of its move where it always refused, in
 //! this order: nothing to import, a session switched on, a rebuild

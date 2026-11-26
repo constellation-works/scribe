@@ -223,7 +223,7 @@ fn committed_flag_suppresses_guard_lines_on_mark_result_and_drop() {
 #[test]
 fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
     // STD-01 R31: a read writes nothing, not even an audit line.
-    use crate::apps::{entry, proposal, session, tag};
+    use crate::apps::{entry, proposal, session, tag, transcript};
     use crate::{DateRange, Provider, SessionId};
     let provider = Provider::ClaudeCode;
     let id = |id: &str| id.parse::<SessionId>().unwrap();
@@ -275,9 +275,9 @@ fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
         ("tag list", tag::Command::List.audit()),
         (
             "transcript list",
-            session::Command::TranscriptList {
+            transcript::Command::List {
                 provider,
-                input: session::TranscriptListInput {
+                input: transcript::ListInput {
                     since: time::macros::date!(2026 - 10 - 01),
                     dates: DateRange::default(),
                     projects: &[],
@@ -289,7 +289,7 @@ fn only_the_hook_commands_are_audited_because_every_other_command_reads() {
         ),
         (
             "transcript show",
-            session::Command::TranscriptShow {
+            transcript::Command::Show {
                 provider,
                 id: id("abcd"),
             }

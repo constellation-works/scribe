@@ -6,12 +6,11 @@
 //! line, and they work on a read-only root. `list` is how the user picks a
 //! past session to catalog; `show` is the preview.
 
-use super::session::{View, output};
 use super::{DateArgs, ListNotice, day_parser};
 use crate::error::CliError;
 use crate::output::{Output, Record, Records, TranscriptPayload, WarningPayload};
 use clap::{Args, Subcommand};
-use scribe_core::apps::session::{Command, Surveyed, TranscriptListInput, TranscriptsListed, exec};
+use scribe_core::apps::transcript::{Command, ListInput, Listed, Outcome, Surveyed, exec};
 use scribe_core::composition::Context;
 use scribe_core::{DateRange, Project, SessionId};
 use time::Date;
@@ -95,6 +94,14 @@ pub(super) fn run(command: TranscriptCommand, ctx: &Context) -> Result<Output, C
     }
 }
 
+/// A `transcript` outcome as its output; `criteria` echoes `list`'s flags.
+fn output(outcome: Outcome, criteria: &[String]) -> Output {
+    match outcome {
+        Outcome::Transcripts(found) => listed(found, criteria),
+        Outcome::Transcript(surveyed) => shown(*surveyed),
+    }
+}
+
 fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     let dates = dates(args.since, args.until)?;
     let mut criteria = Vec::new();
@@ -109,7 +116,7 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
         criteria.push(format!("--project {project}"));
     }
     criteria.push(format!("--min-turns {}", args.min_turns));
-    let input = TranscriptListInput {
+    let input = ListInput {
         since: args.since,
         dates,
         projects: &args.project,
@@ -118,27 +125,17 @@ fn list(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
     };
     let outcome = exec(
         ctx,
-        Command::TranscriptList {
+        Command::List {
             provider: ctx.provider(),
             input,
         },
     )?;
-    Ok(output(
-        outcome,
-        View {
-            transcripts: &criteria,
-            ..View::default()
-        },
-        ctx,
-    ))
+    Ok(output(outcome, &criteria))
 }
 
 /// `transcript list`'s output, echoing `criteria`; `None` when there is no
 /// transcripts directory.
-pub(in crate::commands) fn listed(
-    listed: Option<Box<TranscriptsListed>>,
-    criteria: &[String],
-) -> Output {
+fn listed(listed: Option<Box<Listed>>, criteria: &[String]) -> Output {
     let Some(listed) = listed else {
         return Output::List {
             notices: vec![String::from(
@@ -183,16 +180,16 @@ pub(in crate::commands) fn listed(
 fn show(args: &ShowArgs, ctx: &Context) -> Result<Output, CliError> {
     let outcome = exec(
         ctx,
-        Command::TranscriptShow {
+        Command::Show {
             provider: ctx.provider(),
             id: args.id.clone(),
         },
     )?;
-    Ok(output(outcome, View::default(), ctx))
+    Ok(output(outcome, &[]))
 }
 
 /// `transcript show`'s output: the transcript with the user's first turns.
-pub(in crate::commands) fn shown(surveyed: Surveyed) -> Output {
+fn shown(surveyed: Surveyed) -> Output {
     Output::Show {
         record: Record::Transcript(Box::new(payload(surveyed, true))),
     }
