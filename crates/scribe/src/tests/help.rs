@@ -160,7 +160,7 @@ fn builtin_help_subcommand_still_runs() {
         .into_iter()
         .map(OsString::from)
         .collect();
-    let err = Cli::parse_args(&args).unwrap_err();
+    let err = Cli::parse_args(&args, None).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
     assert_eq!(err.exit_code(), 0);
 }

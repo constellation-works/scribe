@@ -115,6 +115,7 @@ impl Setup {
             claude_config_dir: None,
             codex_home: None,
             claude_entrypoint: None,
+            ..Default::default()
         };
         let root = dir.path().join("root");
         std::fs::create_dir_all(&root).unwrap();

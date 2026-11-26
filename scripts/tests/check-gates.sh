@@ -386,6 +386,59 @@ expect pass check-session-id-outcomes.py "$outcomes" "matching session-ID outcom
 sed -i.bak 's/Refused as not switched on/Stale outcome/' "$outcomes/docs/guide.md"
 expect fail check-session-id-outcomes.py "$outcomes" "a stale session-ID outcome table"
 
+# --- check-terminal-guard.sh: one terminal decision, and its environment names --
+# Composition captures the log and terminal names; the output module decides
+# the terminal; any other module that decides, prints or names one fails
+# (STD-01 R17, STD-02 R3). A doc comment or a test names one harmlessly.
+guard_tree() {
+  local root="$work/$1"
+  mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src/output/tests" \
+    "$root/crates/scribe/src/commands"
+  printf '//! composition\npub const LOG_ENV: &str = "SCRIBE_LOG";\n' \
+    >"$root/crates/scribe-core/src/composition.rs"
+  printf '//! output\npub(crate) fn decide() -> bool {\n    std::io::stdout().is_terminal() && cw_cli::Terminal::detect(&env, "scribe", None).is_some()\n}\n' \
+    >"$root/crates/scribe/src/output/mod.rs"
+  printf '#[test]\nfn no_color() {\n    let _ = Env::from_vars([("NO_COLOR", "1")]);\n}\n' \
+    >"$root/crates/scribe/src/output/tests/render.rs"
+  printf '/// Output format [default: $SCRIBE_FORMAT, else auto]\npub(crate) fn run() {}\n' \
+    >"$root/crates/scribe/src/commands/entry.rs"
+  printf 'pub(crate) fn cli() {}\n' >"$root/crates/scribe/src/cli.rs"
+  echo "$root"
+}
+
+clean=$(guard_tree guard-clean)
+expect pass check-terminal-guard.sh "$clean" \
+  "composition captures the log name, output decides, a doc comment and a test name a variable"
+
+decision=$(guard_tree guard-second-decision)
+printf 'pub(crate) fn f() -> bool {\n    std::io::stdout().is_terminal()\n}\n' \
+  >>"$decision/crates/scribe/src/commands/entry.rs"
+expect fail check-terminal-guard.sh "$decision" "a second terminal decision in a command module"
+
+probe=$(guard_tree guard-probe)
+printf 'pub(crate) fn g() {\n    let _ = cw_cli::Probe::detect();\n}\n' \
+  >>"$probe/crates/scribe/src/cli.rs"
+expect fail check-terminal-guard.sh "$probe" "a terminal probe in the CLI outside output"
+
+printing=$(guard_tree guard-print)
+printf 'pub(crate) fn h() {\n    println!("hi");\n}\n' >>"$printing/crates/scribe/src/commands/entry.rs"
+expect fail check-terminal-guard.sh "$printing" "a print from a command module"
+
+raw=$(guard_tree guard-raw-color)
+printf 'pub(crate) fn k() -> bool {\n    std::env::var_os("NO_COLOR").is_some()\n}\n' \
+  >>"$raw/crates/scribe/src/commands/entry.rs"
+expect fail check-terminal-guard.sh "$raw" "a raw NO_COLOR read in a command module"
+
+log=$(guard_tree guard-log-output)
+printf 'pub(crate) fn log_name() -> &'\''static str {\n    "SCRIBE_LOG"\n}\n' \
+  >>"$log/crates/scribe/src/output/mod.rs"
+expect fail check-terminal-guard.sh "$log" "the output module naming SCRIBE_LOG itself"
+
+core=$(guard_tree guard-core-format)
+printf 'pub fn format_name() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
+  >"$core/crates/scribe-core/src/format_name.rs"
+expect fail check-terminal-guard.sh "$core" "a core module naming SCRIBE_FORMAT"
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi

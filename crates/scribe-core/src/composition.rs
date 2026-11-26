@@ -55,6 +55,10 @@ pub(crate) fn current_exe() -> Result<PathBuf, CommandError> {
 /// Environment variable naming the data directory.
 pub const ROOT_ENV: &str = "SCRIBE_ROOT";
 
+/// Environment variable holding the log filter the binary's tracing reads
+/// (`warn` when unset).
+pub const LOG_ENV: &str = "SCRIBE_LOG";
+
 /// Environment variable Claude Code sets on its hooks: `cli` when a person
 /// types into the session.
 const ENTRYPOINT_ENV: &str = "CLAUDE_CODE_ENTRYPOINT";
@@ -83,7 +87,8 @@ macro_rules! state_accessor {
     };
 }
 
-/// The configuration-relevant environment, captured once.
+/// The environment, captured once: the variables scribe reads, and the
+/// snapshot the binary's terminal decision reads.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     /// `SCRIBE_ROOT`.
@@ -98,10 +103,16 @@ pub struct Env {
     /// `CLAUDE_CODE_ENTRYPOINT`: `cli` in an interactive Claude Code
     /// session, `sdk-cli` for every `claude -p` run (2_design.md §12.5).
     pub claude_entrypoint: Option<OsString>,
+    /// `SCRIBE_LOG`, the log filter the binary's tracing reads, as set.
+    pub log: Option<OsString>,
+    /// The whole process environment, for the binary's one terminal decision
+    /// (color, width and format, `cw-cli`). A snapshot the binary passes to
+    /// its output layer; the core never consults it.
+    pub terminal: cw_app::Env,
 }
 
 impl Env {
-    /// Read the variables from the real process environment.
+    /// Read the variables from the real process environment, once.
     #[must_use]
     pub fn from_process() -> Self {
         Self {
@@ -110,6 +121,8 @@ impl Env {
             claude_config_dir: std::env::var_os(CLAUDE_CONFIG_ENV),
             codex_home: std::env::var_os("CODEX_HOME"),
             claude_entrypoint: std::env::var_os(ENTRYPOINT_ENV),
+            log: std::env::var_os(LOG_ENV),
+            terminal: cw_app::Env::capture(),
         }
     }
 }

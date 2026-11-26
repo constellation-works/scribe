@@ -37,7 +37,7 @@ fn json_is_shorthand_for_format_json_and_conflicts_with_format() {
         &["scribe", "entry", "list", "--json", "--format", "auto"][..],
     ] {
         let args: Vec<OsString> = conflicting.iter().map(OsString::from).collect();
-        let err = Cli::parse_args(&args).unwrap_err();
+        let err = Cli::parse_args(&args, None).unwrap_err();
         assert_eq!(
             err.exit_code(),
             2,
@@ -48,7 +48,7 @@ fn json_is_shorthand_for_format_json_and_conflicts_with_format() {
         .iter()
         .map(OsString::from)
         .collect();
-    assert!(Cli::parse_args(&redundant).is_ok());
+    assert!(Cli::parse_args(&redundant, None).is_ok());
 }
 
 /// Every subcommand path in the tree, including the root.
@@ -243,7 +243,7 @@ fn every_documented_command_line_parses() {
         let Some(args) = documented_invocation(line) else {
             continue;
         };
-        if let Err(err) = Cli::parse_args(&args) {
+        if let Err(err) = Cli::parse_args(&args, None) {
             panic!("{source}: `{}` does not parse:\n{err}", line.trim());
         }
         parsed += 1;

@@ -39,6 +39,7 @@ impl Setup {
             claude_config_dir: None,
             codex_home: None,
             claude_entrypoint: None,
+            ..Default::default()
         };
         let ctx = Context::resolve(Some(&root), &env).unwrap();
         Self { dir, ctx }

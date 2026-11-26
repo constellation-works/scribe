@@ -232,8 +232,10 @@ sees it.
 
 - `Env::from_process()` captures the environment variables scribe reads
   (`SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-  `CLAUDE_CODE_ENTRYPOINT`, the redaction variables). `main.rs` calls it once
-  and passes the value down. Tests build an `Env` by hand.
+  `CLAUDE_CODE_ENTRYPOINT`, `SCRIBE_LOG`, the redaction variables), and the
+  process snapshot (`cw_app::Env`) that the binary's terminal decision reads
+  (color, width, format). `main.rs` calls it once and passes the values down;
+  the core never consults the snapshot. Tests build an `Env` by hand.
 - Composition picks the data directory, reads `config.toml`, opens the
   `Store`, and builds the redactor, into one `Context` (`Context::resolve`,
   or `Context::at` for a root the caller names, as the plugin's envelope
@@ -474,9 +476,9 @@ boundary owners:
 
 - `std::fs` types and methods (only `scribe-store/src/db/files.rs` beside
   `cw-fs`, and `scribe-tools/src/fs.rs` for host files);
-- `std::env` reads, `current_dir` and `home_dir` (only
-  `scribe-core/src/composition.rs`, plus `SCRIBE_LOG` in
-  `scribe/src/output/mod.rs`);
+- `std::env` reads, `current_dir`, `home_dir` and the process snapshot
+  `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
+  binary has no exemption);
 - `std::process::Command::{output,status,spawn}` and
   `std::sync::mpsc::channel` (only `scribe-core/src/providers/cli.rs`);
 - `rusqlite::Connection::open` and its `open_with_flags` forms (banned with no

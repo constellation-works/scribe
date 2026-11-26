@@ -6,11 +6,9 @@
 //! shut and the command runs to its end, so [`finish`] exits as the command
 //! decided (STD-01 R13). The renderers here only build what the sink writes:
 //! a table, a detail view, or the payload's JSON.
-
-#![expect(
-    clippy::disallowed_methods,
-    reason = "output::init_logging reads SCRIBE_LOG at the CLI surface to configure tracing"
-)]
+//!
+//! The process environment is captured by composition and passed in; this
+//! module reads none of it (STD-02 R3, R7).
 
 mod color;
 mod payload;
@@ -34,8 +32,9 @@ use crate::error::CliError;
 use cw_app::Env;
 use cw_cli::{Format, Mode, Probe, Terminal};
 use scribe_core::ShortIds;
+use scribe_core::composition::LOG_ENV;
 use serde::Serialize;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -87,13 +86,14 @@ impl Console {
     }
 }
 
-/// Columns the root help may wrap command rows into.
+/// Columns the root help may wrap command rows into, decided from the
+/// captured process environment `terminal`.
 ///
 /// `None` when stdout is not a terminal or no width is known, so each
 /// command stays on one line. Piped `--help`, which is how the golden is
 /// captured, therefore does not depend on the machine (STD-01 R17, R24).
-pub(crate) fn help_width() -> Option<usize> {
-    Terminal::detect(&Env::capture(), APP, None).width()
+pub(crate) fn help_width(terminal: &Env) -> Option<usize> {
+    Terminal::detect(terminal, APP, None).width()
 }
 
 /// A failure of the sink as an `io::Error`, the form the binary's error wraps.
@@ -105,27 +105,25 @@ fn io_error(error: cw_cli::Error) -> io::Error {
     }
 }
 
-/// Environment variable holding the log filter (`warn` when unset).
-const LOG_ENV: &str = "SCRIBE_LOG";
-
-/// Send `tracing` output to stderr as plain text, filtered by `SCRIBE_LOG`.
+/// Send `tracing` output to stderr as plain text, filtered by `log`: the
+/// value of `SCRIBE_LOG` that composition captured (`None` when unset).
 ///
 /// Fail open (STD-02 R31): logging is a side channel, so a filter that does
 /// not parse never fails the command. It is reported once and replaced by
 /// the default, not silently ignored.
-pub(crate) fn init_logging() {
+pub(crate) fn init_logging(log: Option<&OsStr>) {
     use tracing_subscriber::EnvFilter;
     let default = || EnvFilter::new("warn");
-    let filter = match std::env::var(LOG_ENV) {
-        Ok(spec) => EnvFilter::try_new(&spec).unwrap_or_else(|e| {
+    let filter = match log.map(OsStr::to_str) {
+        Some(Some(spec)) => EnvFilter::try_new(spec).unwrap_or_else(|e| {
             let _ = writeln!(
                 io::stderr().lock(),
                 "warning: ignoring {LOG_ENV}={spec:?} ({e}); logging at warn"
             );
             default()
         }),
-        Err(std::env::VarError::NotPresent) => default(),
-        Err(std::env::VarError::NotUnicode(_)) => {
+        None => default(),
+        Some(None) => {
             let _ = writeln!(
                 io::stderr().lock(),
                 "warning: ignoring {LOG_ENV}: not valid UTF-8; logging at warn"
@@ -178,7 +176,7 @@ pub(crate) fn finish(console: &Console, outcome: Result<(Output, ShortIds), CliE
 
 /// Handle an argument-parsing outcome that is not a parsed command line:
 /// `--help` and `--version` (stdout, exit 0) or a usage error (stderr, exit 2).
-pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString]) -> ExitCode {
+pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString], terminal: &Env) -> ExitCode {
     let code = u8::try_from(err.exit_code()).unwrap_or(2);
     if !err.use_stderr() {
         let written = io::stdout()
@@ -189,8 +187,7 @@ pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString]) -> ExitCo
             _ => ExitCode::from(code),
         };
     }
-    let env = Env::capture();
-    let env_format = env.app(APP).format().and_then(|value| value.to_str());
+    let env_format = terminal.app(APP).format().and_then(|value| value.to_str());
     let rendered = err.render().to_string();
     if usage::raw_args_request_json(args, env_format) {
         write_json_error(&usage_message(&rendered), "usage_error");
