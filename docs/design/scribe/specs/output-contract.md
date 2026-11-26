@@ -703,8 +703,9 @@ that is not valid JSON, lacks a field or has an invalid `session_id` exits 1
 with `hook_payload_invalid`.
 The `UserPromptSubmit` reply has one echo line per settling line (form 4,
 a whole line; 2_design.md §4.4), then the marker echoes below. A settling line
-echoes `scribe: approved p-<n> — <older> is superseded by <newer>; ask
-leaves it out of answers` (`<older> is retired` for a stale proposal),
+echoes `scribe: approved p-<n> — <older> is superseded by <newer>; scribe
+search hides superseded and retired entries by default; --include-hidden shows them`
+(`<older> is retired` for a stale proposal),
 `scribe: approved p-<n> — already covered by <entry>; no new entry` when an
 active entry of the same tag and project already covers the candidate (the
 proposal becomes `rejected`, `newer` stays empty, and the covering id is
@@ -712,8 +713,9 @@ named only in the reply; when the approval was already recorded and its
 entry is missing, format 15 also keeps its settlement and sets
 `closed_reason: covered`),
 `scribe: rejected p-<n> — its entries stay as they are, and it is not
-proposed again`, `scribe: retired <id> — ask leaves it out of answers;
-scribe entry show <id> still has it`, `scribe: forgot <id> — entry text and
+proposed again`, `scribe: retired <id> — scribe search hides retired entries
+by default; --include-hidden shows them; scribe entry show <id> still has it`,
+`scribe: forgot <id> — entry text and
 evidence, proposal quotes of it, and related candidate quotes, evidence and
 reasons are cleared; session records stay`, `scribe: forgot s-<n> (<full id>) — the
 session record and <k> stored messages are erased[; it is switched off for

@@ -11,7 +11,8 @@
 //!   by the newer (or `retired`, for a stale proposal);
 //! - reject: the proposal is `rejected`, and its pair is never proposed
 //!   again;
-//! - retire: the entry is hidden from answers and stays on disk;
+//! - retire: search hides the entry by default (`--include-hidden` shows it),
+//!   and it stays on disk;
 //! - forget: entry text and evidence, proposal quotes of it, and related
 //!   candidate quotes, evidence and reasons are cleared; session records stay;
 //! - forget a session (`s-<n>`, its provider id or a unique prefix of it, as a
@@ -96,7 +97,9 @@ pub fn run<E>(ctx: &Ctx<'_, E>, settling: &Settling, turn: &Turn) -> Reply {
             };
             done(
                 proposal.to_string(),
-                format!("scribe: approved {proposal} — {what}; ask leaves it out of answers"),
+                format!(
+                    "scribe: approved {proposal} — {what}; scribe search hides superseded and retired entries by default; --include-hidden shows them"
+                ),
             )
         }
         Settled::Covered { proposal, by } => done(
@@ -112,7 +115,7 @@ pub fn run<E>(ctx: &Ctx<'_, E>, settling: &Settling, turn: &Turn) -> Reply {
         Settled::Retired(entry) => done(
             entry.to_string(),
             format!(
-                "scribe: retired {entry} — ask leaves it out of answers; scribe entry show {entry} still has it"
+                "scribe: retired {entry} — scribe search hides retired entries by default; --include-hidden shows them; scribe entry show {entry} still has it"
             ),
         ),
         Settled::Forgotten(entry) => done(

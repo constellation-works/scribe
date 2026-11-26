@@ -434,6 +434,86 @@ fn a_mixed_prompt_notes_each_line_by_whether_it_was_recorded() {
 }
 
 #[test]
+fn settlement_replies_describe_search_visibility_for_hidden_entries() {
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: stand-up at nine",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
+    write_verbatim(
+        &fx,
+        2,
+        "#scribe preferences: stand-up at ten",
+        "a newer prompt",
+        1,
+        Some("u-1"),
+    );
+    fx.ok(&[
+        "proposal",
+        "add",
+        "--kind",
+        "supersedes",
+        "--older",
+        "preferences-1",
+        "--newer",
+        "preferences-2",
+        "--reason",
+        "The time changed",
+        "--author",
+        "opus",
+    ]);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe approve p-1");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: approved p-1 — preferences-1 is superseded by preferences-2; scribe search hides superseded and retired entries by default; --include-hidden shows them"
+    );
+
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: stand-up at nine",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
+    propose_stale(&fx);
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe approve p-1");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: approved p-1 — preferences-1 is retired; scribe search hides superseded and retired entries by default; --include-hidden shows them"
+    );
+
+    let fx = Fixture::new();
+    let claude = Claude::new(&fx);
+    write_verbatim(
+        &fx,
+        1,
+        "#scribe preferences: stand-up at nine",
+        "an older prompt",
+        1,
+        Some("u-0"),
+    );
+    let mut payload = claude.payload("user-prompt-submit.json");
+    payload["prompt"] = json!("#scribe retire preferences-1");
+    let out = hook_ok(&fx, "user-prompt-submit", &payload);
+    assert_eq!(
+        reply(&out)["systemMessage"],
+        "scribe: retired preferences-1 — scribe search hides retired entries by default; --include-hidden shows them; scribe entry show preferences-1 still has it"
+    );
+}
+
+#[test]
 fn the_audit_log_holds_ids_and_codes_never_what_was_said() {
     let fx = Fixture::new();
     let claude = Claude::new(&fx);
