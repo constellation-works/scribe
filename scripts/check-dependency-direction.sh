@@ -405,11 +405,38 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
       }
       return @out;
     }
-    # Blank comments first (keeping newlines, so line numbers hold): a
-    # semicolon inside one must not end a statement early. Block comments
-    # nest in Rust, so strip from the innermost out.
-    1 while s{/\*(?:(?!/\*|\*/).)*\*/}{ (my $c = $&) =~ s/[^\n]//g; $c }gse;
-    s{//[^\n]*}{}g;
+    # Lex left to right: comment delimiters inside literals or other comments
+    # are inert. Blank each token with spaces while retaining its newlines and
+    # token boundaries, so statements and their reported lines stay intact.
+    my $source = $_;
+    my $clean = "";
+    pos($source) = 0;
+    while (pos($source) < length($source)) {
+      my $start = pos($source);
+      if ($source =~ /\G\/\//gc) {
+        $source =~ /\G[^\n]*/gc;
+      } elsif ($source =~ /\G\/\*/gc) {
+        my $depth = 1;
+        while ($depth && $source =~ m{\G(?:(?!/\*|\*/).)*(/\*|\*/)}gcs) {
+          $depth += $1 eq "/*" ? 1 : -1;
+        }
+        pos($source) = length($source) if $depth;
+      } elsif ($source =~ /\G(?:br|cr|r)(\#*)"/gc) {
+        my $end = index($source, "\"" . $1, pos($source));
+        pos($source) = $end < 0 ? length($source) : $end + 1 + length($1);
+      } elsif ($source =~ /\G"(?:\\.|[^"\\])*"/gcs ||
+               $source =~ /\G\x27(?:\\.|[^\x27\\\n])\x27/gc) {
+        # Ordinary strings and character literals, including escapes.
+      } else {
+        $source =~ /\G(.)/gcs;
+        $clean .= $1;
+        next;
+      }
+      my $token = substr($source, $start, pos($source) - $start);
+      $token =~ s/[^\n]/ /g;
+      $clean .= $token;
+    }
+    $_ = $clean;
     while (/^[ \t]*(?:pub(?:[ \t]*\([^)]*\))?[ \t]+)?use\s+([^;]+);/mg) {
       my ($tree, $at) = ($1, $-[0]);
       next unless grep { /^(?:::)?(?:(?:crate|self|super)::)*(?:super::files|db::files)(?:$|::)/ } paths("", $tree);
