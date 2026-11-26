@@ -187,13 +187,14 @@ so the guard holds each to the same order.
   `Store` and resolves the transcript roots and the provider. `config.rs`
   parses the config file; `Context::redactor` and `Context::models` build from a
   parsed `Config`. `runtime/host/` implements the ports on the `Context`.
-- `providers/` holds the remaining in-process model calls until ORB-27911
-  removes scribe's own model calls. Session catalog and rebuild still use it.
-  Session pass, group close and memory refresh use deterministic prepare/apply
-  flows. Their Orbit jobs perform the model step; group close reads evidence,
-  drafts outside the store, then applies the supplied summary atomically. The
-  CLI compares the evidence digest only when `--if-evidence` is supplied; the
-  plugin apply tool always requires it.
+- `providers/` is interim while ORB-27911 removes Scribe's own model calls.
+  Session pass, session catalog, session rebuild, group close and memory
+  refresh use deterministic prepare/apply/begin/finish flows; Orbit jobs
+  perform their model work. The provider adapters remain until their deletion
+  (ORB-28144). Group close reads evidence, drafts outside the store, then
+  applies the supplied summary atomically. The CLI compares the evidence
+  digest only when `--if-evidence` is supplied; the plugin apply tool always
+  requires it.
 
 ## `scribe-store`
 
@@ -321,10 +322,13 @@ cannot express. "Module" includes any file added later.
   `current_dir()`), and it imports no app. Only `composition.rs` and
   `providers/` name `std::fs`; only `providers/` names `std::process`,
   `rustix` and `tempfile`; nothing opens a socket.
-- **The model callers:** only the four flows, their apps' `mod.rs` and
-  `runtime/errors.rs` name `providers`, `Models`, `ModelError`, `ModelsOnce`
-  or `ModelsEach`. `providers/` imports no app and no runtime, and the model
-  shapes import none of their callers.
+- **The model callers:** the dependency guard allows only
+  `apps/memory/refresh.rs`, `apps/group/close.rs`, their apps' `mod.rs` files,
+  and `runtime/errors.rs` to name `providers`, `Models`, `ModelError`,
+  `ModelsOnce` or `ModelsEach`. The flows no longer invoke an in-process
+  model; the remaining `ModelError` references are in `apps/group/mod.rs` and
+  `runtime/errors.rs`. `providers/` imports no app and no runtime, and the
+  model shapes import none of their callers.
 - **The store:** reads no environment variable and discovers no path; only
   `db/` names `rusqlite` (and `testing.rs`); `db/files.rs` names nothing of the
   store but its error; no module of the store re-implements a file mechanism:
