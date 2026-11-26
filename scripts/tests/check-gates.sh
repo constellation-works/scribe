@@ -328,6 +328,38 @@ for banned_dep in \
   fi
 done
 
+# A TOML comment is not part of a declaration: a `package = ...` after a `#`
+# names no package. The legal serde dependency passes with a banned name in its
+# comment; the banned rusqlite dependency fails with a legal name in its comment.
+for comment_legal in \
+  $'[dependencies]\nserde = "1" # package = "rusqlite"\n' \
+  $'[dependencies]\nserde = { version = "1" } # package = "rusqlite"\n' \
+  $'[dependencies.serde]\nversion = "1" # package = "rusqlite"\n'; do
+  n_scribe=$((n_scribe + 1))
+  legal=$(tree "comment-legal-$n_scribe")
+  printf '[package]\nname = "scribe"\n\n%s' "$comment_legal" >"$legal/crates/scribe/Cargo.toml"
+  expect pass check-dependency-direction.sh "$legal" "a legal dependency with a banned name in its comment ($n_scribe)"
+  if grep -Fq "rusqlite" "$work/out"; then
+    echo "check-gates: FAIL: a banned name in a trailing comment was reported ($n_scribe)" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+for comment_banned in \
+  $'[dependencies]\nrusqlite = "0.43" # package = "serde"\n' \
+  $'[dependencies]\nrusqlite = { version = "0.43" } # package = "serde"\n' \
+  $'[dependencies.rusqlite]\nversion = "0.43" # package = "serde"\n'; do
+  n_scribe=$((n_scribe + 1))
+  commented=$(tree "comment-banned-$n_scribe")
+  printf '[package]\nname = "scribe"\n\n%s' "$comment_banned" >"$commented/crates/scribe/Cargo.toml"
+  expect fail check-dependency-direction.sh "$commented" "a banned dependency with a legal name in its comment ($n_scribe)"
+  if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+    echo "check-gates: FAIL: missing banned-crate diagnostic for a commented dependency ($n_scribe)" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
 # 2. Top-level module cycles inside a crate (direct, relative super::, grouped, 3-node)
 #    plus clean acyclic twins and comment/string non-cycles.
 cyc_top_ok=$(tree cycle-top-clean)

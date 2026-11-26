@@ -82,9 +82,29 @@ policy() {
 #   key.workspace = true  /  key = { workspace = true }  (the package comes
 #     from the root manifest's [workspace.dependencies])
 # in [dependencies], [build-dependencies] and [target.<cfg>.*]; dev-dependencies
-# are exempt. POSIX awk only (macOS ships BWK awk, not gawk). The first file is
-# the root manifest, the second the member's.
+# are exempt. A TOML comment is not part of a declaration, so each line is read
+# without its comment first: `# package = "x"` names no package. POSIX awk only
+# (macOS ships BWK awk, not gawk). The first file is the root manifest, the
+# second the member's.
 DECLARED_DEPS_AWK='
+# The line without its TOML comment and trailing blanks. A "#" outside a basic
+# ("...", with backslash escapes) or literal (single-quoted) string starts the
+# comment.
+function uncomment(text,    i, c, q, out) {
+  q = ""; out = ""
+  for (i = 1; i <= length(text); i++) {
+    c = substr(text, i, 1)
+    if (q == "") {
+      if (c == "#") break
+      if (c == "\"" || c == "\047") q = c
+    } else if (c == "\\" && q == "\"") {
+      out = out c; i++; c = substr(text, i, 1)
+    } else if (c == q) q = ""
+    out = out c
+  }
+  sub(/[ \t]+$/, "", out)
+  return out
+}
 function unquote(s) {
   gsub(/^[ \t]+|[ \t]+$/, "", s)
   if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
@@ -124,6 +144,7 @@ function classify(h,    root) {
   }
   if (mode == "sub") note(subkey, FNR, "", 0)
 }
+{ $0 = uncomment($0) }
 FNR == 1 { mode = ""; subkey = "" }
 /^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
 /^[ \t]*(#|$)/ { next }
