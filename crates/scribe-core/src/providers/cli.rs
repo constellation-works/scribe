@@ -26,11 +26,6 @@
 //! The adapter spawns processes, so it lives under `providers/`, the one
 //! place in the core that names `std::process` (ARCHITECTURE.md).
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn; the drain result travels on a capacity-one sync_channel)"
-)]
-
 mod codex;
 
 use super::Models;
@@ -437,6 +432,10 @@ pub(crate) fn supervise(
     budget: Duration,
 ) -> Result<Ran, ModelError> {
     let program = OsStr::new(cmd.get_program()).to_string_lossy().into_owned();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "providers/cli.rs is scribe-core's supervised subprocess adapter (Command::spawn)"
+    )]
     let child = cmd
         .spawn()
         .map_err(|e| ModelError::Unavailable(format!("{program}: {e}")))?;

@@ -979,15 +979,13 @@ pub fn bail() -> ! {
 EOF
 )" "clippy::disallowed-methods" "scribe-core importing std::process::exit by name"
 
-# Copy each real module's inner expectation, then compile a representative
+# Copy each module-level adapter expectation, then compile a representative
 # allowed operation before adding an exit call. This exercises the independent
 # lint under the same exemption that previously hid direct exit calls.
-for adapter in composition cli fs; do
+for adapter in composition fs; do
   case "$adapter" in
     composition) source="$REPO_ROOT/crates/scribe-core/src/composition.rs"
       operation='pub fn host() { let _ = std::env::var_os("PATH"); }' ;;
-    cli) source="$REPO_ROOT/crates/scribe-core/src/providers/cli.rs"
-      operation='pub fn host() { let _ = std::process::Command::new("unused").spawn(); }' ;;
     fs) source="$REPO_ROOT/crates/scribe-tools/src/fs.rs"
       operation='pub fn host() { let _ = std::fs::read("unused"); let _: Option<std::fs::File> = None; }' ;;
   esac
@@ -1001,17 +999,12 @@ EOF
   # Place the twin at the production module's relative path.
   case "$adapter" in
     composition) module=composition ;;
-    cli) module=providers/cli ;;
     fs) module=fs ;;
   esac
   fixture_src="$fixture/crates/scribe-core/src"
   mkdir -p "$(dirname "$fixture_src/$module.rs")"
   mv "$fixture_src/config.rs" "$fixture_src/$module.rs"
-  if [[ "$adapter" == cli ]]; then
-    printf '//! Core fixture.\n/// Provider fixtures.\npub mod providers { pub mod cli; }\n' >"$fixture_src/lib.rs"
-  else
-    printf '//! Core fixture.\npub mod %s;\n' "$module" >"$fixture_src/lib.rs"
-  fi
+  printf '//! Core fixture.\npub mod %s;\n' "$module" >"$fixture_src/lib.rs"
   expect_clippy pass "$fixture" "" "approved $adapter host operation"
   cat >>"$fixture_src/$module.rs" <<'EOF'
 /// Direct exit must remain forbidden under the adapter expectation.
@@ -1074,6 +1067,196 @@ expect_clippy fail "$store_clippy" "clippy::disallowed-methods" \
   "a raw SQLite open through the cw-sqlite re-export in the file adapter"
 if ! grep -Fq "open scribe.db through cw-sqlite" "$work/out"; then
   echo "check-gates: FAIL: missing raw SQLite open diagnostic" >&2
+  fail=1
+fi
+
+# Compile the actual provider CLI adapter with the pinned dependencies. The
+# clean twin passes with only supervise's spawn statement exempted; adding a
+# direct exit, swapping drain's sync_channel(1) for an unbounded channel, or
+# calling mpsc::channel in the codex submodule each fail under the same lint
+# config.
+cli_clippy="$work/clippy-provider-cli"
+mkdir -p "$cli_clippy/src/cli"
+cp "$REPO_ROOT/clippy.toml" "$cli_clippy/clippy.toml"
+cp "$REPO_ROOT/crates/scribe-core/src/providers/cli.rs" "$cli_clippy/src/cli.rs"
+cp "$REPO_ROOT/crates/scribe-core/src/providers/cli/codex.rs" "$cli_clippy/src/cli/codex.rs"
+{
+  printf '[workspace]\nresolver = "3"\n\n[package]\nname = "provider-cli-fixture"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n'
+  grep -E '^(cw-app|serde|serde_json|tempfile) = ' "$REPO_ROOT/Cargo.toml"
+  printf "\n[target.'cfg(unix)'.dependencies]\n"
+  grep -E '^rustix = ' "$REPO_ROOT/Cargo.toml"
+  printf '\n[lints]\nworkspace = true\n\n%s\n' "$clippy_lints"
+} >"$cli_clippy/Cargo.toml"
+cp "$REPO_ROOT/Cargo.lock" "$cli_clippy/Cargo.lock"
+cat >"$cli_clippy/src/lib.rs" <<'EOF'
+//! Provider CLI adapter fixture.
+#![allow(dead_code)]
+
+/// Provider transport selection stub.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Provider {
+    /// Claude CLI.
+    ClaudeCode,
+    /// Codex CLI.
+    Codex,
+}
+
+/// Redactor stub.
+#[derive(Clone, Debug)]
+pub struct Redactor;
+
+impl Redactor {
+    /// Construct a stub redactor.
+    pub fn new<I, K, V>(_: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+    {
+        Self
+    }
+
+    /// Return text unchanged in the compile-only lint fixture.
+    pub fn mask(&self, text: &str) -> String {
+        text.to_owned()
+    }
+}
+
+/// Model port stubs.
+pub mod models {
+    use serde::Deserialize;
+    use std::time::Duration;
+
+    /// Group summary budget stub.
+    pub const ASK_BUDGET: Duration = Duration::from_secs(90);
+    /// Profile schema stub.
+    pub const PROFILE_SCHEMA: &str = "{}";
+    /// Session header schema stub.
+    pub const SESSION_HEADER_SCHEMA: &str = "{}";
+
+    /// Model error stub.
+    #[derive(Debug)]
+    pub enum ModelError {
+        /// Timed out.
+        Timeout {
+            /// Elapsed budget.
+            budget: Duration,
+        },
+        /// Unavailable binary.
+        Unavailable(String),
+        /// Non-zero exit or error output.
+        Failed(String),
+        /// Malformed answer.
+        Malformed(String),
+    }
+
+    /// Group close evidence stub.
+    pub struct CloseEvidence;
+    impl CloseEvidence {
+        /// Prompt stub.
+        pub fn prompt(&self) -> String {
+            String::new()
+        }
+    }
+
+    /// Session request stub.
+    pub struct SessionRequest {
+        /// Model id.
+        pub model: String,
+        /// Call budget.
+        pub budget: Duration,
+    }
+    impl SessionRequest {
+        /// Schema stub.
+        pub fn schema(&self) -> String {
+            String::new()
+        }
+        /// Prompt stub.
+        pub fn prompt(&self) -> String {
+            String::new()
+        }
+    }
+
+    /// Session header request stub.
+    pub struct SessionHeaderRequest {
+        /// Model id.
+        pub model: String,
+        /// Call budget.
+        pub budget: Duration,
+    }
+    impl SessionHeaderRequest {
+        /// Prompt stub.
+        pub fn prompt(&self) -> String {
+            String::new()
+        }
+    }
+
+    /// Profile request stub.
+    pub struct ProfileRequest {
+        /// Model id.
+        pub model: String,
+        /// Call budget.
+        pub budget: Duration,
+    }
+    impl ProfileRequest {
+        /// Prompt stub.
+        pub fn prompt(&self) -> String {
+            String::new()
+        }
+    }
+
+    /// Session answer stub.
+    #[derive(Deserialize)]
+    pub struct SessionAnswer;
+    /// Session header answer stub.
+    #[derive(Deserialize)]
+    pub struct SessionHeader;
+    /// Profile answer stub.
+    #[derive(Deserialize)]
+    pub struct ProfileAnswer;
+}
+
+/// Models trait stub.
+pub trait Models {
+    /// Session distillation stub.
+    fn session(&self, request: &models::SessionRequest) -> Result<models::SessionAnswer, models::ModelError>;
+    /// Session header stub.
+    fn session_header(&self, request: &models::SessionHeaderRequest) -> Result<models::SessionHeader, models::ModelError>;
+    /// Group summary stub.
+    fn group_summary(&self, model: &str, evidence: &models::CloseEvidence) -> Result<String, models::ModelError>;
+    /// Profile rebuild stub.
+    fn profile(&self, request: &models::ProfileRequest) -> Result<models::ProfileAnswer, models::ModelError>;
+}
+
+mod cli;
+EOF
+expect_clippy pass "$cli_clippy" "" "the production provider CLI adapter with scoped spawn expectation"
+cat >>"$cli_clippy/src/cli.rs" <<'EOF'
+
+fn forbidden_exit() -> ! { std::process::exit(1) }
+EOF
+expect_clippy fail "$cli_clippy" "clippy::exit" "direct exit in the production provider CLI adapter"
+cp "$REPO_ROOT/crates/scribe-core/src/providers/cli.rs" "$cli_clippy/src/cli.rs"
+sed 's/mpsc::sync_channel(1)/mpsc::channel()/' "$REPO_ROOT/crates/scribe-core/src/providers/cli.rs" >"$cli_clippy/src/cli.rs"
+if cmp -s "$REPO_ROOT/crates/scribe-core/src/providers/cli.rs" "$cli_clippy/src/cli.rs"; then
+  echo "check-gates: FAIL: did not rewrite drain sync_channel(1) for negative fixture" >&2
+  fail=1
+fi
+expect_clippy fail "$cli_clippy" "clippy::disallowed-methods" \
+  "an unbounded mpsc::channel() in the provider drain"
+if ! grep -Fq "use a bounded channel (std::sync::mpsc::sync_channel)" "$work/out"; then
+  echo "check-gates: FAIL: missing bounded-channel diagnostic for drain" >&2
+  fail=1
+fi
+cp "$REPO_ROOT/crates/scribe-core/src/providers/cli.rs" "$cli_clippy/src/cli.rs"
+cat >>"$cli_clippy/src/cli/codex.rs" <<'EOF'
+
+fn forbidden_channel() {
+    let _ = std::sync::mpsc::channel::<()>();
+}
+EOF
+expect_clippy fail "$cli_clippy" "clippy::disallowed-methods" \
+  "an unbounded mpsc::channel() in the provider codex submodule"
+if ! grep -Fq "use a bounded channel (std::sync::mpsc::sync_channel)" "$work/out"; then
+  echo "check-gates: FAIL: missing bounded-channel diagnostic for codex submodule" >&2
   fail=1
 fi
 

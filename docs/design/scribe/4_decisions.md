@@ -7,11 +7,11 @@ status: Draft
 feature: scribe
 doc_role: decisions
 type: design
-summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, why the consistency scan and the Stop hook call no model, and why the store file adapter keeps its filesystem lint expectations statement-scoped under STD-02 R6 and R35, why the standards sync adopts STD-02@10, STD-12@4 and STD-14@1 with each deferred gate recorded per rule, and why pre-release migrations and file-store archives stay until Daniel exports them.
+summary: Why superseded entries are hidden not removed, why one JSON file per tag and per session with no persisted index, why no migration from orbit-office and only two default tags, why hooks call the binary, why models run through the claude CLI and which model does what, why session passes run from an opt-in routine or by hand with bounded windows and retries, why frontmatter is parsed by yaml_serde, why a session record is a rewritable header over an append-only log of segments, why sessions carry an active flag deactivated mainly when their feature is removed and why only Daniel-authored entries count as removal evidence, why agents read and write through the CLI under one skill with authors recorded and Daniel's entries left to him, why tags agents create live in the store, why a tmux popup rather than an app, and why backfill catalogs only sessions Daniel names, why action tags are config-marked with a capped window, a cancel window, pickups, a stuck line, a CLI quote check and SSH reads from the owner host, why scribe keeps a descriptive memory the session pass writes without approval, why that memory has a personal base fed by every typed session (with people, recurring dates and light catalog entries) and a work layer fed only by sessions switched on by /scribe on or cataloged by name, why scribe reads Claude Code and Codex sessions only (no hosted server, app connector or ChatGPT import), why the personal base, people, recurring dates and light catalog entries are parked, why the session pass writes Daniel's ideas itself with their outcome, why #scribe becomes an annotation anywhere in a typed turn cataloged at the end of the turn with a statement and his verbatim quote (proposed), why tags become configurable catchers, memory a fixed three-part synthesis and the rest one SQLite database, with approved entries in SQLite, `issue` a catcher tag rather than a record kind, only cited assistant turns stored, and the meaning landing before the storage (proposed), plus the engineering decisions carried over from the Rust CLI template, why scribe was four crates (domain, store, use cases, CLI) and is now laid out by app in four crates (scribe, core, store, tools), why ask, the Orbit task search and the tmux popup are removed, why the consistency scan and the Stop hook call no model, and why the store file adapter keeps its filesystem lint expectations statement-scoped under STD-02 R6 and R35, why the provider spawn adapter keeps its spawn lint expectation statement-scoped under STD-02 R6 and R35 and STD-03 R2, why the standards sync adopts STD-02@10, STD-12@4 and STD-14@1 with each deferred gate recorded per rule, and why pre-release migrations and file-store archives stay until Daniel exports them.
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904, ORB-28921]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904, ORB-28921, ORB-28889]
 ---
 
 # scribe — Decisions
@@ -2481,6 +2481,7 @@ show` prints `rebuilt_by` only in `--json`.
 - [ORB-26640] — proposed tags as catchers, the fixed three-part memory and
   one SQLite store, with the four decisions of the accepted proposal.
 - [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
+- [ORB-28889] — recorded the provider spawn adapter's statement-scoped STD-02 §R6 deviation.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
 
@@ -5472,6 +5473,42 @@ cw-sqlite” diagnostic.
 - **Cost:** each permitted direct filesystem call needs its own reasoned
   expectation, and the fixture must keep checking that the exception scope
   does not weaken the SQLite boundary.
+
+## Provider spawn lint expectation stays statement-scoped
+
+**Recorded:** 2026-11-26 · [ORB-28889]
+**Standard:** [STD-02@8 §R6 and §R35](../../standards/STD-02-rust-architecture-and-errors/STD-02.md), [STD-03@2 §R2](../../standards/STD-03-concurrency-and-process-safety/STD-03.md)
+**Code anchors:** `crates/scribe-core/src/providers/cli.rs#supervise`, `crates/scribe-core/src/providers/cli.rs#drain`, `clippy.toml`, `scripts/tests/check-gates.sh`
+
+### Context
+
+STD-02@8 §R6 says an allowed module carries a module-level expectation for a
+disallowed-method lint. In `scribe-core` the CLI provider adapter needs
+`Command::spawn` in `supervise`. `clippy.toml` uses the same
+`clippy::disallowed_methods` lint to ban `std::sync::mpsc::channel` under
+STD-03@2 §R2. A module-wide `#![expect(clippy::disallowed_methods)]` in
+`providers/cli.rs` therefore suppressed unbounded-channel diagnostics across
+`drain` and `providers/cli/codex.rs`.
+
+### Decision
+
+The `Command::spawn` expectation in `providers/cli.rs` is placed on the
+single `cmd.spawn()` statement in `supervise` rather than at module scope.
+This is a scoped deviation from STD-02@8 §R6's module-level placement,
+following §R35's narrowest-item rule and matching `db/files.rs`. The
+`provider-cli-fixture` check in `check-gates.sh` compiles the production
+adapter and verifies that `supervise` passes with `sync_channel(1)` in
+`drain`, while direct `exit`, an unbounded `mpsc::channel()` in `drain`, and
+an unbounded `mpsc::channel()` in `providers/cli/codex.rs` all fail.
+
+### Consequences
+
+- `Command::spawn` remains allowed in `supervise` while `std::sync::mpsc::channel`
+  and every other disallowed method stay rejected throughout `providers/cli.rs`
+  (including `drain`) and `providers/cli/codex.rs`.
+- **Cost:** any future allowed `Command` spawn in `providers/` needs its own
+  reasoned statement-level expectation, and the gate fixture must continue to
+  check both the passing adapter and the negative channel cases.
 
 ## Application units are sliced by subject (STD-02 R45)
 
