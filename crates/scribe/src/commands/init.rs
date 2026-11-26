@@ -20,6 +20,7 @@ const SKILL_FILES: &[(&str, &str)] = skill_files![
     "references/action-tags.md",
     "references/capture-controls.md",
     "references/catchers.md",
+    "references/decisions.md",
     "references/handoffs.md",
     "references/lookups.md",
     "references/memory.md",
