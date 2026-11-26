@@ -211,7 +211,8 @@ so the guard holds each to the same order.
   root and optional transcripts supplied by the plugin. Neither constructor
   reads the config file; `Store::open` performs no I/O. Commands that need
   configuration read it on demand through the store-backed config access
-  (for example, tag configuration parses the config file or shipped defaults).
+  (for example, tag configuration parses a supplied config file and uses
+  built-in defaults when the file is absent).
   `Context::models` reads its allowed process values when building the model
   adapter.
   `composition/host/` implements `runtime`'s ports on the `Context` (STD-02

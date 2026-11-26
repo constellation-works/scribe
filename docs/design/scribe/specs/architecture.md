@@ -251,8 +251,9 @@ sees it.
   state. `Context::at` wraps the root and optional transcript path supplied by
   the plugin. Neither constructor reads the config file; `Store::open` performs
   no I/O. Commands that need configuration load it on demand through the
-  store-backed config access (for example, tag configuration parses the config
-  file or the shipped defaults). `Context::redactor` builds a redactor
+  store-backed config access (for example, tag configuration parses a supplied
+  config file and uses built-in defaults when the file is absent).
+  `Context::redactor` builds a redactor
   on demand from the supplied config and live process values for its configured
   `[redact] env` names.
 - Outside `composition.rs`, nothing in the core reads an environment variable
