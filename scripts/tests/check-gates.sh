@@ -395,21 +395,46 @@ printf '// use crate::providers;\n/* use crate::providers; */\nconst S: &str = r
 printf '//! providers\nuse crate::config;\n' >"$cyc_comment/crates/scribe-core/src/providers/mod.rs"
 expect pass check-dependency-direction.sh "$cyc_comment" "commented and raw-string cycle-like imports"
 
-# 3. Module cycles inside a layer without a declared order (scribe::output)
-#    and inside a declared ordered layer (scribe-store::db).
+# 3. Module cycles inside a layer without a declared order (scribe::output::common)
+#    and inside declared ordered layers (scribe::output, scribe-store::db).
 cyc_out_ok=$(tree cycle-output-clean)
-mkdir -p "$cyc_out_ok/crates/scribe/src/output"
-printf '//! color\n' >"$cyc_out_ok/crates/scribe/src/output/color.rs"
-printf '//! render\nuse super::color;\n' >"$cyc_out_ok/crates/scribe/src/output/render.rs"
-expect pass check-dependency-direction.sh "$cyc_out_ok" "acyclic scribe::output modules"
+mkdir -p "$cyc_out_ok/crates/scribe/src/output/common"
+printf '//! color\n' >"$cyc_out_ok/crates/scribe/src/output/common/color.rs"
+printf '//! table\nuse super::color;\n' >"$cyc_out_ok/crates/scribe/src/output/common/table.rs"
+expect pass check-dependency-direction.sh "$cyc_out_ok" "acyclic scribe::output::common modules"
 
 cyc_out_bad=$(tree cycle-output-bad)
-mkdir -p "$cyc_out_bad/crates/scribe/src/output"
-printf '//! color\nuse super::render;\n' >"$cyc_out_bad/crates/scribe/src/output/color.rs"
-printf '//! render\nuse super::color;\n' >"$cyc_out_bad/crates/scribe/src/output/render.rs"
-expect fail check-dependency-direction.sh "$cyc_out_bad" "in-layer module cycle in scribe::output (color <-> render)"
-if ! grep -Fq "scribe::output import cycle:" "$work/out"; then
-  echo "check-gates: FAIL: missing scribe::output cycle diagnostic" >&2
+mkdir -p "$cyc_out_bad/crates/scribe/src/output/common"
+printf '//! color\nuse super::table;\n' >"$cyc_out_bad/crates/scribe/src/output/common/color.rs"
+printf '//! table\nuse super::color;\n' >"$cyc_out_bad/crates/scribe/src/output/common/table.rs"
+expect fail check-dependency-direction.sh "$cyc_out_bad" "in-layer module cycle in scribe::output::common (color <-> table)"
+if ! grep -Fq "scribe::output::common import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing scribe::output::common cycle diagnostic" >&2
+  fail=1
+fi
+
+ord_out_ok=$(tree order-output-clean)
+mkdir -p "$ord_out_ok/crates/scribe/src/output/common"
+printf '//! common\n' >"$ord_out_ok/crates/scribe/src/output/common/mod.rs"
+printf '//! entry\nuse super::common;\n' >"$ord_out_ok/crates/scribe/src/output/entry.rs"
+expect pass check-dependency-direction.sh "$ord_out_ok" "acyclic scribe::output downward edge (entry -> common)"
+
+ord_out_bad=$(tree order-output-upward)
+mkdir -p "$ord_out_bad/crates/scribe/src/output/common"
+printf '//! common\nuse super::entry;\n' >"$ord_out_bad/crates/scribe/src/output/common/mod.rs"
+printf '//! entry\n' >"$ord_out_bad/crates/scribe/src/output/entry.rs"
+expect fail check-dependency-direction.sh "$ord_out_bad" "upward edge in scribe::output (common -> entry)"
+if ! grep -Fq "scribe::output: common imports entry, which is not lower" "$work/out"; then
+  echo "check-gates: FAIL: missing scribe::output declared order diagnostic" >&2
+  fail=1
+fi
+
+ord_out_unlisted=$(tree order-output-unlisted)
+mkdir -p "$ord_out_unlisted/crates/scribe/src/output"
+printf '//! extra\n' >"$ord_out_unlisted/crates/scribe/src/output/extra.rs"
+expect fail check-dependency-direction.sh "$ord_out_unlisted" "unlisted module in scribe::output (extra)"
+if ! grep -Fq "scribe::output: module 'extra' has no place in the declared order" "$work/out"; then
+  echo "check-gates: FAIL: missing scribe::output unlisted-module diagnostic" >&2
   fail=1
 fi
 

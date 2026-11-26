@@ -1,8 +1,9 @@
-use crate::output::payload::{
-    AuthorPayload, CitePayload, ContentFromPayload, EntryPayload, HandoffPayload, Record, Records,
-    SessionHandoffsPayload, TagPayload, WarningPayload,
-};
-use crate::output::render::{list, show, table_date};
+use crate::output::common::record::{AuthorPayload, CitePayload, WarningPayload};
+use crate::output::common::table::table_date;
+use crate::output::entry::{ContentFromPayload, EntryPayload};
+use crate::output::session::{HandoffPayload, SessionHandoffsPayload};
+use crate::output::tag::TagPayload;
+use crate::output::{Record, Records, list, show};
 use cw_app::Env;
 use cw_cli::{Format, Mode, Probe, Sink, Terminal};
 use scribe_core::ShortIds;

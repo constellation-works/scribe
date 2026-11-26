@@ -1,7 +1,13 @@
-//! Payloads for memory reads, rules and refresh results.
+//! Payloads and rendering for `scribe memory`.
 
-use super::{OriginPayload, Timestamp};
+use super::common::console::{Sink, notice};
+use super::common::detail::{Detail, emit_detail, field, or_none};
+use super::common::record::{OriginPayload, Timestamp, origin_text};
+use super::common::table::{Cell, Result, one_line, plain_line, table, timestamp, yes_no};
+use cw_cli::{Column, Mode, Table};
 use serde::Serialize;
+use std::fmt::{self, Write as _};
+use std::io::Write;
 
 /// One memory file (`memory show <id>`, and the writes on one;
 /// docs/design/scribe/specs/output-contract.md). Field names are a
@@ -160,14 +166,6 @@ impl MemoryBlockPayload {
     }
 }
 
-/// `memory rules`: the fixed memory rules (2_design.md §15.5). Field names
-/// are a contract.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct MemoryRulesPayload {
-    /// In a fixed order.
-    pub(crate) rules: Vec<MemoryRulePayload>,
-}
-
 /// One rule.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct MemoryRulePayload {
@@ -179,6 +177,14 @@ pub(crate) struct MemoryRulePayload {
     pub(crate) origin: OriginPayload,
     /// What it does, in one line.
     pub(crate) meaning: &'static str,
+}
+
+/// `memory rules`: the fixed memory rules (2_design.md §15.5). Field names
+/// are a contract.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct MemoryRulesPayload {
+    /// In a fixed order.
+    pub(crate) rules: Vec<MemoryRulePayload>,
 }
 
 impl MemoryRulesPayload {
@@ -274,6 +280,244 @@ pub(crate) struct RevisionPayload {
     pub(crate) created: Timestamp,
     /// The profile's text.
     pub(crate) text: String,
+}
+
+/// Render a single memory item (`memory show <id>` and write verbs).
+pub(crate) fn show<O: Write, E: Write>(sink: &mut Sink<O, E>, item: &MemoryPayload) -> Result {
+    emit_detail(sink, item, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain => {
+            writeln!(
+                out,
+                "{}",
+                plain_line(&[
+                    Cell::plain(item.id.clone()),
+                    Cell::plain(item.kind.to_owned()),
+                    Cell::plain(item.date.clone().unwrap_or_else(|| String::from("-"))),
+                    Cell::plain(item.title.clone().unwrap_or_else(|| String::from("-"))),
+                ])
+            )?;
+            for line in item.text.lines() {
+                writeln!(out, "text\t{line}")?;
+            }
+            Ok(())
+        }
+        Mode::Table => memory_detail(out, item),
+    })
+}
+
+/// Render the memory block (`memory show` with no id), emitting its warnings
+/// to stderr first.
+pub(crate) fn show_block<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    block: &MemoryBlockPayload,
+) -> Result {
+    for warning in &block.warnings {
+        notice(sink, warning);
+    }
+    emit_detail(sink, block, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain | Mode::Table => write!(out, "{}", block.text),
+    })
+}
+
+/// Render a profile revision (`memory show --revision <n>`).
+pub(crate) fn show_revision<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    revision: &RevisionPayload,
+) -> Result {
+    emit_detail(sink, revision, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain | Mode::Table => {
+            write!(out, "{}", revision.text)?;
+            if !revision.text.ends_with('\n') {
+                writeln!(out)?;
+            }
+            Ok(())
+        }
+    })
+}
+
+/// Render a `memory refresh` or `memory apply` written result.
+pub(crate) fn show_refresh<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    refresh: &RefreshPayload,
+) -> Result {
+    emit_detail(sink, refresh, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain => writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            refresh.result,
+            refresh
+                .revision
+                .map_or_else(|| String::from("-"), |n| n.to_string()),
+            refresh.sessions,
+            refresh.backlog,
+            refresh.milestones.len(),
+            refresh.removed.len()
+        ),
+        Mode::Table => {
+            field(out, "result", refresh.result)?;
+            field(
+                out,
+                "revision",
+                &refresh
+                    .revision
+                    .map_or_else(|| String::from("-"), |n| n.to_string()),
+            )?;
+            field(out, "sessions", &refresh.sessions.to_string())?;
+            field(out, "backlog", &refresh.backlog.to_string())?;
+            field(out, "milestones", &or_none(&refresh.milestones))?;
+            field(out, "removed", &or_none(&refresh.removed))
+        }
+    })
+}
+
+/// Render a `memory prepare` result.
+pub(crate) fn show_prepare<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    prepared: &scribe_core::apps::memory::PreparedRefresh,
+) -> Result {
+    emit_detail(sink, prepared, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain => writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            prepared.nothing_new,
+            prepared.session_ids.len(),
+            prepared.backlog,
+            prepared.passed_stems.len()
+        ),
+        Mode::Table => {
+            field(
+                out,
+                "nothing_new",
+                if prepared.nothing_new {
+                    "true"
+                } else {
+                    "false"
+                },
+            )?;
+            field(out, "sessions", &prepared.session_ids.len().to_string())?;
+            field(out, "backlog", &prepared.backlog.to_string())?;
+            field(out, "passed", &prepared.passed_stems.len().to_string())?;
+            field(
+                out,
+                "corrections",
+                yes_no(
+                    prepared
+                        .inputs
+                        .as_ref()
+                        .is_some_and(|i| i.corrections.is_some()),
+                ),
+            )
+        }
+    })
+}
+
+/// Render a `memory apply` retry refusal.
+pub(crate) fn show_refresh_retry<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    retry: &RefreshRetryPayload,
+) -> Result {
+    emit_detail(sink, retry, |out, mode| match mode {
+        Mode::Json => Ok(()),
+        Mode::Plain => writeln!(
+            out,
+            "{}\t{}\t{}",
+            retry.status,
+            retry.code,
+            one_line(&retry.correction)
+        ),
+        Mode::Table => {
+            field(out, "status", retry.status)?;
+            field(out, "code", retry.code)?;
+            field(out, "correction", &retry.correction)
+        }
+    })
+}
+
+/// Render `memory rules`.
+pub(crate) fn show_rules<O: Write, E: Write>(
+    sink: &mut Sink<O, E>,
+    rules: &MemoryRulesPayload,
+) -> Result {
+    let mode = sink.terminal().mode();
+    sink.emit(rules, |_| memory_rules(mode, rules))
+}
+
+fn memory_detail(out: &mut Detail, m: &MemoryPayload) -> fmt::Result {
+    let or_dash = |v: Option<&str>| v.unwrap_or("-").to_owned();
+    field(out, "id", &m.id)?;
+    field(out, "kind", m.kind)?;
+    if m.kind == "profile" {
+        field(out, "as_of", &or_dash(m.as_of.as_deref()))?;
+        return writeln!(out, "\n{}", m.text.trim_end());
+    }
+    field(out, "date", &or_dash(m.date.as_deref()))?;
+    if let Some(kind) = m.now_kind {
+        field(out, "now_kind", kind)?;
+    }
+    field(out, "title", &or_dash(m.title.as_deref()))?;
+    field(out, "text", &m.text)?;
+    field(out, "sources", &or_none(&m.sources))?;
+    if let Some(updated) = m.updated {
+        field(out, "updated", &timestamp(updated))?;
+    }
+    if m.kind == "now" {
+        field(
+            out,
+            "raised",
+            &m.raised.as_ref().map_or_else(
+                || String::from("-"),
+                |r| format!("{} in {}", timestamp(r.at), r.session),
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn memory_rule_columns() -> Vec<Column> {
+    vec![
+        Column::new("RULE"),
+        Column::new("VALUE"),
+        Column::new("ORIGIN"),
+        Column::new("MEANING").truncatable(),
+    ]
+}
+
+/// `memory rules`: plain is `<rule>\t<value>\t<origin>` lines, like `tag
+/// show`; the table adds each rule's meaning, cut to fit (`--json` keeps
+/// it whole).
+fn memory_rules(mode: Mode, rules: &MemoryRulesPayload) -> Table {
+    let rows: Vec<Vec<Cell>> = rules
+        .rules
+        .iter()
+        .map(|r| {
+            let value = r.value.as_array().map_or_else(
+                || r.value.to_string(),
+                |list| {
+                    list.iter()
+                        .map(|v| format!("{:?}", v.as_str().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            );
+            let mut row = vec![
+                Cell::plain(r.rule),
+                Cell::plain(value),
+                Cell::plain(origin_text(&r.origin)),
+            ];
+            if mode == Mode::Table {
+                row.push(Cell::plain(r.meaning));
+            }
+            row
+        })
+        .collect();
+    let mut columns = memory_rule_columns();
+    columns.truncate(rows.first().map_or(0, Vec::len));
+    table(mode, columns, rows)
 }
 
 fn day(date: time::Date) -> String {

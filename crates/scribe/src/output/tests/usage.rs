@@ -1,4 +1,4 @@
-use crate::output::usage::raw_args_request_json;
+use crate::output::common::usage::raw_args_request_json;
 use std::ffi::OsString;
 
 fn args(list: &[&str]) -> Vec<OsString> {

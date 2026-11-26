@@ -1,4 +1,4 @@
-use crate::output::printable::Printable;
+use crate::output::common::printable::Printable;
 use std::io::Write;
 
 fn through(chunks: &[&[u8]]) -> String {

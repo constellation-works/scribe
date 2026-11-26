@@ -6,7 +6,7 @@ use std::ffi::OsString;
 /// error can be reported as JSON too (STD-01 R19). Parsing failed, so this
 /// reads the raw arguments: `--json`, `--format json` or `--format=json`,
 /// else the environment variable.
-pub(super) fn raw_args_request_json(args: &[OsString], env_format: Option<&str>) -> bool {
+pub(crate) fn raw_args_request_json(args: &[OsString], env_format: Option<&str>) -> bool {
     let mut explicit = None;
     let mut iter = args.iter().skip(1).map(|a| a.to_string_lossy());
     while let Some(arg) = iter.next() {

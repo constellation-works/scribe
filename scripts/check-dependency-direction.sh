@@ -622,6 +622,13 @@ for retired in \
   crates/scribe-store/src/candidates.rs \
   crates/scribe-store/src/audit.rs \
   crates/scribe-store/src/db/groups/close.rs \
+  crates/scribe/src/output/payload.rs \
+  crates/scribe/src/output/payload \
+  crates/scribe/src/output/render.rs \
+  crates/scribe/src/output/render \
+  crates/scribe/src/output/color.rs \
+  crates/scribe/src/output/printable.rs \
+  crates/scribe/src/output/usage.rs \
   crates/scribe-core/src/cases \
   crates/scribe-domain; do
   [[ -e "$retired" ]] && err "retired path exists again: $retired"
@@ -651,6 +658,7 @@ CONTRACTS_ORDER='audit provider record session entry handoff tag action group ma
 REPOSITORY_ORDER='sealed ids memory audit entries groups marks messages pickups proposals sessions tags'
 TOOLS_ORDER='fs host origin text voice markers project payload transcript window group_close memory_refresh session_distill'
 COMMANDS_ORDER='instruction store brief consistency entry export group hook init mark memory proposal search session tag transcript plugin'
+OUTPUT_ORDER='common entry export group hook init mark memory proposal search session store tag transcript brief consistency plugin'
 
 if ! command -v python3 >/dev/null 2>&1; then
   err "python3 is required for the import-cycle and in-layer order check"
@@ -660,6 +668,7 @@ elif ! DECLARED_DEPS_AWK="$DECLARED_DEPS_AWK" \
   REPOSITORY_ORDER="$REPOSITORY_ORDER" \
   TOOLS_ORDER="$TOOLS_ORDER" \
   COMMANDS_ORDER="$COMMANDS_ORDER" \
+  OUTPUT_ORDER="$OUTPUT_ORDER" \
   ROOT_PLACES="$ROOT_PLACES" \
   python3 -I - <<'PY'
 import collections
@@ -1118,6 +1127,7 @@ DECLARED_ORDERS = {
     ("scribe-store", ("repository",)): os.environ["REPOSITORY_ORDER"].split(),
     ("scribe-tools", ()): os.environ["TOOLS_ORDER"].split(),
     ("scribe", ("commands",)): os.environ["COMMANDS_ORDER"].split(),
+    ("scribe", ("output",)): os.environ["OUTPUT_ORDER"].split(),
 }
 
 # --- 3c. Walk every crate and every module directory ------------------------
