@@ -5795,3 +5795,65 @@ to zero.
 - `clippy.toml` explicitly sets the threshold to seven. The workspace lint
   is enabled at warn, and the existing CI Clippy command turns warnings into
   errors. STD-02@10 §R51 also requires review to reject source suppressions.
+
+## Legacy readers, migrations and the importer stay spread (STD-02 R44)
+
+**Recorded:** 2026-11-26 · [ORB-28767] · **Daniel's direction** (option 2 of decision request dr-e28c0eede7f9afde)
+**Code anchors:** `crates/scribe-store/src/db/mod.rs` (`MIGRATIONS`, `database`); `db/documents.rs` (`import_at_write`, `file_store_items`, `refuse_file_store`); `db/import.rs`, `db/import/forget.rs`, `db/archive.rs`; `db/write.rs` (`begin`, `after_commit`, `import_file_store`); `crates/scribe-core/src/apps/store/migrate.rs`
+
+### Context
+
+STD-02@10 §R44 says readers of superseded formats, schema and format migrations, and one-time importers MUST live in one unit named for that purpose (`legacy` or `migrate`). The live path calls that unit only when it opens or upgrades stored state, and imports nothing else from it. A superseded reader is deleted when no supported version can still produce its input (R17).
+
+Scribe pins STD-02@10. The task cites `STD-02@8 §R44`. The R44 text is identical in the @8 and @10 vendored copies (`de02786a` and `49ce79d5`), so this entry cites the pinned version.
+
+The review base is `ea02b6e1`, which contains ORB-28614 (`822c3642`). `scribe.db` is opened, configured and migrated through cw-sqlite, and `MIGRATIONS` is the ordered step list passed to `Db::new`.
+
+The entry "Pre-release migrations and file-store archives stay until Daniel exports them (STD-14@1 §R1)" keeps the `MIGRATIONS` chain, the archive import and the legacy readers they call, and deviates from STD-14@1 §R1 and §R2 for deletion. This entry is about placement, not deletion. It records where those pieces sit under R44.
+
+### Result
+
+The store does not conform to R44. No `legacy` or `migrate` unit exists. Superseded-format readers, migration steps and the importer are spread across several `db/` modules and two core modules, and live read and write paths call into them. No gate checks R44. `checks.md` names a dependency-direction check for it, and `scripts/check-dependency-direction.sh` has none, so the rule is review-only here.
+
+### Ownership and call sites
+
+| Piece | Owned in | Called by |
+|---|---|---|
+| Migration steps | `db/mod.rs` (`MIGRATIONS`, `migrate_v1`, V1–V8, V10, V13, V16, V17); `db/groups.rs` (V9, V11, V12, V18, V19); `db/groups/claude.rs` (V15); `db/docs.rs` (V14); `db/archive.rs` (V20) | cw-sqlite applies them when a writer opens `scribe.db` (`database`, `open_writer`, `open_new_writer`). Readers refuse a newer schema against `MIGRATIONS.len()`. |
+| Archive importer | `db/import.rs` (`import_archives`, `import_leftovers`, `replay_forgets`, `remove_archive`); tables and row access in `db/archive.rs`; reads through `db/files.rs::read_archived` | `import_at_write` (`db/documents.rs`), run from `begin` (`db/write.rs`) at the start of every write transaction; `Store::import_file_store` for `store migrate`; `after_commit` removes the imported directories. |
+| Legacy detection and refusal | `db/documents.rs` (`file_store_items`, `refuse_file_store`, `documents_moved`, `document_has_content`); `db/sessions.rs` (`moved`, `read_moved`); `db/docs.rs` (`moved`) | `import_at_write` on every write. `refuse_file_store` from `load_entries` and `entry` (`repository/entries.rs`), `control` and `load_sessions` (`repository/sessions.rs`), `audit_lines` (`repository/audit.rs`), `export` (`repository/sessions/export.rs`) and `read_or_empty` (`db/documents.rs`), each when the documents are not in `scribe.db`. |
+| Forget over archive rows | `db/import/forget.rs` (`scrub_session`, `scrub_entry`, `scrub_pending_entry`) | `erase_session` (`repository/sessions.rs`) and `erase_entry_residue` (`repository/entries.rs`) on a live forget; `replay_forgets` in the importer. |
+| Format-24 memory count | `repository/memory.rs` (`legacy_count`), and the journal branch that applies, without reading, a format-24 operation | `memory_view`; the warning in `apps/memory/block.rs`. |
+| Serde and rule reads of superseded shapes | `contracts/record.rs` (`AuthorKind::User`, alias `daniel`); `contracts/proposal.rs` (`context`, `statement`); `contracts/entry/records.rs` (trial entries without `item`); `apps/entry/rules/records.rs`; `apps/brief/rules.rs` (`open_items`) | serde on every read of a persisted record; the core's entry and brief rules. |
+
+The core adapter is not a reader and conforms. `scribe store migrate` and `scribe store export` map to `apps::store::exec`. `Command::Migrate` runs `apps/store/migrate.rs::migrate`, which calls `Store::import_file_store(now, check_migrate)`. `check_migrate`, in the same file, calls the core's refusal rules in `apps/store/rules.rs`. The store runs them inside the write, under its lock, before anything is imported. The explicit migrate call is the upgrade entry point R44 allows.
+
+### Retained boundaries
+
+Each boundary below is a deviation from STD-02@10 §R44 and is retained as stated.
+
+1. **Migration steps, spread over five modules.** Retained because the steps are the schema's ordered history. `MIGRATIONS` in `db/mod.rs` keeps their order in one list, and each step's SQL sits beside the tables it creates, so a table's DDL and its row access are read together. Moving them into one unit changes no behaviour and splits each table's history from its queries. *Reassess* at the first release tag (STD-14@1 §R2), or when a change to the chain makes a `migrate` unit worth cutting.
+
+2. **Archive importer and its tables.** Retained because ORB-26657 imports each archive inside the write's own transaction and removes it after the commit. The import therefore uses the write's connection, and the removal waits for that commit. Retaining the archives is the STD-14@1 §R1 entry above, and this placement follows from it. *Reassess* when the export gate in that entry closes (Daniel approves removal and an export keeps the archive tables), or at the first release tag. Removal retires the importer, `replay_forgets` and the forget code over archive rows together.
+
+3. **Legacy detection and refusal.** Retained because a store whose records never moved must be refused, not read: this build has no file decoder (ORB-26657). The refusal is the guard against reading a file store as an empty one. *Reassess* when no supported store can still hold file-store inputs. The designer checked the Mac and the box; Daniel confirms whether any other supported store does (ORB-28594 advice recorded on this task, 2026-11-26T02:10Z). Then R17 deletes the detection, the refusal and the stamp reads together.
+   - **Call pattern.** R44 asks for the legacy unit to be called only when a store opens or upgrades. `begin` calls `import_at_write`, which calls `file_store_items`, at the start of every write transaction. Each such call reads up to five small JSON stamp files. The import itself does nothing when no leftovers or archives exist. The reads call `refuse_file_store` only when the documents are not in `scribe.db`. This second deviation is recorded here and changes with item 3.
+
+4. **Forget over archive rows.** Retained because a forget erases archived rows in the same transaction as the live rows. A forget that spans two databases cannot commit once (ORB-26657). The helpers sit in `db/import/forget.rs`, so the live forget path imports from the importer unit, which R44 says the live path must not do. *Reassess* with item 2. The forget tests in `crates/scribe-core/src/tests/store/archive.rs` cover the erasure that stays, and they must be reviewed before any removal.
+
+5. **Format-24 memory count.** Retained because the memory view reports unread `m-<n>.md` files so the user sees the warning until the next write archives them. It reads no content. *Reassess* with item 3.
+
+6. **Serde and rule reads of superseded shapes.** Retained because each accepts a value or field an existing store still holds. R16 requires a persisted shape to read its old keys rather than reject them. Moving one out needs a separate wire type per record, which R16 allows only where the domain shape diverges. This entry does not decide whether these go. STD-14@1 §R1 treats pre-release shims as deletable, and the archive entry does not cover these, so Daniel decides them with the STD-14 question. *Reassess* at the first release tag or when Daniel decides that question. Before removing any of them, check stored values as the ORB-28921 entry requires.
+
+### Reconciliation with the archive-retention entry
+
+- This entry removes no code, data or reader. The archive retention and its export gate stay as recorded.
+- That entry says ORB-28767 should cite STD-14@1 §R1 as well as this rule. This entry cites both.
+- ORB-28629 still owns only the obsolete root audit importer and decision 50. It does not own the archive tables, the `MIGRATIONS` chain or the forget code over archive rows.
+
+### Consequences
+
+- Cost: the six boundaries above stay spread until a reassessment trigger fires. Each has one named owner file in the table.
+- Cost: R44 has no gate. The dependency check that `checks.md` names needs a `legacy` or `migrate` unit to check, so it cannot be added before that unit exists. The rule is review-only until then.
+- Cost: the detection on every write is a small I/O cost on the write path. It changes with item 3.
+- Names: the modules are `import`, `archive` and `documents`, not the `legacy` or `migrate` names R44 gives. This entry does not rename them.

@@ -287,6 +287,32 @@ testing.rs           test support (test-support)
     the precondition of the store's own filesystem write, and only the store
     touches the filesystem.
 
+### Upgrade boundary
+
+STD-02 R44 asks for the superseded readers, the migrations and the importer
+to sit in one unit. Scribe has no such unit, so the rule is review-only.
+[The decision](docs/design/scribe/4_decisions.md#legacy-readers-migrations-and-the-importer-stay-spread-std-02-r44)
+records each retained boundary and when to reassess it. As built:
+
+- **Schema.** `MIGRATIONS` in `db/mod.rs` lists the cw-sqlite steps in order.
+  The steps sit beside the tables they create, in `db/groups.rs`,
+  `db/groups/claude.rs`, `db/docs.rs` and `db/archive.rs`. cw-sqlite applies
+  them when a writer opens `scribe.db`, and every reader refuses a newer schema.
+- **Legacy detection.** `db/documents.rs` decides whether the root holds a file
+  store whose records never moved (`file_store_items`, `refuse_file_store`).
+  `import_at_write` runs it at the start of every write transaction, and the
+  reads run it when a record set is not in `scribe.db`.
+- **Archive importer.** `db/import.rs` imports the `pre-sqlite-*` and
+  `pre-issue-*` directories and any leftover files into the tables in
+  `db/archive.rs`, inside the write's transaction. `after_commit` removes them
+  after the commit. A session or entry forget erases from those rows through
+  `db/import/forget.rs`.
+- **Core adapter.** `scribe store migrate` is the `Migrate` command of the
+  `store` app. `crates/scribe-core/src/apps/store/migrate.rs` supplies the refusals (`check_migrate`)
+  and calls `Store::import_file_store`, which runs them inside its write, under
+  the lock, before anything is imported. `scribe store export` calls
+  `Store::export`.
+
 ### Public API
 
 What the core and the tools import from `scribe_store`:
@@ -457,6 +483,9 @@ express. "Module" includes any file added later.
   log variables. The terminal variables come through the full process
   snapshot; `SCRIBE_LOG` is read separately and passed to logging
   (`scripts/check-terminal-guard.sh`).
+- **Upgrade boundary (STD-02 R44):** no gate. No `legacy` or `migrate` unit
+  exists for a check to hold, so the rule is review-only; see
+  [the upgrade boundary](#upgrade-boundary).
 - **History:** a persisted timestamp never defaults to the current time
   (R16), and the deleted paths (`scribe-domain`, cases, the binary's moved
   files, the core's retired module names) stay deleted (R17).
