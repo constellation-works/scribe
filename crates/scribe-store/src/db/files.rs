@@ -62,20 +62,17 @@ pub(crate) fn list_root(root: &Path) -> Result<Vec<String>> {
     }
 }
 
-/// Remove the store file at `path` and flush its directory. `path` lies
-/// directly under the data directory or under a directory inside it that
-/// has been checked; the former is resolved through a link at the root.
-pub(crate) fn remove(path: &Path) -> Result<()> {
-    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+/// Remove the store file at `path`, which lies under the data directory
+/// `root`, and flush its directory. Only a link at `root` itself is
+/// resolved; every component below it goes to the kit as written, so a
+/// link in a directory inside the root is refused (`store_symlink`), never
+/// followed. A `path` outside `root` is not resolved at all.
+pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
+    let Ok(rel) = path.strip_prefix(root) else {
         return cw_fs::remove(path).map_err(Error::from);
     };
-    let parent = if parent.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        parent
-    };
-    match resolve_root(parent)? {
-        Some(real) => cw_fs::remove(&real.join(name)).map_err(Error::from),
+    match resolve_root(root)? {
+        Some(real) => cw_fs::remove(&real.join(rel)).map_err(Error::from),
         None => Ok(()),
     }
 }

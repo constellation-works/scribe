@@ -464,7 +464,7 @@ impl Store {
             self.stamp_format()?;
         }
         for spooled in &after.spooled {
-            files::remove(spooled)?;
+            files::remove(&self.root, spooled)?;
         }
         if after.journals {
             self.apply_open_journals()?;
