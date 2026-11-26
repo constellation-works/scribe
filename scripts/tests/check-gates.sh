@@ -106,6 +106,16 @@ for spec in \
   $'apps/tag/mod.rs|use crate::{\n    config,\n    apps::entry::Command,\n};' \
   'apps/mark/mod.rs|use crate::{apps::entry::flow::Step};' \
   'apps/mark/mod.rs|use crate::apps::{entry::{flow::Step}};' \
+  'apps/entry/mod.rs|use super::tag::rules::helper;' \
+  'apps/entry/mod.rs|use super::tag::{rules::helper};' \
+  'apps/entry/flow.rs|use super::super::tag::{rules::helper};' \
+  'apps/entry/mod.rs|use super::{tag::{rules::helper}};' \
+  'apps/entry/mod.rs|use super::tag::{helper, rules::{self, sub::helper}};' \
+  'apps/entry/mod.rs|use crate::apps::tag::{rules::helper};' \
+  'apps/entry/mod.rs|use crate::apps::tag::rules::{helper};' \
+  'apps/entry/mod.rs|use super::tag::rules::*;' \
+  'apps/entry/mod.rs|use super::tag::{rules::*};' \
+  $'apps/entry/mod.rs|use super::tag::{\n    helper, // ok\n    rules::helper,\n};' \
   'apps/tag/mod.rs|use crate::{apps::nosuch::Command};' \
   'providers/models.rs|use super::super::apps::session::Entry;'; do
   bad=$(tree "rel-up-$n")
@@ -117,11 +127,18 @@ done
 # The downward twins of the grouped and relative spellings above are legal.
 for spec in \
   'apps/entry/mod.rs|use super::tag::Command;' \
+  'apps/entry/mod.rs|use super::tag::helper;' \
+  'apps/entry/mod.rs|use super::tag::{helper, Other};' \
   'apps/entry/flow.rs|use super::super::tag::Command;' \
+  'apps/entry/flow.rs|use super::super::tag::{self, helper};' \
+  'apps/entry/mod.rs|use super::{tag::{helper, Other}};' \
   'apps/entry/mod.rs|use crate::{apps::tag::Command};' \
+  'apps/entry/mod.rs|use crate::{apps::tag::{helper, Other}};' \
+  'apps/entry/mod.rs|use crate::apps::tag::{helper, Other};' \
   'apps/entry/mod.rs|use crate::{config, apps::{tag::Command, mark::{Mark, Outcome}}};' \
   'apps/entry/mod.rs|use crate::apps::{tag::Command, mark::{Mark, Outcome}};' \
   $'apps/entry/mod.rs|use crate::{\n    config,\n    apps::tag::Command,\n};' \
+  'apps/entry/mod.rs|use super::tag::*;' \
   'apps/entry/mod.rs|use crate::{config, runtime::Ctx};'; do
   ok=$(tree "rel-down-$n")
   mkdir -p "$ok/crates/scribe-core/src/$(dirname "${spec%%|*}")"

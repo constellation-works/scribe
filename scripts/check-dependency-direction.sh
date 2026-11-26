@@ -213,8 +213,8 @@ done
 # The app order reads each app file as resolve gives it, so a relative import
 # (`use super::session::X;` in apps/entry/mod.rs) is held to the order an
 # absolute one is, and a grouped import through the crate root
-# (`use crate::{apps::session::X};`) or the apps module is flattened to the
-# paths it names.
+# (`use crate::{apps::session::X};`), the apps module, or an app/submodule
+# (`use crate::apps::entry::{...};`) is flattened to the paths it names.
 APP_CHECK='
   use strict; use warnings;
   my $n = 0; my %rank = map { $_ => $n++ } split " ", $ENV{APP_ORDER};
@@ -226,6 +226,7 @@ APP_CHECK='
   # path with a nested group, flattened to the full paths it names.
   sub flat {
     my ($prefix, $g) = @_;
+    $g =~ s{//[^\n]*}{}g;
     my (@items, @out);
     my ($d, $cur) = (0, "");
     for my $c (split //, $g) {
@@ -241,21 +242,28 @@ APP_CHECK='
       if ($it =~ /^(.*?)\{(.*)\}$/s) {
         (my $p = $1) =~ s/\s+//g;
         push @out, flat($prefix . $p, $2);
-      } else { push @out, $prefix . $it }
+      } else {
+        $it =~ s/\s+as\s+\w+$//;
+        $it =~ s/\s+//g;
+        push @out, $prefix . $it;
+      }
     }
     return @out;
   }
   my @refs;
-  push @refs, [$1, $2, $-[0]] while $s =~ /crate::apps::(\w+)((?:::\w+)*(?:::\{)?)/g;
-  # A grouped import names apps through the crate root (`crate::{apps::entry::X}`)
-  # or through the apps module (`crate::apps::{entry::X}`); nested groups are
-  # flattened, so `crate::{apps::{entry::{flow::X}}}` is read as the paths it names.
-  while ($s =~ /crate::(apps::)?\{/g) {
-    my ($at, $i, $prefix, $d) = ($-[0], pos($s), $1 // "", 1);
+  while ($s =~ /crate::apps::(\w+)((?:::(?:\w+|\*))*)(::\s*\{)?/g) {
+    push @refs, [$1, $2, $-[0]] unless defined $3;
+  }
+  # A grouped import names apps through the crate root (`crate::{apps::entry::X}`),
+  # through the apps module (`crate::apps::{entry::X}`), or through an app or
+  # submodule (`crate::apps::entry::{flow::X}`); nested groups are flattened, so
+  # `crate::apps::entry::{X, flow::{Y}}` is read as every path it names.
+  while ($s =~ /crate::((?:apps::(?:\w+::)*)?)\s*\{/g) {
+    my ($at, $i, $prefix, $d) = ($-[0], pos($s), $1, 1);
     my $j = $i;
     while ($d && $j < length $s) { my $c = substr($s, $j++, 1); $d++ if $c eq "{"; $d-- if $c eq "}"; }
     for (flat($prefix, substr($s, $i, $j - $i - 1))) {
-      push @refs, [$1, $2, $at] if /^apps::(\w+)((?:::\w+)*)/;
+      push @refs, [$1, $2, $at] if /^apps::(\w+)((?:::(?:\w+|\*))*)/;
     }
     pos($s) = $j;
   }
