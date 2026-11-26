@@ -73,9 +73,13 @@ policy() {
 }
 
 # The Cargo packages a manifest depends on through its non-dev dependency
-# tables, as "<package> <line>" pairs. A dependency's package is its table key
-# unless `package = "..."` renames it, so the policy and the crate graph see
-# the crate Cargo resolves, not the alias. Every declaration form is read:
+# tables, as "<package> <line>" pairs, one per declaration. A declaration is its
+# table ([dependencies], [build-dependencies] or a [target.<cfg>.dependencies]
+# table) and its key: Cargo keeps the same key in two tables as two
+# dependencies, so each gets its own pair with its own package and line
+# (ORB-28908). A dependency's package is its table key unless
+# `package = "..."` renames it, so the policy and the crate graph see the crate
+# Cargo resolves, not the alias. Every declaration form is read:
 #   [dependencies]  key = "1"  /  key = { package = "x" }  /  key.package = "x"
 #   [dependencies.key]  package = "x"  (and a dotted `dependencies.key = ...`
 #     line outside a dependency table)
@@ -117,19 +121,25 @@ function package_of(text,    s) {
   sub(/^[^=]*=[ \t]*/, "", s)
   return unquote(s)
 }
-function note(key, where, pkg, ws) {
+# A declaration is identified by its table and its key (id), never by the key
+# alone: Cargo treats the same key in [dependencies], [build-dependencies] and
+# each target table as separate dependencies (ORB-28908). The keys of the root
+# [workspace.dependencies] table are unique, so wspkg stays keyed by name.
+function note(key, where, pkg, ws,    id) {
   if (FILENAME == ARGV[1]) {
     if (pkg != "") wspkg[key] = pkg
     return
   }
-  if (!(key in seen)) { order[++n] = key; seen[key] = where }
-  if (pkg != "") named[key] = pkg
-  if (ws) viaws[key] = 1
+  id = tbl SUBSEP key
+  if (!(id in seen)) { order[++n] = id; seen[id] = where; keyof[id] = key }
+  if (pkg != "") named[id] = pkg
+  if (ws) viaws[id] = 1
 }
 # Sets mode: "" (not a dependency table), "table" ([dependencies]) or "sub"
-# (a [dependencies.key] subtable, key in subkey).
+# (a [dependencies.key] subtable, key in subkey). tbl names the table the
+# declarations of this section belong to: the header without a subtable key.
 function classify(h,    root) {
-  mode = ""; subkey = ""
+  mode = ""; subkey = ""; tbl = ""
   root = (FILENAME == ARGV[1])
   sub(/^\[[ \t]*/, "", h); sub(/[ \t]*\]$/, "", h)
   if (root) {
@@ -137,15 +147,15 @@ function classify(h,    root) {
     else if (h ~ /^workspace\.dependencies\./) {
       mode = "sub"; subkey = unquote(substr(h, length("workspace.dependencies.") + 1))
     }
-  } else if (h ~ /^(target\..*\.)?(build-)?dependencies$/) mode = "table"
-  else if (h ~ /^(target\..*\.)?(build-)?dependencies\./) {
-    sub(/^(target\..*\.)?(build-)?dependencies\./, "", h)
-    mode = "sub"; subkey = unquote(h)
+  } else if (h ~ /^(target\..*\.)?(build-)?dependencies$/) { mode = "table"; tbl = h }
+  else if (match(h, /^(target\..*\.)?(build-)?dependencies\./)) {
+    mode = "sub"; tbl = substr(h, 1, RLENGTH - 1)
+    subkey = unquote(substr(h, RLENGTH + 1))
   }
   if (mode == "sub") note(subkey, FNR, "", 0)
 }
 { $0 = uncomment($0) }
-FNR == 1 { mode = ""; subkey = "" }
+FNR == 1 { mode = ""; subkey = ""; tbl = "" }
 /^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
 /^[ \t]*(#|$)/ { next }
 mode == "sub" {
@@ -155,7 +165,10 @@ mode == "sub" {
 }
 mode == "table" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*(build-)?dependencies[ \t]*\./) {
   line = $0; sub(/^[ \t]+/, "", line)
-  if (mode == "") sub(/^(build-)?dependencies[ \t]*\./, "", line)
+  if (mode == "") {
+    match(line, /^(build-)?dependencies/); tbl = substr(line, 1, RLENGTH)
+    sub(/^(build-)?dependencies[ \t]*\./, "", line)
+  }
   if (!match(line, /^("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)/)) next
   key = unquote(substr(line, 1, RLENGTH)); rest = substr(line, RLENGTH + 1)
   sub(/^[ \t]+/, "", rest)
@@ -167,13 +180,14 @@ mode == "table" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*(build-)?depend
 }
 END {
   for (i = 1; i <= n; i++) {
-    key = order[i]
-    pkg = (key in named) ? named[key] : ((key in viaws && key in wspkg) ? wspkg[key] : key)
-    print pkg, seen[key]
+    id = order[i]; key = keyof[id]
+    pkg = (id in named) ? named[id] : ((id in viaws && key in wspkg) ? wspkg[key] : key)
+    print pkg, seen[id]
   }
 }'
 
-# Print "<package> <line>" for each non-dev dependency of a Cargo.toml.
+# Print "<package> <line>" for each non-dev declaration of a Cargo.toml (a key
+# reused in another dependency table is a declaration of its own).
 declared_deps() {
   local root=Cargo.toml
   [[ -f "$root" ]] || root=/dev/null
