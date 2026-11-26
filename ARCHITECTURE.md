@@ -373,6 +373,7 @@ Checked across the workspace by `clippy.toml` (`clippy::disallowed_types` and
 `clippy::disallowed_methods`, denied workspace-wide in `Cargo.toml`, with
 `#[expect(..., reason = "...")]` on the boundary owners — statement-level on
 `scribe-store/src/db/files.rs`, module-level `#![expect(...)]` elsewhere),
+the independent `clippy::exit` lint for calls outside `main`,
 `scripts/check-dependency-direction.sh`, and (for the terminal)
 `scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
 express. "Module" includes any file added later.
@@ -397,8 +398,9 @@ express. "Module" includes any file added later.
   `std::sync::mpsc::sync_channel`, which is not a banned path). The binary
   has no exemption:
   `main` and the output layer receive captured values.
-  `std::process::exit` has no production exemption (commands return errors or
-  `ExitCode` to `main`), and `rusqlite::Connection::open*` has no production
+  `std::process::exit` calls outside `main` are also denied by `clippy::exit`,
+  which remains active in the exempt modules; the disallowed-path lint covers
+  `main` (commands return errors or `ExitCode` instead). `rusqlite::Connection::open*` has no production
   exemption (`scribe-store` opens `scribe.db` only through `cw-sqlite`).
   `std::sync::mpsc::channel` has no production exemption.
 - **Crate edges:** each crate's internal allowlist and banned crates, from the

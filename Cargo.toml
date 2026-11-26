@@ -84,6 +84,9 @@ dbg_macro = "deny"
 # boundaries live in clippy.toml so Clippy resolves every path spelling.
 disallowed_methods = "deny"
 disallowed_types = "deny"
+# Independent of disallowed_methods expectations on host adapters. That lint
+# still covers main, which clippy::exit intentionally exempts.
+exit = "deny"
 expect_used = "warn"
 print_stderr = "warn"
 print_stdout = "warn"
