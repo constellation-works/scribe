@@ -703,6 +703,54 @@ fn put_entry_refuses_unreadable_spoken_entry_without_writing() {
     let (entries, skipped) = store.load_entries().unwrap();
     assert!(entries.is_empty() && skipped.is_empty());
 }
+
+#[test]
+fn claim_provenance_must_read_back_on_both_sides_of_the_store() {
+    for invalid_said in [
+        "",
+        "scribe proposal settle p-1 --approve --author opus --session s-9 --instruction",
+    ] {
+        let dir = private_tempdir();
+        let root = dir.path().join("store");
+        let mut entry = entry("preferences-1", 0, "Keep updates short.");
+        let source = cite();
+        entry.author = Author::assistant();
+        entry.content_from = ContentFrom::Message {
+            role: crate::Speaker::Assistant,
+            message: source.message.clone().unwrap(),
+            at: source.at,
+        };
+        entry.cite = Some(source);
+        entry.said = String::from("#scribe approve p-1");
+        let store = seed(&root, &Seed::default());
+        store.write(|tx| tx.entries().put(&entry, true)).unwrap();
+
+        let mut invalid = entry.clone();
+        invalid_said.clone_into(&mut invalid.said);
+        let error = store
+            .write(|tx| tx.entries().put(&invalid, false))
+            .unwrap_err();
+        assert_eq!(error.code(), "store_corrupt");
+        assert_eq!(store.read().entries().get(&entry.id).unwrap(), entry);
+
+        // Simulate a row that did not go through the repository writer.
+        let conn = db::open_writer(&root, store.lock_wait()).unwrap();
+        conn.execute(
+            "UPDATE entries SET said = ?1 WHERE id = ?2",
+            (invalid_said, entry.id.to_string()),
+        )
+        .unwrap();
+        drop(conn);
+
+        let error = store.read().entries().get(&entry.id).unwrap_err();
+        assert_eq!(error.code(), "store_corrupt");
+        let (entries, skipped) = store.read().entries().all().unwrap();
+        assert!(entries.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].error.code(), "store_corrupt");
+    }
+}
+
 #[test]
 fn migrate_counts_spool_arriving_before_drain() {
     let dir = private_tempdir();

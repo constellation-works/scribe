@@ -225,11 +225,9 @@ testing.rs           test support (test-support)
   parser that enforces the type's own invariant, serde and `Display`, and
   own-shape methods. It imports nothing from `db/` or `repository/`, has no
   `check_*` function and reads no clock.
-- **The store holds no rule.** A check that decides whether a write may happen
-  belongs to its app, which passes it into the write as a closure the store
-  runs at the same step and under the same lock. Four refusals stay in the
-  store, each one a check every writer, including the store's own, must make
-  at the point of the write:
+- **The app owns product rules.** The calling app evaluates a rule requiring
+  atomicity inside the store's transaction. The store owns format and
+  persistence checks such as these:
   - `forgotten_refusal` (defined in `error.rs`): a forgotten session is a
     tombstone, and every writer that touches a session refuses it under the
     write lock. The store's session writers (`db/`) and the core's session
@@ -240,6 +238,13 @@ testing.rs           test support (test-support)
     session record (`encode_session` refuses a write that would not read
     back), and the session row reader runs it on each row; a malformed log is
     `store_corrupt`.
+  - `validate_entry` (`db/codec/entry.rs`): entry rows must agree with their
+    ids and encode consistent provenance on read and write. The proposal app
+    checks approval before materializing the entry in its transaction.
+  - `Writer::scrub_journal` (`db/memory.rs`): remove copies of superseded
+    file operations and copies matching an erasure predicate supplied by
+    the caller. See the
+    [entry and journal decision](docs/design/scribe/4_decisions.md#entry-provenance-and-memory-journal-scrubbing-are-storage-mechanisms).
   - `export_target_exists` (`repository/sessions/export.rs::prepare_target`):
     `export` refuses a target that is not an empty directory. The check is
     the precondition of the store's own filesystem write, and only the store

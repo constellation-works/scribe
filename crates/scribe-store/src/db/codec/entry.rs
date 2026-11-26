@@ -26,7 +26,7 @@ pub(crate) fn checked_entry(
     Ok(entry)
 }
 
-/// Validate the same entry invariants for both reads and writes.
+/// Check the persisted entry format on both reads and writes.
 pub(crate) fn validate_entry(
     path: &Path,
     entry: &Entry,
@@ -46,14 +46,16 @@ pub(crate) fn validate_entry(
             ),
         ));
     }
-    // A claim approval's `said`: the typed `#scribe approve p-<n>` line, or
-    // (format 15) the canonical `proposal settle` command an agent ran on
-    // Daniel's checked instruction, only beside its `approved_by`.
-    let approval_said = |said: &str| {
-        said.starts_with("#scribe approve p-")
-            || (entry.approved_by.is_some()
-                && said.starts_with(crate::proposal::INSTRUCTED_SAID_PREFIX))
-    };
+    // Formats 10, 14 and 15 distinguish the saved provenance of a
+    // claim-derived entry from that of other entry shapes. Instructed
+    // provenance has its own prefix and requires an approver alongside it.
+    // These prefixes describe saved text. Settlement checks the source
+    // turn and proposal before materializing the entry.
+    let claim_provenance_said = entry.said.starts_with("#scribe approve p-")
+        || (entry.approved_by.is_some()
+            && entry
+                .said
+                .starts_with(crate::proposal::INSTRUCTED_SAID_PREFIX));
     let valid = match entry.author.kind {
         crate::AuthorKind::User => {
             entry.cite.is_some()
@@ -103,7 +105,7 @@ pub(crate) fn validate_entry(
                                 crate::EntryStatus::Active
                                 | crate::EntryStatus::Superseded
                                 | crate::EntryStatus::Retired => {
-                                    entry.quote.is_some() && approval_said(&entry.said)
+                                    entry.quote.is_some() && claim_provenance_said
                                 }
                             }
                     }
@@ -123,7 +125,7 @@ pub(crate) fn validate_entry(
                 crate::EntryStatus::Forgotten => entry.said.is_empty() && body.is_empty(),
                 crate::EntryStatus::Active
                 | crate::EntryStatus::Superseded
-                | crate::EntryStatus::Retired => approval_said(&entry.said),
+                | crate::EntryStatus::Retired => claim_provenance_said,
             };
             let approved_assistant = entry.cite.is_some()
                 && approved_said

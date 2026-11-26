@@ -5294,3 +5294,45 @@ The splits preserve caller paths through re-exports and move implementations
 with their existing input and output shapes. CLI output, persisted format and
 database migrations retain their existing contracts. The remaining large
 files can be reassessed when their responsibilities change.
+
+## Entry provenance and memory journal scrubbing are storage mechanisms
+
+**Recorded:** 2026-11-26 · ORB-28766
+**Standard:** [STD-02@8 §R40 and §R24](../../standards/STD-02-rust-architecture-and-errors/STD-02.md)
+**Code anchors:** `db/codec/entry.rs::validate_entry`,
+`db/docs.rs::entries` and `put_entry`, `db/memory.rs::Writer::scrub_journal`
+in `scribe-store`, and `apps/proposal/verbs.rs::write_candidate_entry` in
+`scribe-core`.
+
+### Decision
+
+The proposal app checks whether a candidate is approved when it builds the
+entry inside the write transaction. Typed settlement uses the typed turn.
+Instructed settlement uses the checked instruction and compares its time to
+the proposal's opening time under the transaction. Recovery uses the
+recorded settlement. These operations own the authority to create an entry.
+
+The entry codec checks the saved format on decode and before a row write.
+It checks identity and agreement among the provenance fields. For a
+claim-derived entry, the saved `said` prefix distinguishes typed approval
+text from the format-15 instructed command, which requires an agent
+approver and instruction beside it. The codec sees only the entry's fields.
+The actual proposal and source turn are inputs to the app's settlement
+operation. Entry updates, Markdown exports and exact and bulk entry reads
+use the same row checks. Forgotten entries keep the format's existing
+allowance for erased text.
+
+The memory journal writer removes older file operations superseded by the
+replacement's paths or selected by the caller's source predicate. It keeps
+the replacement journal itself. This scrubs copies in open and closed
+journals so the durable history and crash replay both respect the erasure.
+The caller supplies the already-selected source or replacement.
+
+### Alternatives and cost
+
+An app-only entry-format check would require each consumer, including reads
+inside the store, to reject the same malformed row. A replay-only journal
+filter would leave erased text in closed journal rows.
+
+**Cost:** Changes to the entry format or journal representation must
+account for existing records and check that they still read and replay.

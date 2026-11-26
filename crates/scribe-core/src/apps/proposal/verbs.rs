@@ -2,7 +2,7 @@
 //! turn, consistency proposals and the recovery of interrupted approvals
 //! (2_design.md §11, §12).
 
-use super::rules::proposals::CandidateEntry;
+use super::rules::proposals::{CandidateEntry, is_approved_candidate};
 use crate::apps::entry::{required_message, required_reason};
 use crate::apps::tag::ConfigReads;
 use crate::apps::tag::check_agent_author;
@@ -374,11 +374,9 @@ impl ProposalVerbs for Store {
                 tx.proposals().put_all(&proposals)?;
             }
             if let Settle::Approve(id) = action
-                && let Some(index) = proposals.iter().position(|p| {
-                    p.id == *id
-                        && p.kind == crate::ProposalKind::Candidate
-                        && p.state == crate::ProposalState::Approved
-                })
+                && let Some(index) = proposals
+                    .iter()
+                    .position(|p| p.id == *id && is_approved_candidate(p))
             {
                 let proposal = proposals[index].clone();
                 match write_candidate_entry(tx, &proposal)? {
@@ -588,7 +586,7 @@ fn settle_candidate_on_instruction(
     Ok((proposals[i].clone(), true))
 }
 
-/// Caller holds the lock. What happened to the reserved entry file.
+/// Materialize an approved candidate within the caller's transaction.
 fn write_candidate_entry(tx: &Tx<'_>, proposal: &Proposal) -> Result<CandidateWrite> {
     if proposal
         .candidate
@@ -646,14 +644,14 @@ fn write_candidate_entry(tx: &Tx<'_>, proposal: &Proposal) -> Result<CandidateWr
 /// settlement and instruction, and reported in
 /// [`ReapplyReport::covered`]; the covering id is not stored on the
 /// proposal. An instructed approval is replayed with its agent and
-/// instruction ([`Proposal::candidate_entry`]).
+/// instruction ([`CandidateEntry::candidate_entry`]).
 fn reapply_candidates(store: &Store) -> Result<ReapplyReport> {
     if !store
         .read()
         .proposals()
         .all()?
         .iter()
-        .any(|p| p.kind == ProposalKind::Candidate && p.state == ProposalState::Approved)
+        .any(is_approved_candidate)
     {
         return Ok(ReapplyReport::default());
     }
@@ -661,11 +659,7 @@ fn reapply_candidates(store: &Store) -> Result<ReapplyReport> {
         let mut proposals = tx.proposals().all()?;
         let mut report = ReapplyReport::default();
         let mut changed = false;
-        for proposal in &mut proposals {
-            if proposal.kind != ProposalKind::Candidate || proposal.state != ProposalState::Approved
-            {
-                continue;
-            }
+        for proposal in proposals.iter_mut().filter(|p| is_approved_candidate(p)) {
             let snapshot = proposal.clone();
             match write_candidate_entry(tx, &snapshot)? {
                 CandidateWrite::Created => report.applied.push(Reapplied {

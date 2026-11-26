@@ -13,6 +13,11 @@ use crate::record::{Author, AuthorKind, DateRange, Topics};
 use crate::tag::TagTable;
 use time::OffsetDateTime;
 
+/// Whether this settlement authorizes materializing a candidate entry.
+pub(in crate::apps::proposal) fn is_approved_candidate(proposal: &Proposal) -> bool {
+    proposal.kind == ProposalKind::Candidate && proposal.state == ProposalState::Approved
+}
+
 /// The entry an approved candidate becomes (`Proposal::candidate_entry`).
 pub trait CandidateEntry {
     /// Reconstruct an approved candidate's entry, including after an
@@ -64,6 +69,9 @@ fn sentences(text: &str) -> usize {
 
 impl CandidateEntry for Proposal {
     fn candidate_entry(&self, review_after: Option<time::Date>) -> Option<Entry> {
+        if !is_approved_candidate(self) {
+            return None;
+        }
         let candidate = self.candidate.as_ref()?;
         let at = self.settled_at?;
         let message = candidate.cite.message.clone()?;
