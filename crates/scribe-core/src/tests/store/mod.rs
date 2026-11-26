@@ -8,10 +8,6 @@
     reason = "store unit tests stage files and inspect scribe.db directly with rusqlite"
 )]
 
-pub(crate) use scribe_store::testing::{
-    SESSION_BODY, Seed, entry_text, on_disk, private_tempdir, seed, session_text,
-};
-
 mod archive;
 mod db;
 mod documents;
@@ -21,3 +17,6 @@ mod sessions;
 // The store facade's tests, named as they were inside the store.
 #[allow(clippy::module_inception)]
 mod store;
+pub(crate) use scribe_store::testing::{
+    SESSION_BODY, Seed, entry_text, on_disk, private_tempdir, seed, session_text,
+};

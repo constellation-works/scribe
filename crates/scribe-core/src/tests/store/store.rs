@@ -1,3 +1,333 @@
+mod cites {
+    use crate::EntryVerbs;
+    use crate::MarkVerbs;
+    use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
+    use crate::error::Error;
+    use crate::store::Store;
+    use crate::store::tests::private_tempdir;
+    use crate::testing::StoreTestInternals;
+    use crate::testing::ViewTestReads;
+    use std::fs;
+    use time::macros::datetime;
+
+    fn draft(tag: &str, line: u32, content: &str) -> NewEntry {
+        let at = datetime!(2026-11-02 19:05:40 UTC);
+        NewEntry {
+            tag: tag.parse().unwrap(),
+            project: "scribe".parse().unwrap(),
+            topics: crate::record::Topics::default(),
+            related: Vec::new(),
+            provider: String::from("claude-code").try_into().unwrap(),
+            host: String::from("host").try_into().unwrap(),
+            created: at,
+            said: format!("#scribe {tag}: {content}"),
+            content: content.to_owned(),
+            content_from: ContentFrom::Instruction,
+            cite: Cite {
+                session: "s-9".parse().unwrap(),
+                message: None,
+                at,
+                prompt_sha256: "a".repeat(64),
+                line,
+                cwd: String::from("/work"),
+            },
+            review_after: None,
+            window: None,
+            quote: None,
+            stated_by: None,
+        }
+    }
+
+    /// Write `drafts` as entries, numbered in their tags.
+    fn write(store: &Store, drafts: Vec<NewEntry>) {
+        store.prepare_dir(store.root()).unwrap();
+        let mut ids: Vec<EntryId> = Vec::new();
+        for draft in drafts {
+            let id = EntryId::next_in(&draft.tag, &ids);
+            store
+                .write_entry(&draft.into_entry(id.clone()), true)
+                .unwrap();
+            ids.push(id);
+        }
+    }
+
+    #[test]
+    fn an_unsafe_root_is_refused_and_nothing_is_written() {
+        let dir = private_tempdir();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+            let err = Store::open(dir.path())
+                .record_marks(
+                    vec![(
+                        crate::store::MarkKey {
+                            session: "s-9".parse().unwrap(),
+                            message: String::from("u-1"),
+                            prompt_sha256: "a".repeat(64),
+                            marker: 1,
+                        },
+                        crate::store::MarkChange::Refused(crate::store::AGENT_HANDOFF),
+                    )],
+                    datetime!(2026-11-02 19:06:00 UTC),
+                )
+                .unwrap_err();
+            assert!(matches!(err, Error::Permissions { .. }), "{err:?}");
+            assert!(!dir.path().join("entries").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_root_or_config_open_to_others_is_refused_on_load() {
+        // Owner-only (STD-05 R9): the config's group and other read bits are
+        // refused as well as its write bits, and so is a loose root.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = private_tempdir();
+        let config = dir.path().join("config.toml");
+        fs::write(&config, "").unwrap();
+        for loose in [0o644, 0o640] {
+            fs::set_permissions(&config, fs::Permissions::from_mode(loose)).unwrap();
+            let err = Store::open(dir.path()).config().unwrap_err();
+            assert!(
+                matches!(err, Error::Permissions { mode, fix: "600", .. } if mode == loose),
+                "{loose:o}: {err:?}"
+            );
+        }
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(Store::open(dir.path()).config().is_ok());
+
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let err = Store::open(dir.path()).config().unwrap_err();
+        assert!(
+            matches!(err, Error::Permissions { fix: "700", .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn cites_of_the_session_are_filled_once_and_others_are_left_alone() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path());
+        let mut other = draft("preferences", 1, "other session");
+        other.cite.session = "s-other".parse().unwrap();
+        write(
+            &store,
+            vec![
+                draft("preferences", 1, "one"),
+                draft("preferences", 2, "two"),
+                other,
+            ],
+        );
+        let session = "s-9".parse().unwrap();
+        assert!(store.has_unfilled_cites(&session).unwrap());
+        let now = datetime!(2026-11-02 19:06:00 UTC);
+        let filled = store
+            .fill_cite_messages(&session, now, |cite| {
+                (cite.line == 1).then(|| String::from("m-1"))
+            })
+            .unwrap();
+        let filled: Vec<String> = filled.iter().map(ToString::to_string).collect();
+        assert_eq!(filled, ["preferences-1"]);
+        let one = store.entry(&"preferences-1".parse().unwrap()).unwrap();
+        assert_eq!(one.cite.as_ref().unwrap().message.as_deref(), Some("m-1"));
+        assert_eq!(one.updated, now);
+        let two = store.entry(&"preferences-2".parse().unwrap()).unwrap();
+        assert_eq!(
+            two.cite.as_ref().unwrap().message,
+            None,
+            "no match leaves it waiting"
+        );
+        let three = store.entry(&"preferences-3".parse().unwrap()).unwrap();
+        assert_eq!(
+            three.cite.as_ref().unwrap().message,
+            None,
+            "another session is not touched"
+        );
+        // A filled cite is not filled again.
+        let again = store
+            .fill_cite_messages(&session, now, |_| Some(String::from("m-2")))
+            .unwrap();
+        let again: Vec<String> = again.iter().map(ToString::to_string).collect();
+        assert_eq!(again, ["preferences-2"]);
+        assert!(!store.has_unfilled_cites(&session).unwrap());
+    }
+
+    #[test]
+    fn entries_from_one_prompt_are_found_by_session_and_hash_without_writing() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("absent"));
+        let session = "s-9".parse().unwrap();
+        assert!(
+            store
+                .entries_from_prompt(&session, &"a".repeat(64))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !dir.path().join("absent").exists(),
+            "a read creates nothing"
+        );
+        let mut other_prompt = draft("preferences", 1, "other prompt");
+        other_prompt.cite.prompt_sha256 = "b".repeat(64);
+        let mut other_session = draft("preferences", 1, "other session");
+        other_session.cite.session = "s-other".parse().unwrap();
+        let store = Store::open(dir.path());
+        write(
+            &store,
+            vec![
+                draft("preferences", 1, "one"),
+                draft("rituals", 2, "two"),
+                other_prompt,
+                other_session,
+            ],
+        );
+        let mut found: Vec<String> = store
+            .entries_from_prompt(&session, &"a".repeat(64))
+            .unwrap()
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect();
+        found.sort();
+        assert_eq!(found, ["preferences-1", "rituals-1"]);
+    }
+
+    #[test]
+    fn checking_for_waiting_cites_writes_nothing() {
+        let dir = private_tempdir();
+        let root = dir.path().join("absent");
+        let store = Store::open(&root);
+        assert!(!store.has_unfilled_cites(&"s-9".parse().unwrap()).unwrap());
+        let filled = store
+            .fill_cite_messages(
+                &"s-9".parse().unwrap(),
+                datetime!(2026-11-02 19:06:00 UTC),
+                |_| Some(String::from("m")),
+            )
+            .unwrap();
+        assert!(filled.is_empty());
+        assert!(!root.exists());
+    }
+}
+
+mod marks {
+    use crate::EntryVerbs;
+    use crate::store::Store;
+    use crate::store::tests::private_tempdir;
+
+    #[test]
+    fn store_agent_writes_enforce_single_immutable_handoff_session_ref() {
+        let dir = private_tempdir();
+        let store = Store::open(dir.path().join("root"));
+        let redactor = crate::Redactor::new(std::iter::empty());
+        let author: crate::AuthorName = "opus".parse().unwrap();
+        let now = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(100);
+        let valid_body = "\
+## State
+Done.
+
+## In flight
+None.
+
+## Next
+Ship.
+
+## Waiting on you
+None.
+
+## Do not touch
+None.
+
+## Pointers
+None.
+";
+        let draft = |related: &[&str]| crate::AgentEntry {
+            tag: "handoff".parse().unwrap(),
+            content: valid_body.to_owned(),
+            project: "scribe".parse().unwrap(),
+            topics: crate::Topics::default(),
+            related: related.iter().map(|s| s.parse().unwrap()).collect(),
+            host: crate::Label::sanitized("test", "test"),
+            quote: Some(String::from("Please write a handoff for this session.")),
+            evidence: None,
+            as_of: None,
+            spoken: false,
+            handoff_mode: None,
+            decision: None,
+            item: None,
+            self_refresh_verified: false,
+        };
+
+        // Direct API call refuses multiple sessions and invalid session refs.
+        let err = store
+            .add_agent_entry(
+                draft(&["session:s-1", "session:s-2"]),
+                author.clone(),
+                now,
+                &redactor,
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), "handoff_session");
+        let err = store
+            .add_agent_entry(draft(&["session:../bad"]), author.clone(), now, &redactor)
+            .unwrap_err();
+        assert_eq!(err.code(), "handoff_session");
+
+        // Single valid session succeeds.
+        let added = store
+            .add_agent_entry(
+                draft(&["session:s-1", "task:ORB-1"]),
+                author.clone(),
+                now,
+                &redactor,
+            )
+            .unwrap();
+        let id = added.id.to_string();
+
+        // Direct API update refuses removing, adding, or replacing a session ref.
+        for patch in [
+            crate::EntryPatch {
+                remove_related: vec!["session:s-1".parse().unwrap()],
+                ..Default::default()
+            },
+            crate::EntryPatch {
+                add_related: vec!["session:s-2".parse().unwrap()],
+                ..Default::default()
+            },
+            crate::EntryPatch {
+                remove_related: vec!["session:s-1".parse().unwrap()],
+                add_related: vec!["session:s-2".parse().unwrap()],
+                ..Default::default()
+            },
+        ] {
+            let err = store.check_agent_entry_update(&id, &patch).unwrap_err();
+            assert_eq!(err.code(), "handoff_session");
+            let err = store
+                .update_agent_entry(&id, patch, author.clone(), now, &redactor)
+                .unwrap_err();
+            assert_eq!(err.code(), "handoff_session");
+        }
+
+        // Non-session related edits still succeed and preserve session:s-1.
+        let ok_patch = crate::EntryPatch {
+            remove_related: vec!["task:ORB-1".parse().unwrap()],
+            add_related: vec!["repo:scribe".parse().unwrap()],
+            ..Default::default()
+        };
+        let (updated, changed) = store
+            .update_agent_entry(&id, ok_patch, author, now, &redactor)
+            .unwrap();
+        assert!(changed);
+        assert_eq!(
+            updated.related,
+            vec![
+                "session:s-1".parse().unwrap(),
+                "repo:scribe".parse().unwrap()
+            ]
+        );
+    }
+}
+
 use super::{Seed, entry_text, private_tempdir, seed};
 use crate::TagVerbs;
 use crate::entry::{EntryFilter, EntryStatus};
@@ -253,218 +583,6 @@ fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
     assert_eq!(fs::read_dir(&spool).unwrap().count(), 0, "drained");
     let (events, _) = store.audit_events().unwrap();
     assert_eq!(events.len(), 3, "each line once: {events:?}");
-}
-
-mod cites {
-    use crate::EntryVerbs;
-    use crate::MarkVerbs;
-    use crate::entry::{Cite, ContentFrom, EntryId, NewEntry};
-    use crate::error::Error;
-    use crate::store::Store;
-    use crate::store::tests::private_tempdir;
-    use crate::testing::StoreTestInternals;
-    use crate::testing::ViewTestReads;
-    use std::fs;
-    use time::macros::datetime;
-
-    fn draft(tag: &str, line: u32, content: &str) -> NewEntry {
-        let at = datetime!(2026-11-02 19:05:40 UTC);
-        NewEntry {
-            tag: tag.parse().unwrap(),
-            project: "scribe".parse().unwrap(),
-            topics: crate::record::Topics::default(),
-            related: Vec::new(),
-            provider: String::from("claude-code").try_into().unwrap(),
-            host: String::from("host").try_into().unwrap(),
-            created: at,
-            said: format!("#scribe {tag}: {content}"),
-            content: content.to_owned(),
-            content_from: ContentFrom::Instruction,
-            cite: Cite {
-                session: "s-9".parse().unwrap(),
-                message: None,
-                at,
-                prompt_sha256: "a".repeat(64),
-                line,
-                cwd: String::from("/work"),
-            },
-            review_after: None,
-            window: None,
-            quote: None,
-            stated_by: None,
-        }
-    }
-
-    /// Write `drafts` as entries, numbered in their tags.
-    fn write(store: &Store, drafts: Vec<NewEntry>) {
-        store.prepare_dir(store.root()).unwrap();
-        let mut ids: Vec<EntryId> = Vec::new();
-        for draft in drafts {
-            let id = EntryId::next_in(&draft.tag, &ids);
-            store
-                .write_entry(&draft.into_entry(id.clone()), true)
-                .unwrap();
-            ids.push(id);
-        }
-    }
-
-    #[test]
-    fn an_unsafe_root_is_refused_and_nothing_is_written() {
-        let dir = private_tempdir();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
-            let err = Store::open(dir.path())
-                .record_marks(
-                    vec![(
-                        crate::store::MarkKey {
-                            session: "s-9".parse().unwrap(),
-                            message: String::from("u-1"),
-                            prompt_sha256: "a".repeat(64),
-                            marker: 1,
-                        },
-                        crate::store::MarkChange::Refused(crate::store::AGENT_HANDOFF),
-                    )],
-                    datetime!(2026-11-02 19:06:00 UTC),
-                )
-                .unwrap_err();
-            assert!(matches!(err, Error::Permissions { .. }), "{err:?}");
-            assert!(!dir.path().join("entries").exists());
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_root_or_config_open_to_others_is_refused_on_load() {
-        // Owner-only (STD-05 R9): the config's group and other read bits are
-        // refused as well as its write bits, and so is a loose root.
-        use std::os::unix::fs::PermissionsExt;
-        let dir = private_tempdir();
-        let config = dir.path().join("config.toml");
-        fs::write(&config, "").unwrap();
-        for loose in [0o644, 0o640] {
-            fs::set_permissions(&config, fs::Permissions::from_mode(loose)).unwrap();
-            let err = Store::open(dir.path()).config().unwrap_err();
-            assert!(
-                matches!(err, Error::Permissions { mode, fix: "600", .. } if mode == loose),
-                "{loose:o}: {err:?}"
-            );
-        }
-        fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(Store::open(dir.path()).config().is_ok());
-
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
-        let err = Store::open(dir.path()).config().unwrap_err();
-        assert!(
-            matches!(err, Error::Permissions { fix: "700", .. }),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn cites_of_the_session_are_filled_once_and_others_are_left_alone() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path());
-        let mut other = draft("preferences", 1, "other session");
-        other.cite.session = "s-other".parse().unwrap();
-        write(
-            &store,
-            vec![
-                draft("preferences", 1, "one"),
-                draft("preferences", 2, "two"),
-                other,
-            ],
-        );
-        let session = "s-9".parse().unwrap();
-        assert!(store.has_unfilled_cites(&session).unwrap());
-        let now = datetime!(2026-11-02 19:06:00 UTC);
-        let filled = store
-            .fill_cite_messages(&session, now, |cite| {
-                (cite.line == 1).then(|| String::from("m-1"))
-            })
-            .unwrap();
-        let filled: Vec<String> = filled.iter().map(ToString::to_string).collect();
-        assert_eq!(filled, ["preferences-1"]);
-        let one = store.entry(&"preferences-1".parse().unwrap()).unwrap();
-        assert_eq!(one.cite.as_ref().unwrap().message.as_deref(), Some("m-1"));
-        assert_eq!(one.updated, now);
-        let two = store.entry(&"preferences-2".parse().unwrap()).unwrap();
-        assert_eq!(
-            two.cite.as_ref().unwrap().message,
-            None,
-            "no match leaves it waiting"
-        );
-        let three = store.entry(&"preferences-3".parse().unwrap()).unwrap();
-        assert_eq!(
-            three.cite.as_ref().unwrap().message,
-            None,
-            "another session is not touched"
-        );
-        // A filled cite is not filled again.
-        let again = store
-            .fill_cite_messages(&session, now, |_| Some(String::from("m-2")))
-            .unwrap();
-        let again: Vec<String> = again.iter().map(ToString::to_string).collect();
-        assert_eq!(again, ["preferences-2"]);
-        assert!(!store.has_unfilled_cites(&session).unwrap());
-    }
-
-    #[test]
-    fn entries_from_one_prompt_are_found_by_session_and_hash_without_writing() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("absent"));
-        let session = "s-9".parse().unwrap();
-        assert!(
-            store
-                .entries_from_prompt(&session, &"a".repeat(64))
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            !dir.path().join("absent").exists(),
-            "a read creates nothing"
-        );
-        let mut other_prompt = draft("preferences", 1, "other prompt");
-        other_prompt.cite.prompt_sha256 = "b".repeat(64);
-        let mut other_session = draft("preferences", 1, "other session");
-        other_session.cite.session = "s-other".parse().unwrap();
-        let store = Store::open(dir.path());
-        write(
-            &store,
-            vec![
-                draft("preferences", 1, "one"),
-                draft("rituals", 2, "two"),
-                other_prompt,
-                other_session,
-            ],
-        );
-        let mut found: Vec<String> = store
-            .entries_from_prompt(&session, &"a".repeat(64))
-            .unwrap()
-            .iter()
-            .map(|e| e.id.to_string())
-            .collect();
-        found.sort();
-        assert_eq!(found, ["preferences-1", "rituals-1"]);
-    }
-
-    #[test]
-    fn checking_for_waiting_cites_writes_nothing() {
-        let dir = private_tempdir();
-        let root = dir.path().join("absent");
-        let store = Store::open(&root);
-        assert!(!store.has_unfilled_cites(&"s-9".parse().unwrap()).unwrap());
-        let filled = store
-            .fill_cite_messages(
-                &"s-9".parse().unwrap(),
-                datetime!(2026-11-02 19:06:00 UTC),
-                |_| Some(String::from("m")),
-            )
-            .unwrap();
-        assert!(filled.is_empty());
-        assert!(!root.exists());
-    }
 }
 
 #[test]
@@ -1237,124 +1355,6 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
 
     // Neither the rows nor a WAL frame or free page keeps the quote.
     assert!(!super::on_disk(dir.path(), "XYZ123"));
-}
-
-mod marks {
-    use crate::EntryVerbs;
-    use crate::store::Store;
-    use crate::store::tests::private_tempdir;
-
-    #[test]
-    fn store_agent_writes_enforce_single_immutable_handoff_session_ref() {
-        let dir = private_tempdir();
-        let store = Store::open(dir.path().join("root"));
-        let redactor = crate::Redactor::new(std::iter::empty());
-        let author: crate::AuthorName = "opus".parse().unwrap();
-        let now = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(100);
-        let valid_body = "\
-## State
-Done.
-
-## In flight
-None.
-
-## Next
-Ship.
-
-## Waiting on you
-None.
-
-## Do not touch
-None.
-
-## Pointers
-None.
-";
-        let draft = |related: &[&str]| crate::AgentEntry {
-            tag: "handoff".parse().unwrap(),
-            content: valid_body.to_owned(),
-            project: "scribe".parse().unwrap(),
-            topics: crate::Topics::default(),
-            related: related.iter().map(|s| s.parse().unwrap()).collect(),
-            host: crate::Label::sanitized("test", "test"),
-            quote: Some(String::from("Please write a handoff for this session.")),
-            evidence: None,
-            as_of: None,
-            spoken: false,
-            handoff_mode: None,
-            decision: None,
-            item: None,
-            self_refresh_verified: false,
-        };
-
-        // Direct API call refuses multiple sessions and invalid session refs.
-        let err = store
-            .add_agent_entry(
-                draft(&["session:s-1", "session:s-2"]),
-                author.clone(),
-                now,
-                &redactor,
-            )
-            .unwrap_err();
-        assert_eq!(err.code(), "handoff_session");
-        let err = store
-            .add_agent_entry(draft(&["session:../bad"]), author.clone(), now, &redactor)
-            .unwrap_err();
-        assert_eq!(err.code(), "handoff_session");
-
-        // Single valid session succeeds.
-        let added = store
-            .add_agent_entry(
-                draft(&["session:s-1", "task:ORB-1"]),
-                author.clone(),
-                now,
-                &redactor,
-            )
-            .unwrap();
-        let id = added.id.to_string();
-
-        // Direct API update refuses removing, adding, or replacing a session ref.
-        for patch in [
-            crate::EntryPatch {
-                remove_related: vec!["session:s-1".parse().unwrap()],
-                ..Default::default()
-            },
-            crate::EntryPatch {
-                add_related: vec!["session:s-2".parse().unwrap()],
-                ..Default::default()
-            },
-            crate::EntryPatch {
-                remove_related: vec!["session:s-1".parse().unwrap()],
-                add_related: vec!["session:s-2".parse().unwrap()],
-                ..Default::default()
-            },
-        ] {
-            let err = store.check_agent_entry_update(&id, &patch).unwrap_err();
-            assert_eq!(err.code(), "handoff_session");
-            let err = store
-                .update_agent_entry(&id, patch, author.clone(), now, &redactor)
-                .unwrap_err();
-            assert_eq!(err.code(), "handoff_session");
-        }
-
-        // Non-session related edits still succeed and preserve session:s-1.
-        let ok_patch = crate::EntryPatch {
-            remove_related: vec!["task:ORB-1".parse().unwrap()],
-            add_related: vec!["repo:scribe".parse().unwrap()],
-            ..Default::default()
-        };
-        let (updated, changed) = store
-            .update_agent_entry(&id, ok_patch, author, now, &redactor)
-            .unwrap();
-        assert!(changed);
-        assert_eq!(
-            updated.related,
-            vec![
-                "session:s-1".parse().unwrap(),
-                "repo:scribe".parse().unwrap()
-            ]
-        );
-    }
 }
 
 /// A trial `open-item` entry (no `item` object) as the 2026-11-23 trial

@@ -68,15 +68,6 @@
 //! paths = ["codebases/scribe"]
 //! ```
 
-/// Default windows before sealing an open segment.
-pub const SEGMENT_WINDOWS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(3) {
-    Some(n) => n,
-    None => std::num::NonZeroU32::MIN,
-};
-
-/// Maximum open candidate proposals across the whole store.
-pub const MAX_OPEN_CANDIDATES: usize = 20;
-
 mod tags;
 pub mod voice;
 
@@ -89,6 +80,15 @@ pub use scribe_tools::window::{WINDOW_CHARS, WINDOW_MESSAGES, WindowLimits};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroUsize};
+
+/// Default windows before sealing an open segment.
+pub const SEGMENT_WINDOWS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(3) {
+    Some(n) => n,
+    None => std::num::NonZeroU32::MIN,
+};
+
+/// Maximum open candidate proposals across the whole store.
+pub const MAX_OPEN_CANDIDATES: usize = 20;
 
 /// `CLAUDE_CODE_OAUTH_TOKEN`: the Claude Code sign-in token, the first default
 /// model credential. A model call gets it in its environment, never in argv.
@@ -110,6 +110,12 @@ pub(crate) const OPENAI_API_KEY: EnvVar = EnvVar::global(
     "OPENAI_API_KEY",
     "The OpenAI API key, the default model credential for Codex. A Codex model call gets it in its environment.",
 );
+
+/// Claude Code `entrypoint` values of a session Daniel types into: the
+/// terminal (`cli`) and the desktop app (`claude-desktop`). `sdk-cli` is
+/// `claude -p` and the Agent SDK, which every Orbit run, routine and drain
+/// uses; it and every other value are refused (§12.5).
+pub const INTERACTIVE_ENTRYPOINTS: &[&str] = &["cli", "claude-desktop"];
 
 /// How often an opted-in session gets a pass: `[catalog]` in `config.toml`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -403,20 +409,6 @@ impl Config {
     }
 }
 
-fn line_of(text: &str, offset: usize) -> usize {
-    text.get(..offset)
-        .map_or(0, |before| before.matches('\n').count())
-        + 1
-}
-
-fn is_env_name(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
@@ -572,6 +564,39 @@ struct RawProject {
     paths: Vec<String>,
 }
 
+/// The store's [`Redactor`](crate::Redactor) built from a [`Config`], at the
+/// call it had in the store (`Redactor::from_config`).
+pub trait RedactorFromConfig {
+    /// A redactor for the variables `config` names, their values looked up
+    /// with `lookup` (the process environment, in the CLI).
+    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self;
+}
+
+impl RedactorFromConfig for crate::Redactor {
+    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self {
+        Self::new(
+            config
+                .secret_names()
+                .into_iter()
+                .filter_map(|name| lookup(name).map(|value| (name.to_owned(), value))),
+        )
+    }
+}
+
+fn line_of(text: &str, offset: usize) -> usize {
+    text.get(..offset)
+        .map_or(0, |before| before.matches('\n').count())
+        + 1
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
 /// `[projects.<slug>]` with a kebab-case slug and at least one path.
 fn projects_from(
     text: &str,
@@ -623,12 +648,6 @@ fn project_line(text: &str, slug: &str) -> Option<usize> {
         .find_map(|needle| text.find(needle).map(|at| line_of(text, at)))
 }
 
-/// Claude Code `entrypoint` values of a session Daniel types into: the
-/// terminal (`cli`) and the desktop app (`claude-desktop`). `sdk-cli` is
-/// `claude -p` and the Agent SDK, which every Orbit run, routine and drain
-/// uses; it and every other value are refused (§12.5).
-pub const INTERACTIVE_ENTRYPOINTS: &[&str] = &["cli", "claude-desktop"];
-
 /// The configuration `config.toml`'s text (`Tags::config_text`) holds, or the
 /// defaults when there is none. A bad key or value is refused, naming it.
 pub(crate) fn load(text: Option<(std::path::PathBuf, String)>) -> crate::Result<Config> {
@@ -648,25 +667,6 @@ pub(crate) fn load(text: Option<(std::path::PathBuf, String)>) -> crate::Result<
         }
     }
     Ok(config)
-}
-
-/// The store's [`Redactor`](crate::Redactor) built from a [`Config`], at the
-/// call it had in the store (`Redactor::from_config`).
-pub trait RedactorFromConfig {
-    /// A redactor for the variables `config` names, their values looked up
-    /// with `lookup` (the process environment, in the CLI).
-    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self;
-}
-
-impl RedactorFromConfig for crate::Redactor {
-    fn from_config(config: &Config, lookup: impl Fn(&str) -> Option<String>) -> Self {
-        Self::new(
-            config
-                .secret_names()
-                .into_iter()
-                .filter_map(|name| lookup(name).map(|value| (name.to_owned(), value))),
-        )
-    }
 }
 
 /// The `[redact] env` names in `config` whose value `lookup` cannot supply

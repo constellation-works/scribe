@@ -10,20 +10,6 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
-pub(super) fn resolve(
-    tags: Option<BTreeMap<String, RawTag>>,
-    text: &str,
-) -> Result<(TagTable, Vec<String>), ConfigError> {
-    let Some(tags) = tags else {
-        return Ok((TagTable::defaults(), Vec::new()));
-    };
-    let declared = tags
-        .into_iter()
-        .map(|(name, tag)| tag.into_def(name, text))
-        .collect::<Result<Vec<_>, _>>()?;
-    merge_with_shipped(declared)
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTag {
@@ -295,6 +281,20 @@ impl RawTag {
             aliases_set,
         })
     }
+}
+
+pub(super) fn resolve(
+    tags: Option<BTreeMap<String, RawTag>>,
+    text: &str,
+) -> Result<(TagTable, Vec<String>), ConfigError> {
+    let Some(tags) = tags else {
+        return Ok((TagTable::defaults(), Vec::new()));
+    };
+    let declared = tags
+        .into_iter()
+        .map(|(name, tag)| tag.into_def(name, text))
+        .collect::<Result<Vec<_>, _>>()?;
+    merge_with_shipped(declared)
 }
 
 /// Words this config entry claims: its name, and its aliases only when the

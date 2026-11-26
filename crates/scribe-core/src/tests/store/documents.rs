@@ -40,6 +40,17 @@ const AUDIT_FIXTURE: &str = concat!(
     r#"{"format":5,"at":"2026-11-21T09:"#,
 );
 
+#[derive(Debug, PartialEq)]
+struct Kinds {
+    sessions: Vec<crate::SessionRecord>,
+    entries: Vec<Entry>,
+    claims: Vec<Proposal>,
+    tags: Vec<StoreTag>,
+    marks: Vec<MarkRecord>,
+    pickups: Vec<crate::action::Pickup>,
+    audit: Vec<AuditEvent>,
+}
+
 /// Write `bytes` at `rel` under `root`, creating owner-only directories.
 fn put(root: &Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);
@@ -163,17 +174,6 @@ fn archive(root: &Path, name: &str, lines: usize) {
 }
 
 /// Every record kind as the store reads it.
-#[derive(Debug, PartialEq)]
-struct Kinds {
-    sessions: Vec<crate::SessionRecord>,
-    entries: Vec<Entry>,
-    claims: Vec<Proposal>,
-    tags: Vec<StoreTag>,
-    marks: Vec<MarkRecord>,
-    pickups: Vec<crate::action::Pickup>,
-    audit: Vec<AuditEvent>,
-}
-
 fn kinds(store: &Store) -> Kinds {
     let mut sessions = store.load_sessions().unwrap().records;
     sessions.sort_by(|a, b| a.id.cmp(&b.id));
