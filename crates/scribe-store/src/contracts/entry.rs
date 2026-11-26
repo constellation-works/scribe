@@ -763,19 +763,6 @@ impl Entry {
     }
 }
 
-impl Cite {
-    /// Whether `other` cites the same `#scribe` line: the same session,
-    /// prompt and line. This is capture's idempotency key
-    /// (docs/design/scribe/2_design.md §4.2), so a retried hook finds the
-    /// entry it already wrote instead of writing a second.
-    #[must_use]
-    pub fn same_line(&self, other: &Cite) -> bool {
-        self.session == other.session
-            && self.prompt_sha256 == other.prompt_sha256
-            && self.line == other.line
-    }
-}
-
 /// Metadata and content for a directly written note.
 #[derive(Clone, Debug)]
 pub struct AgentEntry {

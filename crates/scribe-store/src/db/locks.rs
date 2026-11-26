@@ -19,19 +19,6 @@ pub struct SessionLock {
 }
 
 impl Store {
-    /// Take the lock file `name` under `locks/`, with the store's bounded
-    /// wait; `what` names its holder in a timeout.
-    ///
-    /// # Errors
-    ///
-    /// [`crate::Error::Locked`] past the wait, and the privacy and I/O errors.
-    pub fn session_lock(&self, name: &str, what: &str) -> Result<SessionLock> {
-        let path = self.lock_path(name)?;
-        Ok(SessionLock {
-            _lock: cw_fs::Lock::acquire(&path, what, self.lock_wait)?,
-        })
-    }
-
     /// Keep `record` as its session's rebuild checkpoint; `false` when the
     /// session has no row.
     pub(crate) fn keep_checkpoint(&self, record: &SessionRecord) -> Result<bool> {
