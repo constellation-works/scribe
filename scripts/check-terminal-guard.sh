@@ -77,14 +77,36 @@ scan() {
   return 0
 }
 
-# Fail closed when there is nothing to scan (STD-04 R10): an unusable root
+# Filters allowlisted hits out of a scan result. grep exit 1 is ordinary
+# no-match (every hit was allowlisted); any exit above 1 is a scan failure.
+filter_allowlist() {
+  local raw="$1"
+  local allow_prefix="$2"
+  local rc=0
+  if [[ -z "$raw" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$raw" | grep -v "^$allow_prefix" || rc=$?
+  if [[ "$rc" -gt 1 ]]; then
+    echo "terminal-guard: scan failed (allowlist filter exit $rc)" >&2
+    return 2
+  fi
+  return 0
+}
+
+# Fail closed when there is nothing eligible to scan (STD-04 R10): an unusable
+# root or a root whose only Rust files live under excluded `tests/` directories
 # must not report ok.
 if [[ ! -d crates ]]; then
   echo "terminal-guard: cannot scan: crates/ is missing or not a directory" >&2
   exit 1
 fi
-if ! find crates -name '*.rs' -print -quit 2>/dev/null | grep -q .; then
-  echo "terminal-guard: cannot scan: no Rust sources under crates/" >&2
+if ! eligible_rs=$(find crates -type d -name tests -prune -o -type f -name '*.rs' -print -quit); then
+  echo "terminal-guard: cannot scan: failed to enumerate Rust sources under crates/" >&2
+  exit 1
+fi
+if [[ -z "$eligible_rs" ]]; then
+  echo "terminal-guard: cannot scan: no non-test Rust sources under crates/ (tests/ directories are excluded)" >&2
   exit 1
 fi
 
@@ -97,10 +119,10 @@ else
   echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
   exit "$scan_rc"
 fi
-if [[ -n "$terminal_raw" ]]; then
-  terminal_hits=$(printf '%s\n' "$terminal_raw" | grep -v "^$OUTPUT_DIR/" || true)
-else
-  terminal_hits=""
+filter_rc=0
+terminal_hits=$(filter_allowlist "$terminal_raw" "$OUTPUT_DIR/") || filter_rc=$?
+if [[ "$filter_rc" -ne 0 ]]; then
+  exit "$filter_rc"
 fi
 if [[ -n "$terminal_hits" ]]; then
   echo "$terminal_hits" >&2
@@ -115,10 +137,10 @@ else
   echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
   exit "$scan_rc"
 fi
-if [[ -n "$env_raw" ]]; then
-  env_hits=$(printf '%s\n' "$env_raw" | grep -v "^$COMPOSITION:" || true)
-else
-  env_hits=""
+filter_rc=0
+env_hits=$(filter_allowlist "$env_raw" "$COMPOSITION:") || filter_rc=$?
+if [[ "$filter_rc" -ne 0 ]]; then
+  exit "$filter_rc"
 fi
 if [[ -n "$env_hits" ]]; then
   echo "$env_hits" >&2
