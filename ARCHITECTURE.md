@@ -57,9 +57,12 @@ second dependency.
 main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, run, render, map the result to an exit code
 cli.rs               clap declarations
 help.rs              the grouped root help
-commands/<noun>.rs   (three verbs or fewer) arguments -> apps::<app>::Command; Outcome -> payload
-commands/<noun>/      a noun with four or more verbs (entry, group, memory, proposal, tag): noun dispatch, per-verb arguments and shared rendering
-output/              payloads (including session and memory shapes), rendering (including record detail); the sink itself is the kit's `cw-cli`
+commands/<noun>.rs   arguments -> apps::<app>::Command; Outcome -> payload
+commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
+output/              CLI output layer (STD-02 R48); the sink itself is the kit's `cw-cli`
+  mod.rs             module wiring, re-exports and dispatch enums (`Output`, `Record`, `Records`)
+  <command>.rs       one file per top-level command holding its payloads and rendering
+  common/            shared console/sink, record envelopes, table/detail formatting, usage, color and printable helpers
 error.rs             app errors -> one-line message and exit code
 tests/               the binary's own tests (cfg(test))
 ```
@@ -99,6 +102,13 @@ this order (STD-02 R39):
 
 ```
 instruction < store < brief < consistency < entry < export < group < hook < init < mark < memory < proposal < search < session < tag < transcript < plugin
+```
+
+The `output/` layer (17 modules: `common/` plus one file per top-level command,
+STD-02 R48) imports only strictly earlier modules in this order (STD-02 R39):
+
+```
+common < entry < export < group < hook < init < mark < memory < proposal < search < session < store < tag < transcript < brief < consistency < plugin
 ```
 
 ## `scribe-core`
@@ -444,7 +454,7 @@ express. "Module" includes any file added later.
   directory (resolving `super::`, `self::`, grouped `use` trees and root
   re-exports while ignoring comments and string literals). Every layer with
   more than about ten units (`apps/`, `db/`, `contracts/`, `repository/`,
-  `scribe-tools`, `commands/`) obeys its declared order above; an unlisted
+  `scribe-tools`, `commands/`, `output/`) obeys its declared order above; an unlisted
   module or upward import fails. Inline modules count as units; root modules
   containing only public re-exports are treated as compatibility facades
   outside declared orders. A facade is no node, but a path through it

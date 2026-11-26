@@ -76,9 +76,12 @@ and the moved modules at the paths they had in it (`scribe_core::handoff`,
 ```
 main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, dispatch, map the result to an exit code
 cli.rs               clap declarations
-commands/<noun>.rs   (three verbs or fewer) arguments -> apps::<app>::Command; outcome -> payload
-commands/<noun>/      a noun with four or more verbs (entry, group, memory, proposal, tag): noun dispatch, per-verb arguments and shared rendering
-output/              payloads, rendering; the sink is the kit's cw-cli
+commands/<noun>.rs   arguments -> apps::<app>::Command; outcome -> payload
+commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
+output/              one file per top-level command (STD-02 R48), shared helpers under output/common/, wiring in output/mod.rs; the sink is the kit's cw-cli
+  mod.rs             module wiring, re-exports and dispatch enums (`Output`, `Record`, `Records`)
+  <command>.rs       one file per top-level command holding its payloads and rendering
+  common/            shared console/sink, record envelopes, table/detail formatting, usage, color and printable helpers
 error.rs             app errors -> one-line message and exit code
 help.rs
 ```
@@ -528,7 +531,7 @@ rules:
   import graph is acyclic between crates, between the top-level modules of
   every crate, and between the sibling modules of every layer and module
   directory; every layer with more than about ten units (`apps/`, `db/`,
-  `contracts/`, `repository/`, `scribe-tools`, `commands/`) obeys its
+  `contracts/`, `repository/`, `scribe-tools`, `commands/`, `output/`) obeys its
   declared order in `ARCHITECTURE.md`;
 - the app order: an app imports only apps below it, and only through
   `apps::<app>::` paths that `mod.rs` exports; a relative `super::` path
