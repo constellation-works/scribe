@@ -362,7 +362,8 @@ script. The Makefile formats these files alongside Cargo's module tree.
 
 Checked across the workspace by `clippy.toml` (`clippy::disallowed_types` and
 `clippy::disallowed_methods`, denied workspace-wide in `Cargo.toml`, with
-module-level `#![expect(..., reason = "...")]` on the boundary owners),
+`#[expect(..., reason = "...")]` on the boundary owners — statement-level on
+`scribe-store/src/db/files.rs`, module-level `#![expect(...)]` elsewhere),
 `scripts/check-dependency-direction.sh`, and (for the terminal)
 `scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
 express. "Module" includes any file added later.
