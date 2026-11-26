@@ -39,7 +39,7 @@ spec:
         config:
           tool: scribe.group-close-apply
           input:
-            group: "{{ input.group }}"
+            group: "{{ steps.prepare.output.id }}"
             session: "{{ input.session }}"
             provider: "{{ input.provider }}"
             quote: "{{ input.quote }}"

@@ -1658,6 +1658,65 @@ fn group_show_renders_cataloged_session_aliases() {
 }
 
 #[test]
+fn close_evidence_is_bound_to_the_prepared_group_when_a_slug_is_reused() {
+    let f = Fixture::new();
+    let prompt = "/scribe group close-reuse";
+    let path = transcript(&f, A, &[row(A, "typed", "user", prompt)]);
+    let open_project = || {
+        hook(
+            &f,
+            &["hook", "user-prompt-submit"],
+            json!({"session_id": A, "transcript_path": path, "cwd": f.home(), "prompt": prompt}),
+            &[],
+        );
+        invoke(&f, A, &["group", "leave"], 0);
+    };
+    open_project();
+    let input = json!({"group":"close-reuse", "session":A, "provider":"claude-code"});
+    let prepared = close_plugin(&f, "group-close-prepare", input.clone());
+    assert_eq!(prepared["output"]["id"], "g-1", "{prepared}");
+    invoke(&f, A, &["group", "close", "g-1", "--no-summary"], 0);
+    open_project();
+    let replacement = close_plugin(&f, "group-close-prepare", input.clone());
+    assert_eq!(replacement["output"]["id"], "g-2", "{replacement}");
+    assert_eq!(
+        prepared["output"]["evidence"],
+        replacement["output"]["evidence"]
+    );
+    assert_eq!(
+        prepared["output"]["related"],
+        replacement["output"]["related"]
+    );
+    assert_ne!(
+        prepared["output"]["evidence_sha256"],
+        replacement["output"]["evidence_sha256"]
+    );
+
+    let mut apply = input;
+    apply["summary"] = json!("Summary for the original group");
+    apply["evidence_sha256"] = prepared["output"]["evidence_sha256"].clone();
+    let rejected = close_plugin(&f, "group-close-apply", apply.clone());
+    assert_eq!(
+        rejected["error"]["code"], "group_evidence_changed",
+        "{rejected}"
+    );
+    apply["group"] = prepared["output"]["id"].clone();
+    let original = close_plugin(&f, "group-close-apply", apply);
+    assert_eq!(original["output"]["group"]["id"], "g-1", "{original}");
+    assert_eq!(original["output"]["changed"], false, "{original}");
+    assert!(invoke(&f, A, &["group", "show", "g-2"], 0)["closed"].is_null());
+
+    // Both shipped jobs must pass the prepared id to apply after drafting.
+    for job in [
+        include_str!("../../../plugin/.orbit-plugin/jobs/group_close.yaml"),
+        include_str!("../../../plugin/orbit-codex/.orbit-plugin/jobs/group_close.yaml"),
+    ] {
+        let apply_step = job.split("    - id: apply\n").nth(1).unwrap();
+        assert!(apply_step.contains("group: \"{{ steps.prepare.output.id }}\""));
+    }
+}
+
+#[test]
 fn project_group_join_preserves_existing_role_when_role_is_omitted() {
     let f = Fixture::new();
     let prompt = "/scribe group role-preservation";
