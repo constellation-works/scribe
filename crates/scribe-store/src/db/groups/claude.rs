@@ -1,6 +1,6 @@
 //! Incremental Claude group capture, scoped to one membership position.
 
-use super::{CaptureState, GroupRows, RowError, Rows, capture_state};
+use super::{CaptureState, GroupRows, ReadGroupRows, RowError, Rows, capture_state};
 use crate::ClaudeSeen;
 use crate::SessionId;
 use crate::db::{Fallible, refuse_newer};
@@ -59,12 +59,14 @@ impl ClaudeGroupCapture {
     }
 }
 
-impl GroupRows<'_> {
+impl ReadGroupRows<'_> {
     /// `session`'s capture row and its Claude transcript progress.
     pub fn claude_snapshot(&self, session: &SessionId) -> Rows<Option<ClaudeGroupCapture>> {
         snapshot(self.conn, self.path, session).map_err(RowError)
     }
+}
 
+impl GroupRows<'_> {
     /// Keep membership row `position`'s byte progress in its transcript.
     pub fn save_progress(&self, position: i64, at: &ClaudeCapturePosition) -> Rows<()> {
         self.conn
@@ -97,7 +99,7 @@ impl GroupRows<'_> {
     }
 }
 
-impl<'c> GroupRows<'c> {
+impl<'c> ReadGroupRows<'c> {
     /// The ids membership row `position` has seen, read one at a time
     /// ([`ClaudeSeenIds::get`]).
     pub fn seen(&self, position: i64) -> Rows<ClaudeSeenIds<'_, 'c>> {
@@ -119,7 +121,7 @@ impl<'c> GroupRows<'c> {
 /// The message ids one membership row has seen, read through one prepared
 /// statement.
 pub struct ClaudeSeenIds<'r, 'c> {
-    rows: &'r GroupRows<'c>,
+    rows: &'r ReadGroupRows<'c>,
     position: i64,
     lookup: rusqlite::Statement<'c>,
 }

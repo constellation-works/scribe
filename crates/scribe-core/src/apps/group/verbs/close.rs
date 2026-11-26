@@ -1,7 +1,7 @@
 //! Read bounded group evidence and atomically apply a supplied summary.
 
 use crate::group::{CloseEvidence, GroupCloser};
-use crate::repository::GroupRows;
+use crate::repository::ReadGroupRows;
 use crate::store::refusal;
 use crate::{AuditEvent, Redactor, Related, Result, Store, WriteRefusal};
 use time::OffsetDateTime;
@@ -131,7 +131,12 @@ pub(in crate::apps::group) fn apply(
 /// A quoted closer needs no seat, but its consent must have been verified for
 /// closing exactly this group: consent for another group or for opening one
 /// never authorizes a close.
-fn check_closer(rows: &GroupRows<'_>, n: i64, opener: &str, closer: GroupCloser<'_>) -> Result<()> {
+fn check_closer(
+    rows: &ReadGroupRows<'_>,
+    n: i64,
+    opener: &str,
+    closer: GroupCloser<'_>,
+) -> Result<()> {
     let caller = match closer {
         GroupCloser::Session(caller) => caller,
         GroupCloser::Quoted(consent) => {
@@ -163,7 +168,7 @@ fn check_closer(rows: &GroupRows<'_>, n: i64, opener: &str, closer: GroupCloser<
     }
 }
 
-fn open_for(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<bool> {
+fn open_for(rows: &ReadGroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<bool> {
     let header = rows
         .header(n)?
         .ok_or_else(|| refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}")))?;
@@ -171,7 +176,7 @@ fn open_for(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<boo
     Ok(header.open)
 }
 
-fn snapshot(rows: &GroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<Option<Snapshot>> {
+fn snapshot(rows: &ReadGroupRows<'_>, n: i64, closer: GroupCloser<'_>) -> Result<Option<Snapshot>> {
     let header = rows
         .header(n)?
         .ok_or_else(|| refusal(WriteRefusal::GroupNotFound, format!("no group g-{n}")))?;

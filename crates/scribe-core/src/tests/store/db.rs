@@ -2287,3 +2287,54 @@ fn schema_nineteen_marks_possible_restorations_and_preserves_existing_marks() {
         );
     }
 }
+
+#[test]
+fn group_rows_read_pending_write_and_commit_with_audit() {
+    let dir = private_tempdir();
+    let store = Store::open(dir.path());
+    let opener: crate::SessionId = "pending-opener".parse().unwrap();
+    let draft = crate::group::NewGroup {
+        title: "Pending group".to_owned(),
+        kind: "work".to_owned(),
+        project: crate::Project::sanitized("checkout"),
+        related: Vec::new(),
+    };
+    let event = AuditEvent {
+        at: T0,
+        command: "group close".to_owned(),
+        status: AuditStatus::Success,
+        target: None,
+        error_code: None,
+        author: None,
+        instruction_session: None,
+        instruction_message: None,
+        issue: None,
+        duration_ms: 1,
+    };
+    let n = store
+        .write(|tx| {
+            tx.groups().rows("write group in", |rows| {
+                let n = rows.insert_group(&draft, &opener, T0)?;
+                assert!(rows.header(n)?.unwrap().open);
+                assert!(
+                    store
+                        .read()
+                        .groups()
+                        .read_rows(|read| Ok(read.header(n)?.unwrap().open))?
+                );
+                rows.set_closed(n, T0, Some("done"))?;
+                assert!(!rows.header(n)?.unwrap().open);
+                tx.audit().record(&event)?;
+                Ok(n)
+            })
+        })
+        .unwrap();
+    assert!(
+        !store
+            .read()
+            .groups()
+            .read_rows(|rows| Ok(rows.header(n)?.unwrap().open))
+            .unwrap()
+    );
+    assert_eq!(store.audit_events().unwrap().0.len(), 1);
+}
