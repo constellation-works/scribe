@@ -183,7 +183,7 @@ impl Store {
     /// were files erased: every forgotten session, and every entry forget
     /// whose archive cleanup had not finished.
     fn replay_forgets(&self, conn: &Connection, db: &Path) -> Result<()> {
-        for (id, tombstone) in db::sessions::forgotten(conn, db)? {
+        for (id, tombstone) in db::sessions::forgotten(conn, db::schema(), db)? {
             scrub_session(conn, db, &id, Some(tombstone.number))?;
         }
         let pending = db::docs::pending_archive_forgets(conn, db)?;

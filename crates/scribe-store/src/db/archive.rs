@@ -5,7 +5,7 @@
 
 use super::{db_error, stamp};
 use crate::error::{Error, Result};
-use rusqlite::Connection;
+use cw_sqlite::rusqlite::Connection;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;

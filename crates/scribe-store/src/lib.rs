@@ -11,8 +11,9 @@
 //! - this file, the [`Store`] facade: open the root, its layout and the
 //!   listing's skipped records;
 //! - `db/`: `scribe.db`, the SQLite database of every record kind
-//!   (2_design.md §15.7), its row access, and the storage mechanism under
-//!   it; the only user of `rusqlite`:
+//!   (2_design.md §15.7), opened, configured and migrated through `cw-sqlite`,
+//!   its row access, and the storage mechanism under it; the only user of
+//!   `cw-sqlite` and its re-exported `rusqlite`:
 //!   - `db/codec`: the current format's documents, as the export, the memory
 //!     files and rebuild checkpoints hold them, and the row checks;
 //!   - `db/import`: the file store's archives in `scribe.db`, imported once
@@ -180,7 +181,7 @@ const ISSUES_DIR: &str = "issues";
 const RECORD_EXT: &str = ".md";
 
 /// How long a writer waits for another writer before refusing (STD-03 R7):
-/// `scribe.db`'s `busy_timeout`, and the per-session locks' wait.
+/// `cw-sqlite`'s lock wait on `scribe.db`, and the per-session locks' wait.
 pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(10);
 
 /// A record file a listing left out because it did not parse.

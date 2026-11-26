@@ -74,4 +74,33 @@ fn phase_seven_store_loads_and_exports_unchanged() {
         );
         compare_tree(&fixture.join(name), &target);
     }
+    // Writing to the pre-change fixture migrates it cleanly through cw-sqlite
+    // with no manual step and preserves existing records.
+    store
+        .write(|tx| {
+            tx.messages().put(
+                &[crate::NewMessage {
+                    session: "s-1".parse().unwrap(),
+                    message: String::from("m-post-cw-sqlite"),
+                    role: crate::entry::Speaker::User,
+                    at: crate::fixtures::T0,
+                    text: String::from("post-migration message"),
+                }],
+                &crate::Redactor::default(),
+            )
+        })
+        .unwrap();
+    assert_eq!(store.load_sessions().unwrap().records.len(), 1);
+    assert_eq!(store.load_entries().unwrap().0.len(), 2);
+    assert_eq!(store.proposals().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .read()
+            .messages()
+            .search(&[String::from("post")])
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
 }

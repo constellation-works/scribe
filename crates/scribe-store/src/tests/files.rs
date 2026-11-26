@@ -220,17 +220,10 @@ mod private_state {
     }
 
     #[test]
-    fn a_missing_root_is_absent_and_a_created_database_file_is_private() {
+    fn a_missing_root_is_absent() {
         let dir = crate::testing::private_tempdir();
         let root = dir.path().join("none");
         assert!(!files::inspect_root(&root).unwrap());
         assert!(files::list_root(&root).unwrap().is_empty());
-        let path = dir.path().join("scribe.db");
-        files::create_empty(&path).unwrap();
-        files::create_empty(&path).unwrap();
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
-            0o600
-        );
     }
 }

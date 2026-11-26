@@ -8,15 +8,14 @@ pub(super) use claude::V15;
 pub use claude::{ClaudeCapturePosition, ClaudeGroupCapture, ClaudeSeenIds};
 pub use rows::CloseHeader;
 
-use super::{
-    DB_FILE, Fallible, db_error, memory::read, open_writer, optimize_fts, refuse_newer, stamp,
-};
+use super::{DB_FILE, db_error, memory::read, open_writer, optimize_fts, stamp};
 use crate::error::refusal;
 use crate::group::{Group, NewGroup, Seat, SeatHold};
 use crate::message::NewMessage;
 use crate::repository::ids::number;
 use crate::{Error, Label, Project, Redactor, Result, SessionId, Store, WriteRefusal};
-use rusqlite::{Connection, OptionalExtension, params};
+use cw_sqlite::Writer as SqliteWriter;
+use cw_sqlite::rusqlite::{self, Connection, OptionalExtension, params};
 use std::path::Path;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -205,18 +204,10 @@ LEFT JOIN handoffs h ON h.session = m.session
 WHERE ?1 IS NULL OR g.id = ?1
 ORDER BY g.id DESC, s.name, m.position";
 
-fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Group>, Fallible> {
-    let fail = |e| Fallible::from_sqlite("read groups from", path, e);
-    let summary = if refuse_newer(conn, path)? >= 11 {
-        "g.summary"
-    } else {
-        "NULL"
-    };
-    let slug = if refuse_newer(conn, path)? >= 12 {
-        "g.slug"
-    } else {
-        "NULL"
-    };
+fn roster(conn: &Connection, version: u32, path: &Path, number: Option<i64>) -> Result<Vec<Group>> {
+    let fail = |e| db_error("read groups from", path, e);
+    let summary = if version >= 11 { "g.summary" } else { "NULL" };
+    let slug = if version >= 12 { "g.slug" } else { "NULL" };
     let sql = ROSTER.replace("{summary}", summary).replace("{slug}", slug);
     let mut query = conn.prepare(&sql).map_err(fail)?;
     let mut rows = query.query([number]).map_err(fail)?;
@@ -236,8 +227,7 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
                 closed: row.get(5).map_err(fail)?,
                 summary: row.get(14).map_err(fail)?,
                 opener: row.get(6).map_err(fail)?,
-                related: serde_json::from_str(&related)
-                    .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?,
+                related: serde_json::from_str(&related).map_err(|e| Error::corrupt(path, e))?,
                 seats: Vec::new(),
             });
         }
@@ -257,15 +247,12 @@ fn roster(conn: &Connection, path: &Path, number: Option<i64>) -> Result<Vec<Gro
             let session: String = row.get(10).map_err(fail)?;
             if let Some(seat) = group.seats.last_mut() {
                 if seat.transcripts.last().map(SessionId::as_str) != Some(&session) {
-                    seat.transcripts.push(
-                        session
-                            .parse()
-                            .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?,
-                    );
+                    seat.transcripts
+                        .push(session.parse().map_err(|e| Error::corrupt(path, e))?);
                 }
                 if let Some(created) = row.get::<_, Option<String>>(12).map_err(fail)? {
                     let at = OffsetDateTime::parse(&created, &Rfc3339)
-                        .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?;
+                        .map_err(|e| Error::corrupt(path, e))?;
                     let key = (at, row.get::<_, i64>(13).map_err(fail)?);
                     if newest.is_none_or(|prior| key > prior) {
                         newest = Some(key);
@@ -301,18 +288,17 @@ fn seat_member(
 impl Store {
     fn read_groups<T: Default>(
         &self,
-        f: impl Fn(&Connection, &Path) -> Result<T, Fallible>,
+        f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
     ) -> Result<T> {
         if !self.root_exists()? {
             return Ok(T::default());
         }
         self.check_stamp()?;
-        let (result, _) = read(self.root(), |conn, path| {
-            let version = refuse_newer(conn, path)?;
+        let (result, _) = read(self.root(), |conn, version, path| {
             if version < 9 {
                 Ok(T::default())
             } else {
-                f(conn, path)
+                f(conn, version, path)
             }
         })?;
         Ok(result)
@@ -320,13 +306,13 @@ impl Store {
 
     /// Groups newest first, including seats and their active handoffs.
     pub(crate) fn groups(&self) -> Result<Vec<Group>> {
-        self.read_groups(|conn, path| roster(conn, path, None))
+        self.read_groups(|conn, version, path| roster(conn, version, path, None))
     }
 
     /// The most recently opened group in the project.
     pub(crate) fn last_group(&self, project: &Project) -> Result<Option<crate::LastGroup>> {
-        self.read_groups(|conn, path| {
-            let summary = if refuse_newer(conn, path)? >= 11 { "summary" } else { "NULL" };
+        self.read_groups(|conn, version, path| {
+            let summary = if version >= 11 { "summary" } else { "NULL" };
             conn.query_row(
                 &format!("SELECT id, title, closed, {summary} FROM groups WHERE project = ?1 ORDER BY id DESC LIMIT 1"),
                 [project.as_str()],
@@ -336,7 +322,7 @@ impl Store {
                     closed: row.get(2)?,
                     summary: row.get(3)?,
                 }),
-            ).optional().map_err(|e| Fallible::from_sqlite("read last group from", path, e))
+            ).optional().map_err(|e| db_error("read last group from", path, e))
         })
     }
 
@@ -349,8 +335,8 @@ impl Store {
 
     pub(crate) fn group_number(&self, input: &str) -> Result<i64> {
         // Open project slugs take precedence over id prefixes.
-        let slug = self.read_groups(|conn, path| {
-            if refuse_newer(conn, path)? < 12 {
+        let slug = self.read_groups(|conn, version, path| {
+            if version < 12 {
                 return Ok(None);
             }
             conn.query_row(
@@ -359,14 +345,14 @@ impl Store {
                 |r| r.get::<_, i64>(0),
             )
             .optional()
-            .map_err(|e| Fallible::from_sqlite("read group slug from", path, e))
+            .map_err(|e| db_error("read group slug from", path, e))
         })?;
         if let Some(n) = slug {
             return Ok(n);
         }
         // An exact id wins, including when a longer id starts with it.
-        let ids = self.read_groups(|conn, path| {
-            let fail = |e| Fallible::from_sqlite("read group ids from", path, e);
+        let ids = self.read_groups(|conn, _version, path| {
+            let fail = |e| db_error("read group ids from", path, e);
             let mut query = conn
                 .prepare(
                     "SELECT 'g-' || id FROM groups WHERE instr('g-' || id, ?1) = 1 ORDER BY id",
@@ -390,7 +376,7 @@ impl Store {
     /// One group by exact id or unique prefix.
     pub(crate) fn group(&self, id: &str) -> Result<Group> {
         let n = self.group_number(id)?;
-        self.read_groups(|conn, path| roster(conn, path, Some(n)))?
+        self.read_groups(|conn, version, path| roster(conn, version, path, Some(n)))?
             .pop()
             .ok_or_else(|| self.missing_group(id))
     }
@@ -417,12 +403,15 @@ impl Store {
         self.write_step(|| {
             let conn = open_writer(self.root(), self.lock_wait)?;
             let path = self.root().join(DB_FILE);
-            f(&GroupRows(ReadGroupRows {
-                conn: &conn,
-                path: &path,
-                action,
-                read: false,
-            }))
+            f(&GroupRows {
+                rows: ReadGroupRows {
+                    conn: &conn,
+                    version: conn.version(),
+                    path: &path,
+                    action,
+                },
+                writer: &conn,
+            })
         })
     }
 
@@ -430,14 +419,14 @@ impl Store {
     /// store has groups.
     pub(crate) fn read_group_rows<T: Default>(
         &self,
-        f: impl Fn(&ReadGroupRows<'_>) -> Result<T, RowError>,
+        f: impl FnOnce(&ReadGroupRows<'_>) -> Result<T, RowError>,
     ) -> Result<T> {
-        self.read_groups(|conn, path| {
+        self.read_groups(|conn, version, path| {
             f(&ReadGroupRows {
                 conn,
+                version,
                 path,
                 action: "read groups from",
-                read: true,
             })
             .map_err(|e| e.0)
         })
@@ -445,20 +434,19 @@ impl Store {
 
     /// [`Store::read_group_rows`] inside one read transaction, so that its
     /// reads see one state; `action` names the read in a database error.
+    /// Both `cw_sqlite::Reader` and an active write scope already hold a
+    /// transaction for the connection's snapshot.
     pub(crate) fn read_group_rows_in_tx<T: Default>(
         &self,
         action: &'static str,
-        f: impl Fn(&ReadGroupRows<'_>) -> Result<T, RowError>,
+        f: impl FnOnce(&ReadGroupRows<'_>) -> Result<T, RowError>,
     ) -> Result<T> {
-        self.read_groups(|conn, path| {
-            let tx = conn
-                .unchecked_transaction()
-                .map_err(|e| Fallible::from_sqlite(action, path, e))?;
+        self.read_groups(|conn, version, path| {
             f(&ReadGroupRows {
-                conn: &tx,
+                conn,
+                version,
                 path,
                 action,
-                read: true,
             })
             .map_err(|e| e.0)
         })
@@ -466,8 +454,8 @@ impl Store {
 
     /// Whether a deferred ancestry check is pending for `session`.
     pub(crate) fn deferred_ancestry(&self, session: &SessionId) -> Result<bool> {
-        self.read_groups(|conn, path| {
-            if refuse_newer(conn, path)? < 13 {
+        self.read_groups(|conn, version, path| {
+            if version < 13 {
                 return Ok(false);
             }
             conn.query_row(
@@ -475,7 +463,7 @@ impl Store {
                 [session.as_str()],
                 |row| row.get::<_, bool>(0),
             )
-            .map_err(|e| Fallible::from_sqlite("read deferred ancestry from", path, e))
+            .map_err(|e| db_error("read deferred ancestry from", path, e))
         })
     }
 }
@@ -522,11 +510,12 @@ pub struct CaptureState {
 
 fn capture_state(
     conn: &Connection,
+    version: u32,
     path: &Path,
     session: &SessionId,
-) -> Result<Option<CaptureState>, Fallible> {
-    let fail = |e| Fallible::from_sqlite("read group capture state from", path, e);
-    let joined = if refuse_newer(conn, path)? >= 11 {
+) -> Result<Option<CaptureState>> {
+    let fail = |e| db_error("read group capture state from", path, e);
+    let joined = if version >= 11 {
         ("m.joined", "m.turn_cursor")
     } else {
         ("g.opened", "NULL")
@@ -543,8 +532,8 @@ fn capture_state(
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(fail)?;
     row.map(|(position, joined, cursor, holds)| {
-        let since = OffsetDateTime::parse(&joined, &Rfc3339)
-            .map_err(|e| Fallible::Failed(Error::corrupt(path, e)))?;
+        let since =
+            OffsetDateTime::parse(&joined, &Rfc3339).map_err(|e| Error::corrupt(path, e))?;
         Ok(CaptureState {
             position,
             holds,
@@ -663,22 +652,25 @@ fn newest_open_seat(
 /// Group rows in a write step ([`crate::repository::Groups::rows`]).
 /// Reads and mutations report the rows as they are; their meaning and any
 /// write refusal are the caller's responsibility.
-pub struct GroupRows<'c>(ReadGroupRows<'c>);
+pub struct GroupRows<'c> {
+    rows: ReadGroupRows<'c>,
+    writer: &'c SqliteWriter,
+}
 
 impl<'c> std::ops::Deref for GroupRows<'c> {
     type Target = ReadGroupRows<'c>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.rows
     }
 }
 
 /// Read-only access to group rows, including inside a write transaction.
 pub struct ReadGroupRows<'c> {
     conn: &'c Connection,
+    version: u32,
     path: &'c Path,
     action: &'static str,
-    read: bool,
 }
 
 /// A membership row's group and capture window ([`ReadGroupRows::member_window`]).
@@ -694,9 +686,8 @@ pub struct MemberWindow {
     pub holds_seat: bool,
 }
 
-/// A [`ReadGroupRows`] or [`GroupRows`] call's failure. It converts into [`Error`]; a read keeps
-/// whether a read-only copy of the database could serve it.
-pub struct RowError(Fallible);
+/// A [`ReadGroupRows`] or [`GroupRows`] call's failure. It converts into [`Error`].
+pub struct RowError(Error);
 
 impl std::fmt::Debug for RowError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -706,13 +697,13 @@ impl std::fmt::Debug for RowError {
 
 impl From<RowError> for Error {
     fn from(e: RowError) -> Self {
-        e.0.into_error()
+        e.0
     }
 }
 
 impl From<Error> for RowError {
     fn from(e: Error) -> Self {
-        Self(Fallible::Failed(e))
+        Self(e)
     }
 }
 
@@ -720,11 +711,7 @@ type Rows<T> = std::result::Result<T, RowError>;
 
 impl ReadGroupRows<'_> {
     fn fail(&self, e: rusqlite::Error) -> RowError {
-        RowError(if self.read {
-            Fallible::from_sqlite(self.action, self.path, e)
-        } else {
-            Fallible::Failed(db_error(self.action, self.path, e))
-        })
+        RowError(db_error(self.action, self.path, e))
     }
 
     /// The ids of the project's open groups, newest first.
@@ -881,7 +868,7 @@ impl ReadGroupRows<'_> {
 
     /// `session`'s capture row in an open group, unless it is forgotten.
     pub fn capture_state(&self, session: &SessionId) -> Rows<Option<CaptureState>> {
-        capture_state(self.conn, self.path, session).map_err(RowError)
+        capture_state(self.conn, self.version, self.path, session).map_err(RowError)
     }
 
     /// The seat `session` holds now.
@@ -1055,11 +1042,7 @@ impl GroupRows<'_> {
 
     /// Truncate the write-ahead log.
     pub fn truncate_wal(&self) -> Rows<()> {
-        Ok(super::truncate_wal(
-            self.conn,
-            self.path,
-            std::time::Instant::now(),
-        )?)
+        Ok(super::truncate_wal(self.writer, self.rows.path)?)
     }
 
     /// Set `session`'s joined time and capture cursor as stored.
@@ -1135,7 +1118,7 @@ impl GroupRows<'_> {
 #[cfg(test)]
 mod migration_tests {
     use super::{V9, V18, V19};
-    use rusqlite::{Connection, StatementStatus, params};
+    use cw_sqlite::rusqlite::{Connection, StatementStatus, params};
 
     fn migration_steps(size: i64) -> i32 {
         let conn = Connection::open_in_memory().unwrap();

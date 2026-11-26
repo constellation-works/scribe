@@ -33,15 +33,16 @@ err() { echo "dependency-direction: $*" >&2; fail=1; }
 policy() {
   case "$1" in
     scribe-store)
-      # The only crate that touches the data root and scribe.db.
+      # The only crate that touches the data root and scribe.db; uses rusqlite
+      # only through cw-sqlite's re-export.
       ALLOWED=""
-      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored"
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite"
       ;;
     scribe-tools)
       # Functions of host files, bytes and text. It depends on the store for
       # the capture position a window resumes from and the record shapes.
       ALLOWED="scribe-store"
-      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite tempfile"
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite cw-sqlite tempfile"
       ;;
     scribe-core)
       ALLOWED="scribe-store scribe-tools"
@@ -51,14 +52,14 @@ policy() {
       # tempfile are allowed for providers/, whose model adapters supervise
       # process groups and hand the codex child its schema in a private
       # temporary directory.
-      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite"
+      BANNED="clap tracing-subscriber anstream anstyle termcolor terminal_size crossterm owo-colors colored rusqlite cw-sqlite"
       ;;
     scribe)
       # The CLI reaches scribe.db through scribe_core::Store; its tests may
       # stage database states with rusqlite as a dev-dependency. Composition,
       # the tools and the audit guard live in the core (ORB-27921 step 3).
       ALLOWED="scribe-core"
-      BANNED="rusqlite"
+      BANNED="rusqlite cw-sqlite"
       ;;
     *) return 1 ;;
   esac
@@ -448,6 +449,7 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
     err "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
   fi
   ban "$file" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not do I/O"
+  ban "$file" '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "store/${shape%%:*}.rs ${shape#*:}; it must not open SQLite"
 done
 # The core and the store receive resolved roots and configuration (R3).
 # A child's working directory (`Command::current_dir(path)`, providers/) is
@@ -465,18 +467,21 @@ done
 # Composition builds the context the apps run against; it imports no app.
 ban_crate "$CORE/composition.rs" 'crate::apps(::|[^[:alnum:]_]|$)' "composition.rs must not import the apps"
 ban "$STORE"         'std::env::|home_dir|current_dir'           "the store crate must not read the environment or discover paths"
-# ORB-27921 step 4: db/ holds the storage mechanism. SQLite is its
-# mechanism (2_design.md §15.7): only db/ names rusqlite (testing.rs, the
-# test-support shim, hands tests a connection), every other store module
-# reaches scribe.db through it, and the crate policies keep rusqlite out of
-# every other crate. The file layer is the kit's cw-fs (ORB-28612): the store
-# names it, scribe-core's project scaffold (apps/admin/init.rs) names it, and
-# no other crate does. db/files.rs, its adapter, names nothing else of the
-# store but its error type.
+# ORB-27921 step 4 and ORB-28614: db/ holds the storage mechanism. SQLite is
+# opened, configured and migrated through the kit's cw-sqlite (2_design.md
+# §15.7): only db/ names cw_sqlite or rusqlite (through cw_sqlite::rusqlite),
+# every other store module reaches scribe.db through it, and no scribe source
+# sets journal_mode, synchronous, busy_timeout, user_version, secure_delete,
+# PersistWal or wal_checkpoint itself. The file layer is the kit's cw-fs
+# (ORB-28612): the store names it, scribe-core's project scaffold
+# (apps/admin/init.rs) names it, and no other crate does. db/files.rs, its
+# adapter, names nothing else of the store but its error type.
 while IFS= read -r -d '' path; do
-  case "$path" in "$STORE"/db/* | "$STORE"/testing.rs) continue ;; esac
-  ban "$path" '(^|[^[:alnum:]_])rusqlite([^[:alnum:]_]|$)' "${path#crates/}: only scribe-store's db/ uses rusqlite"
+  case "$path" in "$STORE"/db/*) continue ;; esac
+  ban "$path" '(^|[^[:alnum:]_])(rusqlite|cw_sqlite)([^[:alnum:]_]|$)' "${path#crates/}: only scribe-store's db/ uses cw-sqlite and rusqlite"
 done < <(find "$STORE" -name '*.rs' -not -path '*/tests/*' -print0)
+ban "$STORE" 'PRAGMA[[:space:]]+(journal_mode|synchronous|busy_timeout|user_version|secure_delete|wal_checkpoint)|\.busy_timeout\(|PersistWal' \
+  "scribe-store must open, configure, checkpoint and migrate scribe.db only through cw-sqlite"
 files_hits=$(grep -nE '(crate|super)::' "$STORE/db/files.rs" | grep -vE '^[0-9]+:[[:space:]]*//' | grep -v 'crate::error::' || true)
 if [[ -n "$files_hits" ]]; then
   echo "$files_hits" >&2
@@ -488,6 +493,9 @@ while IFS= read -r -d '' path; do
   case "$path" in "$CORE"/apps/admin/init.rs) continue ;; esac
   ban "$path" '(^|[^[:alnum:]_])cw_fs([^[:alnum:]_]|$)' "${path#crates/}: only the store and the project scaffold (apps/admin/init.rs) use cw-fs"
 done < <(find "$CORE" "$CLI" "$TOOLS" -name '*.rs' -not -path '*/tests/*' -print0)
+ban "$CORE" '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "only scribe-store's db/ uses cw-sqlite"
+ban "$CLI"  '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "only scribe-store's db/ uses cw-sqlite"
+ban "$TOOLS" '(^|[^[:alnum:]_])cw_sqlite([^[:alnum:]_]|$)' "only scribe-store's db/ uses cw-sqlite"
 # contracts/ holds record shapes only: it imports nothing from db/ or
 # repository/, as a path or inside a grouped import, and decides nothing
 # (no `check_*` function).

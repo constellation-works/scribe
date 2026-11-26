@@ -2,7 +2,7 @@
 
 use super::scope::Tx;
 use super::{
-    DB_FILE, Fallible, db_error, inspect, open_reader, open_writer, refuse_newer, sessions, stamp,
+    DB_FILE, database, db_error, from_sqlite_error, memory, open_writer, scope, sessions, stamp,
     truncate_wal, write_error,
 };
 use crate::Redactor;
@@ -10,7 +10,7 @@ use crate::entry::Speaker;
 use crate::error::{Error, Result};
 use crate::message::{MessageMatch, MessageSearch, NewMessage};
 use crate::session::SessionId;
-use rusqlite::Connection;
+use cw_sqlite::rusqlite::{self, Connection};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
@@ -162,8 +162,16 @@ pub(crate) fn delete_messages(
     keys: &[(SessionId, String)],
 ) -> Result<usize> {
     let path = root.join(DB_FILE);
-    if keys.is_empty() || !inspect(root)? {
+    if keys.is_empty() {
         return Ok(0);
+    }
+    if scope::active(root).is_none() {
+        let started = Instant::now();
+        match database(root, wait).read() {
+            Ok(_) => {}
+            Err(cw_sqlite::Error::Missing { .. }) => return Ok(0),
+            Err(e) => return Err(from_sqlite_error(e, started)),
+        }
     }
     let conn = open_writer(root, wait)?;
     let tx = Tx::begin(&conn, &path, "forget messages in")?;
@@ -184,7 +192,7 @@ pub(crate) fn delete_messages(
     }
     tx.commit()?;
     if deleted > 0 {
-        truncate_wal(&conn, &path, started)?;
+        truncate_wal(&conn, &path)?;
     }
     Ok(deleted)
 }
@@ -197,37 +205,26 @@ pub(crate) fn search_messages(
     tokens: &[String],
     group: Option<i64>,
 ) -> Result<MessageSearch> {
-    let path = root.join(DB_FILE);
-    if tokens.is_empty() || !inspect(root)? {
+    if tokens.is_empty() {
         return Ok(MessageSearch::default());
     }
     let query = fts_query(tokens);
-    match open_reader(&path, false).and_then(|conn| read_matches(&conn, &path, &query, group)) {
-        Ok(matches) => Ok(MessageSearch {
-            matches,
-            read_only_copy: false,
-        }),
-        Err(Fallible::NeedsImmutable(first)) => {
-            tracing::debug!(path = %path.display(), error = %first, "retrying scribe.db as a read-only copy");
-            let conn = open_reader(&path, true).map_err(Fallible::into_error)?;
-            let matches =
-                read_matches(&conn, &path, &query, group).map_err(Fallible::into_error)?;
-            Ok(MessageSearch {
-                matches,
-                read_only_copy: true,
-            })
-        }
-        Err(Fallible::Failed(e)) => Err(e),
-    }
+    let (matches, read_only_copy) = memory::read(root, |conn, version, path| {
+        read_matches(conn, version, path, &query, group)
+    })?;
+    Ok(MessageSearch {
+        matches,
+        read_only_copy,
+    })
 }
 
 fn read_matches(
     conn: &Connection,
+    version: u32,
     path: &Path,
     query: &str,
     group: Option<i64>,
-) -> Result<Vec<MessageMatch>, Fallible> {
-    let version = refuse_newer(conn, path)?;
+) -> Result<Vec<MessageMatch>> {
     if version == 0 || (version < 9 && group.is_some()) {
         return Ok(Vec::new());
     }
@@ -249,7 +246,7 @@ fn read_matches(
              WHERE messages_fts MATCH ?1 {membership}
              ORDER BY bm25(messages_fts), m.at, m.id"
         ))
-        .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+        .map_err(|e| db_error("read", path, e))?;
     let params = rusqlite::params![query, group];
     let rows = select
         .query_map(&params[..if group.is_some() { 2 } else { 1 }], |row| {
@@ -263,14 +260,12 @@ fn read_matches(
                 row.get::<_, Option<String>>(6)?,
             ))
         })
-        .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+        .map_err(|e| db_error("read", path, e))?;
     let mut matches = Vec::new();
     for row in rows {
         let (session, message, role, at, text, bm25, project) =
-            row.map_err(|e| Fallible::from_sqlite("read", path, e))?;
-        let corrupt = |what: &str| {
-            Fallible::Failed(Error::corrupt(path, format!("a message row has {what}")))
-        };
+            row.map_err(|e| db_error("read", path, e))?;
+        let corrupt = |what: &str| Error::corrupt(path, format!("a message row has {what}"));
         matches.push(MessageMatch {
             session: session.parse().map_err(|_| corrupt("a bad session id"))?,
             message,

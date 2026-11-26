@@ -20,7 +20,7 @@
 
 use super::codec;
 use super::sessions::{Col, columns, export_sql_value, from_sql, object, quoted};
-use super::{Fallible, db_error, stamp};
+use super::{db_error, stamp};
 use crate::MarkRecord;
 use crate::Pickup;
 use crate::entry::{Entry, EntryId};
@@ -28,8 +28,8 @@ use crate::error::{Error, Result};
 use crate::proposal::{Proposal, ProposalId};
 use crate::repository::audit::{AUDIT_FORMAT, AuditEvent};
 use crate::tag::StoreTag;
-use rusqlite::types::Value as Sql;
-use rusqlite::{Connection, params_from_iter};
+use cw_sqlite::rusqlite::types::Value as Sql;
+use cw_sqlite::rusqlite::{self, Connection, params_from_iter};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
@@ -295,8 +295,7 @@ fn names<'a>(spec: &'a [(&'a str, Col)]) -> impl Iterator<Item = &'a str> {
 
 /// Whether the documents live in the database: schema 5 or newer and a
 /// `record_kinds` row for every kind of [`KINDS`].
-pub(crate) fn moved(conn: &Connection) -> rusqlite::Result<bool> {
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+pub(crate) fn moved(conn: &Connection, version: u32) -> rusqlite::Result<bool> {
     if version < 5 {
         return Ok(false);
     }
@@ -331,14 +330,13 @@ pub(crate) fn mark_moved(
 /// database; `None` when they are still files (or there is no database).
 pub(crate) fn read<T>(
     root: &Path,
-    f: impl Fn(&Connection, &Path) -> Result<T>,
+    f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
 ) -> Result<Option<T>> {
-    let (found, _) = super::memory::read(root, |conn, path| {
-        super::refuse_newer(conn, path)?;
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+    let (found, _) = super::memory::read(root, |conn, version, path| {
+        if !moved(conn, version).map_err(|e| db_error("read", path, e))? {
             return Ok(None);
         }
-        f(conn, path).map(Some).map_err(Fallible::Failed)
+        f(conn, version, path).map(Some)
     })?;
     Ok(found)
 }
@@ -357,14 +355,12 @@ pub(crate) struct BadEntry {
 /// Every entry, by id; a row that does not decode is a [`BadEntry`].
 pub(crate) fn entries(
     conn: &Connection,
+    version: u32,
     db: &Path,
 ) -> Result<Vec<std::result::Result<Entry, BadEntry>>> {
     let extra = [("content", Col::Text)];
     let mut out = Vec::new();
     // Reads project only fields present in the recorded schema.
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|e| db_error("read", db, e))?;
     let fields = match version {
         ..7 => &ENTRY[..ENTRY.len() - 3],
         7..17 => &ENTRY[..ENTRY.len() - 2],
@@ -481,13 +477,9 @@ pub(crate) fn delete_handoff(conn: &Connection, db: &Path, id: &EntryId) -> Resu
 }
 
 /// Handoff ids that must not be allocated again.
-pub(crate) fn deleted_handoffs(conn: &Connection, db: &Path) -> Result<Vec<EntryId>> {
+pub(crate) fn deleted_handoffs(conn: &Connection, version: u32, db: &Path) -> Result<Vec<EntryId>> {
     let fail = |e| db_error("read deleted handoff ids from", db, e);
-    if conn
-        .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
-        .map_err(fail)?
-        < 14
-    {
+    if version < 14 {
         return Ok(Vec::new());
     }
     let mut query = conn

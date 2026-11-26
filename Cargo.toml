@@ -21,10 +21,12 @@ repository = "https://github.com/constellation-works/scribe"
 
 [workspace.dependencies]
 # The cw-kit (https://github.com/constellation-works/satellites): file access
-# for a private data directory (cw-fs). No release is published yet, so the
-# workspace pins one commit of the satellites `agent-main` for every kit
-# crate; moving the pin is a change of its own.
-cw-fs = { git = "https://github.com/constellation-works/satellites", rev = "9c9cc998720f0a75041be3451c14fbaf80f29dc8" }
+# for a private data directory (cw-fs) and SQLite open/configure/migrate
+# (cw-sqlite). No release is published yet, so the workspace pins one commit
+# of the satellites `agent-main` for every kit crate; moving the pin is a
+# change of its own.
+cw-fs = { git = "https://github.com/constellation-works/satellites", rev = "bdce98be91251d442cde3a8d0f3ddec13a81e362" }
+cw-sqlite = { git = "https://github.com/constellation-works/satellites", rev = "bdce98be91251d442cde3a8d0f3ddec13a81e362" }
 scribe-store = { path = "crates/scribe-store" }
 scribe-tools = { path = "crates/scribe-tools" }
 scribe-core = { path = "crates/scribe-core" }
@@ -32,10 +34,8 @@ scribe-core = { path = "crates/scribe-core" }
 # output sink is the only place allowed to do that (STD-01 R17). Help is plain
 # text everywhere, which also keeps the help goldens byte-stable.
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
-# scribe.db (docs/design/scribe/2_design.md §15.7). `bundled` compiles
-# SQLite from source with FTS5 on, so every platform gets the same engine and
-# the BM25 message search, with no system library. Used by
-# scribe-core::store::db only (scripts/check-dependency-direction.sh).
+# Dev-dependency for tests that stage `scribe.db` states directly; `scribe-store`
+# uses `cw-sqlite`'s re-exported `rusqlite` (same 0.43 bundled SQLite with FTS5).
 rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
 # Unix only: the process's effective uid, for the project scaffold's owner
 # check (STD-05 R9) and the beneath-a-root opens. std has no safe `geteuid`;

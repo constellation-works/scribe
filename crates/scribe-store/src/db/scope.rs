@@ -15,12 +15,13 @@
 //!   ([`Scope::truncate_later`]) and the outermost commit runs it.
 //!
 //! Thread-local, so a second thread (or process) opens its own connection
-//! and waits on SQLite's lock for `busy_timeout`, as a second writer did on
+//! and waits on SQLite's lock for the lock wait, as a second writer did on
 //! the store lock.
 
 use super::{db_error, write_error};
 use crate::error::Result;
-use rusqlite::Connection;
+use cw_sqlite::Writer as SqliteWriter;
+use cw_sqlite::rusqlite::{self, Connection};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -29,7 +30,7 @@ use std::time::Instant;
 /// The writer connection of the store write in progress on this thread.
 struct Active {
     root: PathBuf,
-    conn: Rc<Connection>,
+    conn: Rc<SqliteWriter>,
     truncate: bool,
 }
 
@@ -38,7 +39,7 @@ thread_local! {
 }
 
 /// The connection of the write in progress under `root` on this thread.
-pub(crate) fn active(root: &Path) -> Option<Rc<Connection>> {
+pub(crate) fn active(root: &Path) -> Option<Rc<SqliteWriter>> {
     ACTIVE.with(|a| {
         a.borrow()
             .as_ref()
@@ -55,7 +56,7 @@ pub(crate) struct Scope {
 impl Scope {
     /// Make `conn` the connection every step of this write under `root`
     /// uses.
-    pub(crate) fn enter(root: &Path, conn: Rc<Connection>) -> Self {
+    pub(crate) fn enter(root: &Path, conn: Rc<SqliteWriter>) -> Self {
         let previous = ACTIVE.with(|a| {
             a.replace(Some(Active {
                 root: root.to_path_buf(),
@@ -187,7 +188,7 @@ impl Drop for Tx<'_> {
 }
 
 /// Begin the outermost transaction of a store write: `BEGIN IMMEDIATE`,
-/// waiting `busy_timeout` for another writer.
+/// waiting up to the lock wait for another writer.
 pub(crate) fn begin_outer(conn: &Connection, path: &Path) -> Result<()> {
     let started = Instant::now();
     conn.execute_batch("BEGIN IMMEDIATE")

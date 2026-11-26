@@ -25,11 +25,11 @@
 
 use super::log::check_log;
 use super::memory::read;
-use super::{DB_FILE, Fallible, db_error, optimize_fts, stamp};
+use super::{DB_FILE, db_error, optimize_fts, stamp};
 use crate::error::{Error, Result};
 use crate::session::{ControlState, SessionControl, SessionId, SessionRecord};
-use rusqlite::types::Value as Sql;
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use cw_sqlite::rusqlite::types::Value as Sql;
+use cw_sqlite::rusqlite::{self, Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -196,8 +196,7 @@ pub(crate) struct Sessions {
 
 /// Whether the sessions live in the database: schema 3 or newer and a
 /// `record_kinds` row for them.
-pub(crate) fn moved(conn: &Connection) -> rusqlite::Result<bool> {
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+pub(crate) fn moved(conn: &Connection, version: u32) -> rusqlite::Result<bool> {
     if version < 3 {
         return Ok(false);
     }
@@ -225,12 +224,11 @@ pub(crate) fn mark_moved(
 /// The sessions, read-only, when they live in the database; `None` when
 /// they are still files (or there is no database).
 pub(crate) fn read_sessions(root: &Path) -> Result<Option<Sessions>> {
-    let (found, _) = read(root, |conn, path| {
-        super::refuse_newer(conn, path)?;
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+    let (found, _) = read(root, |conn, version, path| {
+        if !moved(conn, version).map_err(|e| db_error("read", path, e))? {
             return Ok(None);
         }
-        load(conn, path).map(Some).map_err(Fallible::Failed)
+        load(conn, version, path).map(Some)
     })?;
     Ok(found)
 }
@@ -245,23 +243,22 @@ pub(crate) struct Tombstone {
 /// Forgotten session ids, without loading session payloads.
 /// `None` means sessions have not moved into the database yet.
 pub(crate) fn read_forgotten(root: &Path) -> Result<Option<BTreeMap<SessionId, Tombstone>>> {
-    let (found, _) = read(root, |conn, path| {
-        super::refuse_newer(conn, path)?;
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+    let (found, _) = read(root, |conn, version, path| {
+        if !moved(conn, version).map_err(|e| db_error("read", path, e))? {
             return Ok(None);
         }
-        forgotten(conn, path).map(Some).map_err(Fallible::Failed)
+        forgotten(conn, version, path).map(Some)
     })?;
     Ok(found)
 }
 
 /// Check the tombstone without decoding any session record or switch.
 pub(crate) fn read_is_forgotten(root: &Path, id: &SessionId) -> Result<bool> {
-    let (found, _) = read(root, |conn, path| {
-        if super::refuse_newer(conn, path)? < 4 {
+    let (found, _) = read(root, |conn, version, path| {
+        if version < 4 {
             return Ok(false);
         }
-        is_forgotten(conn, id).map_err(|e| Fallible::from_sqlite("read", path, e))
+        is_forgotten(conn, id).map_err(|e| db_error("read", path, e))
     })?;
     Ok(found)
 }
@@ -269,12 +266,11 @@ pub(crate) fn read_is_forgotten(root: &Path, id: &SessionId) -> Result<bool> {
 /// The switches and cursors, read-only, when the sessions live in the
 /// database; `None` when they are still files.
 pub(crate) fn read_control(root: &Path) -> Result<Option<ControlState>> {
-    let (found, _) = read(root, |conn, path| {
-        super::refuse_newer(conn, path)?;
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+    let (found, _) = read(root, |conn, version, path| {
+        if !moved(conn, version).map_err(|e| db_error("read", path, e))? {
             return Ok(None);
         }
-        control(conn, path).map(Some).map_err(Fallible::Failed)
+        control(conn, path).map(Some)
     })?;
     Ok(found)
 }
@@ -282,26 +278,25 @@ pub(crate) fn read_control(root: &Path) -> Result<Option<ControlState>> {
 /// The rebuild checkpoint of `id`, read-only; `None` when the sessions are
 /// still files or there is none.
 pub(crate) fn read_checkpoint(root: &Path, id: &SessionId) -> Result<Option<String>> {
-    let (found, _) = read(root, |conn, path| {
-        super::refuse_newer(conn, path)?;
-        if !moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))? {
+    let (found, _) = read(root, |conn, version, path| {
+        if !moved(conn, version).map_err(|e| db_error("read", path, e))? {
             return Ok(None);
         }
-        checkpoint(conn, id).map_err(|e| Fallible::from_sqlite("read", path, e))
+        checkpoint(conn, version, id).map_err(|e| db_error("read", path, e))
     })?;
     Ok(found)
 }
 
 /// Whether the sessions live in the database, read-only.
 pub(crate) fn read_moved(root: &Path) -> Result<bool> {
-    let (found, _) = read(root, |conn, path| {
-        moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))
+    let (found, _) = read(root, |conn, version, path| {
+        moved(conn, version).map_err(|e| db_error("read", path, e))
     })?;
     Ok(found)
 }
 
 /// Every session, switch and cursor.
-pub(crate) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
+pub(crate) fn load(conn: &Connection, version: u32, db: &Path) -> Result<Sessions> {
     let err = |e| db_error("read sessions from", db, e);
     let mut out = Sessions::default();
     {
@@ -401,7 +396,7 @@ pub(crate) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
         });
     }
     out.control = control(conn, db)?;
-    out.forgotten = forgotten(conn, db)?
+    out.forgotten = forgotten(conn, version, db)?
         .into_iter()
         .map(|(id, tombstone)| (id, tombstone.at))
         .collect();
@@ -410,11 +405,12 @@ pub(crate) fn load(conn: &Connection, db: &Path) -> Result<Sessions> {
 
 /// When each forgotten session was forgotten; none before schema 4, which
 /// a reader of a database no writer has migrated yet still sees.
-pub(crate) fn forgotten(conn: &Connection, db: &Path) -> Result<BTreeMap<SessionId, Tombstone>> {
+pub(crate) fn forgotten(
+    conn: &Connection,
+    version: u32,
+    db: &Path,
+) -> Result<BTreeMap<SessionId, Tombstone>> {
     let err = |e| db_error("read sessions from", db, e);
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(err)?;
     let mut out = BTreeMap::new();
     if version < 4 {
         return Ok(out);
@@ -844,8 +840,11 @@ pub(crate) fn put_control(
 }
 
 /// The rebuild checkpoint of `id`: a session record's file text.
-pub(crate) fn checkpoint(conn: &Connection, id: &SessionId) -> rusqlite::Result<Option<String>> {
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+pub(crate) fn checkpoint(
+    conn: &Connection,
+    version: u32,
+    id: &SessionId,
+) -> rusqlite::Result<Option<String>> {
     // Schema 4 is the first with `sessions.forgotten`. A forgotten session
     // keeps no checkpoint, including one an older build left before the
     // version 8 repair deletes the row.
@@ -905,13 +904,11 @@ pub(super) fn export_sql_value(sql: Sql) -> Value {
 /// `(table, row)` in table order, then row order. Reads only.
 pub(crate) fn export_rows(
     conn: &Connection,
+    version: u32,
     db: &Path,
     tables: &[(&'static str, &str)],
 ) -> Result<Vec<(&'static str, Value)>> {
     let err = |e| db_error("export", db, e);
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(err)?;
     let mut out = Vec::new();
     for &(table, order) in tables {
         let mut select = conn

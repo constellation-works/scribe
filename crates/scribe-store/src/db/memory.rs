@@ -9,14 +9,12 @@
 //! write replays a journal left open by a crash. Reads ([`memory_view`],
 //! [`revision_at`]) open read-only and never replay.
 
-use super::{
-    DB_FILE, Fallible, db_error, inspect, open_reader, optimize_fts, refuse_newer, stamp,
-    write_error,
-};
+use super::{DB_FILE, db_error, optimize_fts, stamp, write_error};
 use crate::Pending;
 use crate::error::{Error, Result};
 use crate::session::SessionId;
-use rusqlite::{Connection, OptionalExtension};
+use cw_sqlite::Writer as SqliteWriter;
+use cw_sqlite::rusqlite::{self, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -172,20 +170,14 @@ fn revision_row(path: &Path, row: (i64, String, String, Option<String>)) -> Resu
     })
 }
 
-fn has_journal(conn: &Connection) -> rusqlite::Result<bool> {
-    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    Ok(version >= 2)
-}
-
 const SELECT_REVISION: &str = "SELECT n, created, content, file_sha256 FROM profile_revisions";
 
-fn read_view(conn: &Connection, path: &Path) -> Result<MemoryDb, Fallible> {
-    let fail = |e| Fallible::from_sqlite("read", path, e);
-    let version = refuse_newer(conn, path)?;
+fn read_view(conn: &Connection, version: u32, path: &Path) -> Result<MemoryDb> {
+    let fail = |e| db_error("read", path, e);
     if version == 0 {
         return Ok(MemoryDb::default());
     }
-    let one = |sql: &str| -> Result<Option<Revision>, Fallible> {
+    let one = |sql: &str| -> Result<Option<Revision>> {
         conn.query_row(sql, [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
@@ -193,7 +185,6 @@ fn read_view(conn: &Connection, path: &Path) -> Result<MemoryDb, Fallible> {
         .map_err(fail)?
         .map(|row| revision_row(path, row))
         .transpose()
-        .map_err(Fallible::Failed)
     };
     let latest = one(&format!("{SELECT_REVISION} ORDER BY n DESC LIMIT 1"))?;
     let closed = one(&format!(
@@ -215,29 +206,24 @@ fn read_view(conn: &Connection, path: &Path) -> Result<MemoryDb, Fallible> {
     })
 }
 
-/// Read `f` from the database under `root` read-only, retrying as a
-/// read-only copy (`immutable=1`) when the WAL cannot be opened. A missing
-/// database reads as `T::default()`.
+/// Read `f` from the database under `root` read-only through `cw-sqlite`.
+/// A missing or empty database reads as `T::default()`.
 pub(super) fn read<T: Default>(
     root: &Path,
-    f: impl Fn(&Connection, &Path) -> Result<T, Fallible>,
+    f: impl FnOnce(&Connection, u32, &Path) -> Result<T>,
 ) -> Result<(T, bool)> {
     let path = root.join(DB_FILE);
     // Inside a store write on this thread, read what it has written so far.
-    if let Some(conn) = super::scope::active(root) {
-        return Ok((f(&conn, &path).map_err(Fallible::into_error)?, false));
+    if let Some(writer) = super::scope::active(root) {
+        return Ok((f(&writer, writer.version(), &path)?, false));
     }
-    if !inspect(root)? {
-        return Ok((T::default(), false));
-    }
-    match open_reader(&path, false).and_then(|conn| f(&conn, &path)) {
-        Ok(value) => Ok((value, false)),
-        Err(Fallible::NeedsImmutable(_)) => {
-            let conn = open_reader(&path, true).map_err(Fallible::into_error)?;
-            Ok((f(&conn, &path).map_err(Fallible::into_error)?, true))
-        }
-        Err(Fallible::Failed(e)) => Err(e),
-    }
+    let started = Instant::now();
+    let reader = match super::database(root, crate::DEFAULT_LOCK_WAIT).read() {
+        Ok(reader) => reader,
+        Err(cw_sqlite::Error::Missing { .. }) => return Ok((T::default(), false)),
+        Err(e) => return Err(super::from_sqlite_error(e, started)),
+    };
+    Ok((f(&reader, reader.version(), &path)?, reader.immutable()))
 }
 
 /// The profile revisions and journal state, read-only.
@@ -249,10 +235,7 @@ pub fn memory_view(root: &Path) -> Result<MemoryDb> {
 
 /// Revision `n`, read-only.
 pub(crate) fn revision_at(root: &Path, n: i64) -> Result<Option<Revision>> {
-    let (found, _) = read(root, |conn, path| {
-        let version: u32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+    let (found, _) = read(root, |conn, version, path| {
         if version == 0 {
             return Ok(None);
         }
@@ -260,10 +243,9 @@ pub(crate) fn revision_at(root: &Path, n: i64) -> Result<Option<Revision>> {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
         .optional()
-        .map_err(|e| Fallible::from_sqlite("read", path, e))?
+        .map_err(|e| db_error("read", path, e))?
         .map(|row| revision_row(path, row))
         .transpose()
-        .map_err(Fallible::Failed)
     })?;
     Ok(found)
 }
@@ -271,14 +253,11 @@ pub(crate) fn revision_at(root: &Path, n: i64) -> Result<Option<Revision>> {
 /// The pending candidates of `session`, read-only; none without a
 /// database or before schema 1.
 pub fn pending_read(root: &Path, session: &SessionId) -> Result<Vec<Pending>> {
-    let (found, _) = read(root, |conn, path| {
-        let version: u32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|e| Fallible::from_sqlite("read", path, e))?;
+    let (found, _) = read(root, |conn, version, path| {
         if version == 0 {
             return Ok(Vec::new());
         }
-        pending_rows(conn, session).map_err(|e| Fallible::Failed(db_error("read", path, e)))
+        pending_rows(conn, session).map_err(|e| db_error("read", path, e))
     })?;
     Ok(found)
 }
@@ -301,13 +280,13 @@ fn pending_rows(conn: &Connection, session: &SessionId) -> rusqlite::Result<Vec<
 
 /// The writer's view of the memory tables, on an open writer connection.
 pub(crate) struct Writer<'a> {
-    conn: &'a Connection,
+    conn: &'a SqliteWriter,
     path: std::path::PathBuf,
 }
 
 impl<'a> Writer<'a> {
     /// Wrap a writer connection for the database under `root`.
-    pub(crate) fn new(conn: &'a Connection, root: &Path) -> Self {
+    pub(crate) fn new(conn: &'a SqliteWriter, root: &Path) -> Self {
         Self {
             conn,
             path: root.join(DB_FILE),
@@ -320,7 +299,7 @@ impl<'a> Writer<'a> {
 
     /// Every journal left open, oldest first.
     pub(crate) fn open_journals(&self) -> Result<Vec<Journal>> {
-        if !has_journal(self.conn).map_err(|e| self.err(e))? {
+        if self.conn.version() < 2 {
             return Ok(Vec::new());
         }
         let mut select = self
@@ -437,7 +416,7 @@ impl<'a> Writer<'a> {
         let (journal, erased) = stage(&tx, &path, started, commit, now)?;
         tx.commit()?;
         if erased > 0 {
-            super::truncate_wal(self.conn, &path, started)?;
+            super::truncate_wal(self.conn, &path)?;
         }
         Ok(journal)
     }
@@ -470,7 +449,7 @@ impl<'a> Writer<'a> {
 
     /// The newest revision and the newest closed one.
     pub(crate) fn revisions(&self) -> Result<(Option<Revision>, Option<Revision>)> {
-        let view = read_view(self.conn, &self.path).map_err(Fallible::into_error)?;
+        let view = read_view(self.conn, self.conn.version(), &self.path)?;
         Ok((view.latest, view.closed))
     }
 

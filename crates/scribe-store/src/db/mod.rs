@@ -1,28 +1,16 @@
 //! `scribe.db`: the SQLite database beside the files
 //! (docs/design/scribe/2_design.md §15.7). Phase 4 keeps the session pass's
 //! messages here, with an FTS5 index for BM25 search, and creates the
-//! memory tables phase 5 fills. The only module that uses `rusqlite`
-//! (scripts/check-dependency-direction.sh).
+//! memory tables phase 5 fills. The only module that uses `cw-sqlite` and
+//! its re-exported `rusqlite` (scripts/check-dependency-direction.sh).
 //!
-//! - **Privacy.** The file and its `-wal` and `-shm` files are owner-only:
-//!   created `0600` before SQLite opens it (SQLite gives the `-wal` and `-shm`
-//!   files the database's mode), and refused on every open, read or write,
-//!   when one is a link, another user's or open to any group or other bit
-//!   (STD-05 R7–R9).
-//! - **Writers** open read-write in WAL mode with `busy_timeout` equal to the
-//!   store's lock wait and take `BEGIN IMMEDIATE`; a timeout is
-//!   [`Error::Locked`]. Each sets `SQLITE_FCNTL_PERSIST_WAL`, so the `-wal`
-//!   and `-shm` files outlive the last connection and a read-only reader
-//!   finds them.
-//! - **Readers** take no lock and write nothing (STD-01 R31): they open with
-//!   `SQLITE_OPEN_READ_ONLY`. On a read-only root without the `-wal` and
-//!   `-shm` files (a copied or mounted store) SQLite cannot open the WAL, so
-//!   the reader retries with `immutable=1`, which is safe there because no
-//!   writer can exist, and says so ([`MessageSearch::read_only_copy`]).
-//! - **Schema.** [`MIGRATIONS`] is a numbered list of SQL keyed on `PRAGMA
-//!   user_version`; each step runs in its own `BEGIN IMMEDIATE` transaction.
-//!   A database newer than this build is refused (STD-03 R10).
-//!   `specs/store.md` gives every table's types and constraints.
+//! Opening, owner-only file checks, WAL configuration (`synchronous = FULL`,
+//! `foreign_keys = ON`, `PersistWal`, `secure_delete = ON`), clock-bounded
+//! lock waits, read-only / immutable-copy opens, schema migrations keyed on
+//! `PRAGMA user_version`, newer-schema refusal (STD-03 R10), and WAL
+//! `TRUNCATE` checkpoints all go through `cw-sqlite`. Scribe keeps its
+//! thread-local write scope and savepoints ([`scope`]) and its queries.
+//! `specs/store.md` gives every table's types and constraints.
 
 pub(super) mod archive;
 pub(crate) mod codec;
@@ -51,8 +39,9 @@ pub(super) use messages::{
 };
 
 use crate::error::{Error, Result};
-use rusqlite::{Connection, ErrorCode, OpenFlags, TransactionBehavior};
-use std::path::{Path, PathBuf};
+use cw_sqlite::rusqlite::{self, Connection, Transaction};
+use cw_sqlite::{Db, Step, Writer as SqliteWriter};
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
@@ -69,28 +58,43 @@ pub const DB_FILE: &str = "scribe.db";
 /// The schema, one step per `user_version`: step `n` (1-based) moves the
 /// database from version `n - 1` to `n`. Append only; never edit a shipped
 /// step.
-const MIGRATIONS: &[&str] = &[
-    V1,
-    V2,
-    V3,
-    V4,
-    V5,
-    V6,
-    V7,
-    V8,
-    groups::V9,
-    V10,
-    groups::V11,
-    groups::V12,
-    V13,
-    docs::V14,
-    groups::V15,
-    V16,
-    V17,
-    groups::V18,
-    groups::V19,
-    archive::V20,
+const MIGRATIONS: &[Step] = &[
+    Step::function(migrate_v1),
+    Step::sql(V2),
+    Step::sql(V3),
+    Step::sql(V4),
+    Step::sql(V5),
+    Step::sql(V6),
+    Step::sql(V7),
+    Step::sql(V8),
+    // Versions 8 and 9 may have committed the deletion in V8 without
+    // finishing its physical WAL cleanup. Checkpoint outside the transaction
+    // before advancing past either version; V10 is the durable completion marker.
+    Step::sql(groups::V9).checkpoint_truncate_before(),
+    Step::sql(V10).checkpoint_truncate_before(),
+    Step::sql(groups::V11),
+    Step::sql(groups::V12),
+    Step::sql(V13),
+    Step::sql(docs::V14),
+    Step::sql(groups::V15),
+    Step::sql(V16),
+    Step::sql(V17),
+    Step::sql(groups::V18),
+    Step::sql(groups::V19),
+    Step::sql(archive::V20),
 ];
+
+/// Version 1: create the initial tables and record the database's store id.
+fn migrate_v1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(V1)?;
+    let created = now();
+    let path = tx.path().map_or_else(|| Path::new(DB_FILE), Path::new);
+    tx.execute(
+        "INSERT INTO meta (id, store_id, created) VALUES (1, ?1, ?2)",
+        (store_id(path, &created), &created),
+    )?;
+    Ok(())
+}
 
 /// Version 17 ships typed records and replaces the trial's tag registrations.
 const V17: &str = "
@@ -489,54 +493,73 @@ WHERE session IN (SELECT id FROM sessions WHERE forgotten IS NOT NULL);
 /// Version 10 marks completion of the schema-8 WAL cleanup barrier.
 const V10: &str = "SELECT 1;";
 
-/// Refuse, for a reader as for a writer, a database a newer build migrated
-/// past this build's schema: `store_too_new`, never a read of tables whose
-/// shape this build does not know.
-fn refuse_newer(conn: &Connection, path: &Path) -> Result<u32, Fallible> {
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|e| Fallible::from_sqlite("read", path, e))?;
-    if version > schema() {
-        return Err(Fallible::Failed(Error::NewerFormat {
-            path: path.to_path_buf(),
-            found: version,
-            supported: schema(),
-        }));
-    }
-    Ok(version)
-}
-
 /// The newest schema version this build reads and writes.
-fn schema() -> u32 {
+pub(super) fn schema() -> u32 {
     u32::try_from(MIGRATIONS.len()).unwrap_or(u32::MAX)
 }
 
-/// The database and its WAL-mode companions under `root`.
-fn paths(root: &Path) -> [PathBuf; 3] {
-    let db = root.join(DB_FILE);
-    let side = |suffix: &str| {
-        let mut name = db.clone().into_os_string();
-        name.push(suffix);
-        PathBuf::from(name)
-    };
-    [side(""), side("-wal"), side("-shm")]
+/// The `cw-sqlite` handle for `scribe.db` under `root`, with `secure_delete`
+/// enabled so forgotten or redacted text is overwritten on freed pages.
+pub(super) fn database(root: &Path, wait: Duration) -> Db {
+    Db::new(root.join(DB_FILE), MIGRATIONS)
+        .lock_wait(wait)
+        .secure_delete(true)
 }
 
-/// Refuse the database or a companion that is a link, another user's or
-/// open to others; `Ok(false)` when the database does not exist.
-fn inspect(root: &Path) -> Result<bool> {
-    let [db, wal, shm] = paths(root);
-    cw_fs::inspect_file(&wal)?;
-    cw_fs::inspect_file(&shm)?;
-    Ok(cw_fs::inspect_file(&db)?)
+/// Convert a `cw-sqlite` error into the store's typed [`Error`], keeping its
+/// stable code, sentence, and elapsed lock wait.
+pub(super) fn from_sqlite_error(error: cw_sqlite::Error, started: Instant) -> Error {
+    match error {
+        cw_sqlite::Error::File(e) => Error::from(e),
+        cw_sqlite::Error::Missing { path } => Error::io(
+            "open",
+            path,
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ),
+        cw_sqlite::Error::Locked { path, .. } => Error::Locked {
+            path,
+            holder: String::from("another scribe.db connection"),
+            waited_ms: started.elapsed().as_millis(),
+        },
+        cw_sqlite::Error::Corrupt { path, source } => Error::corrupt(path, source),
+        cw_sqlite::Error::CheckFailed { path, problems } => {
+            Error::corrupt(path, problems.join("; "))
+        }
+        cw_sqlite::Error::Incompatible {
+            path,
+            found,
+            supported,
+        } => Error::NewerFormat {
+            path,
+            found,
+            supported,
+        },
+        cw_sqlite::Error::NotWal { path, mode } => Error::Database {
+            action: "switch to WAL",
+            path,
+            source: format!("journal_mode stayed {mode}").into(),
+        },
+        cw_sqlite::Error::Migration { path, source, .. } => Error::Database {
+            action: "migrate",
+            path,
+            source: Box::new(source),
+        },
+        cw_sqlite::Error::Sqlite {
+            action,
+            path,
+            source,
+        } => Error::Database {
+            action,
+            path,
+            source: Box::new(source),
+        },
+    }
 }
 
-/// A read-write connection: the database created owner-only if missing,
-/// WAL with a persistent WAL, `busy_timeout = wait`, migrated to
-/// [`schema`]. The caller has prepared the root. Inside a store write on
-/// this thread ([`scope::Scope`]) it is that write's connection, so the
-/// caller joins its transaction.
-pub fn open_writer(root: &Path, wait: Duration) -> Result<Rc<Connection>> {
+/// A read-write connection opened and migrated through `cw-sqlite`. Inside a
+/// store write on this thread ([`scope::Scope`]) it is that write's
+/// connection, so the caller joins its transaction.
+pub fn open_writer(root: &Path, wait: Duration) -> Result<Rc<SqliteWriter>> {
     if let Some(conn) = scope::active(root) {
         return Ok(conn);
     }
@@ -544,230 +567,49 @@ pub fn open_writer(root: &Path, wait: Duration) -> Result<Rc<Connection>> {
 }
 
 /// [`open_writer`] on a connection of its own.
-pub fn open_new_writer(root: &Path, wait: Duration) -> Result<Connection> {
-    let path = root.join(DB_FILE);
-    if !inspect(root)? {
-        files::create_empty(&path)?;
-    }
-    let mut conn = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| db_error("open", &path, e))?;
-    conn.busy_timeout(wait)
-        .map_err(|e| db_error("configure", &path, e))?;
-    let mut persist = 1;
-    conn.file_control(
-        rusqlite::DEFAULT_NAME,
-        rusqlite::FileControl::PersistWal(&mut persist),
-    )
-    .map_err(|e| db_error("configure", &path, e))?;
-    let mode = switch_to_wal(&conn, &path, wait)?;
-    if !mode.eq_ignore_ascii_case("wal") {
-        return Err(Error::Database {
-            action: "switch to WAL",
-            path,
-            source: format!("journal_mode stayed {mode}").into(),
-        });
-    }
-    // FULL: a committed window survives power loss, not only a crash.
-    // secure_delete: a deleted message's text is overwritten, not left in
-    // a free page.
-    conn.execute_batch("PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;")
-        .map_err(|e| db_error("configure", &path, e))?;
-    migrate(&mut conn, &path, wait)?;
-    Ok(conn)
-}
-
-/// Put the database in WAL mode, which stays set in the file. SQLite does
-/// not call the busy handler for a journal-mode change, so while another
-/// writer holds a new database the switch is retried every
-/// [`WAL_RETRY`], an in-process sleep (STD-03 R17), until `wait` runs out.
-fn switch_to_wal(conn: &Connection, path: &Path, wait: Duration) -> Result<String> {
+pub fn open_new_writer(root: &Path, wait: Duration) -> Result<SqliteWriter> {
     let started = Instant::now();
-    loop {
-        let current = conn.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0));
-        let mode = match current {
-            Ok(mode) if mode.eq_ignore_ascii_case("wal") => Ok(mode),
-            Ok(_) => conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0)),
-            Err(e) => Err(e),
-        };
-        match mode {
-            Ok(mode) => return Ok(mode),
-            Err(e) if is_busy(&e) && started.elapsed() < wait => std::thread::sleep(WAL_RETRY),
-            Err(e) => return Err(write_error("switch to WAL", path, started, e)),
-        }
-    }
-}
-
-/// How often [`switch_to_wal`] retries a busy database.
-const WAL_RETRY: Duration = Duration::from_millis(20);
-
-fn is_busy(e: &rusqlite::Error) -> bool {
-    matches!(
-        e.sqlite_error_code(),
-        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
-    )
-}
-
-/// Run every step past the database's `user_version`, each in its own
-/// immediate transaction that re-reads the version, so two writers racing
-/// on a new database run each step once.
-fn migrate(conn: &mut Connection, path: &Path, wait: Duration) -> Result<()> {
-    let target = schema();
-    loop {
-        let started = Instant::now();
-        // Versions 8 and 9 may have committed the deletion without finishing
-        // its physical cleanup. Version 10 is the durable completion marker.
-        // Checkpoint outside the transaction; never let a busy checkpoint
-        // erase the obligation. Recheck the version under the write lock below.
-        let observed: u32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|e| db_error("read the schema version of", path, e))?;
-        let cleaned = (8..=9).contains(&observed);
-        if cleaned {
-            let checkpoint_started = Instant::now();
-            loop {
-                let busy: i64 = conn
-                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-                    .map_err(|e| write_error("checkpoint", path, started, e))?;
-                if busy == 0 {
-                    break;
-                }
-
-                let waited = checkpoint_started.elapsed();
-                if waited >= wait {
-                    return Err(Error::Locked {
-                        path: path.to_path_buf(),
-                        holder: String::from("another scribe.db connection"),
-                        waited_ms: waited.as_millis(),
-                    });
-                }
-
-                // Another opener may have advanced the schema while this
-                // checkpoint was busy. Version 10 records completed cleanup,
-                // so it removes the obligation to checkpoint here.
-                let current: u32 = conn
-                    .query_row("PRAGMA user_version", [], |row| row.get(0))
-                    .map_err(|e| db_error("read the schema version of", path, e))?;
-                if !(8..=9).contains(&current) {
-                    break;
-                }
-
-                std::thread::sleep(WAL_RETRY.min(wait.saturating_sub(waited)));
-            }
-        }
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| write_error("migrate", path, started, e))?;
-        let version: u32 = tx
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|e| db_error("read the schema version of", path, e))?;
-        if version > target {
-            return Err(Error::NewerFormat {
-                path: path.to_path_buf(),
-                found: version,
-                supported: target,
-            });
-        }
-        if (8..=9).contains(&version) && !cleaned {
-            tx.commit()
-                .map_err(|e| write_error("migrate", path, started, e))?;
-            continue;
-        }
-        if version == target {
-            return tx
-                .commit()
-                .map_err(|e| write_error("migrate", path, started, e));
-        }
-        let index = usize::try_from(version).unwrap_or(usize::MAX);
-        let Some(step) = MIGRATIONS.get(index) else {
-            return Ok(());
-        };
-        tx.execute_batch(step)
-            .map_err(|e| db_error("migrate", path, e))?;
-        if version == 0 {
-            let created = now();
-            tx.execute(
-                "INSERT INTO meta (id, store_id, created) VALUES (1, ?1, ?2)",
-                (store_id(path, &created), &created),
-            )
-            .map_err(|e| db_error("migrate", path, e))?;
-        }
-        tx.pragma_update(None, "user_version", version + 1)
-            .map_err(|e| db_error("migrate", path, e))?;
-        tx.commit()
-            .map_err(|e| write_error("migrate", path, started, e))?;
-    }
+    database(root, wait)
+        .open_writer()
+        .map_err(|e| from_sqlite_error(e, started))
 }
 
 /// Empty the WAL after a forget committed (`TRUNCATE`), so the deleted
-/// pages leave the store. The checkpoint waits out readers through
-/// `busy_timeout`; one still reading keeps its frames until the next
-/// checkpoint, so a busy result is reported, not failed.
-pub(super) fn truncate_wal(conn: &Connection, path: &Path, started: Instant) -> Result<()> {
+/// pages leave the store. A reader still holding an older snapshot keeps its
+/// frames until the next checkpoint, so a lock timeout is logged, not failed.
+pub(super) fn truncate_wal(writer: &SqliteWriter, path: &Path) -> Result<()> {
     if let Some(root) = path.parent()
         && scope::Scope::truncate_later(root)
     {
         return Ok(());
     }
-    let busy: i64 = conn
-        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-        .map_err(|e| write_error("checkpoint", path, started, e))?;
-    if busy != 0 {
-        tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
+    let started = Instant::now();
+    match writer.checkpoint_truncate() {
+        Ok(()) => Ok(()),
+        Err(cw_sqlite::Error::Locked { .. }) => {
+            tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
+            Ok(())
+        }
+        Err(e) => Err(from_sqlite_error(e, started)),
     }
-    Ok(())
 }
 
 /// [`truncate_wal`] on a new writer connection, after a forget committed
 /// in a transaction whose connection is gone.
 pub(super) fn truncate_wal_of(root: &Path, wait: Duration) -> Result<()> {
+    if scope::Scope::truncate_later(root) {
+        return Ok(());
+    }
     let path = root.join(DB_FILE);
-    let conn = open_writer(root, wait)?;
-    truncate_wal(&conn, &path, Instant::now())
-}
-
-/// A read failure, split by whether a read-only copy could succeed.
-enum Fallible {
-    /// SQLite could not open or recover the WAL read-only: the `-wal` or
-    /// `-shm` file is missing and the directory is not writable.
-    NeedsImmutable(rusqlite::Error),
-    /// Anything else.
-    Failed(Error),
-}
-
-impl Fallible {
-    fn from_sqlite(action: &'static str, path: &Path, e: rusqlite::Error) -> Self {
-        let wal_unreadable = matches!(
-            e.sqlite_error_code(),
-            Some(ErrorCode::CannotOpen | ErrorCode::ReadOnly)
-        );
-        if wal_unreadable {
-            Self::NeedsImmutable(e)
-        } else {
-            Self::Failed(db_error(action, path, e))
+    let started = Instant::now();
+    match database(root, wait).checkpoint_truncate() {
+        Ok(()) | Err(cw_sqlite::Error::Missing { .. }) => Ok(()),
+        Err(cw_sqlite::Error::Locked { .. }) => {
+            tracing::warn!(path = %path.display(), "a reader kept forgotten messages' old pages in the WAL until the next checkpoint");
+            Ok(())
         }
+        Err(e) => Err(from_sqlite_error(e, started)),
     }
-
-    fn into_error(self) -> Error {
-        match self {
-            Self::NeedsImmutable(e) => db_error("read", Path::new(DB_FILE), e),
-            Self::Failed(e) => e,
-        }
-    }
-}
-
-fn open_reader(path: &Path, immutable: bool) -> Result<Connection, Fallible> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX
-        | OpenFlags::SQLITE_OPEN_URI;
-    let target = if immutable {
-        format!("file:{}?immutable=1", uri_path(path))
-    } else {
-        format!("file:{}", uri_path(path))
-    };
-    Connection::open_with_flags(target, flags).map_err(|e| Fallible::from_sqlite("open", path, e))
 }
 
 /// What `scribe export --as jsonl` read from `scribe.db`, with which record
@@ -788,19 +630,16 @@ pub(crate) fn read_export(
     session_tables: &[(&'static str, &str)],
     doc_tables: &[(&'static str, &str)],
 ) -> Result<DbExport> {
-    let (found, _) = memory::read(root, |conn, path| {
-        let version = refuse_newer(conn, path)?;
+    let (found, _) = memory::read(root, |conn, version, path| {
         let sessions_moved =
-            sessions::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
-        let docs_moved = docs::moved(conn).map_err(|e| Fallible::from_sqlite("read", path, e))?;
+            sessions::moved(conn, version).map_err(|e| db_error("read", path, e))?;
+        let docs_moved = docs::moved(conn, version).map_err(|e| db_error("read", path, e))?;
         let mut rows = Vec::new();
         if sessions_moved {
-            rows.extend(
-                sessions::export_rows(conn, path, session_tables).map_err(Fallible::Failed)?,
-            );
+            rows.extend(sessions::export_rows(conn, version, path, session_tables)?);
         }
         if docs_moved {
-            rows.extend(sessions::export_rows(conn, path, doc_tables).map_err(Fallible::Failed)?);
+            rows.extend(sessions::export_rows(conn, version, path, doc_tables)?);
         }
         if version >= 9 {
             let tables = [
@@ -808,7 +647,7 @@ pub(crate) fn read_export(
                 ("group_seats", "group_id, name"),
                 ("group_members", "position"),
             ];
-            rows.extend(sessions::export_rows(conn, path, &tables).map_err(Fallible::Failed)?);
+            rows.extend(sessions::export_rows(conn, version, path, &tables)?);
         }
         Ok(DbExport {
             sessions_moved,
@@ -834,20 +673,6 @@ fn store_id(path: &Path, created: &str) -> String {
         .collect()
 }
 
-/// `path` for a `file:` URI: `%`, `?` and `#` escaped, as SQLite requires.
-fn uri_path(path: &Path) -> String {
-    let mut out = String::new();
-    for c in path.to_string_lossy().chars() {
-        match c {
-            '%' => out.push_str("%25"),
-            '?' => out.push_str("%3f"),
-            '#' => out.push_str("%23"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
 /// RFC 3339 UTC, as every store time is written.
 fn stamp(at: OffsetDateTime) -> String {
     at.to_offset(time::UtcOffset::UTC)
@@ -859,35 +684,21 @@ fn now() -> String {
     stamp(OffsetDateTime::now_utc())
 }
 
-/// A write failure: `SQLITE_BUSY` past `busy_timeout` is [`Error::Locked`].
+/// A write failure: `SQLITE_BUSY` past the lock wait is [`Error::Locked`].
 pub(super) fn write_error(
     action: &'static str,
     path: &Path,
     started: Instant,
     e: rusqlite::Error,
 ) -> Error {
-    if is_busy(&e) {
-        Error::Locked {
-            path: path.to_path_buf(),
-            holder: String::from("another scribe.db writer"),
-            waited_ms: started.elapsed().as_millis(),
-        }
-    } else {
-        db_error(action, path, e)
-    }
+    from_sqlite_error(cw_sqlite::Error::sqlite(action, path, e), started)
 }
 
-/// A database failure `action` on `path`, as the store reports it: a file
-/// that is not a database or is damaged is corrupt, anything else a database error.
+/// A database failure `action` on `path`, as the store reports it: busy or
+/// locked is [`Error::Locked`], not-a-database or damaged is
+/// [`Error::Corrupt`], anything else a database error.
 pub fn db_error(action: &'static str, path: &Path, e: rusqlite::Error) -> Error {
-    match e.sqlite_error_code() {
-        Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt) => Error::corrupt(path, e),
-        Some(_) | None => Error::Database {
-            action,
-            path: path.to_path_buf(),
-            source: Box::new(e),
-        },
-    }
+    from_sqlite_error(cw_sqlite::Error::sqlite(action, path, e), Instant::now())
 }
 
 /// Restore the schema-10 shape before exercising migrations from an older version.
@@ -912,14 +723,14 @@ ALTER TABLE groups DROP COLUMN summary;
 #[cfg(any(test, feature = "test-support"))]
 pub fn meta(root: &Path) -> Result<Option<(u32, String)>> {
     let path = root.join(DB_FILE);
-    if !inspect(root)? {
-        return Ok(None);
-    }
-    let conn = open_reader(&path, false).map_err(Fallible::into_error)?;
-    let version: u32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|e| db_error("read", &path, e))?;
-    let id: Option<String> = conn
+    let started = Instant::now();
+    let reader = match database(root, crate::DEFAULT_LOCK_WAIT).read() {
+        Ok(reader) => reader,
+        Err(cw_sqlite::Error::Missing { .. }) => return Ok(None),
+        Err(e) => return Err(from_sqlite_error(e, started)),
+    };
+    let version = reader.version();
+    let id: Option<String> = reader
         .query_row("SELECT store_id FROM meta WHERE id = 1", [], |row| {
             row.get(0)
         })

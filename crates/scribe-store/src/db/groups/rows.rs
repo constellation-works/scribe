@@ -2,9 +2,9 @@
 //! chain and the close itself. The close's flow and its refusals are the
 //! caller's (`scribe-core`'s group app).
 
-use super::{Fallible, GroupRows, HOLDS_SEAT, ReadGroupRows, RowError, Rows, db_error, stamp};
+use super::{GroupRows, HOLDS_SEAT, ReadGroupRows, RowError, Rows, db_error, stamp};
 use crate::{Error, Related};
-use rusqlite::{OptionalExtension, params};
+use cw_sqlite::rusqlite::{self, OptionalExtension, params};
 use time::OffsetDateTime;
 
 /// A group's row as a close reads it ([`ReadGroupRows::header`]).
@@ -22,11 +22,7 @@ pub struct CloseHeader {
 
 impl ReadGroupRows<'_> {
     fn evidence_fail(&self, e: rusqlite::Error) -> RowError {
-        RowError(Fallible::Failed(db_error(
-            "read evidence for group close from",
-            self.path,
-            e,
-        )))
+        RowError(db_error("read evidence for group close from", self.path, e))
     }
 
     /// Group `n`'s row as a close reads it.
@@ -62,11 +58,11 @@ impl ReadGroupRows<'_> {
                 |r| r.get(0),
             )
             .map_err(|e| {
-                RowError(Fallible::Failed(db_error(
+                RowError(db_error(
                     "read seat chain for group close from",
                     self.path,
                     e,
-                )))
+                ))
             })
     }
 

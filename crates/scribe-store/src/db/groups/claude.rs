@@ -3,8 +3,9 @@
 use super::{CaptureState, GroupRows, ReadGroupRows, RowError, Rows, capture_state};
 use crate::ClaudeSeen;
 use crate::SessionId;
-use crate::db::{Fallible, refuse_newer};
-use rusqlite::{Connection, OptionalExtension};
+use crate::db::db_error;
+use crate::error::Result;
+use cw_sqlite::rusqlite::{self, Connection, OptionalExtension};
 use std::path::Path;
 
 pub(in crate::db) const V15: &str = "
@@ -62,7 +63,7 @@ impl ClaudeGroupCapture {
 impl ReadGroupRows<'_> {
     /// `session`'s capture row and its Claude transcript progress.
     pub fn claude_snapshot(&self, session: &SessionId) -> Rows<Option<ClaudeGroupCapture>> {
-        snapshot(self.conn, self.path, session).map_err(RowError)
+        snapshot(self.conn, self.version, self.path, session).map_err(RowError)
     }
 }
 
@@ -145,13 +146,14 @@ impl ClaudeSeenIds<'_, '_> {
 
 fn snapshot(
     conn: &Connection,
+    version: u32,
     path: &Path,
     session: &SessionId,
-) -> std::result::Result<Option<ClaudeGroupCapture>, Fallible> {
-    let Some(member) = capture_state(conn, path, session)? else {
+) -> Result<Option<ClaudeGroupCapture>> {
+    let Some(member) = capture_state(conn, version, path, session)? else {
         return Ok(None);
     };
-    let progress = if refuse_newer(conn, path)? >= 15 {
+    let progress = if version >= 15 {
         conn.query_row(
             "SELECT file_id, offset, modified, boundary FROM group_claude_progress WHERE position = ?1",
             [member.position],
@@ -161,7 +163,7 @@ fn snapshot(
                 modified: row.get(2)?,
                 boundary: row.get(3)?,
             }),
-        ).optional().map_err(|e| Fallible::from_sqlite("read Claude group progress from", path, e))?
+        ).optional().map_err(|e| db_error("read Claude group progress from", path, e))?
     } else {
         None
     };

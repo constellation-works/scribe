@@ -203,7 +203,7 @@ pub trait StoreTestInternals {
     /// A store write's connection (`Store::with_conn`).
     fn with_conn<T>(
         &self,
-        f: impl FnOnce(&rusqlite::Connection, &std::path::Path) -> Result<T>,
+        f: impl FnOnce(&crate::db::Conn, &std::path::Path) -> Result<T>,
     ) -> Result<T>;
 }
 
@@ -344,7 +344,7 @@ impl StoreTestInternals for Store {
     }
     fn with_conn<T>(
         &self,
-        f: impl FnOnce(&rusqlite::Connection, &std::path::Path) -> Result<T>,
+        f: impl FnOnce(&crate::db::Conn, &std::path::Path) -> Result<T>,
     ) -> Result<T> {
         Store::with_conn(self, f)
     }
