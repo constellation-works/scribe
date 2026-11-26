@@ -74,7 +74,7 @@ and the moved modules at the paths they had in it (`scribe_core::handoff`,
 ## `scribe` (binary)
 
 ```
-main.rs              capture the environment, parse, dispatch, map the result to an exit code
+main.rs              read selected configuration and log values and capture the terminal environment snapshot (composition), parse, dispatch, map the result to an exit code
 cli.rs               clap declarations
 commands/<noun>.rs   arguments -> apps::<app>::Command; outcome -> payload
 commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
@@ -147,8 +147,8 @@ runtime/
   resolve.rs         id and session resolution
   errors.rs          CommandError, read and write error mapping
   audit.rs           the audit guard around a mutating command, InstructionNote and AuditHost
-composition.rs       Env, Context: roots, config, store, redactor
-composition/host/    the runtime port traits implemented on Context: the clock, transcripts, the redactor
+composition.rs       Env, Context: roots, store and host state; on-demand redactor construction
+composition/host/    the runtime port traits implemented on Context: the clock, transcripts, redactor construction
 config.rs            config.toml shapes and parsing
 config/tags.rs       tag and capture config, including the shipped-tag merge
 config/voice.rs      the prompt half of voice
@@ -213,8 +213,10 @@ providers/           interim: the Models port, its shapes (models.rs) and adapte
 `runtime` is what every app runs against. It is `pub(crate)`: the binary never
 sees it.
 
-- Composition's `Context` owns the store, the config, the redactor and the
-  host roots. An app's `exec` lends a flow the `Ctx` built from it.
+- Composition's `Context` owns the store and host roots. It implements the
+  redaction port by building a redactor from the supplied config and the live
+  values of configured `[redact] env` variables. An app's `exec` lends a flow
+  the `Ctx` built from it.
 - `Ctx` is the borrowed view a flow receives: `store`, `config`, `clock`,
   `transcripts`, `redaction`. The port traits (`Clock`, `Transcripts`,
   `Redaction`, `AuditNotes`) are in `runtime/mod.rs`, so test fakes
@@ -231,16 +233,21 @@ sees it.
 
 `composition.rs` is the one place that resolves anything about the host.
 
-- `Env::from_process()` captures the environment variables scribe reads
-  (`SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-  `CLAUDE_CODE_ENTRYPOINT`, `SCRIBE_LOG`, the redaction variables), and the
-  process snapshot (`cw_app::Env`) that the binary's terminal decision reads
-  (color, width, format). `main.rs` calls it once and passes the values down;
-  the core never consults the snapshot. Tests build an `Env` by hand.
+- `Env::from_process()` reads `SCRIBE_ROOT`, `HOME`, `CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, `CLAUDE_CODE_ENTRYPOINT` and `SCRIBE_LOG` individually for
+  configuration and logging. It also captures the full process environment
+  once as `cw_app::Env` for the binary's terminal decision (color, width,
+  format); this snapshot can include and reread those same variables. `main.rs`
+  passes both the selected values and snapshot down, and the core does not
+  consult the terminal snapshot. Tests build an `Env` by hand. Redaction
+  variables are not captured in `Env`: `Context::redactor` reads the configured
+  `[redact] env` values live from the process environment when it builds a
+  redactor.
 - Composition picks the data directory, reads `config.toml`, opens the
-  `Store`, and builds the redactor, into one `Context` (`Context::resolve`,
-  or `Context::at` for a root the caller names, as the plugin's envelope
-  does).
+  `Store`, and resolves host paths into one `Context` (`Context::resolve`, or
+  `Context::at` for a root the caller names, as the plugin's envelope does).
+  `Context::redactor` builds a redactor on demand from the parsed config and
+  live process values for its configured `[redact] env` names.
 - Outside `composition.rs`, nothing in the core reads an environment variable
   or discovers a path. Outside `composition.rs` and `providers/`, nothing in
   the core touches a file: it reaches the data root through the store and

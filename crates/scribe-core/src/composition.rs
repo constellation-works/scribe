@@ -1,7 +1,8 @@
 //! Composition (STD-02 R2): the one place that resolves anything about the
-//! host. It captures the environment once ([`Env::from_process`]), picks the
-//! data directory, constructs the store, and hands the apps resolved values
-//! (STD-02 R3); it composes the model adapter
+//! host. It reads selected configuration and log values and captures a
+//! separate process snapshot for the terminal decision
+//! ([`Env::from_process`]), picks the data directory, constructs the store,
+//! and hands the apps resolved values (STD-02 R3); it composes the model adapter
 //! ([`ClaudeCliModels`](crate::providers::ClaudeCliModels)) and knows nothing
 //! about argument parsing or rendering. Outside this module, nothing in the
 //! core reads an environment variable or uses `std::fs` (`clippy.toml`).
@@ -11,7 +12,7 @@
 
 #![expect(
     clippy::disallowed_methods,
-    reason = "composition.rs is scribe-core's host composition root (STD-02 R3); it captures the environment and checks executable metadata on PATH"
+    reason = "composition.rs is scribe-core's host composition root (STD-02 R3); it reads selected environment values, captures the terminal snapshot and checks executable metadata on PATH"
 )]
 
 mod host;
@@ -201,8 +202,9 @@ macro_rules! state_accessor {
     };
 }
 
-/// The environment, captured once: the variables scribe reads, and the
-/// snapshot the binary's terminal decision reads.
+/// Selected configuration and log values, plus the process snapshot the
+/// binary's terminal decision reads. The snapshot is a separate full-process
+/// capture and can include values read individually for the other fields.
 #[derive(Clone, Debug, Default)]
 pub struct Env {
     /// `SCRIBE_ROOT`.
@@ -226,7 +228,9 @@ pub struct Env {
 }
 
 impl Env {
-    /// Read the variables from the real process environment, once.
+    /// Read the selected configuration and log variables, then capture the
+    /// full process environment once for the terminal decision. The snapshot
+    /// can read those selected variables again.
     #[must_use]
     pub fn from_process() -> Self {
         Self {
