@@ -223,12 +223,16 @@ pub fn run<E: PortError>(
         if transcript::user_turn(message).is_none() || cwd.is_empty() {
             continue;
         }
+        // `project` borrows `cwd`, which the literal then moves: bind both
+        // values in their original order first.
+        let prompt_sha256 = capture::prompt_sha256(&message.text());
+        let project = ctx.transcripts.project_of(Path::new(&cwd));
         let turn = Turn {
             session: session.clone(),
             at: message.at,
-            prompt_sha256: capture::prompt_sha256(&message.text()),
-            project: ctx.transcripts.project_of(Path::new(&cwd)),
+            prompt_sha256,
             cwd,
+            project,
             provider: Label::sanitized(provider.as_str(), provider.as_str()),
             host: host.clone(),
         };

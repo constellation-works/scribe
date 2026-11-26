@@ -110,6 +110,25 @@ pub struct Begun {
     pub bytes: Vec<u8>,
 }
 
+/// `session catalog`'s errors, each the variant it was before the flow moved.
+impl From<CatalogError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: CatalogError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            CatalogError::Core(e) => Self::Core(e),
+            CatalogError::Port(e) => e,
+            CatalogError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
+            CatalogError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            CatalogError::Read { what, source } => Self::Read { what, source },
+            CatalogError::SessionCataloged(id) => Self::SessionCataloged(id),
+            CatalogError::Usage(message) => Self::Usage(message),
+        }
+    }
+}
+
 /// Run `session catalog`: begin the catalog, and name the job that runs
 /// its windows.
 ///
@@ -339,23 +358,4 @@ fn recorded<E>(ctx: &Ctx<'_, E>, id: &SessionId) -> Result<bool, crate::Error> {
         skipped.path.file_stem().and_then(|stem| stem.to_str()) == Some(id.as_str())
     });
     Ok(parsed || skipped)
-}
-
-/// `session catalog`'s errors, each the variant it was before the flow moved.
-impl From<CatalogError<crate::runtime::errors::CommandError>>
-    for crate::runtime::errors::CommandError
-{
-    fn from(err: CatalogError<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            CatalogError::Core(e) => Self::Core(e),
-            CatalogError::Port(e) => e,
-            CatalogError::TranscriptNotFound { id, dir } => Self::TranscriptNotFound { id, dir },
-            CatalogError::TranscriptRefused { id, reason } => {
-                Self::TranscriptRefused { id, reason }
-            }
-            CatalogError::Read { what, source } => Self::Read { what, source },
-            CatalogError::SessionCataloged(id) => Self::SessionCataloged(id),
-            CatalogError::Usage(message) => Self::Usage(message),
-        }
-    }
 }

@@ -69,23 +69,41 @@ pub use scribe_tools::session_distill::{
 /// The most sessions one `session pass` run processes (2_design.md §5.2).
 pub const MAX_PER_RUN: usize = 5;
 
-/// The latest records of the sessions `links` point at, as pass context,
-/// in link order; a link whose session has no record in `records` is left
-/// out.
-#[must_use]
-pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<LinkedRecord> {
-    links
-        .iter()
-        .filter_map(|link| {
-            let record = records.iter().find(|r| r.id == link.session)?;
-            Some(LinkedRecord {
-                kind: link.kind,
-                session: record.id.to_string(),
-                title: record.title.clone(),
-                summary: record.summary.clone(),
-            })
-        })
-        .collect()
+/// What a pass knows about the session besides the model's answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassMeta {
+    /// The session.
+    pub id: SessionId,
+    /// The repository its cwd belongs to.
+    pub project: Project,
+    /// The tool, `claude-code`.
+    pub provider: Label,
+    /// This host.
+    pub host: Label,
+    /// The session's working directory.
+    pub cwd: String,
+    /// The transcript's first message.
+    pub started: OffsetDateTime,
+    /// When cataloging was last switched on.
+    pub on_since: OffsetDateTime,
+    /// The last message folded in: the window's last.
+    pub through: Option<String>,
+    /// The window's first message.
+    pub first_message: Option<String>,
+    /// When the window's first message was sent.
+    pub from: OffsetDateTime,
+    /// When the window's last message was sent.
+    pub to: OffsetDateTime,
+    /// Now.
+    pub now: OffsetDateTime,
+    /// Whether this is the session-end pass.
+    pub final_pass: bool,
+    /// Window message ids and timestamps in transcript order.
+    pub window: Vec<(String, OffsetDateTime)>,
+    /// Windows before automatic sealing.
+    pub segment_windows: NonZeroU32,
+    /// The route writing new segments.
+    pub origin: SegmentOrigin,
 }
 
 /// Inputs for the session model's request for one window.
@@ -106,6 +124,25 @@ pub struct RequestInput<'a> {
     pub final_pass: bool,
     /// The user's name and `[instructions] session`.
     pub voice: crate::voice::Voice,
+}
+
+/// The latest records of the sessions `links` point at, as pass context,
+/// in link order; a link whose session has no record in `records` is left
+/// out.
+#[must_use]
+pub fn linked_context(links: &[SessionLink], records: &[SessionRecord]) -> Vec<LinkedRecord> {
+    links
+        .iter()
+        .filter_map(|link| {
+            let record = records.iter().find(|r| r.id == link.session)?;
+            Some(LinkedRecord {
+                kind: link.kind,
+                session: record.id.to_string(),
+                title: record.title.clone(),
+                summary: record.summary.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Build the session-model request for one pass window.
@@ -191,43 +228,6 @@ pub fn repair(
     let mut checked = scribe_tools::session_distill::repair(answer, conversation, request)?;
     checked.candidates = candidates::check(checked.candidates, request);
     Ok(checked)
-}
-
-/// What a pass knows about the session besides the model's answer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PassMeta {
-    /// The session.
-    pub id: SessionId,
-    /// The repository its cwd belongs to.
-    pub project: Project,
-    /// The tool, `claude-code`.
-    pub provider: Label,
-    /// This host.
-    pub host: Label,
-    /// The session's working directory.
-    pub cwd: String,
-    /// The transcript's first message.
-    pub started: OffsetDateTime,
-    /// When cataloging was last switched on.
-    pub on_since: OffsetDateTime,
-    /// The last message folded in: the window's last.
-    pub through: Option<String>,
-    /// The window's first message.
-    pub first_message: Option<String>,
-    /// When the window's first message was sent.
-    pub from: OffsetDateTime,
-    /// When the window's last message was sent.
-    pub to: OffsetDateTime,
-    /// Now.
-    pub now: OffsetDateTime,
-    /// Whether this is the session-end pass.
-    pub final_pass: bool,
-    /// Window message ids and timestamps in transcript order.
-    pub window: Vec<(String, OffsetDateTime)>,
-    /// Windows before automatic sealing.
-    pub segment_windows: NonZeroU32,
-    /// The route writing new segments.
-    pub origin: SegmentOrigin,
 }
 
 /// The record a pass writes. A previous record keeps its `created`,

@@ -60,6 +60,12 @@ use crate::{Author, AuthorName, Provider, Redactor, SessionId, SessionLink, Stor
 use std::num::NonZeroU32;
 use time::OffsetDateTime;
 
+/// `session deactivate`'s command path in the audit log.
+pub const DEACTIVATE_COMMAND: &str = "session deactivate";
+
+/// `session activate`'s command path in the audit log.
+pub const ACTIVATE_COMMAND: &str = "session activate";
+
 /// A `session` command.
 pub enum Command<'i> {
     /// `session list`.
@@ -97,12 +103,6 @@ pub enum Command<'i> {
     /// `session activate`.
     Activate(ActivateInput<'i>),
 }
-
-/// `session deactivate`'s command path in the audit log.
-pub const DEACTIVATE_COMMAND: &str = "session deactivate";
-
-/// `session activate`'s command path in the audit log.
-pub const ACTIVATE_COMMAND: &str = "session activate";
 
 impl Command<'_> {
     /// What the audit log records for this command, or `None` when it is
@@ -222,44 +222,6 @@ impl Command<'_> {
     }
 }
 
-/// A catalog job step's subject: its session and author. An ordinary
-/// pass step names none.
-fn catalog_subject(
-    session: Option<&SessionId>,
-    catalog: Option<&CatalogSelection>,
-) -> AuditSubject {
-    let Some(catalog) = catalog else {
-        return AuditSubject::default();
-    };
-    AuditSubject {
-        target: session.map(|id| format!("session:{id}")),
-        author: Some(catalog.author.as_str().to_owned()),
-    }
-}
-
-/// A rebuild step's subject, from its sealed basis.
-fn rebuild_subject(basis: &RebuildBasis) -> AuditSubject {
-    AuditSubject {
-        target: Some(format!("session:{}", basis.session())),
-        author: Some(basis.author().as_str().to_owned()),
-    }
-}
-
-/// An activity verb's subject: the session a whole-session reference
-/// resolves to, and the author. A segment reference names no target.
-fn activity_subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> AuditSubject {
-    let target = id
-        .segment
-        .is_none()
-        .then(|| id.id.clone())
-        .and_then(|id| resolved_id(ctx, &id))
-        .map(|id| format!("session:{id}"));
-    AuditSubject {
-        target,
-        author: Some(author.as_str().to_owned()),
-    }
-}
-
 /// What a `session` or `transcript` command returns.
 pub enum Outcome {
     /// What `list` found.
@@ -328,6 +290,109 @@ impl<E> From<CatalogError<E>> for Error<E> {
 impl<E> From<RebuildError<E>> for Error<E> {
     fn from(err: RebuildError<E>) -> Self {
         Self::Rebuild(err)
+    }
+}
+
+/// `scribe session` and `scribe transcript`'s errors, each the variant it was
+/// before the app moved.
+impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
+    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            Error::Read(e) => e.into(),
+            Error::Write(e) => e.into(),
+            Error::Pass(e) => e.into(),
+            Error::Catalog(e) => e.into(),
+            Error::Rebuild(e) => e.into(),
+        }
+    }
+}
+
+/// A pass, catalog or rebuild writes one line per session passed (see
+/// [`PassReport`]'s lines); an activity write names its session when it
+/// changed it.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        match self {
+            Self::Passed(report) => pass_lines(report),
+            Self::PassPrepared(prepared) => prepared.settled.iter().filter_map(pass_line).collect(),
+            Self::PassApplied(applied) => applied
+                .pass
+                .as_ref()
+                .and_then(pass_line)
+                .into_iter()
+                .chain(
+                    applied
+                        .persisted_targets
+                        .iter()
+                        .chain(&applied.memory_targets)
+                        .map(|id| Line::success(Some(id.clone()))),
+                )
+                .collect(),
+            Self::PassFailed(failure) => {
+                failure.as_deref().and_then(pass_line).into_iter().collect()
+            }
+            // A switch written is one line; a resumed one writes nothing.
+            Self::CatalogBegun(begun) => {
+                if begun.wrote_switch {
+                    vec![Line::success(Some(format!("session:{}", begun.session)))]
+                } else {
+                    Vec::new()
+                }
+            }
+            // The checkpoint is private: only the finish that replaces the
+            // record is a line, as the whole rebuild was one.
+            Self::RebuildPrepared(_) | Self::RebuildApplied(_) => Vec::new(),
+            Self::RebuildFinished(finished) => finished
+                .pass
+                .as_ref()
+                .and_then(pass_line)
+                .into_iter()
+                .collect(),
+            Self::Activity(written) => Line::written(
+                Some(format!("session:{}", written.view.record.id)),
+                written.changed,
+            ),
+            // Reads: never audited (STD-01 R31).
+            Self::Listed(_) | Self::Shown(_) => vec![Line::success(None)],
+        }
+    }
+}
+
+/// A catalog job step's subject: its session and author. An ordinary
+/// pass step names none.
+fn catalog_subject(
+    session: Option<&SessionId>,
+    catalog: Option<&CatalogSelection>,
+) -> AuditSubject {
+    let Some(catalog) = catalog else {
+        return AuditSubject::default();
+    };
+    AuditSubject {
+        target: session.map(|id| format!("session:{id}")),
+        author: Some(catalog.author.as_str().to_owned()),
+    }
+}
+
+/// A rebuild step's subject, from its sealed basis.
+fn rebuild_subject(basis: &RebuildBasis) -> AuditSubject {
+    AuditSubject {
+        target: Some(format!("session:{}", basis.session())),
+        author: Some(basis.author().as_str().to_owned()),
+    }
+}
+
+/// An activity verb's subject: the session a whole-session reference
+/// resolves to, and the author. A segment reference names no target.
+fn activity_subject(ctx: &Context, id: &SessionRef, author: &AuthorName) -> AuditSubject {
+    let target = id
+        .segment
+        .is_none()
+        .then(|| id.id.clone())
+        .and_then(|id| resolved_id(ctx, &id))
+        .map(|id| format!("session:{id}"));
+    AuditSubject {
+        target,
+        author: Some(author.as_str().to_owned()),
     }
 }
 
@@ -491,71 +556,6 @@ pub(crate) fn update_session_metadata(
     redactor: &Redactor,
 ) -> crate::Result<()> {
     verbs::SessionVerbs::update_session_metadata(store, id, field, value, redactor)
-}
-
-/// `scribe session` and `scribe transcript`'s errors, each the variant it was
-/// before the app moved.
-impl From<Error<crate::runtime::errors::CommandError>> for crate::runtime::errors::CommandError {
-    fn from(err: Error<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            Error::Read(e) => e.into(),
-            Error::Write(e) => e.into(),
-            Error::Pass(e) => e.into(),
-            Error::Catalog(e) => e.into(),
-            Error::Rebuild(e) => e.into(),
-        }
-    }
-}
-
-/// A pass, catalog or rebuild writes one line per session passed (see
-/// [`PassReport`]'s lines); an activity write names its session when it
-/// changed it.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        match self {
-            Self::Passed(report) => pass_lines(report),
-            Self::PassPrepared(prepared) => prepared.settled.iter().filter_map(pass_line).collect(),
-            Self::PassApplied(applied) => applied
-                .pass
-                .as_ref()
-                .and_then(pass_line)
-                .into_iter()
-                .chain(
-                    applied
-                        .persisted_targets
-                        .iter()
-                        .chain(&applied.memory_targets)
-                        .map(|id| Line::success(Some(id.clone()))),
-                )
-                .collect(),
-            Self::PassFailed(failure) => {
-                failure.as_deref().and_then(pass_line).into_iter().collect()
-            }
-            // A switch written is one line; a resumed one writes nothing.
-            Self::CatalogBegun(begun) => {
-                if begun.wrote_switch {
-                    vec![Line::success(Some(format!("session:{}", begun.session)))]
-                } else {
-                    Vec::new()
-                }
-            }
-            // The checkpoint is private: only the finish that replaces the
-            // record is a line, as the whole rebuild was one.
-            Self::RebuildPrepared(_) | Self::RebuildApplied(_) => Vec::new(),
-            Self::RebuildFinished(finished) => finished
-                .pass
-                .as_ref()
-                .and_then(pass_line)
-                .into_iter()
-                .collect(),
-            Self::Activity(written) => Line::written(
-                Some(format!("session:{}", written.view.record.id)),
-                written.changed,
-            ),
-            // Reads: never audited (STD-01 R31).
-            Self::Listed(_) | Self::Shown(_) => vec![Line::success(None)],
-        }
-    }
 }
 
 fn pass_line(pass: &PassPayload) -> Option<Line> {

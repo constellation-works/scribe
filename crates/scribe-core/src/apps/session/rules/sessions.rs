@@ -9,6 +9,38 @@ use crate::session::{
 use std::collections::{BTreeMap, BTreeSet};
 use time::{Duration, OffsetDateTime};
 
+impl Cadence {
+    /// The due rule the `Stop` hook applies after each reply: a session that
+    /// is on needs a pass once `every_minutes` have passed since
+    /// `last_pass`, or `every_turns` user turns have arrived since it. A
+    /// session that is off is never due; one already due stays due.
+    #[must_use]
+    pub fn pass_due(
+        &self,
+        control: &SessionControl,
+        last_pass: OffsetDateTime,
+        now: OffsetDateTime,
+        turns_since: u32,
+    ) -> bool {
+        if !control.on {
+            return false;
+        }
+        let waited = now - last_pass >= Duration::minutes(i64::from(self.every_minutes.get()));
+        control.due || waited || turns_since >= self.every_turns.get()
+    }
+}
+
+/// A session that links to another one, seen from the one it links to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Child {
+    /// How the child relates to this session.
+    pub kind: LinkType,
+    /// The child session.
+    pub session: SessionId,
+    /// The child's record title.
+    pub title: String,
+}
+
 /// Whether `link` may be added to `child`'s links. `known` holds every
 /// session scribe knows (a record or a switch); `graph` every session's
 /// links, recorded or pending. `Ok(false)` means the link is already there
@@ -52,17 +84,6 @@ pub fn check_link(
         }
     }
     Ok(true)
-}
-
-/// A session that links to another one, seen from the one it links to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Child {
-    /// How the child relates to this session.
-    pub kind: LinkType,
-    /// The child session.
-    pub session: SessionId,
-    /// The child's record title.
-    pub title: String,
 }
 
 /// Every session's children, derived from the records' links: for each
@@ -138,25 +159,4 @@ pub fn tree_order(records: &[SessionRecord]) -> Vec<(usize, usize)> {
         }
     }
     out
-}
-
-impl Cadence {
-    /// The due rule the `Stop` hook applies after each reply: a session that
-    /// is on needs a pass once `every_minutes` have passed since
-    /// `last_pass`, or `every_turns` user turns have arrived since it. A
-    /// session that is off is never due; one already due stays due.
-    #[must_use]
-    pub fn pass_due(
-        &self,
-        control: &SessionControl,
-        last_pass: OffsetDateTime,
-        now: OffsetDateTime,
-        turns_since: u32,
-    ) -> bool {
-        if !control.on {
-            return false;
-        }
-        let waited = now - last_pass >= Duration::minutes(i64::from(self.every_minutes.get()));
-        control.due || waited || turns_since >= self.every_turns.get()
-    }
 }

@@ -43,6 +43,17 @@ pub struct SessionStartInput<'i> {
     pub provider: Provider,
 }
 
+/// What a session's group seat at its start adds to the hook's reply.
+#[derive(Debug, Default)]
+pub struct SeatReply {
+    /// For the agent.
+    pub context: Option<String>,
+    /// For the user.
+    pub message: Option<String>,
+    /// For the audit log.
+    pub outcomes: Vec<HookOutcome>,
+}
+
 /// Run the hook on its parsed payload. The reply's context is the
 /// restored handoff and the seat; the CLI appends the brief.
 #[must_use]
@@ -192,17 +203,6 @@ fn deferral_failure(child: &SessionId, err: &crate::Error) -> SeatReply {
             error_code: Some(err.code()),
         }],
     }
-}
-
-/// What a session's group seat at its start adds to the hook's reply.
-#[derive(Debug, Default)]
-pub struct SeatReply {
-    /// For the agent.
-    pub context: Option<String>,
-    /// For the user.
-    pub message: Option<String>,
-    /// For the audit log.
-    pub outcomes: Vec<HookOutcome>,
 }
 
 /// Seat `child` at its start: keep the seat it holds, or inherit its one

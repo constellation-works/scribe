@@ -8,19 +8,10 @@ use crate::session::{SegmentOrigin, SegmentState, SessionStatus};
 use crate::transcript::Message;
 use time::Duration;
 
-fn message(uuid: &str, role: Speaker, text: &str) -> Message {
-    Message {
-        uuid: uuid.to_owned(),
-        role,
-        at: T0,
-        blocks: vec![text.to_owned()],
-    }
-}
+const ASSISTANT: &str = "A graduated crew is one that has passed three reviews without a repair.";
 
 const DEFINED: &str =
     "by a resident orchestrator I mean one agent that stays up and owns the backlog";
-
-const ASSISTANT: &str = "A graduated crew is one that has passed three reviews without a repair.";
 
 /// A session: Daniel defines a term, the assistant defines another, a pasted
 /// log, and the synthetic turns Claude Code writes.
@@ -42,6 +33,15 @@ fn transcript() -> Vec<Message> {
         ),
         message("a-2", Speaker::Assistant, "Because the lock was held."),
     ]
+}
+
+fn message(uuid: &str, role: Speaker, text: &str) -> Message {
+    Message {
+        uuid: uuid.to_owned(),
+        role,
+        at: T0,
+        blocks: vec![text.to_owned()],
+    }
 }
 
 #[test]
@@ -254,11 +254,11 @@ fn meta(now: time::OffsetDateTime, through: &str, final_pass: bool) -> PassMeta 
         started: T0,
         on_since: T0 + Duration::minutes(1),
         through: Some(through.to_owned()),
-        now,
-        final_pass,
         first_message: Some(String::from("m-1")),
         from: T0,
         to: now,
+        now,
+        final_pass,
         window: vec![(String::from("m-1"), T0), (through.to_owned(), now)],
         segment_windows: pass::SEGMENT_WINDOWS,
         origin: SegmentOrigin::Pass,

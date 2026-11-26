@@ -39,6 +39,9 @@ use time::OffsetDateTime;
 /// The topics and terms offered to the model, at most.
 const MAX_LISTED: usize = 200;
 
+/// `session rebuild`'s audit command name.
+pub const REBUILD_COMMAND: &str = "session rebuild";
+
 /// The rebuild verbs, implemented for [`Store`].
 pub trait RebuildVerbs {
     /// The partial rebuilt record, if present. This read never locks or writes.
@@ -97,17 +100,6 @@ impl Mark {
             updated: record.updated,
         }
     }
-}
-
-/// The stored checkpoint of `id`, read in the write transaction.
-fn stored_mark(tx: &crate::Tx<'_>, id: &SessionId) -> Result<(SessionRecord, Option<Mark>)> {
-    let loaded = tx.sessions().loaded()?;
-    if loaded.forgotten.contains_key(id) {
-        return Err(forgotten_refusal(id, "nothing is written to it"));
-    }
-    let current = tx.sessions().get(id)?.record;
-    let mark = tx.sessions().checkpoint(&current)?.as_ref().map(Mark::of);
-    Ok((current, mark))
 }
 
 impl RebuildVerbs for Store {
@@ -177,9 +169,6 @@ impl RebuildVerbs for Store {
         })
     }
 }
-
-/// `session rebuild`'s audit command name.
-pub const REBUILD_COMMAND: &str = "session rebuild";
 
 /// What `session rebuild` checks before it names the job.
 pub struct RebuildInput<'i> {
@@ -571,54 +560,6 @@ struct Admitted {
     redactor: Redactor,
 }
 
-fn admit<E: PortError>(
-    ctx: &Ctx<'_, E>,
-    input: &SessionId,
-    author: &AuthorName,
-    confirm: bool,
-) -> std::result::Result<Admitted, RebuildError<E>> {
-    check_agent_author(author)?;
-    let store = ctx.store;
-    let id = store.read().sessions().resolve(input)?;
-    // Refused before the confirm check, the transcript and any model call.
-    refuse_forgotten(store, &id)?;
-    let original = store.read().sessions().get(&id)?.record;
-    let provider: Provider = original
-        .provider
-        .as_str()
-        .parse()
-        .map_err(RebuildError::Usage)?;
-    if !confirm {
-        return Err(RebuildError::ConfirmRequired {
-            id: id.clone(),
-            segments: original.log.len(),
-            passes: original.passes,
-        });
-    }
-    refuse_busy(&store.read().sessions().control()?, &id)?;
-    let path = ctx
-        .transcripts
-        .files(provider)
-        .map_err(RebuildError::Port)?
-        .into_iter()
-        .find(|(found, _)| *found == id)
-        .map(|(_, path)| path)
-        .ok_or_else(|| RebuildError::TranscriptMissing(id.clone()))?;
-    let config = store.read().tags().config()?.for_provider(provider);
-    let redactor = ctx
-        .redaction
-        .redactor(&config)
-        .map_err(RebuildError::Port)?;
-    Ok(Admitted {
-        id,
-        original,
-        provider,
-        path,
-        config,
-        redactor,
-    })
-}
-
 impl Admitted {
     /// The transcript's messages, its provenance re-checked on the handle
     /// the bytes come from.
@@ -651,9 +592,9 @@ impl Admitted {
             return Err(RebuildError::TranscriptMissing(self.id.clone()));
         }
         Ok(Transcript {
-            cwd: transcript::cwd(&bytes).unwrap_or_default(),
             messages,
             conversation,
+            cwd: transcript::cwd(&bytes).unwrap_or_default(),
         })
     }
 
@@ -767,6 +708,97 @@ struct Window {
     through: String,
     final_window: bool,
     digest: String,
+}
+
+/// `session rebuild`'s errors, each the variant it was before the flow moved.
+impl From<RebuildError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: RebuildError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            RebuildError::Core(e) => Self::Core(e),
+            RebuildError::Port(e) => e,
+            RebuildError::Usage(message) => Self::Usage(message),
+            RebuildError::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            } => Self::ConfirmRequired {
+                id,
+                segments,
+                passes,
+            },
+            RebuildError::TranscriptMissing(id) => Self::TranscriptMissing(id),
+            RebuildError::TranscriptRefused { id, reason } => {
+                Self::TranscriptRefused { id, reason }
+            }
+            RebuildError::Read { what, source } => Self::Read { what, source },
+            RebuildError::Input(message) => Self::Usage(message.to_owned()),
+            RebuildError::Step(error) => Self::SessionPassStep {
+                code: error.code,
+                message: error.message,
+            },
+        }
+    }
+}
+
+fn admit<E: PortError>(
+    ctx: &Ctx<'_, E>,
+    input: &SessionId,
+    author: &AuthorName,
+    confirm: bool,
+) -> std::result::Result<Admitted, RebuildError<E>> {
+    check_agent_author(author)?;
+    let store = ctx.store;
+    let id = store.read().sessions().resolve(input)?;
+    // Refused before the confirm check, the transcript and any model call.
+    refuse_forgotten(store, &id)?;
+    let original = store.read().sessions().get(&id)?.record;
+    let provider: Provider = original
+        .provider
+        .as_str()
+        .parse()
+        .map_err(RebuildError::Usage)?;
+    if !confirm {
+        return Err(RebuildError::ConfirmRequired {
+            id: id.clone(),
+            segments: original.log.len(),
+            passes: original.passes,
+        });
+    }
+    refuse_busy(&store.read().sessions().control()?, &id)?;
+    let path = ctx
+        .transcripts
+        .files(provider)
+        .map_err(RebuildError::Port)?
+        .into_iter()
+        .find(|(found, _)| *found == id)
+        .map(|(_, path)| path)
+        .ok_or_else(|| RebuildError::TranscriptMissing(id.clone()))?;
+    let config = store.read().tags().config()?.for_provider(provider);
+    let redactor = ctx
+        .redaction
+        .redactor(&config)
+        .map_err(RebuildError::Port)?;
+    Ok(Admitted {
+        id,
+        original,
+        provider,
+        path,
+        config,
+        redactor,
+    })
+}
+
+/// The stored checkpoint of `id`, read in the write transaction.
+fn stored_mark(tx: &crate::Tx<'_>, id: &SessionId) -> Result<(SessionRecord, Option<Mark>)> {
+    let loaded = tx.sessions().loaded()?;
+    if loaded.forgotten.contains_key(id) {
+        return Err(forgotten_refusal(id, "nothing is written to it"));
+    }
+    let current = tx.sessions().get(id)?.record;
+    let mark = tx.sessions().checkpoint(&current)?.as_ref().map(Mark::of);
+    Ok((current, mark))
 }
 
 /// Bind the window's messages, the cwd and the transcript through its end.
@@ -1183,37 +1215,5 @@ pub(crate) fn finish<E: PortError>(
         }),
         Finished::Rebased(next) => Ok(not_yet(Some(next))),
         Finished::Stale => Ok(not_yet(None)),
-    }
-}
-
-/// `session rebuild`'s errors, each the variant it was before the flow moved.
-impl From<RebuildError<crate::runtime::errors::CommandError>>
-    for crate::runtime::errors::CommandError
-{
-    fn from(err: RebuildError<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            RebuildError::Core(e) => Self::Core(e),
-            RebuildError::Port(e) => e,
-            RebuildError::Usage(message) => Self::Usage(message),
-            RebuildError::ConfirmRequired {
-                id,
-                segments,
-                passes,
-            } => Self::ConfirmRequired {
-                id,
-                segments,
-                passes,
-            },
-            RebuildError::TranscriptMissing(id) => Self::TranscriptMissing(id),
-            RebuildError::TranscriptRefused { id, reason } => {
-                Self::TranscriptRefused { id, reason }
-            }
-            RebuildError::Read { what, source } => Self::Read { what, source },
-            RebuildError::Input(message) => Self::Usage(message.to_owned()),
-            RebuildError::Step(error) => Self::SessionPassStep {
-                code: error.code,
-                message: error.message,
-            },
-        }
     }
 }

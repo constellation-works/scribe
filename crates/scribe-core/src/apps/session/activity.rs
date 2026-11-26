@@ -24,26 +24,6 @@ pub struct SessionRef {
     pub segment: Option<NonZeroU32>,
 }
 
-/// `<id>`, `session:<id>` or `session:<id>#<n>`.
-///
-/// # Errors
-///
-/// A segment that is not a number from 1, or an invalid id.
-pub fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
-    let rest = raw.strip_prefix("session:").unwrap_or(raw);
-    let (id, segment) = match rest.split_once('#') {
-        Some((id, n)) => {
-            let n = n.parse::<NonZeroU32>().map_err(|_| {
-                format!("invalid segment '{n}' in '{raw}': expected session:<id>#<n> with n from 1")
-            })?;
-            (id, Some(n))
-        }
-        None => (rest, None),
-    };
-    let id = id.parse::<SessionId>().map_err(|e| e.to_string())?;
-    Ok(SessionRef { id, segment })
-}
-
 /// What `session deactivate` runs.
 pub struct DeactivateInput<'i> {
     /// The session.
@@ -78,6 +58,26 @@ pub struct ActivityWritten {
     pub changed: bool,
     /// Notices for the user.
     pub notices: Vec<String>,
+}
+
+/// `<id>`, `session:<id>` or `session:<id>#<n>`.
+///
+/// # Errors
+///
+/// A segment that is not a number from 1, or an invalid id.
+pub fn parse_session_ref(raw: &str) -> Result<SessionRef, String> {
+    let rest = raw.strip_prefix("session:").unwrap_or(raw);
+    let (id, segment) = match rest.split_once('#') {
+        Some((id, n)) => {
+            let n = n.parse::<NonZeroU32>().map_err(|_| {
+                format!("invalid segment '{n}' in '{raw}': expected session:<id>#<n> with n from 1")
+            })?;
+            (id, Some(n))
+        }
+        None => (rest, None),
+    };
+    let id = id.parse::<SessionId>().map_err(|e| e.to_string())?;
+    Ok(SessionRef { id, segment })
 }
 
 /// `session deactivate`.

@@ -28,6 +28,9 @@ use crate::runtime::{Ctx, Discovered};
 use crate::{Provider, SessionId, Store};
 use std::path::Path;
 
+/// The most sessions one line may name: each is a transcript read.
+pub const MAX_SESSIONS: usize = 32;
+
 /// What a typed `group add` line runs on.
 pub struct GroupAddInput<'i> {
     /// The group's slug, as typed.
@@ -41,9 +44,6 @@ pub struct GroupAddInput<'i> {
     /// The provider whose hook this is.
     pub provider: Provider,
 }
-
-/// The most sessions one line may name: each is a transcript read.
-pub const MAX_SESSIONS: usize = 32;
 
 /// Apply a typed `group add` line, reading each named session's past
 /// transcript with `read_past`.

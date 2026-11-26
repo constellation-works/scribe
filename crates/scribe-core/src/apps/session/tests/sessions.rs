@@ -1,50 +1,3 @@
-use super::T0;
-use crate::session::{Cadence, SessionControl};
-use std::num::NonZeroU32;
-use time::Duration;
-
-fn on(due: bool) -> SessionControl {
-    SessionControl {
-        provider: crate::Provider::ClaudeCode,
-        on: true,
-        since: Some(T0),
-        due,
-        final_pass: false,
-        consecutive_failures: 0,
-        retry_after: None,
-        pending_links: Vec::new(),
-        cataloged_by: None,
-    }
-}
-
-fn cadence() -> Cadence {
-    Cadence {
-        every_minutes: NonZeroU32::new(20).unwrap(),
-        every_turns: NonZeroU32::new(10).unwrap(),
-    }
-}
-
-#[test]
-fn a_pass_is_due_after_the_minutes_or_the_turns_and_never_when_off() {
-    let c = cadence();
-    let last = T0;
-    assert!(!c.pass_due(&on(false), last, last + Duration::minutes(19), 9));
-    assert!(c.pass_due(&on(false), last, last + Duration::minutes(20), 0));
-    assert!(c.pass_due(&on(false), last, last + Duration::minutes(1), 10));
-    assert!(c.pass_due(&on(true), last, last, 0), "a due pass stays due");
-    let off = SessionControl {
-        provider: crate::Provider::ClaudeCode,
-        on: false,
-        ..on(true)
-    };
-    assert!(!c.pass_due(&off, last, last + Duration::hours(5), 99));
-}
-
-#[test]
-fn the_default_cadence_is_twenty_minutes_or_ten_turns() {
-    assert_eq!(Cadence::default(), cadence());
-}
-
 mod links {
     use super::super::{T0, session};
     use crate::session::{
@@ -154,4 +107,51 @@ mod links {
         assert_eq!(order.len(), 3);
         assert!(order.iter().all(|(depth, _)| *depth == 0));
     }
+}
+
+use super::T0;
+use crate::session::{Cadence, SessionControl};
+use std::num::NonZeroU32;
+use time::Duration;
+
+fn on(due: bool) -> SessionControl {
+    SessionControl {
+        provider: crate::Provider::ClaudeCode,
+        on: true,
+        since: Some(T0),
+        due,
+        final_pass: false,
+        consecutive_failures: 0,
+        retry_after: None,
+        pending_links: Vec::new(),
+        cataloged_by: None,
+    }
+}
+
+fn cadence() -> Cadence {
+    Cadence {
+        every_minutes: NonZeroU32::new(20).unwrap(),
+        every_turns: NonZeroU32::new(10).unwrap(),
+    }
+}
+
+#[test]
+fn a_pass_is_due_after_the_minutes_or_the_turns_and_never_when_off() {
+    let c = cadence();
+    let last = T0;
+    assert!(!c.pass_due(&on(false), last, last + Duration::minutes(19), 9));
+    assert!(c.pass_due(&on(false), last, last + Duration::minutes(20), 0));
+    assert!(c.pass_due(&on(false), last, last + Duration::minutes(1), 10));
+    assert!(c.pass_due(&on(true), last, last, 0), "a due pass stays due");
+    let off = SessionControl {
+        provider: crate::Provider::ClaudeCode,
+        on: false,
+        ..on(true)
+    };
+    assert!(!c.pass_due(&off, last, last + Duration::hours(5), 99));
+}
+
+#[test]
+fn the_default_cadence_is_twenty_minutes_or_ten_turns() {
+    assert_eq!(Cadence::default(), cadence());
 }
