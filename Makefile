@@ -29,8 +29,8 @@ endef
 help:
 	@echo "scribe make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate, no compile: fmt, structure, readme-links, standards-check"
-	@echo "  make ci-lint          clippy -D warnings + cargo-deny (skipped locally if not installed)"
+	@echo "  make ci-fast          Pre-handoff gate: fmt, structure, readme-links, standards-check (no scribe build; compiles Clippy fixtures, needs clippy)"
+	@echo "  make ci-lint          clippy -D warnings (required) + cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make goldens          Compare --help and output goldens with the built binary"
 	@echo "  make goldens UPDATE=1 Regenerate goldens after an intended surface change"
@@ -58,11 +58,14 @@ fmt-check:
 	$(CARGO) fmt --all -- --check
 	rustfmt --check $(TEST_CASES)
 
-# Source-only structure checks: the architecture map (STD-02 R43), dependency
+# Structure checks: the architecture map (STD-02 R43), dependency
 # direction (STD-02 R1-R6), unit-test module reachability (STD-02 R19),
 # terminal/stream ownership (STD-01 R17), current-format claims in the store
 # spec against FORMAT, and the cases that test those gates themselves
-# (STD-04 R2, R12).
+# (STD-04 R2, R12). Only the Clippy cases in check-gates.sh compile: they build
+# small fixture crates with cargo clippy, so structure needs the clippy
+# component and fails without it (STD-04 R10). The other checks read manifests
+# (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
 	python3 scripts/sync-skills.py --check
@@ -144,9 +147,10 @@ standards-check:
 		echo "         from the constellation root: operations/scripts/sync-standards.sh --adopt STD-01,STD-02,STD-03,STD-04,STD-05 <this repo>" >&2; \
 	fi
 
-# Pre-handoff gate for agents: no compile, and every parity check CI runs
-# that needs no build (STD-04 R12). Goldens need the binary, so they are
-# their own target.
+# Pre-handoff gate for agents: every parity check CI runs that needs no build
+# of scribe (STD-04 R12). It compiles the small Clippy fixture crates that
+# structure runs, so it needs cargo clippy. Goldens need the binary, so they
+# are their own target.
 ci-fast: fmt-check structure readme-links standards-check
 
 ci-lint: clippy deny

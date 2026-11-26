@@ -518,7 +518,7 @@ scripts/               gates run by make ci-fast (structure, README links)
 ## Development
 
 ```sh
-make ci-fast          # fmt, structure checks, README links, standards-check; no compile
+make ci-fast          # fmt, structure checks, README links, standards-check; builds no scribe crate, but compiles the Clippy fixtures
 make ci-lint          # clippy -D warnings, plus cargo-deny
 make test             # nextest when installed, else cargo test; then doctests
 make goldens          # compare help and output with the built binary
@@ -529,6 +529,13 @@ make ci               # all of the above; what CI runs
 `cargo-deny` and `cargo-nextest` are optional locally (the Makefile warns and
 skips or falls back). CI installs both at pinned versions, and there a missing
 tool fails. `make standards-check` runs `docs/standards/check.sh`.
+
+`clippy` is required, not optional. `make ci-fast` compiles the Clippy boundary
+fixtures that `structure` runs (`scripts/tests/check-gates.sh`), and `make ci-lint`
+runs `clippy`. A missing component fails the gate rather than skipping it
+(STD-04 R10); add it with `rustup component add clippy`. The fixtures first
+fetch the locked kit dependencies, so a cold cargo cache needs network for that
+step. CI installs `clippy` with its pinned toolchain.
 
 Every line in the root [README](../README.md) and every command example in this
 guide that starts with `scribe ` is parsed by
