@@ -543,6 +543,36 @@ printf 'pub fn format_name() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
   >"$core/crates/scribe-core/src/format_name.rs"
 expect fail check-terminal-guard.sh "$core" "a core module naming SCRIBE_FORMAT"
 
+# An unusable root scans nothing, so the guard must fail closed (STD-04
+# R10): no crates tree, a file named crates, or no Rust sources under
+# crates/. A valid clean tree still passes (guard-clean above); grep's
+# ordinary no-match stays a pass.
+empty_root="$work/guard-no-crates"
+mkdir -p "$empty_root"
+expect fail check-terminal-guard.sh "$empty_root" "a root with no crates tree"
+if ! grep -Fq "terminal-guard: cannot scan" "$work/out"; then
+  echo "check-gates: FAIL: missing cannot-scan diagnostic for a root with no crates" >&2
+  fail=1
+fi
+
+file_root="$work/guard-crates-file"
+mkdir -p "$file_root"
+printf 'not a directory\n' >"$file_root/crates"
+expect fail check-terminal-guard.sh "$file_root" "a root where crates is a plain file"
+if ! grep -Fq "terminal-guard: cannot scan" "$work/out"; then
+  echo "check-gates: FAIL: missing cannot-scan diagnostic for a crates file" >&2
+  fail=1
+fi
+
+norust_root="$work/guard-no-rust"
+mkdir -p "$norust_root/crates/scribe/src"
+printf '[package]\nname = "scribe"\n' >"$norust_root/crates/scribe/Cargo.toml"
+expect fail check-terminal-guard.sh "$norust_root" "a crates tree with no Rust sources"
+if ! grep -Fq "terminal-guard: cannot scan" "$work/out"; then
+  echo "check-gates: FAIL: missing cannot-scan diagnostic for a crates tree with no Rust" >&2
+  fail=1
+fi
+
 # --- clippy.toml: disallowed host operations in scribe-core (STD-02 R6) ----
 # Build a minimal workspace inheriting [workspace.lints] and clippy.toml so
 # every host operation banned in scribe-core fails regardless of path spelling
