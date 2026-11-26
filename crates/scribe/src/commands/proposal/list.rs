@@ -1,5 +1,5 @@
 use super::outcome::output;
-use crate::commands::DateArgs;
+use crate::commands::{AuthorKindArg, DateArgs};
 use crate::{error::CliError, output::Output};
 use clap::Args;
 use scribe_core::apps::proposal::{self, Command, exec};
@@ -30,7 +30,7 @@ pub(crate) struct ListArgs {
 
     /// Only proposals opened through this channel: user, agent (proposal add) or scribe (consistency or session pass) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
-    pub(crate) author_kind: Option<AuthorKindArg>,
+    pub(in crate::commands) author_kind: Option<AuthorKindArg>,
 }
 
 /// A proposal's settlement state.
@@ -42,17 +42,6 @@ pub(crate) enum StateArg {
     Approved,
     // Closed without applying.
     Rejected,
-}
-
-/// Who opened a proposal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum AuthorKindArg {
-    // The user, through a typed #scribe line.
-    User,
-    // An agent, through proposal add.
-    Agent,
-    // scribe's consistency routine.
-    Scribe,
 }
 
 pub(super) fn run(args: ListArgs, ctx: &Context) -> Result<Output, CliError> {
@@ -70,11 +59,7 @@ fn list_input(args: &ListArgs) -> proposal::ListInput<'_> {
             }),
             dates: scribe_core::DateRange::default(),
             entry: None,
-            author_kind: args.author_kind.map(|k| match k {
-                AuthorKindArg::User => AuthorKind::User,
-                AuthorKindArg::Agent => AuthorKind::Agent,
-                AuthorKindArg::Scribe => AuthorKind::Scribe,
-            }),
+            author_kind: args.author_kind.map(AuthorKind::from),
         },
         entry: args.entry.as_deref(),
         since: args.dates.since,

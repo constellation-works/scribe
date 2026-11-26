@@ -1,6 +1,6 @@
 use super::output;
-use super::{EntryAuthorKind, parse_instant, state_parser, status_parser};
-use crate::commands::DateArgs;
+use super::{parse_instant, state_parser, status_parser};
+use crate::commands::{AuthorKindArg, DateArgs};
 use crate::{error::CliError, output::Output};
 use clap::Args;
 use scribe_core::apps::entry::{self, Command, exec};
@@ -66,7 +66,7 @@ pub(crate) struct ListArgs {
 
     /// Only entries written through this channel: user (a #scribe line or an approval), agent (entry add) or scribe (an idea the session pass captured) [default: any]
     #[arg(long, value_name = "KIND", value_enum)]
-    pub(crate) author_kind: Option<EntryAuthorKind>,
+    pub(in crate::commands) author_kind: Option<AuthorKindArg>,
 
     /// Only open items in this derived state; repeat it to accept any of them [default: any entry]
     #[arg(long, value_name = "STATE", value_parser = state_parser())]
