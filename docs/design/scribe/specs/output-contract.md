@@ -957,8 +957,10 @@ keeps its private checkpoint after a failure, and resumes it on another job
 run; it does not change the control switch (see [design §19.3.4](../2_design.md#1934-session-rebuild-scribe-session-rebuild-job)).
 Missing `--confirm` refuses with `confirm_required`, naming the current
 segment and pass counts; `transcript_missing` and `session_busy` also refuse
-before model calls. One audit line names `session:<id>` for success or
-refusal. (Format 19) A
+before model calls. The preflight writes one failure audit line naming
+`session:<id>` on refusal and no audit line on success. The
+`scribe-session-rebuild` job writes one success audit line from its `finish`
+step when the rebuilt record replaces the visible one. (Format 19) A
 pass also carries `memory_written` (format 25: `now` and milestone files
 written across persisted windows), (format 25) `memory_pending` (undated
 `now` candidates kept), `memory_promoted` and `memory_proposed` (both
@@ -978,9 +980,13 @@ job run resumes it (see [design §19.3.3](../2_design.md#1933-session-catalog-sc
 The preflight succeeds with exit 0 and cannot return `session_pass_failed`.
 It refuses `session_cataloged` when a session has a record or an existing
 switch that cannot resume. A catalog switch with `cataloged_by` that is
-still on and due can resume, even when it has a partial record. When this
-run writes the switch, the audit log gains a success line for that switch
-ahead of the pass line; both name `session:<id>`.
+still on and due can resume, even when it has a partial record. The preflight
+itself emits no pass audit line: its `waiting` result is not a pass line. It
+writes one switch success line targeting `session:<id>` only when it writes
+the switch; resuming an existing due switch writes no audit line. In the
+`scribe-session-catalog` job, `begin` writes that switch success line only
+when it writes the switch, and later `apply` or `fail` steps write their own
+`session catalog` audit lines.
 `warnings` is an array of strings, empty when no deterministic repair was
 persisted in this invocation. After the existing one model retry, scribe
 repairs header budget overruns (sentence or bullet boundary, else a word
