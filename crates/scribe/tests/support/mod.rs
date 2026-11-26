@@ -21,20 +21,21 @@ use std::process::{Child, Command, Output};
 /// paragraph of two sentences (2_design.md §15.3).
 pub const CONTEXT_TAIL: &str = "The user and the agent discussed it in this session.";
 
-/// The context paragraph a test claim stating `said`
-/// carries: `said`, then [`CONTEXT_TAIL`].
-pub fn context_of(said: &str) -> String {
-    let said = said.trim();
-    let end = if said.ends_with(['.', '!', '?']) {
-        ""
-    } else {
-        "."
-    };
-    format!("{said}{end} {CONTEXT_TAIL}")
-}
-
 /// The binary under test, exactly as cargo built it (STD-01 R24).
 pub const BIN: &str = env!("CARGO_BIN_EXE_scribe");
+
+/// The `idea` catcher that shipped before phase 2 (2_design.md §15.9),
+/// now a config example: tests that catch ideas declare it.
+pub const IDEA_CATCHER: &str = r#"[tags.idea]
+action = true
+description = "a future consideration worth revisiting"
+[tags.idea.capture]
+from = "user"
+route = "write"
+triggers = ["have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we"]
+criteria = "The user proposes something that could be built, changed or tried, and the session does not carry it out."
+not = "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out."
+"#;
 
 /// A temporary home and data root, deleted on drop.
 pub struct Fixture {
@@ -143,6 +144,47 @@ impl Fixture {
     pub fn seed(&self) {
         copy_private(&fixture_store(), &self.root());
     }
+}
+
+/// A spawned child that is killed and reaped if the test ends early, panics
+/// included (STD-03 R18).
+pub struct ChildGuard(Option<Child>);
+
+impl ChildGuard {
+    pub fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    pub fn child(&mut self) -> &mut Child {
+        self.0.as_mut().expect("child not yet finished")
+    }
+
+    /// Wait for the child and collect what is left of its output.
+    pub fn finish(mut self) -> Output {
+        let child = self.0.take().expect("child not yet finished");
+        child.wait_with_output().expect("wait for child")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// The context paragraph a test claim stating `said`
+/// carries: `said`, then [`CONTEXT_TAIL`].
+pub fn context_of(said: &str) -> String {
+    let said = said.trim();
+    let end = if said.ends_with(['.', '!', '?']) {
+        ""
+    } else {
+        "."
+    };
+    format!("{said}{end} {CONTEXT_TAIL}")
 }
 
 /// The checked-in fixture store: `scribe.db` with its stamps, as a phase-7
@@ -347,35 +389,6 @@ pub fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).expect("utf-8 output")
 }
 
-/// A spawned child that is killed and reaped if the test ends early, panics
-/// included (STD-03 R18).
-pub struct ChildGuard(Option<Child>);
-
-impl ChildGuard {
-    pub fn new(child: Child) -> Self {
-        Self(Some(child))
-    }
-
-    pub fn child(&mut self) -> &mut Child {
-        self.0.as_mut().expect("child not yet finished")
-    }
-
-    /// Wait for the child and collect what is left of its output.
-    pub fn finish(mut self) -> Output {
-        let child = self.0.take().expect("child not yet finished");
-        child.wait_with_output().expect("wait for child")
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
 /// Make `path` owner-only (`0700` for a directory, `0600` for a file), as
 /// the binary itself creates store state (STD-05 R8).
 pub fn make_private(path: &Path) {
@@ -459,19 +472,6 @@ pub fn write_entries(root: &Path, count: usize) {
     let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
     seed_records(root, &refs);
 }
-
-/// The `idea` catcher that shipped before phase 2 (2_design.md §15.9),
-/// now a config example: tests that catch ideas declare it.
-pub const IDEA_CATCHER: &str = r#"[tags.idea]
-action = true
-description = "a future consideration worth revisiting"
-[tags.idea.capture]
-from = "user"
-route = "write"
-triggers = ["have * an idea", "had an idea", "here's an idea", "what do you think about * idea", "what if we"]
-criteria = "The user proposes something that could be built, changed or tried, and the session does not carry it out."
-not = "A direction to act now; a preference; a question of fact; an idea the session goes on to carry out."
-"#;
 
 /// [`IDEA_CATCHER`] on `route` instead of `write`.
 pub fn idea_catcher_on(route: &str) -> String {

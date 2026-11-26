@@ -8,6 +8,16 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
+pub(super) const CURRENT: &str = "3d6a8c12-4e5f-4061-c8d9-0e1f2a3b4c5d";
+
+pub(super) const PREVIOUS: &str = "1b4e6a90-2c3d-4e5f-a6b7-8c9d0e1f2a3b";
+
+pub(super) const NEWER: &str = "2c5f7b01-3d4e-4f60-b7c8-9d0e1f2a3b4c";
+
+pub(super) const MARKED: &str = "I always want short status updates #scribe preferences";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -17,15 +27,6 @@ impl Fixture {
     ) -> E::Output {
         input.into().run(self, &["hook"], expect)
     }
-}
-
-pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
-
-fn fixture(name: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/hooks")
-        .join(name);
-    std::fs::read_to_string(path).unwrap()
 }
 
 /// A Claude Code layout under the fixture's home: the transcript path for
@@ -74,6 +75,13 @@ impl Claude {
         std::fs::write(&self.transcript, text).unwrap();
         make_private(&self.transcript);
     }
+}
+
+fn fixture(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/hooks")
+        .join(name);
+    std::fs::read_to_string(path).unwrap()
 }
 
 pub(super) fn now_rfc3339() -> String {
@@ -267,12 +275,6 @@ pub(super) fn listed(fx: &Fixture, project: &str) -> Vec<Value> {
         .clone()
 }
 
-pub(super) const CURRENT: &str = "3d6a8c12-4e5f-4061-c8d9-0e1f2a3b4c5d";
-
-pub(super) const PREVIOUS: &str = "1b4e6a90-2c3d-4e5f-a6b7-8c9d0e1f2a3b";
-
-pub(super) const NEWER: &str = "2c5f7b01-3d4e-4f60-b7c8-9d0e1f2a3b4c";
-
 /// A non-git directory whose project name is its basename, `scribe`.
 pub(super) fn project_cwd(fx: &Fixture) -> PathBuf {
     let cwd = fx.elsewhere("work/scribe");
@@ -424,8 +426,6 @@ pub(super) fn write_config(fx: &Fixture, body: &str) {
     std::fs::write(&config, body).unwrap();
     make_private(&config);
 }
-
-pub(super) const MARKED: &str = "I always want short status updates #scribe preferences";
 
 pub(super) fn hook_path(
     fx: &Fixture,

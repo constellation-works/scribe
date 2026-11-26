@@ -8,17 +8,6 @@ use crate::support::{Fixture, text};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-impl Fixture {
-    #[track_caller]
-    pub(crate) fn check<'a, E: Expectation>(
-        &self,
-        input: impl Into<Input<'a>>,
-        expect: E,
-    ) -> E::Output {
-        input.into().run(self, &["group"], expect)
-    }
-}
-
 pub(super) const A: &str = "11111111-1111-4111-8111-111111111111";
 
 pub(super) const B: &str = "22222222-2222-4222-8222-222222222222";
@@ -45,6 +34,40 @@ pub(super) const OPEN: &[&str] = &[
 ];
 
 pub(super) const HANDOFF: &str = "## State\nReady\n## In flight\nReview\n## Next\nShip\n## Waiting on you\nNone\n## Do not touch\nArchive\n## Pointers\nREADME.md";
+
+pub(super) const OLD: &str = "2020-01-01T00:00:00Z";
+
+impl Fixture {
+    #[track_caller]
+    pub(crate) fn check<'a, E: Expectation>(
+        &self,
+        input: impl Into<Input<'a>>,
+        expect: E,
+    ) -> E::Output {
+        input.into().run(self, &["group"], expect)
+    }
+}
+
+/// Restores owner access to a path a test made unreadable, even on a panic.
+#[cfg(unix)]
+pub(super) struct RestoreMode(PathBuf, u32);
+
+#[cfg(unix)]
+impl RestoreMode {
+    pub(super) fn lock(path: &std::path::Path, restore: u32) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Self(path.to_path_buf(), restore)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RestoreMode {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+    }
+}
 
 pub(super) fn row(session: &str, id: &str, role: &str, body: &str) -> Value {
     json!({"sessionId":session,"uuid":id,"type":role,"entrypoint":"cli",
@@ -283,27 +306,6 @@ pub(super) fn assert_close_refused_with(
     error
 }
 
-/// Restores owner access to a path a test made unreadable, even on a panic.
-#[cfg(unix)]
-pub(super) struct RestoreMode(PathBuf, u32);
-
-#[cfg(unix)]
-impl RestoreMode {
-    pub(super) fn lock(path: &std::path::Path, restore: u32) -> Self {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
-        Self(path.to_path_buf(), restore)
-    }
-}
-
-#[cfg(unix)]
-impl Drop for RestoreMode {
-    fn drop(&mut self) {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
-    }
-}
-
 pub(super) fn close_with_summary_error(f: &Fixture) -> Value {
     let out = f.check(
         with_env(
@@ -397,8 +399,6 @@ pub(super) fn member_rows(f: &Fixture) -> i64 {
     .query_row("SELECT COUNT(*) FROM group_members", [], |r| r.get(0))
     .unwrap()
 }
-
-pub(super) const OLD: &str = "2020-01-01T00:00:00Z";
 
 pub(super) fn row_at(session: &str, id: &str, role: &str, body: &str, at: &str) -> Value {
     let mut row = row(session, id, role, body);

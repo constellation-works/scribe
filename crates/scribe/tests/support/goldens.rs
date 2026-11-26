@@ -7,17 +7,6 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Output;
 
-impl Fixture {
-    #[track_caller]
-    pub(crate) fn check<'a, E: Expectation>(
-        &self,
-        input: impl Into<Input<'a>>,
-        expect: E,
-    ) -> E::Output {
-        input.into().run(self, &[], expect)
-    }
-}
-
 pub(super) const HELP: &[(&str, &[&str])] = &[
     ("root", &["--help"]),
     ("init", &["init", "--help"]),
@@ -166,15 +155,82 @@ pub(super) const MODES: &[(&str, &[&str])] = &[
     ("json", &["--json"]),
 ];
 
+/// The switch `make goldens UPDATE=1` sets. A harness read, not a variable the
+/// shipped program reads.
+const UPDATE_ENV: &str = "UPDATE_GOLDENS";
+
+/// Daniel's turn the stated-claim goldens quote, verbatim.
+const STATED_QUOTE: &str = "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.";
+
+/// Scribe's statement of it, the approved entry's content.
+const STATED: &str = "The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
+
+/// The context paragraph of [`context_fixture`]'s open claim `p-7`
+/// (2_design.md §15.3): what was being discussed and what the turn settles.
+const CONTEXT: &str = "The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.";
+
+/// The user's words `p-7` cites.
+const CONTEXT_QUOTE: &str =
+    "no, keep every window as its own segment so the start of the session is never rewritten.";
+
+/// Daniel's instruction that approved `p-5` in the instructed goldens.
+pub(super) const INSTRUCTED_WORDS: &str = "approve p-5, that is how session records should work";
+
+/// His instruction that rejected `p-6`.
+pub(super) const REJECTED_WORDS: &str = "reject p-6, the popup can list more";
+
+/// The interactive session he typed it in.
+pub(super) const INSTRUCTED_SESSION: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03";
+
+/// Daniel's turn the captured-idea goldens quote, verbatim.
+const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
+
+/// Scribe's statement of it, the captured entry's content.
+const CAPTURED: &str =
+    "The user suggests caching the routing table per host so lookups stay local.";
+
+/// His words parking it.
+const PARKED: &str = "let's park it until the drains are quiet";
+
+impl Fixture {
+    #[track_caller]
+    pub(crate) fn check<'a, E: Expectation>(
+        &self,
+        input: impl Into<Input<'a>>,
+        expect: E,
+    ) -> E::Output {
+        input.into().run(self, &[], expect)
+    }
+}
+
+/// Which of the three stated-claim stores [`stated_records`] builds.
+#[derive(Clone, Copy, PartialEq)]
+enum Stated {
+    /// `p-5` approved by Daniel, `p-6` open.
+    Plain,
+    /// [`Stated::Plain`] plus an open claim `p-7` carrying a context paragraph.
+    Context,
+    /// [`Stated::Plain`], with both claims settled by an agent on Daniel's
+    /// checked instruction.
+    Instructed,
+}
+
+struct IdeaEntry<'a> {
+    id: &'a str,
+    author: &'a str,
+    said: &'a str,
+    content_from: &'a str,
+    quote: &'a str,
+    stated_by: &'a str,
+    outcome: &'a str,
+    body: &'a str,
+}
+
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("goldens")
 }
-
-/// The switch `make goldens UPDATE=1` sets. A harness read, not a variable the
-/// shipped program reads.
-const UPDATE_ENV: &str = "UPDATE_GOLDENS";
 
 /// Whether the goldens are being rewritten rather than compared.
 pub(super) fn updating() -> bool {
@@ -262,24 +318,6 @@ pub(super) fn run_with_input(
         command.env("PATH", path);
     }
     fx.check(&mut command, Capture.stdin(input))
-}
-
-/// Daniel's turn the stated-claim goldens quote, verbatim.
-const STATED_QUOTE: &str = "ok that makes sense. then let's keep the whole history in an append-only log, not one rewritten outcome.";
-
-/// Scribe's statement of it, the approved entry's content.
-const STATED: &str = "The user prefers that session records keep the whole session's history in an append-only log rather than one rewritten outcome.";
-
-/// Which of the three stated-claim stores [`stated_records`] builds.
-#[derive(Clone, Copy, PartialEq)]
-enum Stated {
-    /// `p-5` approved by Daniel, `p-6` open.
-    Plain,
-    /// [`Stated::Plain`] plus an open claim `p-7` carrying a context paragraph.
-    Context,
-    /// [`Stated::Plain`], with both claims settled by an agent on Daniel's
-    /// checked instruction.
-    Instructed,
 }
 
 /// The Markdown of the approved entry `preferences-2` and the JSON of the
@@ -440,14 +478,6 @@ pub(super) fn stated_fixture() -> Fixture {
     stated_store(Stated::Plain)
 }
 
-/// The context paragraph of [`context_fixture`]'s open claim `p-7`
-/// (2_design.md §15.3): what was being discussed and what the turn settles.
-const CONTEXT: &str = "The user and the agent were choosing how scribe stores session records. The user rejected a single 2,500-character outcome because rewrites lose the session's start, and asked for an append-only log.";
-
-/// The user's words `p-7` cites.
-const CONTEXT_QUOTE: &str =
-    "no, keep every window as its own segment so the start of the session is never rewritten.";
-
 /// [`stated_fixture`] with its claims `p-5` and `p-6` kept as older claims
 /// (a statement, no context), and an open claim `p-7` with a context
 /// paragraph.
@@ -455,41 +485,11 @@ pub(super) fn context_fixture() -> Fixture {
     stated_store(Stated::Context)
 }
 
-/// Daniel's instruction that approved `p-5` in the instructed goldens.
-pub(super) const INSTRUCTED_WORDS: &str = "approve p-5, that is how session records should work";
-
-/// His instruction that rejected `p-6`.
-pub(super) const REJECTED_WORDS: &str = "reject p-6, the popup can list more";
-
-/// The interactive session he typed it in.
-pub(super) const INSTRUCTED_SESSION: &str = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c03";
-
 /// [`stated_fixture`], with `p-5` approved by the agent `opus` on Daniel's
 /// checked instruction rather than by him typing it, and `p-6` rejected on
 /// the same instruction (2_design.md §12.3).
 pub(super) fn instructed_fixture() -> Fixture {
     stated_store(Stated::Instructed)
-}
-
-/// Daniel's turn the captured-idea goldens quote, verbatim.
-const CAPTURED_QUOTE: &str = "what if we cached the routing table per host? not now though, let's park it until the drains are quiet.";
-
-/// Scribe's statement of it, the captured entry's content.
-const CAPTURED: &str =
-    "The user suggests caching the routing table per host so lookups stay local.";
-
-/// His words parking it.
-const PARKED: &str = "let's park it until the drains are quiet";
-
-struct IdeaEntry<'a> {
-    id: &'a str,
-    author: &'a str,
-    said: &'a str,
-    content_from: &'a str,
-    quote: &'a str,
-    stated_by: &'a str,
-    outcome: &'a str,
-    body: &'a str,
 }
 
 /// One idea entry as a complete Markdown record, with its `outcome` line.

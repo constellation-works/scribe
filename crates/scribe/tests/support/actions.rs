@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Output;
 
+pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -17,8 +19,6 @@ impl Fixture {
         input.into().run(self, &["entry"], expect)
     }
 }
-
-pub(super) const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 
 /// A Claude Code layout under the fixture's home.
 pub(super) struct Claude {

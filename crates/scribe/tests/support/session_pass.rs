@@ -1,3 +1,6 @@
+#[path = "session_pass/setup.rs"]
+mod setup;
+
 use crate::support;
 use crate::support::command::Exit::Capture;
 use crate::support::command::Input::Cli;
@@ -10,11 +13,36 @@ use crate::support::{
     text,
 };
 use serde_json::{Value, json};
+pub(super) use setup::{Responses, Setup, answer, line};
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+
+pub(super) const ON: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
+pub(super) const NEVER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e60";
+
+pub(super) const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without review";
+
+pub(super) const NEVER_SAID: &str = "a session never switched on, which scribe must never read";
+
+/// A second session, spawned from `ON`.
+pub(super) const CHILD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
+
+/// A well-formed id scribe has never seen.
+pub(super) const UNKNOWN: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e62";
+
+const WEDDING: &str = "My sister's wedding is on 2026-12-12 and I'm still on the seating.";
+
+pub(super) const WEDDING_QUOTE: &str = "My sister's wedding is on 2026-12-12";
+
+const VENUE: &str = "I still have to book the venue for the party sometime.";
+
+const VENUE_QUOTE: &str = "I still have to book the venue";
+
+pub(super) const WEDDING_STEM: &str = "2026-12-12-sister-s-wedding";
 
 impl Fixture {
     #[track_caller]
@@ -26,18 +54,6 @@ impl Fixture {
         input.into().run(self, &["session"], expect)
     }
 }
-
-#[path = "session_pass/setup.rs"]
-mod setup;
-pub(super) use setup::{Responses, Setup, answer, line};
-
-pub(super) const ON: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
-
-pub(super) const NEVER: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e60";
-
-pub(super) const DEFINED: &str = "by graduate to level 4 I mean a crew that merges without review";
-
-pub(super) const NEVER_SAID: &str = "a session never switched on, which scribe must never read";
 
 /// Marks claim `n` approved by Daniel without writing its entry: the
 /// journal an approval leaves durable before the entry is written.
@@ -224,12 +240,6 @@ pub(super) fn plugin_pass_refusal(setup: &Setup, name: &str, input: Value) -> (S
     )
 }
 
-/// A second session, spawned from `ON`.
-pub(super) const CHILD: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e61";
-
-/// A well-formed id scribe has never seen.
-pub(super) const UNKNOWN: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e62";
-
 pub(super) fn rebuild_args(confirm: bool) -> Vec<&'static str> {
     let mut args = vec!["session", "rebuild", ON, "--author", "test-agent", "--json"];
     if confirm {
@@ -322,16 +332,6 @@ pub(super) fn entries_json(s: &Setup, args: &[&str]) -> Value {
     all.extend_from_slice(args);
     s.fx.check(Cli(&all), Json)
 }
-
-const WEDDING: &str = "My sister's wedding is on 2026-12-12 and I'm still on the seating.";
-
-pub(super) const WEDDING_QUOTE: &str = "My sister's wedding is on 2026-12-12";
-
-const VENUE: &str = "I still have to book the venue for the party sometime.";
-
-const VENUE_QUOTE: &str = "I still have to book the venue";
-
-pub(super) const WEDDING_STEM: &str = "2026-12-12-sister-s-wedding";
 
 pub(super) fn memory_element(kind: &str, title: &str, quote: &str, message: &str) -> Value {
     json!({"kind": kind, "title": title, "text": format!("{title}, as the user said."),

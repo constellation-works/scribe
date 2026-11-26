@@ -4,6 +4,8 @@ use crate::support::command::{Expectation, Input};
 use crate::support::{Fixture, text};
 use serde_json::Value;
 
+pub(super) const SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -16,8 +18,6 @@ impl Fixture {
         })
     }
 }
-
-pub(super) const SESSION: &str = "7c2b9d14-8e5f-4a3b-b1c6-2f9e8d7a6b02";
 
 pub(super) fn json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or_else(|e| panic!("{e}: {}", text(bytes)))

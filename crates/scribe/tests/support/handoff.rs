@@ -8,6 +8,15 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+pub(super) const OFF_SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
+
+pub(super) const ON_SESSION: &str = "6e2d1c8f-3a5b-4d40-9f72-1b0c9d8e7f60";
+
+pub(super) const CHILD: &str = "7f3e2d90-4b6c-4e51-8a83-2c1d0e9f8a71";
+
+// A session id no transcript on this host has.
+pub(super) const UNREADABLE_SESSION: &str = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
+
 impl Fixture {
     #[track_caller]
     pub(crate) fn check<'a, E: Expectation>(
@@ -17,35 +26,6 @@ impl Fixture {
     ) -> E::Output {
         input.into().run(self, &["entry"], expect)
     }
-}
-
-pub(super) const OFF_SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
-
-pub(super) const ON_SESSION: &str = "6e2d1c8f-3a5b-4d40-9f72-1b0c9d8e7f60";
-
-pub(super) fn valid_handoff(state: &str, next: &str) -> String {
-    format!(
-        "\
-## State
-{state}
-
-## In flight
-Uncommitted edits in `crates/scribe-core/src/handoff.rs`.
-
-## Next
-{next}
-
-## Waiting on you
-Confirm whether we cut the release tag today.
-
-## Do not touch
-Leave `crates/scribe/tests/goldens/` untouched until the contract review passes.
-
-## Pointers
-- `crates/scribe-core/src/handoff.rs`
-- `docs/design/scribe/2_design.md`
-"
-    )
 }
 
 /// A Claude Code transcript layout under the fixture's home.
@@ -137,6 +117,31 @@ impl Transcript {
     }
 }
 
+pub(super) fn valid_handoff(state: &str, next: &str) -> String {
+    format!(
+        "\
+## State
+{state}
+
+## In flight
+Uncommitted edits in `crates/scribe-core/src/handoff.rs`.
+
+## Next
+{next}
+
+## Waiting on you
+Confirm whether we cut the release tag today.
+
+## Do not touch
+Leave `crates/scribe/tests/goldens/` untouched until the contract review passes.
+
+## Pointers
+- `crates/scribe-core/src/handoff.rs`
+- `docs/design/scribe/2_design.md`
+"
+    )
+}
+
 pub(super) fn piped(fx: &Fixture, mut cmd: Command, payload: &Value) -> Output {
     fx.check(&mut cmd, Capture.stdin(payload.to_string().as_bytes()))
 }
@@ -162,8 +167,6 @@ pub(super) fn refused(fx: &Fixture, args: &[&str]) -> (String, String) {
         err["error"].as_str().unwrap().to_owned(),
     )
 }
-
-pub(super) const CHILD: &str = "7f3e2d90-4b6c-4e51-8a83-2c1d0e9f8a71";
 
 pub(super) fn refresh_handoff(fx: &Fixture, parent: &Transcript, mode: &str, body: &str) -> String {
     parent.write(&[("u-1", "user", "Continue working on the widget.")]);
@@ -262,6 +265,3 @@ pub(super) fn try_refresh(fx: &Fixture, id: &str) -> Output {
         Capture,
     )
 }
-
-// A session id no transcript on this host has.
-pub(super) const UNREADABLE_SESSION: &str = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
