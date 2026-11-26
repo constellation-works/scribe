@@ -27,6 +27,7 @@ use crate::output::{
 };
 use clap::{Args, Subcommand};
 use scribe_core::apps::session::{self as app, Command, Outcome, Shown, exec};
+pub(crate) use scribe_core::apps::session::{SessionRef, parse_session_ref};
 use scribe_core::composition::Context;
 use scribe_core::{
     Project, Related, SessionFilter, SessionOrder, SessionRecord, SessionStatus, Topic,
@@ -180,11 +181,20 @@ pub(crate) struct ShowArgs {
     pub(crate) segment: Option<NonZeroU32>,
 }
 
-pub(crate) use scribe_core::apps::session::{SessionRef, parse_session_ref};
-
 /// A session app entry point: its `exec`, which audits the commands that
 /// write, or in tests its unaudited one.
 type Exec = fn(&Context, Command<'_>) -> Result<Outcome, scribe_core::CommandError>;
+
+/// What the flags ask of an outcome's output beyond the outcome itself.
+#[derive(Default)]
+pub(in crate::commands) struct View<'a> {
+    /// `session list`'s arguments, echoed as criteria.
+    pub(in crate::commands) list: Option<&'a ListArgs>,
+    /// `session show --log`.
+    pub(in crate::commands) log: bool,
+    /// `session show`'s segment.
+    pub(in crate::commands) segment: Option<NonZeroU32>,
+}
 
 /// Run one `session` verb.
 pub(super) fn run(command: SessionCommand, ctx: &Context) -> Result<Output, CliError> {
@@ -374,17 +384,6 @@ fn shown(shown: Shown, log: bool, segment: Option<NonZeroU32>) -> Output {
     Output::Show {
         record: Record::Session(Box::new(payload)),
     }
-}
-
-/// What the flags ask of an outcome's output beyond the outcome itself.
-#[derive(Default)]
-pub(in crate::commands) struct View<'a> {
-    /// `session list`'s arguments, echoed as criteria.
-    pub(in crate::commands) list: Option<&'a ListArgs>,
-    /// `session show --log`.
-    pub(in crate::commands) log: bool,
-    /// `session show`'s segment.
-    pub(in crate::commands) segment: Option<NonZeroU32>,
 }
 
 /// A `session` outcome as its output.

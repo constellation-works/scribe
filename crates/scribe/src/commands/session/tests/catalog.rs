@@ -72,33 +72,6 @@ impl FakeModels {
     }
 }
 
-fn answer() -> SessionAnswer {
-    SessionAnswer {
-        candidates: Vec::new(),
-        memory: Vec::new(),
-        signal: None,
-        title: String::from("Defining crew levels"),
-        summary: String::from("Daniel defined what level 4 means for crews."),
-        goals: String::from("Name the crew levels."),
-        open: None,
-        new: vec![NewSegmentAnswer {
-            starts_at: String::from("auto"),
-            heading: String::from("Crew levels"),
-            text: String::from("Level 4 is defined."),
-            topics: Vec::new(),
-            related: Vec::new(),
-        }],
-        next: vec![String::from("write it into the routing doc")],
-        topics: vec![String::from("crew-routing")],
-        related: Vec::new(),
-        terms: vec![TermAnswer {
-            term: String::from("graduate to level 4"),
-            said: String::from(DEFINED),
-            message: String::from("u-1"),
-        }],
-    }
-}
-
 struct Setup {
     dir: tempfile::TempDir,
     ctx: Context,
@@ -299,6 +272,33 @@ impl Setup {
 
     fn id(&self) -> SessionId {
         ID.parse().unwrap()
+    }
+}
+
+fn answer() -> SessionAnswer {
+    SessionAnswer {
+        candidates: Vec::new(),
+        memory: Vec::new(),
+        signal: None,
+        title: String::from("Defining crew levels"),
+        summary: String::from("Daniel defined what level 4 means for crews."),
+        goals: String::from("Name the crew levels."),
+        open: None,
+        new: vec![NewSegmentAnswer {
+            starts_at: String::from("auto"),
+            heading: String::from("Crew levels"),
+            text: String::from("Level 4 is defined."),
+            topics: Vec::new(),
+            related: Vec::new(),
+        }],
+        next: vec![String::from("write it into the routing doc")],
+        topics: vec![String::from("crew-routing")],
+        related: Vec::new(),
+        terms: vec![TermAnswer {
+            term: String::from("graduate to level 4"),
+            said: String::from(DEFINED),
+            message: String::from("u-1"),
+        }],
     }
 }
 

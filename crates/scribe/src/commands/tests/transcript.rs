@@ -68,6 +68,29 @@ impl Setup {
     }
 }
 
+/// Restores a directory mode so the temp root can be removed.
+struct ModeGuard {
+    path: PathBuf,
+    mode: u32,
+}
+
+impl ModeGuard {
+    fn set(path: &Path, mode: u32) -> Self {
+        let current = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        Self {
+            path: path.to_path_buf(),
+            mode: current,
+        }
+    }
+}
+
+impl Drop for ModeGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+    }
+}
+
 fn day(year: i32, month: u8, day: u8) -> Date {
     Date::from_calendar_date(year, Month::try_from(month).unwrap(), day).unwrap()
 }
@@ -354,27 +377,4 @@ fn names(dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
-}
-
-/// Restores a directory mode so the temp root can be removed.
-struct ModeGuard {
-    path: PathBuf,
-    mode: u32,
-}
-
-impl ModeGuard {
-    fn set(path: &Path, mode: u32) -> Self {
-        let current = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-        Self {
-            path: path.to_path_buf(),
-            mode: current,
-        }
-    }
-}
-
-impl Drop for ModeGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
-    }
 }

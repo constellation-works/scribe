@@ -15,6 +15,9 @@ use serde_json::json;
 const SESSION: &str = "5d1c0b7e-2f4a-4c39-8e61-0a9b8c7d6e5f";
 const SPOKEN: &str = "I recommend we squash-merge agent PRs and keep merge commits for releases.";
 
+const PAST: &str = "7c2e9a41-3b5d-4f60-9a18-2d4e6f8a0b1c";
+const GHOST: &str = "9e8d7c6b-5a49-4382-b1a0-f9e8d7c6b5a4";
+
 /// A temp home with a transcript for `SESSION`, and a context over a temp
 /// store.
 struct Setup {
@@ -88,6 +91,60 @@ impl Setup {
             .unwrap()
             .listing
             .items
+    }
+}
+
+impl Setup {
+    /// A past session's transcript beside `SESSION`'s: a typed turn, an
+    /// assistant turn, and a turn an agent wrote.
+    fn past_transcript(&self) {
+        let lines = [
+            json!({"type": "user", "uuid": "p-1", "sessionId": PAST, "timestamp": "2026-11-01T06:00:00Z",
+                   "message": {"role": "user", "content": "violetorchid typed long ago"}}),
+            json!({"type": "assistant", "uuid": "p-2", "sessionId": PAST, "timestamp": "2026-11-01T06:00:05Z",
+                   "message": {"role": "assistant", "content": [{"type": "text", "text": "assistantorchid"}]}}),
+            json!({"type": "user", "uuid": "p-3", "sessionId": PAST, "turnOrigin": "agent",
+                   "timestamp": "2026-11-01T06:00:09Z",
+                   "message": {"role": "user", "content": "agentorchid"}}),
+        ];
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        let path = self
+            .dir
+            .path()
+            .join(format!("home/.claude/projects/-work/{PAST}.jsonl"));
+        std::fs::write(&path, text).unwrap();
+        // Owner-only, as Claude Code writes it: the umask must not decide it.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
+    fn block(&self, input: &[u8]) -> String {
+        let Output::Hook(reply) = run(input, &self.ctx).unwrap() else {
+            panic!("hook reply")
+        };
+        reply.block.unwrap_or_default()
+    }
+
+    /// Matches for `term` in any group: none when no group exists.
+    fn found_any(&self, term: &str) -> usize {
+        self.ctx
+            .store()
+            .groups()
+            .unwrap()
+            .iter()
+            .map(|group| self.found(&group.id, term))
+            .sum()
+    }
+
+    fn found(&self, group: &str, term: &str) -> usize {
+        self.ctx
+            .store()
+            .search_group_messages(group, &[term.to_owned()])
+            .unwrap()
+            .matches
+            .len()
     }
 }
 
@@ -213,63 +270,6 @@ fn mixed_case_group_from_untyped_origins_is_refused_without_a_write() {
         );
         let slug = prompt.split_whitespace().last().unwrap();
         assert!(setup.ctx.store().group(slug).is_err(), "{prompt}");
-    }
-}
-
-const PAST: &str = "7c2e9a41-3b5d-4f60-9a18-2d4e6f8a0b1c";
-const GHOST: &str = "9e8d7c6b-5a49-4382-b1a0-f9e8d7c6b5a4";
-
-impl Setup {
-    /// A past session's transcript beside `SESSION`'s: a typed turn, an
-    /// assistant turn, and a turn an agent wrote.
-    fn past_transcript(&self) {
-        let lines = [
-            json!({"type": "user", "uuid": "p-1", "sessionId": PAST, "timestamp": "2026-11-01T06:00:00Z",
-                   "message": {"role": "user", "content": "violetorchid typed long ago"}}),
-            json!({"type": "assistant", "uuid": "p-2", "sessionId": PAST, "timestamp": "2026-11-01T06:00:05Z",
-                   "message": {"role": "assistant", "content": [{"type": "text", "text": "assistantorchid"}]}}),
-            json!({"type": "user", "uuid": "p-3", "sessionId": PAST, "turnOrigin": "agent",
-                   "timestamp": "2026-11-01T06:00:09Z",
-                   "message": {"role": "user", "content": "agentorchid"}}),
-        ];
-        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-        let path = self
-            .dir
-            .path()
-            .join(format!("home/.claude/projects/-work/{PAST}.jsonl"));
-        std::fs::write(&path, text).unwrap();
-        // Owner-only, as Claude Code writes it: the umask must not decide it.
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        }
-    }
-
-    fn block(&self, input: &[u8]) -> String {
-        let Output::Hook(reply) = run(input, &self.ctx).unwrap() else {
-            panic!("hook reply")
-        };
-        reply.block.unwrap_or_default()
-    }
-
-    /// Matches for `term` in any group: none when no group exists.
-    fn found_any(&self, term: &str) -> usize {
-        self.ctx
-            .store()
-            .groups()
-            .unwrap()
-            .iter()
-            .map(|group| self.found(&group.id, term))
-            .sum()
-    }
-
-    fn found(&self, group: &str, term: &str) -> usize {
-        self.ctx
-            .store()
-            .search_group_messages(group, &[term.to_owned()])
-            .unwrap()
-            .matches
-            .len()
     }
 }
 

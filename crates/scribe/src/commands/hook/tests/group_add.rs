@@ -16,6 +16,9 @@ const C: &str = "00000000-0000-4000-8000-000000000003";
 const D: &str = "00000000-0000-4000-8000-000000000004";
 const E: &str = "00000000-0000-4000-8000-000000000005";
 
+/// A callback the read seam runs with the path about to be read.
+type ReadCallback = Box<dyn FnMut(&std::path::Path)>;
+
 fn write_private(path: &std::path::Path, body: &str) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
@@ -424,8 +427,6 @@ fn two_refused_entries_in_one_root_refuse_the_whole_line_when_one_becomes_readab
 
 // The seams are thread-local so concurrent tests never share hook input or a
 // discovery/read interleaving. The real command dispatcher still owns audit.
-type ReadCallback = Box<dyn FnMut(&std::path::Path)>;
-
 thread_local! {
     static HOOK_INPUT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
     static BEFORE_READ: std::cell::RefCell<Option<ReadCallback>> = const { std::cell::RefCell::new(None) };

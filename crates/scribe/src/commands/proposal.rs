@@ -103,6 +103,63 @@ pub(crate) enum AuthorKindArg {
     Scribe,
 }
 
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum Kind {
+    Supersedes,
+    Stale,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AddArgs {
+    /// Proposed change
+    #[arg(long, value_enum)]
+    kind: Kind,
+    /// Entry to retire or supersede
+    #[arg(long)]
+    older: String,
+    /// Replacement entry (required for supersedes)
+    #[arg(long)]
+    newer: Option<String>,
+    /// Why this change is proposed
+    #[arg(long)]
+    reason: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Proposal id or unique prefix (at least four characters)
+    id: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Replacement reason
+    #[arg(long)]
+    reason: String,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SettleArgs {
+    /// Proposal id or unique prefix
+    id: String,
+    /// Agent name
+    #[arg(long)]
+    author: scribe_core::AuthorName,
+    /// Apply the proposal
+    #[arg(long, required_unless_present = "reject", conflicts_with = "reject")]
+    approve: bool,
+    /// Close without applying
+    #[arg(long, required_unless_present = "approve")]
+    reject: bool,
+    /// Replacement explanation for the settlement
+    #[arg(long)]
+    reason: Option<String>,
+    #[command(flatten)]
+    instruction: super::instruction::InstructionArgs,
+}
+
 /// Run one `proposal` verb.
 pub(super) fn run(command: ProposalCommand, ctx: &Context) -> Result<Output, CliError> {
     let outcome = match command {
@@ -211,63 +268,6 @@ fn list(
     let total = proposals.len();
     let records = Records::Proposals(proposals.iter().map(ProposalPayload::from).collect());
     list_output(records, total, &[], &notice)
-}
-
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-enum Kind {
-    Supersedes,
-    Stale,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct AddArgs {
-    /// Proposed change
-    #[arg(long, value_enum)]
-    kind: Kind,
-    /// Entry to retire or supersede
-    #[arg(long)]
-    older: String,
-    /// Replacement entry (required for supersedes)
-    #[arg(long)]
-    newer: Option<String>,
-    /// Why this change is proposed
-    #[arg(long)]
-    reason: String,
-    /// Agent name
-    #[arg(long)]
-    author: scribe_core::AuthorName,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct UpdateArgs {
-    /// Proposal id or unique prefix (at least four characters)
-    id: String,
-    /// Agent name
-    #[arg(long)]
-    author: scribe_core::AuthorName,
-    /// Replacement reason
-    #[arg(long)]
-    reason: String,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct SettleArgs {
-    /// Proposal id or unique prefix
-    id: String,
-    /// Agent name
-    #[arg(long)]
-    author: scribe_core::AuthorName,
-    /// Apply the proposal
-    #[arg(long, required_unless_present = "reject", conflicts_with = "reject")]
-    approve: bool,
-    /// Close without applying
-    #[arg(long, required_unless_present = "approve")]
-    reject: bool,
-    /// Replacement explanation for the settlement
-    #[arg(long)]
-    reason: Option<String>,
-    #[command(flatten)]
-    instruction: super::instruction::InstructionArgs,
 }
 
 fn written(proposal: &scribe_core::Proposal, changed: bool) -> Output {
