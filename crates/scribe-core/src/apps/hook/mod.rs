@@ -75,6 +75,22 @@ pub enum Outcome {
 /// Why a `hook` command failed. A refusal is a reply, not an error.
 pub type Error<E> = HookError<E>;
 
+/// One line per write or refusal the run reports, and none when it changed
+/// nothing.
+impl Audited for Outcome {
+    fn lines(&self) -> Vec<Line> {
+        let Self::Replied(reply) = self;
+        reply
+            .outcomes
+            .iter()
+            .map(|outcome| match outcome.error_code {
+                Some(code) => Line::failure(outcome.target.clone(), code),
+                None => Line::success(outcome.target.clone()),
+            })
+            .collect()
+    }
+}
+
 /// Run `event` against `ctx`, inside the audit guard [`Event::audit`]
 /// declares: its stdin decoded, then the event's command.
 ///
@@ -142,20 +158,4 @@ pub fn group_add(
     read_past: ReadPast<'_, CommandError>,
 ) -> Result<HookReply, CommandError> {
     Ok(group_add::run(&ctx.core(), input, read_past)?)
-}
-
-/// One line per write or refusal the run reports, and none when it changed
-/// nothing.
-impl Audited for Outcome {
-    fn lines(&self) -> Vec<Line> {
-        let Self::Replied(reply) = self;
-        reply
-            .outcomes
-            .iter()
-            .map(|outcome| match outcome.error_code {
-                Some(code) => Line::failure(outcome.target.clone(), code),
-                None => Line::success(outcome.target.clone()),
-            })
-            .collect()
-    }
 }

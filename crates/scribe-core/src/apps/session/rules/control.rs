@@ -58,6 +58,44 @@ pub struct Linked {
     pub write_record: bool,
 }
 
+/// When the `Stop` hook looks at a session: when its last pass ran (the
+/// record's `updated`, else when it was switched on) and how many of
+/// Daniel's turns arrived since.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Since {
+    /// When the last pass ran.
+    pub last_pass: OffsetDateTime,
+    /// User turns since then.
+    pub turns: u32,
+}
+
+/// Whether `session catalog` may start or resume `session`.
+///
+/// A switch `catalog` wrote (`cataloged_by` set) that is still on and due
+/// resumes, even when a partial record exists. Any other switch, or a
+/// record with no such switch, is refused (`session_cataloged`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CatalogGate {
+    /// No record and no switch: write one and catalog.
+    Start,
+    /// A catalog switch is still due. Keep `since` and `cataloged_by`.
+    Resume(SessionControl),
+    /// A record or a non-catalog switch already exists.
+    Refused,
+}
+
+/// How to set the child's switch when adding a session link.
+#[derive(Clone, Copy)]
+pub enum LinkSwitch {
+    /// Set the switch as the link says.
+    Manual {
+        /// Whether the child is switched on.
+        on: bool,
+    },
+    /// The verified handoff identifies a parent even if it was never on.
+    Inherit,
+}
+
 /// Add `link` to `session` at `now`, switching it on first when `on`.
 /// `records` holds every session record's links, by id (a session with a
 /// record has a key, even with no links). The target must be known (a
@@ -84,18 +122,6 @@ pub fn link(
         LinkSwitch::Manual { on },
         now,
     )
-}
-
-/// How to set the child's switch when adding a session link.
-#[derive(Clone, Copy)]
-pub enum LinkSwitch {
-    /// Set the switch as the link says.
-    Manual {
-        /// Whether the child is switched on.
-        on: bool,
-    },
-    /// The verified handoff identifies a parent even if it was never on.
-    Inherit,
 }
 
 /// Apply `link` from `session` to the switch state, as [`LinkSwitch`] says.
@@ -156,21 +182,6 @@ pub fn apply_link(
         switched_on,
         write_record,
     })
-}
-
-/// Whether `session catalog` may start or resume `session`.
-///
-/// A switch `catalog` wrote (`cataloged_by` set) that is still on and due
-/// resumes, even when a partial record exists. Any other switch, or a
-/// record with no such switch, is refused (`session_cataloged`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CatalogGate {
-    /// No record and no switch: write one and catalog.
-    Start,
-    /// A catalog switch is still due. Keep `since` and `cataloged_by`.
-    Resume(SessionControl),
-    /// A record or a non-catalog switch already exists.
-    Refused,
 }
 
 /// Decide [`CatalogGate`] without changing `state`. `has_record` is true
@@ -284,17 +295,6 @@ pub fn switch(
         | Switch::SessionUpdate { .. } => Change::Status(current),
         Switch::Unknown(arg) => Change::Unknown(arg.clone()),
     }
-}
-
-/// When the `Stop` hook looks at a session: when its last pass ran (the
-/// record's `updated`, else when it was switched on) and how many of
-/// Daniel's turns arrived since.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Since {
-    /// When the last pass ran.
-    pub last_pass: OffsetDateTime,
-    /// User turns since then.
-    pub turns: u32,
 }
 
 /// Mark `session` due when it is on and the cadence says so (see

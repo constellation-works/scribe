@@ -1,9 +1,9 @@
 //! Shared session window reads and writes for Orbit pass steps and the
 //! interim catalog flow.
 
-use crate::models::PassMessage;
-
 mod workflow;
+
+use crate::models::PassMessage;
 
 pub use workflow::{
     ActivityAnswer, ApplyInput, ApplyOutput, ApplyStatus, CatalogSelection, FailInput,
@@ -32,6 +32,9 @@ pub const PASS_COMMAND: &str = "session pass";
 pub const CATALOG_COMMAND: &str = "session catalog";
 
 const MAX_LISTED: usize = 200;
+
+/// The maximum characters of a reason exposed in a pass report.
+const MAX_ERROR_CHARS: usize = 300;
 
 /// Why a session pass did not run.
 #[derive(Debug)]
@@ -267,24 +270,23 @@ impl PassError {
     }
 }
 
-/// The maximum characters of a reason exposed in a pass report.
-const MAX_ERROR_CHARS: usize = 300;
-
-/// Redact, flatten and bound a failure reason before it reaches a report or
-/// the aggregate command error.
-pub fn short_reason(redactor: &Redactor, message: &str) -> String {
-    let flattened = redactor
-        .mask(message)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut chars = flattened.chars();
-    let mut bounded: String = chars.by_ref().take(MAX_ERROR_CHARS).collect();
-    if chars.next().is_some() {
-        bounded = bounded.chars().take(MAX_ERROR_CHARS - 1).collect();
-        bounded.push('…');
+/// `session pass`'s errors, each the variant it was before the flow moved to
+/// the session app (ORB-27707 step 3).
+impl From<PassRunError<crate::runtime::errors::CommandError>>
+    for crate::runtime::errors::CommandError
+{
+    fn from(err: PassRunError<crate::runtime::errors::CommandError>) -> Self {
+        match err {
+            PassRunError::Core(e) => Self::Core(e),
+            PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
+            PassRunError::Port(e) => e,
+            PassRunError::Input(message) => Self::Usage(message.to_owned()),
+            PassRunError::Step(error) => Self::SessionPassStep {
+                code: error.code,
+                message: error.message,
+            },
+        }
     }
-    bounded
 }
 
 impl<E: PortError> Job<'_, E> {
@@ -819,6 +821,23 @@ impl<E: PortError> Job<'_, E> {
     }
 }
 
+/// Redact, flatten and bound a failure reason before it reaches a report or
+/// the aggregate command error.
+pub fn short_reason(redactor: &Redactor, message: &str) -> String {
+    let flattened = redactor
+        .mask(message)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = flattened.chars();
+    let mut bounded: String = chars.by_ref().take(MAX_ERROR_CHARS).collect();
+    if chars.next().is_some() {
+        bounded = bounded.chars().take(MAX_ERROR_CHARS - 1).collect();
+        bounded.push('…');
+    }
+    bounded
+}
+
 /// Repairs describe only fixed rule names and numbers; no model text or ids.
 pub(crate) fn window_warnings(window: usize, answer: &pass::Distilled) -> Vec<String> {
     answer
@@ -846,23 +865,4 @@ pub fn attributed_project(
         &transcript::mention_counts(bytes, &config.projects),
         &cwd_project,
     )
-}
-
-/// `session pass`'s errors, each the variant it was before the flow moved to
-/// the session app (ORB-27707 step 3).
-impl From<PassRunError<crate::runtime::errors::CommandError>>
-    for crate::runtime::errors::CommandError
-{
-    fn from(err: PassRunError<crate::runtime::errors::CommandError>) -> Self {
-        match err {
-            PassRunError::Core(e) => Self::Core(e),
-            PassRunError::SessionNotOn(id) => Self::SessionNotOn(id),
-            PassRunError::Port(e) => e,
-            PassRunError::Input(message) => Self::Usage(message.to_owned()),
-            PassRunError::Step(error) => Self::SessionPassStep {
-                code: error.code,
-                message: error.message,
-            },
-        }
-    }
 }

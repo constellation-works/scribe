@@ -34,6 +34,23 @@ pub struct SessionList {
     pub forgotten: BTreeMap<SessionId, time::OffsetDateTime>,
 }
 
+/// One session record with its switch.
+#[derive(Debug)]
+pub struct SessionView {
+    /// The record.
+    pub record: SessionRecord,
+    /// Its switch in `control.json`, if it has one.
+    pub control: Option<crate::session::SessionControl>,
+    /// The sessions that link to it, derived from their records.
+    pub children: Vec<Child>,
+    /// The titles of the sessions its links point at that have a record.
+    pub linked_titles: BTreeMap<SessionId, String>,
+    /// Its `s-<n>`.
+    pub number: Option<NonZeroU64>,
+    /// When `#scribe forget` erased it, if it did.
+    pub forgotten: Option<time::OffsetDateTime>,
+}
+
 /// Session records matching `filter`, oldest first, with the on/off state
 /// beside them; with `members`, the records and their derived lookup data
 /// are restricted to the group's member sessions. Reads only.
@@ -75,37 +92,23 @@ pub fn list_sessions(
             .filter(|r| !r.active && any.matches(r))
             .count()
     };
+    // `listing` takes `records` by value, so what borrows it is bound first.
+    let children = session_mod::children(&records);
+    let titles = records
+        .iter()
+        .map(|r| (r.id.clone(), r.title.clone()))
+        .collect();
     Ok(SessionList {
-        children: session_mod::children(&records),
-        titles: records
-            .iter()
-            .map(|r| (r.id.clone(), r.title.clone()))
-            .collect(),
         listing: filter.select(records),
-        inactive_hidden,
+        children,
+        titles,
         control,
+        inactive_hidden,
         skipped,
         skipped_sessions,
         numbers,
         forgotten,
     })
-}
-
-/// One session record with its switch.
-#[derive(Debug)]
-pub struct SessionView {
-    /// The record.
-    pub record: SessionRecord,
-    /// Its switch in `control.json`, if it has one.
-    pub control: Option<crate::session::SessionControl>,
-    /// The sessions that link to it, derived from their records.
-    pub children: Vec<Child>,
-    /// The titles of the sessions its links point at that have a record.
-    pub linked_titles: BTreeMap<SessionId, String>,
-    /// Its `s-<n>`.
-    pub number: Option<NonZeroU64>,
-    /// When `#scribe forget` erased it, if it did.
-    pub forgotten: Option<time::OffsetDateTime>,
 }
 
 /// The session record with this id, its switch, the sessions that link to

@@ -54,6 +54,20 @@ pub struct StopInput<'i> {
     pub host: Label,
 }
 
+/// A user message with the hashes its text can match: the whole text, and
+/// each text block on its own.
+struct Hashed {
+    message: Message,
+    hashes: Vec<String>,
+}
+
+impl Hashed {
+    fn new(message: Message) -> Self {
+        let hashes = crate::capture::prompt_hashes(&message);
+        Self { message, hashes }
+    }
+}
+
 /// Run the hook on its parsed payload.
 ///
 /// # Errors
@@ -263,20 +277,6 @@ fn fill_cites<E: PortError>(
             error_code: None,
         })
         .collect())
-}
-
-/// A user message with the hashes its text can match: the whole text, and
-/// each text block on its own.
-struct Hashed {
-    message: Message,
-    hashes: Vec<String>,
-}
-
-impl Hashed {
-    fn new(message: Message) -> Self {
-        let hashes = crate::capture::prompt_hashes(&message);
-        Self { message, hashes }
-    }
 }
 
 /// The uuid of the matching message written closest to the cite's time.

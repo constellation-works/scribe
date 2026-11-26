@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
+/// How long after a job's first prepare a later session or window may start:
+/// a window may take two 120-second activity attempts and the job must end
+/// inside the routine's timeout. The first window of a run always starts.
+pub const PASS_START_BY_SECONDS: i64 = 50;
+
 /// Select due sessions, or explicitly name switched-on sessions.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -56,11 +61,6 @@ pub struct PrepareInput {
 pub struct Progress {
     cursor: Cursor,
 }
-
-/// How long after a job's first prepare a later session or window may start:
-/// a window may take two 120-second activity attempts and the job must end
-/// inside the routine's timeout. The first window of a run always starts.
-pub const PASS_START_BY_SECONDS: i64 = 50;
 
 /// Job-local continuation and remaining session budget. Prepare and apply
 /// return it sealed and refuse one whose fields no longer match the seal.
@@ -395,6 +395,12 @@ pub struct FailInput {
     /// `fan_in.errors`): null for a worker that succeeded or was skipped.
     #[serde(default)]
     pub errors: Vec<Option<String>>,
+}
+
+enum Preparation {
+    NeedsModel,
+    Settled(Box<PassPayload>),
+    Window(Box<(Basis, Value)>),
 }
 
 /// The stable model code for an activity failure: an allowlisted
@@ -828,12 +834,6 @@ fn prepare_one<E: PortError>(
         }
     }
     Ok(result)
-}
-
-enum Preparation {
-    NeedsModel,
-    Settled(Box<PassPayload>),
-    Window(Box<(Basis, Value)>),
 }
 
 pub(crate) fn apply<E: PortError>(

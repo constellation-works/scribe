@@ -51,6 +51,19 @@ use crate::runtime::audit::HookOutcome;
 use crate::{Label, Provider, SessionId, annotation};
 use std::path::Path;
 
+/// The hook event this replies to.
+pub use super::reply::USER_PROMPT_SUBMIT_EVENT as EVENT;
+/// What the agent is told after an applied echo, so it does not act on it
+/// again.
+const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
+/// What the agent is told after a refused or failed echo: nothing was
+/// applied, so the line must not be silently lost.
+const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to the user)";
+/// What the agent is told after a marked echo: Stop hands the marker to the
+/// agent after the reply, with the command that records it, so the agent
+/// records nothing for it before then.
+const AGENT_MARKED_NOTE: &str = "(after your reply scribe hands this #scribe marker to you with the command that records it; record nothing for it before then)";
+
 /// What the prompt hook runs on: its parsed payload.
 pub struct PromptInput<'i> {
     /// The session.
@@ -69,18 +82,65 @@ pub struct PromptInput<'i> {
     pub host: Label,
 }
 
-/// The hook event this replies to.
-pub use super::reply::USER_PROMPT_SUBMIT_EVENT as EVENT;
-/// What the agent is told after an applied echo, so it does not act on it
-/// again.
-const AGENT_NOTE: &str = "(recorded by scribe; no action needed)";
-/// What the agent is told after a refused or failed echo: nothing was
-/// applied, so the line must not be silently lost.
-const AGENT_RELAY_NOTE: &str = "(not recorded by scribe; relay this to the user)";
-/// What the agent is told after a marked echo: Stop hands the marker to the
-/// agent after the reply, with the command that records it, so the agent
-/// records nothing for it before then.
-const AGENT_MARKED_NOTE: &str = "(after your reply scribe hands this #scribe marker to you with the command that records it; record nothing for it before then)";
+/// One echo line and the note the agent gets for it.
+struct Echo {
+    text: String,
+    note: &'static str,
+}
+
+impl Echo {
+    fn recorded(text: String) -> Self {
+        Self {
+            text,
+            note: AGENT_NOTE,
+        }
+    }
+
+    fn not_recorded(text: String) -> Self {
+        Self {
+            text,
+            note: AGENT_RELAY_NOTE,
+        }
+    }
+
+    fn marked(text: String) -> Self {
+        Self {
+            text,
+            note: AGENT_MARKED_NOTE,
+        }
+    }
+
+    /// The echo of a settling command's reply: recorded unless its
+    /// outcome carries a code (a refusal or failure).
+    fn settled(echo: String, outcome: Option<&HookOutcome>) -> Self {
+        if outcome.is_some_and(|o| o.error_code.is_some()) {
+            Self::not_recorded(echo)
+        } else {
+            Self::recorded(echo)
+        }
+    }
+}
+
+/// A typed project-group line.
+enum GroupLine {
+    Move {
+        session: SessionId,
+        slug: String,
+    },
+    Remove(SessionId),
+    Update {
+        session: SessionId,
+        field: String,
+        value: String,
+    },
+    /// `/scribe group <slug>`: the typing session joins.
+    Join(String),
+    /// `/scribe group add <slug> <session-id>...`: the named sessions join.
+    Add {
+        slug: String,
+        sessions: Vec<SessionId>,
+    },
+}
 
 /// Run the hook on its parsed payload, `read_past` reading a named
 /// session's past transcript for `/scribe group add`.
@@ -219,45 +279,6 @@ fn ancestry_failure(session: &SessionId, err: &crate::Error, reply: &mut HookRep
         target: Some(format!("session:{session}")),
         error_code: Some(err.code()),
     });
-}
-
-/// One echo line and the note the agent gets for it.
-struct Echo {
-    text: String,
-    note: &'static str,
-}
-
-impl Echo {
-    fn recorded(text: String) -> Self {
-        Self {
-            text,
-            note: AGENT_NOTE,
-        }
-    }
-
-    fn not_recorded(text: String) -> Self {
-        Self {
-            text,
-            note: AGENT_RELAY_NOTE,
-        }
-    }
-
-    fn marked(text: String) -> Self {
-        Self {
-            text,
-            note: AGENT_MARKED_NOTE,
-        }
-    }
-
-    /// The echo of a settling command's reply: recorded unless its
-    /// outcome carries a code (a refusal or failure).
-    fn settled(echo: String, outcome: Option<&HookOutcome>) -> Self {
-        if outcome.is_some_and(|o| o.error_code.is_some()) {
-            Self::not_recorded(echo)
-        } else {
-            Self::recorded(echo)
-        }
-    }
 }
 
 fn capture_prompt<E: HookPortError>(
@@ -495,27 +516,6 @@ fn capture_prompt<E: HookPortError>(
     }
     echoes.extend(mark_echoes);
     Ok(reply(echoes, outcomes))
-}
-
-/// A typed project-group line.
-enum GroupLine {
-    Move {
-        session: SessionId,
-        slug: String,
-    },
-    Remove(SessionId),
-    Update {
-        session: SessionId,
-        field: String,
-        value: String,
-    },
-    /// `/scribe group <slug>`: the typing session joins.
-    Join(String),
-    /// `/scribe group add <slug> <session-id>...`: the named sessions join.
-    Add {
-        slug: String,
-        sessions: Vec<SessionId>,
-    },
 }
 
 /// The project-group line `text` opens with, read by the shared control

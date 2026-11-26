@@ -19,8 +19,8 @@ pub fn restore<E>(
 ) -> HookReply {
     let mut reply = HookReply {
         event,
-        context: None,
         message: None,
+        context: None,
         block: None,
         outcomes: Vec::new(),
     };
