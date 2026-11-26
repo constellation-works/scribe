@@ -1221,7 +1221,9 @@ Removed with `scribe question ask` and the Orbit tool `scribe.ask`
 "session_distill_crew", "session_header_crew"}, …}}`) on stdin and prints exactly one
 compact line, in every mode, then exits 0. The plugin tools are
 `scribe.session-pass-prepare`, `scribe.session-pass-apply`,
-`scribe.session-pass-fail`, `scribe.consistency-scan`,
+`scribe.session-pass-fail`, `scribe.session-catalog-begin`,
+`scribe.session-rebuild-prepare`, `scribe.session-rebuild-apply`,
+`scribe.session-rebuild-finish`, `scribe.consistency-scan`,
 `scribe.memory-refresh-prepare`, `scribe.memory-refresh-apply`,
 `scribe.group-close-prepare` and `scribe.group-close-apply`,
 the tools of `plugin/.orbit-plugin/plugin.yaml` ([2_design.md §1](../2_design.md#1-boundary-and-surfaces), [§19](../2_design.md#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved)).
@@ -1248,11 +1250,13 @@ returns `ok: false` with code `group_evidence_changed`.
 `root` that is missing, empty, relative or the manifest's `/var/tmp` default
 is `not_configured`. A non-empty `codex_home` must be absolute, or the call is
 `not_configured`, and every tool checks it the same way. `transcripts`, Claude
-Code's projects directory, must be absolute for the session-pass tools unless
+Code's projects directory, must be absolute for the session-pass,
+session-catalog-begin and session-rebuild tools unless
 `codex_home` is set and `transcripts` is empty or absent. That Codex-only
-configuration runs the pass with no Claude transcripts directory, reading the
-Codex rollouts under `codex_home` (its `sessions` and `archived_sessions`). A
-relative `transcripts` is `not_configured` even with `codex_home`.
+configuration runs the pass, catalog-begin and rebuild steps with no Claude
+transcripts directory, reading the Codex rollouts under `codex_home` (its
+`sessions` and `archived_sessions`). A relative `transcripts` is
+`not_configured` even with `codex_home`.
 `scribe.consistency-scan`, `scribe.memory-refresh-prepare` and
 `scribe.memory-refresh-apply` read no transcripts and
 do not check it. The Codex-enabled package (`plugin/orbit-codex/.orbit-plugin/`)
@@ -1265,9 +1269,10 @@ both packages.
 code, or `session_pass_failed`.
 
 **Session-pass steps.** Prepare takes optional `sessions`, `resolve`,
-`max_sessions`, `deadline_epoch_s` and `progress`. It returns `done`,
-`needs_model`, `settled`, `cursor`, `basis` and `window_request`. The
-plugin also returns the configured crew names. Apply takes `basis`, `cursor`
+`max_sessions`, `deadline_epoch_s`, `progress` and `catalog`. It returns
+`done`, `needs_model`, `settled`, `cursor`, `basis` and `window_request`. The
+plugin also returns the configured crew names (`session_distill_crew` and
+`session_header_crew`). Apply takes `basis`, `cursor`
 and `answer` and returns `status`, `cursor`, `pass`, `error_code`,
 `correction`, `header_request` and `window_request`. A retry forwards the
 first status as `previous_status`, the correction, and `repair: true`.
@@ -1286,7 +1291,32 @@ returns `{"pass": <pass or null>}` with `model_timeout`,
 `model_unavailable` or `model_failed`. Apply without an answer then returns
 `status: "failed"` with the cursor moved to the next session. A store or
 transcript error in prepare or apply fails that pass with its code and
-backs the session off.
+backs the session off. Optional `catalog: {author, project?}` selects the
+`scribe-session-catalog` job's catalog mode: exactly the one named session,
+requiring its switch to carry `cataloged_by`, with no 50-second start
+cutoff, and the selection sealed into the basis; apply and the failure tool
+read the mode from the sealed basis and audit under `session catalog`.
+
+**Catalog-begin step.** `scribe.session-catalog-begin` takes `session` and
+`author`, with optional `project` and `provider`. It writes the catalog
+switch, or resumes one a failed or interrupted catalog left, and returns
+`session`, `sessions` (the same id, as the pass selection's one session),
+`wrote_switch` and `catalog` (the pass selection's catalog mode for the
+window loop).
+
+**Session-rebuild steps.** `scribe.session-rebuild-prepare` takes `session`,
+`author`, `confirm` and optional `progress`, and returns `needs_model`,
+`ready_to_finish`, `expected_updated`, `basis`, `cursor`, `window_request`
+and the configured `session_distill_crew` and `session_header_crew`.
+`scribe.session-rebuild-apply` takes `basis` and `cursor`, with optional
+`answer`, `errors`, `header`, `header_errors`, `retry_answer`,
+`retry_errors`, `repair`, `previous_status` and `correction`, and returns
+`status` (`idle`, `written`, `stale`, `retry_header` or `retry_window`),
+`cursor`, `correction`, `header_request` and `window_request`.
+`scribe.session-rebuild-finish` takes `basis` and `progress` and returns
+`done`, `finished`, `next_expected` and `pass`. The rebuild cursor and basis
+are sealed like the pass's: forward them unchanged, or the steps refuse them
+as `invalid_input`.
 
 **Retry.** A propagated `store_locked` can be retryable. A refused final
 session answer returns `status: "failed"` after recording backoff. Provider
