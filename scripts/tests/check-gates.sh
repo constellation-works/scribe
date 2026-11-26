@@ -850,6 +850,47 @@ pub fn bail() -> ! {
 EOF
 )" "clippy::disallowed-methods" "scribe-core importing std::process::exit by name"
 
+# Copy each real module's inner expectation, then compile a representative
+# allowed operation before adding an exit call. This exercises the independent
+# lint under the same exemption that previously hid direct exit calls.
+for adapter in composition cli fs; do
+  case "$adapter" in
+    composition) source="$REPO_ROOT/crates/scribe-core/src/composition.rs"
+      operation='pub fn host() { let _ = std::env::var_os("PATH"); }' ;;
+    cli) source="$REPO_ROOT/crates/scribe-core/src/providers/cli.rs"
+      operation='pub fn host() { let _ = std::process::Command::new("unused").spawn(); }' ;;
+    fs) source="$REPO_ROOT/crates/scribe-tools/src/fs.rs"
+      operation='pub fn host() { let _ = std::fs::read("unused"); let _: Option<std::fs::File> = None; }' ;;
+  esac
+  fixture=$(clippy_tree "clippy-exit-$adapter" <<EOF
+//! Host adapter fixture.
+$(sed -n '/^#!\[expect(/,/^)]/p' "$source")
+/// Exercises the approved host operation without running it.
+$operation
+EOF
+  )
+  # Place the twin at the production module's relative path.
+  case "$adapter" in
+    composition) module=composition ;;
+    cli) module=providers/cli ;;
+    fs) module=fs ;;
+  esac
+  fixture_src="$fixture/crates/scribe-core/src"
+  mkdir -p "$(dirname "$fixture_src/$module.rs")"
+  mv "$fixture_src/config.rs" "$fixture_src/$module.rs"
+  if [[ "$adapter" == cli ]]; then
+    printf '//! Core fixture.\n/// Provider fixtures.\npub mod providers { pub mod cli; }\n' >"$fixture_src/lib.rs"
+  else
+    printf '//! Core fixture.\npub mod %s;\n' "$module" >"$fixture_src/lib.rs"
+  fi
+  expect_clippy pass "$fixture" "" "approved $adapter host operation"
+  cat >>"$fixture_src/$module.rs" <<'EOF'
+/// Direct exit must remain forbidden under the adapter expectation.
+pub fn bail() -> ! { std::process::exit(1) }
+EOF
+  expect_clippy fail "$fixture" "clippy::exit" "direct exit in the $adapter exemption"
+done
+
 # Compile the actual store file adapter with the pinned kit dependencies. The
 # bad twin appends a raw open to that same module; both run the real lint
 # configuration, without ever executing the open. The fixture resolves offline
@@ -887,6 +928,13 @@ mod error {
 mod db { mod files; }
 EOF
 expect_clippy pass "$store_clippy" "" "the production file adapter with scoped filesystem expectations"
+cat >>"$store_clippy/src/db/files.rs" <<'EOF'
+
+fn forbidden_exit() -> ! { std::process::exit(1) }
+EOF
+expect_clippy fail "$store_clippy" "clippy::exit" "direct exit in the production file adapter"
+# Restore the adapter before testing the separate SQLite boundary.
+cp "$REPO_ROOT/crates/scribe-store/src/db/files.rs" "$store_clippy/src/db/files.rs"
 cat >>"$store_clippy/src/db/files.rs" <<'EOF'
 
 fn forbidden_open(path: &std::path::Path) -> cw_sqlite::rusqlite::Result<cw_sqlite::rusqlite::Connection> {

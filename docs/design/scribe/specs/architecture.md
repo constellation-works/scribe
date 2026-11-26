@@ -502,8 +502,10 @@ module-level `#![expect(..., reason = "...")]`:
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
   binary has no exemption);
 - `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`);
-- `std::process::exit` (banned with no production exemption so commands exit
-  through normal error handling and `ExitCode`);
+- `std::process::exit` (also denied outside `main` by the independent
+  `clippy::exit` lint, including in modules with disallowed-method expectations;
+  the disallowed-path lint covers `main`, so commands exit through normal
+  error handling and `ExitCode`);
 - `std::sync::mpsc::channel` (banned with no production exemption; the
   provider drain carries its single result on capacity-one
   `std::sync::mpsc::sync_channel`);
