@@ -76,8 +76,9 @@ and the moved modules at the paths they had in it (`scribe_core::handoff`,
 ```
 main.rs              read selected host, configuration and log values and capture one full terminal environment snapshot (composition), probe help width before parsing, decide console output from the snapshot, console probe and parsed format, resolve Context, dispatch, map the result to an exit code
 cli.rs               clap declarations
-commands/<noun>.rs   arguments -> apps::<app>::Command; outcome -> payload
-commands/entry/      entry noun dispatch, per-verb arguments and shared rendering
+commands/<noun>.rs   a noun with three or fewer verbs: arguments -> apps::<app>::Command; Outcome -> payload
+commands/<noun>/     nouns with four or more verbs (entry, group, memory, proposal, session, tag): noun dispatch, per-verb arguments and shared rendering
+commands/hook/       maps the four hook event verbs to app events; sibling modules provide helpers
 output/              one file per top-level command (STD-02 R48), shared helpers under output/common/, wiring in output/mod.rs; the sink is the kit's cw-cli
   mod.rs             module wiring, re-exports and dispatch enums (`Output`, `Record`, `Records`)
   <command>.rs       one file per top-level command holding its payloads and rendering
