@@ -3,6 +3,11 @@
 //! store internals they share with the store's own tests come from
 //! `scribe_store::testing`.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "store unit tests stage files and inspect scribe.db directly with rusqlite"
+)]
+
 pub(crate) use scribe_store::testing::{
     SESSION_BODY, Seed, entry_text, on_disk, private_tempdir, seed, session_text,
 };

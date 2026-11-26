@@ -15,6 +15,11 @@
 //! (`scripts/redact-recording.sh`), it redacts that recording instead of
 //! the synthetic one.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/session_replay.rs"]
 mod subject;

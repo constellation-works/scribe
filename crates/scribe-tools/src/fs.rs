@@ -1,12 +1,120 @@
 //! The crate's file-system access: the only module that names `std::fs`
-//! (scripts/check-dependency-direction.sh). Everything else reaches a file
-//! through these names, so how scribe opens a host file it does not own
-//! (beneath a root, without following a link, without blocking on a pipe)
-//! is decided here.
+//! (`clippy.toml`). Everything else reaches a file through these names, so how
+//! scribe opens a host file it does not own (beneath a root, without following
+//! a link, without blocking on a pipe) is decided here.
 
-pub use std::fs::{File, Metadata, canonicalize, metadata, read_dir, symlink_metadata};
-use std::io;
-use std::path::{Component, Path};
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "fs.rs is scribe-tools' file-system adapter; every other tool module goes through it"
+)]
+
+use std::ffi::OsString;
+pub use std::fs::Metadata;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::path::{Component, Path, PathBuf};
+
+/// A host file handle opened through [`open_beneath`] or [`open_no_follow`].
+#[derive(Debug)]
+pub struct File(std::fs::File);
+
+impl File {
+    /// Query metadata for the underlying open file handle.
+    ///
+    /// # Errors
+    ///
+    /// When the operating system cannot stat the handle.
+    pub fn metadata(&self) -> io::Result<Metadata> {
+        self.0.metadata()
+    }
+}
+
+impl Read for File {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Seek for File {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.0.seek(pos)
+    }
+}
+
+/// One entry returned by [`read_dir`].
+#[derive(Debug)]
+pub struct DirEntry(std::fs::DirEntry);
+
+impl DirEntry {
+    /// The full path to the entry.
+    #[must_use]
+    pub fn path(&self) -> PathBuf {
+        self.0.path()
+    }
+
+    /// The entry's bare file name.
+    #[must_use]
+    pub fn file_name(&self) -> OsString {
+        self.0.file_name()
+    }
+
+    /// The entry's file type without following symbolic links.
+    ///
+    /// # Errors
+    ///
+    /// When the file type cannot be read.
+    pub fn file_type(&self) -> io::Result<std::fs::FileType> {
+        self.0.file_type()
+    }
+}
+
+/// Iterator over directory entries returned by [`read_dir`].
+#[derive(Debug)]
+pub struct ReadDir(std::fs::ReadDir);
+
+impl Iterator for ReadDir {
+    type Item = io::Result<DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|entry| entry.map(DirEntry))
+    }
+}
+
+/// Resolve `path` to its canonical, absolute form.
+///
+/// # Errors
+///
+/// When `path` does not exist or cannot be resolved.
+pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    std::fs::canonicalize(path)
+}
+
+/// Query metadata for `path`, following symbolic links.
+///
+/// # Errors
+///
+/// When `path` does not exist or cannot be inspected.
+pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    std::fs::metadata(path)
+}
+
+/// Query metadata for `path` without following symbolic links.
+///
+/// # Errors
+///
+/// When `path` does not exist or cannot be inspected.
+pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    std::fs::symlink_metadata(path)
+}
+
+/// Read the entries of directory `path`.
+///
+/// # Errors
+///
+/// When `path` is not a readable directory.
+pub fn read_dir(path: impl AsRef<Path>) -> io::Result<ReadDir> {
+    std::fs::read_dir(path).map(ReadDir)
+}
 
 /// Whether `e` is the refusal to open a link where a file or directory was
 /// expected (`O_NOFOLLOW` on a link, or a directory component that is one).
@@ -50,7 +158,7 @@ pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
         }
         dir = openat(&dir, part.as_os_str(), flags, Mode::empty())?;
     }
-    Ok(File::from(dir))
+    Ok(File(std::fs::File::from(dir)))
 }
 
 /// [`open_beneath`] off Unix: a plain open of the joined path.
@@ -62,7 +170,7 @@ pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
 pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
     let mut path = root.to_path_buf();
     path.extend(parts.iter().map(|part| part.as_os_str()));
-    File::open(path)
+    std::fs::File::open(path).map(File)
 }
 
 /// Open `path` read-only. `NOFOLLOW` refuses a link at the last name, and
@@ -80,7 +188,7 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
-    Ok(File::from(fd))
+    Ok(File(std::fs::File::from(fd)))
 }
 
 /// [`open_no_follow`] off Unix: a link at `path` is refused before the open.
@@ -96,7 +204,7 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
             "the Git metadata file is a link",
         ));
     }
-    File::open(path)
+    std::fs::File::open(path).map(File)
 }
 
 /// What [`inspect_owned`] found at a path.

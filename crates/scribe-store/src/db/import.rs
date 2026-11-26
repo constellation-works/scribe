@@ -212,7 +212,7 @@ impl Store {
         for name in cw_fs::list(path)? {
             self.remove_archive(&path.join(name))?;
         }
-        std::fs::remove_dir(path).map_err(|e| Error::io("remove", path, e))
+        files::remove_empty_dir(path)
     }
 }
 
@@ -239,11 +239,7 @@ fn collect(path: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
 /// Whether `path` is a directory itself (a link is not followed, and is
 /// refused by the inspection that follows).
 fn is_dir(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => Ok(meta.is_dir()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(Error::io("inspect", path, e)),
-    }
+    Ok(files::symlink_metadata(path)?.is_some_and(|meta| meta.is_dir()))
 }
 
 /// The kind of the archived file at `rel`.

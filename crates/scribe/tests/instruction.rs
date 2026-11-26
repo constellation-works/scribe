@@ -10,6 +10,11 @@
 //! check measures an instruction's age against the time the command runs.
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/instruction.rs"]
 mod subject;

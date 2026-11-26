@@ -3,6 +3,11 @@
 //! `pre-issue-*` archive or a leftover `issues/` file is imported into
 //! `archive_records` like any other file.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/issue_conversion.rs"]
 mod subject;

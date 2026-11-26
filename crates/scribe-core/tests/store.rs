@@ -4,6 +4,10 @@
 //! owner-only temp root.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "store integration tests copy fixture trees and inspect scribe.db directly"
+)]
 
 use scribe_core::RedactorFromConfig;
 use scribe_core::TagVerbs;

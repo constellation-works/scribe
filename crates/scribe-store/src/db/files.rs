@@ -10,6 +10,11 @@
 //! the kit checks the directory it points to. Nothing inside the root is ever
 //! followed through a link.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "db/files.rs is scribe-store's file adapter beside cw-fs; every other store module goes through it"
+)]
+
 use crate::error::{Error, Result};
 use cw_fs::Cap;
 use std::io;
@@ -100,4 +105,31 @@ pub(crate) fn remove(root: &Path, path: &Path) -> Result<()> {
         }
     }
     cw_fs::remove(&target).map_err(Error::from)
+}
+
+/// Metadata of `path` without following a link, or `None` when missing.
+pub(crate) fn symlink_metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::io("inspect", path, e)),
+    }
+}
+
+/// Remove an empty directory.
+pub(crate) fn remove_empty_dir(path: &Path) -> Result<()> {
+    std::fs::remove_dir(path).map_err(|e| Error::io("remove", path, e))
+}
+
+/// Create `path` and any missing parent directories.
+pub(crate) fn create_dir_all(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path).map_err(|e| Error::io("create", path, e))
+}
+
+/// Whether `dir` contains at least one entry.
+pub(crate) fn dir_is_non_empty(dir: &Path) -> Result<bool> {
+    Ok(std::fs::read_dir(dir)
+        .map_err(|e| Error::io("list", dir, e))?
+        .next()
+        .is_some())
 }

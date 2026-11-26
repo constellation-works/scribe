@@ -79,6 +79,10 @@ strip = true
 [workspace.lints.clippy]
 await_holding_lock = "deny"
 dbg_macro = "deny"
+# STD-02 R3, R5, R6: file, environment, process, channel and SQLite-open
+# boundaries live in clippy.toml so Clippy resolves every path spelling.
+disallowed_methods = "deny"
+disallowed_types = "deny"
 expect_used = "warn"
 print_stderr = "warn"
 print_stdout = "warn"

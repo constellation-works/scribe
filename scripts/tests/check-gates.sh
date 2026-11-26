@@ -63,19 +63,19 @@ expect fail check-test-modules.sh "$nested" "store/tests/ with no \`mod tests;\`
 printf '#[cfg(test)]\nmod tests;\n' >>"$nested/crates/scribe-core/src/store/mod.rs"
 expect pass check-test-modules.sh "$nested" "store/tests/ declared in store/mod.rs"
 
-# --- check-dependency-direction.sh: std::fs reached by a grouped import ------
+# --- check-dependency-direction.sh: std::net reached by a grouped import -----
 deps=$(tree deps-clean)
 expect pass check-dependency-direction.sh "$deps" "a core module with use std::fmt"
 
-for import in 'use std::{fmt, fs};' 'use std::{io, fs::File};' $'use std::{\n    fmt,\n    process::Command,\n};'; do
+for import in 'use std::{fmt, net};' 'use std::{io, net::TcpStream};' $'use std::{\n    fmt,\n    net::UdpSocket,\n};'; do
   bad=$(tree "deps-grouped-$n")
   printf '//! config\n%s\n' "$import" >"$bad/crates/scribe-core/src/config.rs"
   expect fail check-dependency-direction.sh "$bad" "a core module with $(echo "$import" | tr -s '\n ' ' ')"
 done
 
 near=$(tree deps-near)
-printf '//! config\nuse std::{fmt, ffi::OsStr};\n' >"$near/crates/scribe-core/src/config.rs"
-expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like fs"
+printf '//! config\nuse std::{fmt, net_like::Item};\n' >"$near/crates/scribe-core/src/config.rs"
+expect pass check-dependency-direction.sh "$near" "a grouped import of names that only start like net"
 
 # A relative import (`super::`) is the crate path it names: it meets the app
 # order and the port's rules as the `crate::` spelling does, and lib.rs may
@@ -168,8 +168,8 @@ for module in memory group; do
 done
 
 # Inside scribe-store, db/codec.rs and repository/audit.rs do no file I/O:
-# neither names db/files.rs, cw-fs or std::fs (the fsio module they once
-# named is retired).
+# neither names db/files.rs, cw-fs or cw-sqlite (std::fs is enforced by
+# clippy.toml, and the fsio module they once named is retired).
 store_tree() {
   local root
   root=$(tree "$1")
@@ -182,7 +182,7 @@ store_tree() {
 store=$(store_tree store-clean)
 expect pass check-dependency-direction.sh "$store" "a store whose codec and audit do no file I/O"
 for shape in db/codec repository/audit; do
-  for import in 'use super::files;' 'use crate::db::files;' 'use cw_fs::Cap;' 'use cw_sqlite::Db;' 'use std::fs;'; do
+  for import in 'use super::files;' 'use crate::db::files;' 'use cw_fs::Cap;' 'use cw_sqlite::Db;'; do
     bad=$(store_tree "store-io-$n")
     printf '//! shape\n%s\n' "$import" >"$bad/crates/scribe-store/src/${shape}.rs"
     expect fail check-dependency-direction.sh "$bad" "a store $shape with $import"

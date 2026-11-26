@@ -11,6 +11,10 @@
 //! scribe-core's store tests reach. Nothing here is in a normal build's
 //! public API.
 #![allow(clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test-support helpers stage and inspect store directories directly on disk"
+)]
 
 use crate::group::Group;
 use crate::message::{MessageSearch, NewMessage};

@@ -463,9 +463,28 @@ becomes `mod.rs`; the rest become flow files named for their command
 
 ## Guards
 
-`scripts/check-dependency-direction.sh` enforces what a crate edge cannot.
-The ring map for `scribe-domain` was removed with the crate. The script
-holds:
+`clippy.toml` (`clippy::disallowed_types` and `clippy::disallowed_methods`,
+denied workspace-wide in `Cargo.toml`) and
+`scripts/check-dependency-direction.sh` enforce what a crate edge cannot
+(STD-02 R6). The ring map for `scribe-domain` was removed with the crate.
+
+`clippy.toml` holds the path boundaries (resolved regardless of import
+spelling), with module-level `#![expect(..., reason = "...")]` only on the
+boundary owners:
+
+- `std::fs` types and methods (only `scribe-store/src/db/files.rs` beside
+  `cw-fs`, and `scribe-tools/src/fs.rs` for host files);
+- `std::env` reads, `current_dir` and `home_dir` (only
+  `scribe-core/src/composition.rs`, plus `SCRIBE_LOG` in
+  `scribe/src/output/mod.rs`);
+- `std::process::Command::{output,status,spawn}` and
+  `std::sync::mpsc::channel` (only `scribe-core/src/providers/cli.rs`);
+- `rusqlite::Connection::open` and its `open_with_flags` forms (banned with no
+  production exemption since `scribe-store` opens `scribe.db` through
+  `cw-sqlite`).
+
+`scripts/check-dependency-direction.sh` holds the crate, socket and module
+rules:
 
 - the banned crates per crate, from the table above (normal dependencies
   only, as today);
@@ -475,25 +494,23 @@ holds:
 - the core's root modules are `apps`, `composition`, `config`, `providers`
   and `runtime`: `lib.rs` declares a file module only for one of them;
 - no `apps/common`, `apps/shared` or `apps/util`;
-- in the core, only `composition.rs` names `std::env`, only `composition.rs`
-  and `providers/` name `std::fs`, and only `providers/` names
-  `std::process`;
-- only the five listed flows import `providers`, with their apps' `mod.rs`
+- no `std::net` in `scribe-core` or `scribe-tools`, only `providers/` names
+  `rustix` and `tempfile`, and `composition.rs` imports no app;
+- only the listed model callers import `providers`, with their apps' `mod.rs`
   (whose `Command` carries the adapter) and `runtime/errors.rs` (whose
   `CommandError` carries the model failure); `providers/` imports no app
   and no runtime;
-- the binary names no `scribe_store` and no `scribe_tools` path;
-- in `scribe-tools`, only `fs.rs` names `std::fs`, nothing names
-  `scribe_core`, and nothing calls `Store::write`;
-- in `scribe-tools`, nothing reads the clock or draws randomness;
+- the binary names no `scribe_store`, `scribe_tools` or
+  `scribe_core::runtime` path;
+- in `scribe-tools`, nothing names `scribe_core`, calls `Store::write`,
+  reads the clock or draws randomness;
 - in the store: `contracts/` imports no `db` or `repository`, reads no
   clock and has no `fn check_`; only `db/` uses `cw-sqlite` and its
   re-exported `rusqlite`, and no scribe source sets `journal_mode`,
   `synchronous`, `busy_timeout`, `user_version`, `secure_delete`,
   `PersistWal` or `wal_checkpoint` itself, so scribe.db is opened,
   configured, checkpointed and migrated only through `cw-sqlite`;
-  `db/files.rs` names nothing of the store but its error; the store reads no
-  environment variable and discovers no path;
+  `db/files.rs` names nothing of the store but its error;
 - the deleted paths (`scribe-domain`, `cases/`, the binary's moved files)
   stay deleted.
 

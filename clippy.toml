@@ -1,0 +1,54 @@
+# clippy.toml — STD-02 §R3, §R5, §R6: the file, environment, process, channel
+# and SQLite-open boundaries, resolved by Clippy regardless of path spelling.
+# Allowed boundary owners carry a module-level `#![expect(..., reason = "...")]`.
+
+disallowed-types = [
+    { path = "std::fs::File", reason = "file I/O belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host files" },
+    { path = "std::fs::OpenOptions", reason = "file I/O belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host files" },
+    { path = "std::fs::ReadDir", reason = "directory listing belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host directories" },
+    { path = "std::fs::DirEntry", reason = "directory listing belongs to cw-fs (via scribe-store's db/files.rs) for store paths or scribe_tools::fs for host directories" },
+]
+
+disallowed-methods = [
+    # std::fs — store files go through cw-fs (scribe-store's db/files.rs); host files go through scribe_tools::fs
+    { path = "std::fs::read", reason = "read store files through cw-fs / scribe-store's db/files.rs, or host files through scribe_tools::fs" },
+    { path = "std::fs::read_to_string", reason = "read store files through cw-fs / scribe-store's db/files.rs, or host files through scribe_tools::fs" },
+    { path = "std::fs::write", reason = "write durable files through cw-fs::write_atomic in scribe-store or apps/init/install.rs" },
+    { path = "std::fs::remove_file", reason = "remove files through cw-fs / scribe-store's db/files.rs" },
+    { path = "std::fs::remove_dir", reason = "remove directories through scribe-store's db/files.rs" },
+    { path = "std::fs::remove_dir_all", reason = "remove directories through scribe-store's db/files.rs" },
+    { path = "std::fs::create_dir", reason = "create directories through cw-fs::create_private_dir or scribe-store's db/files.rs" },
+    { path = "std::fs::create_dir_all", reason = "create directories through cw-fs::create_private_dir or scribe-store's db/files.rs" },
+    { path = "std::fs::rename", reason = "replace files atomically through cw-fs::write_atomic" },
+    { path = "std::fs::copy", reason = "copy files through scribe-store's db/files.rs or scribe_tools::fs" },
+    { path = "std::fs::hard_link", reason = "link files through scribe-store's db/files.rs" },
+    { path = "std::fs::soft_link", reason = "link files through scribe-store's db/files.rs" },
+    { path = "std::fs::metadata", reason = "stat store paths through cw-fs / scribe-store's db/files.rs, or host paths through scribe_tools::fs" },
+    { path = "std::fs::symlink_metadata", reason = "stat store paths through cw-fs / scribe-store's db/files.rs, or host paths through scribe_tools::fs" },
+    { path = "std::fs::set_permissions", reason = "set modes through cw-fs::create_private_dir or scribe-store's db/files.rs" },
+    { path = "std::fs::read_dir", reason = "list store directories through cw-fs::list / scribe-store's db/files.rs, or host directories through scribe_tools::fs" },
+    { path = "std::fs::read_link", reason = "read links through scribe-store's db/files.rs or scribe_tools::fs" },
+    { path = "std::fs::canonicalize", reason = "resolve paths through scribe-store's db/files.rs, scribe_tools::fs, or scribe_core::composition" },
+    { path = "std::fs::exists", reason = "check paths through cw-fs / scribe-store's db/files.rs or scribe_tools::fs" },
+
+    # std::env — resolved inputs flow down from composition (STD-02 R3)
+    { path = "std::env::var", reason = "capture environment variables in scribe_core::composition (or output::init_logging for SCRIBE_LOG) and pass values down" },
+    { path = "std::env::var_os", reason = "capture environment variables in scribe_core::composition and pass values down" },
+    { path = "std::env::vars", reason = "capture environment variables in scribe_core::composition and pass values down" },
+    { path = "std::env::vars_os", reason = "capture environment variables in scribe_core::composition and pass values down" },
+    { path = "std::env::current_dir", reason = "resolve the working directory in scribe_core::composition and pass it down" },
+    { path = "std::env::home_dir", reason = "resolve the home directory in scribe_core::composition and pass it down" },
+
+    # std::process — children run through the supervised process adapter in scribe_core::providers::cli (STD-03 R11-R15)
+    { path = "std::process::Command::output", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
+    { path = "std::process::Command::status", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
+    { path = "std::process::Command::spawn", reason = "run child processes through scribe_core::providers::cli's bounded supervisor" },
+
+    # std::sync::mpsc — unbounded channels lack backpressure (STD-03)
+    { path = "std::sync::mpsc::channel", reason = "use a bounded channel (std::sync::mpsc::sync_channel) instead of an unbounded channel" },
+
+    # rusqlite — scribe.db is opened, configured and migrated only through cw-sqlite in scribe_store::db
+    { path = "rusqlite::Connection::open", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
+    { path = "rusqlite::Connection::open_with_flags", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
+    { path = "rusqlite::Connection::open_with_flags_and_vfs", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
+]

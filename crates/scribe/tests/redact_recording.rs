@@ -4,6 +4,10 @@
 //! so no build or redaction runs.
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "integration tests stage files, environment and child processes directly"
+)]
 
 #[path = "support/redact_recording.rs"]
 mod subject;

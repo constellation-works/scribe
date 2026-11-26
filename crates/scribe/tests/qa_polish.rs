@@ -10,6 +10,11 @@
 //! 6. a bad argument is reported before an unset `[redact] env` name.
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/qa_polish.rs"]
 mod subject;

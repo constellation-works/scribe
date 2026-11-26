@@ -3,6 +3,12 @@
 //! store's tests that call the use cases are in scribe-core
 //! (`src/tests/store/`); the helpers both share are in [`crate::testing`].
 
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "store unit tests stage files, permissions and synchronization channels directly"
+)]
+
 pub(crate) use crate::fixtures::{T0, entry, session};
 pub(crate) use crate::testing::private_tempdir;
 

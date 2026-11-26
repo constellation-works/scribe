@@ -7,6 +7,11 @@
 //! `make goldens UPDATE=1` (which sets `UPDATE_GOLDENS=1`) and review the
 //! diff in the PR as a contract change.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/goldens.rs"]
 mod subject;

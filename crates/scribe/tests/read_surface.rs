@@ -10,6 +10,11 @@
 //! empty `PATH`, so a model or Orbit call could not even start.
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "integration tests stage files, databases, environment and child processes directly"
+)]
 
 #[path = "support/read_surface.rs"]
 mod subject;
