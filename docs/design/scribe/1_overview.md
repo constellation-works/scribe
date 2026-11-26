@@ -5,7 +5,7 @@ last_updated: 2026-11-26
 last_validated: 2026-11-02
 status: Draft
 stage: building
-next: 2_design.md §19 replaces the remaining model callers with Orbit jobs; approved, not built; S7 discussions unfiled
+next: 2_design.md §19 Orbit jobs built; only §19.5 providers/ deletion and model-config migration (ORB-28144) remain; S7 discussions unfiled
 feature: scribe
 doc_role: overview
 type: design
