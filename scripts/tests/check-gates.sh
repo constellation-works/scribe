@@ -197,13 +197,20 @@ for shape in db/codec repository/audit; do
     'use crate::{db::files};' 'use crate::{db::{docs, files::read}};' \
     $'use super::{\n    log,\n    files,\n};' \
     $'use crate::db::{\n    docs,\n    files,\n};' \
-    $'use crate::{\n    db::files,\n};'; do
+    $'use crate::{\n    db::files,\n};' \
+    'use super::super::db::{files, DB_FILE};' \
+    $'use crate::db::{\n    docs, // done; next\n    files,\n};' \
+    $'use crate::db::{\n    docs, /* a; b */\n    files,\n};' \
+    'pub(in crate::db) use crate::db::{files as private_files};' \
+    'pub (crate) use crate::db::{files};'; do
     bad=$(store_tree "store-path-$n")
     printf '%s\n' "$import" >"$bad/crates/scribe-store/src/${shape}.rs"
     expect fail check-dependency-direction.sh "$bad" "a store $shape referencing files: $import"
   done
   for clean_import in 'use super::{log, files_extra};' 'use crate::db::{docs, files_extra};' \
     'use crate::{db::docs, other::files};' $'use crate::db::{\n    docs,\n    files_extra,\n};' \
+    'use super::super::db::{docs, DB_FILE};' 'pub(in crate::db) use crate::db::{docs as d};' \
+    $'use crate::db::{\n    docs, // files; not an import\n};' \
     'struct Example { files: Vec<String> }' 'fn f(files: usize) { let files = files + 1; }'; do
     ok=$(store_tree "store-near-$n")
     printf '%s\n' "$clean_import" >"$ok/crates/scribe-store/src/${shape}.rs"

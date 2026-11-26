@@ -405,10 +405,13 @@ for shape in db/codec:"converts bytes" repository/audit:"writes its rows through
       }
       return @out;
     }
-    while (/^[ \t]*(?:pub(?:\([a-z]+\))?[ \t]+)?use[ \t]+([^;]+);/mg) {
+    # Blank comments first (keeping newlines, so line numbers hold): a
+    # semicolon inside one must not end a statement early.
+    s{/\*.*?\*/}{ (my $c = $&) =~ s/[^\n]//g; $c }gse;
+    s{//[^\n]*}{}g;
+    while (/^[ \t]*(?:pub(?:[ \t]*\([^)]*\))?[ \t]+)?use\s+([^;]+);/mg) {
       my ($tree, $at) = ($1, $-[0]);
-      $tree =~ s{//[^\n]*}{}g;
-      next unless grep { /^(?:::)?(?:super|(?:crate::)?db)::files(?:$|::)/ } paths("", $tree);
+      next unless grep { /^(?:::)?(?:(?:crate|self|super)::)*(?:super::files|db::files)(?:$|::)/ } paths("", $tree);
       my $line = 1 + (substr($_, 0, $at) =~ tr/\n//);
       print "$ENV{FILE}:$line: grouped import reaches db/files.rs\n";
     }' "$file" 2>/dev/null || true)
