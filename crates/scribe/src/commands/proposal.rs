@@ -96,7 +96,6 @@ pub(crate) enum StateArg {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum AuthorKindArg {
     // The user, through a typed #scribe line.
-    #[value(alias = "daniel")]
     User,
     // An agent, through proposal add.
     Agent,

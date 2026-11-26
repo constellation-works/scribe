@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: store — layout, scribe.db (phase 4: messages with FTS5, WAL, read-only copies; phase 5: the memory journal and pass signals; phase 6: sessions, switches, Codex cursors and rebuild checkpoints as rows, s-<n> ids, store migrate and export; phase 8: the file store's archives imported into archive tables, no file decoder), memory files (profile, now items, milestones), record files with YAML frontmatter (format 31: decisions and open items; format 30: withdrawn claims and deleted source markers; format 25: memory files migrated from memory items; format 24: a claim's context paragraph; format 23: the user author channel; format 22: marks.json and the annotation entry; format 21: a working item's preference_proposal; format 20: memory consolidation and promotion; format 19: memory items; format 18: entry removal_instruction apart from the approval instruction; format 17: issue records; format 16: entry outcome on a pass-written idea; format 15: instructed approval said and closed_reason covered; format 14: candidate statement and subject, entry stated_by; format 13: entry approved_by and instruction, proposal instruction, closed_reason instructed; format 12: entry inactive_since; format 11: proposal admitted and closed_reason; format 10: entry evidence and as_of, candidate role; format 9: proposal candidate; format 8: action entries' quote and transcript window, pickups.json; format 7: agent provenance, write metadata and the rebuilding author; session header and append-only log, active flag, authors), JSON documents, the tags store, config, private modes, links, format versioning, corrupt records, redaction, locking and the audit log"
-last_validated: 2026-11-23
+last_validated: 2026-11-26
 ---
 
 # Spec: Store
@@ -54,9 +54,8 @@ the value stored before it, `{kind: daniel, name: daniel}`, reads as
 `control.json`, `proposals.json`, issues, `marks.json`, `pickups.json` and
 `audit.jsonl`), and the next write persists `user` at format 23, which a
 format-22 build refuses as too new. `user` is a reserved `--author` name,
-and `daniel` stays one. A tag's `[tags.<name>.capture] from` is `user`
-(phase 2: or `assistant` or `both`, specs/catchers.md); `daniel` is still
-read as `user`. Format 22 changes no
+and `daniel` stays one. A tag's `[tags.<name>.capture] from` is `user`,
+`assistant` or `both` (specs/catchers.md). Format 22 changes no
 stored value: it adds `marks.json`, each `#scribe` annotation marker's
 outcome, and admits an entry with `stated_by: {kind: scribe, name:
 annotation}`, scribe's statement of a turn Daniel marked
@@ -1455,8 +1454,8 @@ exits 0.
   `triggers` replaces the shipped list whole (at most 32, each at most 120
   characters), `criteria` and `not` take at most 300 characters, and
   `from = "assistant"` is refused `config_invalid` (phase 2 accepts
-  `assistant` and `both`, adds `max_open`, 1–20, and warns on the removed
-  `route = "agent"`, which then catches nothing). A tag scribe ships no
+  `assistant` and `both` and adds `max_open`, 1–20; `route = "agent"` is
+  removed and refused). A tag scribe ships no
   rules for must give `from`, `route` and `triggers`. A pass claim is
   written only under the lock, after its turn is checked again to fire a
   trigger of its tag under the config then on disk; the recomputed

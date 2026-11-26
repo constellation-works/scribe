@@ -117,16 +117,26 @@ fn the_issue_noun_and_search_kind_are_unknown() {
 }
 
 #[test]
-fn a_route_agent_issue_table_warns_and_catches_nothing() {
-    let fx = Fixture::new();
-    fx.config("[tags.issue.capture]\nroute = \"agent\"\ntriggers = [\"root cause\"]\n");
-    let stderr = text(&fx.check(Cli(&["tag", "list"]), Success).stderr);
-    assert!(stderr.contains("route \"agent\""), "{stderr}");
-    assert!(stderr.contains("specs/catchers.md"), "{stderr}");
-    let shown = json(
-        &fx.check(Cli(&["tag", "show", "issue", "--json"]), Success)
-            .stdout,
-    );
-    assert!(shown["capture"]["route"].is_null(), "{shown}");
-    assert!(shown["capture"]["triggers"].is_null(), "{shown}");
+fn a_route_agent_issue_table_is_refused_as_config_invalid() {
+    for (toml, needle) in [
+        (
+            "[tags.issue.capture]\nroute = \"agent\"\ntriggers = [\"root cause\"]\n",
+            "line 2: tags.issue.capture.route: 'agent' is not one of: propose, write",
+        ),
+        (
+            "[tags.issue.capture]\ntriggers = [\"root cause\"]\n",
+            "tags.issue.capture needs from, route",
+        ),
+    ] {
+        let fx = Fixture::new();
+        fx.config(toml);
+        let out = fx.check(Cli(&["tag", "list", "--json"]), Capture);
+        assert_eq!(out.status.code(), Some(1), "{toml}");
+        let err: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(err["code"], "config_invalid", "{toml}: {err}");
+        assert!(
+            err["error"].as_str().unwrap().contains(needle),
+            "{toml}: {err}"
+        );
+    }
 }

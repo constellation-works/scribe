@@ -1,7 +1,7 @@
 ---
 type: design
 summary: "Spec: output contract — streams, modes, plain columns, the JSON list envelope and record fields (segments, activity, agent authors and direct writes, search hits; future transcripts), warnings, errors and exit codes"
-last_validated: 2026-11-24
+last_validated: 2026-11-26
 ---
 
 # Spec: Output contract
@@ -20,8 +20,8 @@ ones.
 
 **Format 23 (contract change, 2_design.md §15.8).** The user's author
 channel is `user`, not `daniel`: an author's `kind` (and the user's `name`)
-in `--json`, the plain `author` column, `--author-kind user` (`daniel`
-still accepted), the error code `user_only` (was `daniel_only`), and the
+in `--json`, the plain `author` column, `--author-kind user` (the retired
+`daniel` alias is refused as a usage error), the error code `user_only` (was `daniel_only`), and the
 labels `user_turns`, `user_first_turns`, `USER_TURNS` and `user_asked`
 (were `daniel_turns`, `daniel_first_turns`, `DANIEL_TURNS` and
 `daniel_asked`). The only reader, the skill, ships in

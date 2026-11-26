@@ -335,6 +335,9 @@ fn entry_list_filters_by_topics_related_dates_and_author() {
     assert_eq!(list(&["entry", "list", "--author", "user"]).len(), 4);
     // The name before format 23 still selects the user's entries.
     assert_eq!(list(&["entry", "list", "--author", "daniel"]).len(), 4);
+    assert_eq!(list(&["entry", "list", "--author-kind", "user"]).len(), 4);
+    let legacy = usage_error(&fx, &["entry", "list", "--author-kind", "daniel"]);
+    assert_eq!(legacy["code"], "usage_error");
     assert!(list(&["entry", "list", "--author-kind", "agent"]).is_empty());
     fx.check(
         &[
@@ -451,6 +454,9 @@ fn proposal_list_filters_by_state_dates_entry_and_author_kind() {
         2
     );
     assert!(list(&["proposal", "list", "--author-kind", "agent"]).is_empty());
+    assert!(list(&["proposal", "list", "--author-kind", "user"]).is_empty());
+    let legacy = usage_error(&fx, &["proposal", "list", "--author-kind", "daniel"]);
+    assert_eq!(legacy["code"], "usage_error");
     let err = usage_error(&fx, &["proposal", "list", "--entry", "deci"]);
     assert_eq!(err["code"], "id_ambiguous");
 }

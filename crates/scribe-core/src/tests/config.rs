@@ -311,6 +311,38 @@ fn capture_rules_override_field_by_field_with_their_line() {
     assert_eq!(capture.criteria, shipped.criteria);
     assert_eq!(capture.not, shipped.not);
     assert_eq!(capture.from, shipped.from);
+
+    let custom = Config::parse(
+        "[tags.a.capture]\nfrom = \"user\"\nroute = \"propose\"\ntriggers = [\"one\"]\n\
+         [tags.b.capture]\nfrom = \"assistant\"\nroute = \"write\"\ntriggers = [\"two\"]\n\
+         [tags.c.capture]\nfrom = \"both\"\nroute = \"write\"\ntriggers = [\"three\"]\n",
+    )
+    .unwrap();
+    assert!(custom.tag_warnings.is_empty(), "{:?}", custom.tag_warnings);
+    assert_eq!(
+        custom.tags.resolve("a").unwrap().capture.from(),
+        Some(CaptureFrom::User)
+    );
+    assert_eq!(
+        custom.tags.resolve("a").unwrap().capture.route(),
+        Some(CaptureRoute::Propose)
+    );
+    assert_eq!(
+        custom.tags.resolve("b").unwrap().capture.from(),
+        Some(CaptureFrom::Assistant)
+    );
+    assert_eq!(
+        custom.tags.resolve("b").unwrap().capture.route(),
+        Some(CaptureRoute::Write)
+    );
+    assert_eq!(
+        custom.tags.resolve("c").unwrap().capture.from(),
+        Some(CaptureFrom::Both)
+    );
+    assert_eq!(
+        custom.tags.resolve("c").unwrap().capture.route(),
+        Some(CaptureRoute::Write)
+    );
 }
 
 #[test]
@@ -520,19 +552,45 @@ fn a_shipped_word_yields_to_config_and_two_config_entries_do_not() {
 
 #[test]
 fn bad_capture_rules_are_refused_naming_the_field() {
-    for (toml, needle) in [
-        ("[tags.preferences.capture]\nfrom = \"robot\"\n", "from"),
-        ("[tags.preferences.capture]\nroute = \"file\"\n", "route"),
+    for (toml, line, needle) in [
+        (
+            "[tags.preferences.capture]\nfrom = \"robot\"\n",
+            Some(2),
+            "from",
+        ),
+        (
+            "[tags.preferences.capture]\nfrom = \"daniel\"\n",
+            Some(2),
+            "is not one of: user, assistant, both",
+        ),
+        (
+            "[tags.preferences.capture]\nroute = \"file\"\n",
+            Some(2),
+            "route",
+        ),
+        (
+            "[tags.preferences.capture]\nroute = \"agent\"\n",
+            Some(2),
+            "is not one of: propose, write",
+        ),
         (
             "[tags.preferences.capture]\ntriggers = [\"a * * b\"]\n",
+            Some(2),
             "'*'",
         ),
         (
             "[tags.notes.capture]\ncriteria = \"x\"\n",
+            None,
             "scribe ships no capture rules",
+        ),
+        (
+            "[tags.issue.capture]\ntriggers = [\"root cause\"]\n",
+            None,
+            "needs from, route",
         ),
     ] {
         let err = Config::parse(toml).unwrap_err();
+        assert_eq!(err.line, line, "{toml}: {err}");
         assert!(err.to_string().contains(needle), "{toml}: {err}");
     }
     let long = format!(

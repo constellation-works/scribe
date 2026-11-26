@@ -61,14 +61,17 @@ fn the_pass_writes_daniels_idea_itself_as_an_entry_it_authors_with_no_proposal()
         json!({"state": "open", "reason": null, "task": null})
     );
 
-    // Never listed as the user's own (`daniel` is the kind's name before
-    // format 23, still accepted); listed under the pass's channel.
-    for kind in ["user", "daniel"] {
-        assert_eq!(
-            entries_json(&s, &["--tag", "idea", "--author-kind", kind])["total"],
-            0
-        );
-    }
+    // Never listed as the user's own, and retired `daniel` fails as a CLI
+    // usage error; listed under the pass's channel.
+    assert_eq!(
+        entries_json(&s, &["--tag", "idea", "--author-kind", "user"])["total"],
+        0
+    );
+    let legacy = s.fx.check(
+        Cli(&["entry", "list", "--tag", "idea", "--author-kind", "daniel"]),
+        Capture,
+    );
+    assert_eq!(legacy.status.code(), Some(2), "{}", text(&legacy.stderr));
     assert_eq!(
         entries_json(&s, &["--tag", "idea", "--author-kind", "scribe"])["total"],
         1

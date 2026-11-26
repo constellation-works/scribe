@@ -4442,6 +4442,10 @@ audit log holds one issue trigger fire.
 - Cost: a config that sets `[tags.issue.capture]` with route `agent` loads
   with a warning for the 30-day window, and is then refused.
 
+> **Updated 2026-11-26 ([ORB-28931]):** Under STD-14@1 §§R1–R2 (no release tag),
+> `route = "agent"` (and `[tags.issue.capture]` without `from` and `route`) is
+> refused as `config_invalid` rather than warned.
+
 ## The store keeps only the assistant turns a claim cites (proposed)
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 3 of the accepted proposal)
@@ -4623,6 +4627,17 @@ named in R35 only as a breaking change, so this silent alias is recorded here
 rather than justified as a warning. The config key
 `[tags.<tag>.capture] from = "daniel"` does warn, as deprecated, and is read
 for a 30-day window (`crates/scribe-core/src/config.rs`).
+
+> **Superseded in part, 2026-11-26 ([ORB-28931]):** Under STD-14@1 §§R1–R2 (no
+> release tag), the `--author-kind daniel` clap aliases
+> (`crates/scribe/src/commands/entry/mod.rs`, `crates/scribe/src/commands/proposal.rs`)
+> and `[tags.<tag>.capture] from = "daniel"`
+> (`crates/scribe-store/src/contracts/tag.rs`,
+> `crates/scribe-core/src/config/tags.rs`) are retired and refused as usage
+> errors or `config_invalid`. Stored `daniel` author values (`AuthorKind` serde
+> alias and `StoredAuthor` in `crates/scribe-store/src/contracts/record.rs`) and
+> `AuthorName::current`/`is_reserved` remain intact for persisted provenance and
+> Daniel's actor identity.
 
 ### Alternatives
 
