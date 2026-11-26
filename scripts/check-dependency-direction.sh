@@ -967,26 +967,44 @@ def canonical_ident(name):
 def path_segments(path_str):
     return [canonical_ident(s) for s in path_str.lstrip(":").split("::") if s]
 
-def resolve_to_crate(path_str, mod_parts, aliases):
+def resolve_path(path_str, mod_parts):
+    """Resolve a crate-relative path to module segments, or None."""
     segs = path_segments(path_str)
     if not segs:
         return None
     if segs[0] == "crate":
-        res = segs[1:]
-    elif segs[0] == "super":
+        return segs[1:]
+    if segs[0] == "super":
         up = 0
         while up < len(segs) and segs[up] == "super":
             up += 1
         if up > len(mod_parts):
             return None
-        res = mod_parts[: len(mod_parts) - up] + segs[up:]
-    elif segs[0] == "self":
-        res = mod_parts + segs[1:]
-    else:
-        return None
+        return mod_parts[: len(mod_parts) - up] + segs[up:]
+    if segs[0] == "self":
+        return mod_parts + segs[1:]
+    return None
+
+def expand_alias(path, aliases):
+    if path and path[0] in aliases:
+        return aliases[path[0]] + path[1:]
+    return path
+
+def resolve_to_crate(path_str, mod_parts, aliases, facades=None):
+    """Return every module path a crate-relative path can name (usually one).
+
+    A root alias expands the first segment. An inline root facade (a `pub mod`
+    holding only `pub use`) is followed to where its re-export is defined
+    (RootFacades, ORB-28903).
+    """
+    res = resolve_path(path_str, mod_parts)
+    if res is None:
+        return []
     if res and res[0] in aliases:
-        res = aliases[res[0]] + res[1:]
-    return res
+        return [aliases[res[0]] + res[1:]]
+    if res and facades is not None and res[0] in facades.table:
+        return facades.expand(res)
+    return [res]
 
 def collect_root_aliases(src_dir, top_units):
     """Collect unambiguous root-level re-exports in lib.rs / main.rs."""
@@ -1076,7 +1094,162 @@ def inline_modules(clean, raw, base):
                 modules.append((item[2], pos, item[0], item[1]))
     return modules
 
-def extract_resolved_refs(fp, src_dir, aliases):
+def is_facade_body(body):
+    """True when a module body holds only `pub use` statements (a compatibility facade)."""
+    return (bool(USE_STMT_RE.search(body)) and
+            not USE_STMT_RE.sub("", body).strip() and
+            all(re.search(r"\bpub\s+use\b", m.group(0))
+                for m in USE_STMT_RE.finditer(body)))
+
+ITEM_DEF_RE = re.compile(r"\b(?:fn|struct|enum|trait|type|const|static|union|mod|macro_rules!)\s+(?:r#)?(\w+)")
+
+class RootFacades:
+    """Inline root facades and the modules their re-exports are defined in.
+
+    A facade is no unit of its own, so a path through it must reach what it
+    re-exports or the dependency edge vanishes (ORB-28903). A re-export is
+    followed through further re-exports to the module that defines the item;
+    a name another crate defines carries no edge, and a name that cannot be
+    placed stays on the module the facade names.
+    """
+
+    DEPTH = 8
+
+    def __init__(self, src_dir, aliases):
+        self.src_dir = src_dir
+        self.aliases = aliases
+        self.table = {}
+        self.sources = {}
+        self.collect()
+
+    def collect(self):
+        for root_file in ("lib.rs", "main.rs"):
+            fp = os.path.join(self.src_dir, root_file)
+            if not os.path.isfile(fp):
+                continue
+            raw = open(fp, encoding="utf-8").read()
+            clean = strip_comments_and_strings(raw)
+            for start, end, path, ignored in inline_modules(clean, raw, []):
+                body = clean[start + 1:end]
+                if ignored or len(path) != 1 or not is_facade_body(body):
+                    continue
+                self.table[path[0]] = self.reexports(body, list(path))
+
+    def reexports(self, body, here):
+        """The (named, globs) re-exports of a use-only body, each as (binding, target)."""
+        named, globs = {}, []
+        for m in USE_STMT_RE.finditer(body):
+            if has_test_cfg(body[m.start(1):m.end(1)]):
+                continue
+            for target, binding in flatten_use_tree("", m.group(2)):
+                segs = path_segments(target)
+                res = resolve_path(target, here)
+                if segs and segs[-1] == "*":
+                    globs.append(res[:-1] if res else None)
+                elif segs:
+                    named[binding or segs[-1]] = res
+        return named, globs
+
+    def module_source(self, parts):
+        """The cleaned source and raw text of a module's own file, or None."""
+        key = tuple(parts)
+        if key not in self.sources:
+            base = os.path.join(self.src_dir, *parts)
+            found = None
+            for fp in (base + ".rs", os.path.join(base, "mod.rs")):
+                if parts and os.path.isfile(fp):
+                    raw = open(fp, encoding="utf-8").read()
+                    found = (strip_comments_and_strings(raw), raw)
+                    break
+            self.sources[key] = found
+        return self.sources[key]
+
+    def is_module(self, parts):
+        base = os.path.join(self.src_dir, *parts)
+        return bool(parts) and (os.path.isfile(base + ".rs") or os.path.isdir(base))
+
+    def expand(self, res, depth=0):
+        """Module paths for `res`, whose first segment is a facade."""
+        if depth > self.DEPTH:
+            return []
+        named, globs = self.table[res[0]]
+        name, tail = res[1:2], res[2:]
+        if not name:
+            return []
+        if name[0] in named:
+            target = named[name[0]]
+            return [] if target is None else self.locate(self.alias(target) + tail, depth)[1]
+        found, external = [], False
+        for glob in globs:
+            if glob is None:
+                external = True
+                continue
+            ok, paths = self.locate(self.alias(glob) + name + tail, depth)
+            if ok:
+                found.extend(paths)
+        if found:
+            return found
+        # Nothing places the name: a lone internal glob is the best answer.
+        if len(globs) == 1 and not external and globs[0] is not None:
+            return [self.alias(globs[0]) + name + tail]
+        return []
+
+    def alias(self, path):
+        return expand_alias(path, self.aliases)
+
+    def locate(self, path, depth):
+        """(placed, paths): where the item `path` names is defined.
+
+        `paths` is empty when another crate defines it; `placed` is False when
+        no source here says, and `paths` is then `path` itself.
+        """
+        for k in range(len(path) - 1, 0, -1):
+            if self.is_module(path[:k]):
+                module, name, tail = path[:k], path[k], path[k + 1:]
+                break
+        else:
+            return False, [path]
+        src = self.module_source(module)
+        if depth > self.DEPTH or src is None:
+            return False, [path]
+        clean, raw = src
+        if self.defines(module, name):
+            return True, [path]
+        globs = []
+        for m in USE_STMT_RE.finditer(clean):
+            if has_test_cfg(raw[m.start(1):m.end(1)]):
+                continue
+            for target, binding in flatten_use_tree("", m.group(2)):
+                segs = path_segments(target)
+                if segs and segs[-1] == "*":
+                    globs.append(target)
+                elif segs and (binding or segs[-1]) == name:
+                    return True, self.follow(target, module, tail, depth)
+        found = []
+        for target in globs:
+            res = resolve_path(target, module)
+            if res is None:
+                continue
+            ok, paths = self.locate(self.alias(res[:-1]) + [name] + tail, depth + 1)
+            if ok:
+                found.extend(paths)
+        return (True, found) if found else (False, [path])
+
+    def defines(self, module, name):
+        src = self.module_source(module)
+        return src is not None and (name in ITEM_DEF_RE.findall(src[0]) or self.is_module(module + [name]))
+
+    def follow(self, target, module, tail, depth):
+        res = resolve_path(target, module)
+        if res is None:
+            return []
+        if res and res[0] in self.aliases:
+            return self.locate(self.aliases[res[0]] + res[1:] + tail, depth + 1)[1]
+        if res and res[0] in self.table:
+            return self.expand(res + tail, depth + 1)
+        return self.locate(res + tail, depth + 1)[1]
+
+def extract_resolved_refs(fp, src_dir, aliases, facades=None):
     raw = open(fp, encoding="utf-8").read()
     clean = strip_comments_and_strings(raw)
     mod_parts = file_mod_parts(src_dir, fp)
@@ -1097,16 +1270,14 @@ def extract_resolved_refs(fp, src_dir, aliases):
             continue
         lineno = 1 + clean.count("\n", 0, m.start(2))
         for p, _binding in flatten_use_tree("", m.group(2)):
-            res = resolve_to_crate(p, module_at(m.start(2)), aliases)
-            if res:
+            for res in resolve_to_crate(p, module_at(m.start(2)), aliases, facades):
                 refs.append((module_at(m.start(2)), res, lineno))
     for m in INLINE_PATH_RE.finditer(clean):
         pos = m.start(1)
         if any(a <= pos < b for a, b in skip_spans):
             continue
         lineno = 1 + clean.count("\n", 0, pos)
-        res = resolve_to_crate(m.group(1), module_at(pos), aliases)
-        if res:
+        for res in resolve_to_crate(m.group(1), module_at(pos), aliases, facades):
             refs.append((module_at(pos), res, lineno))
     return refs, modules
 
@@ -1136,6 +1307,7 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
 
     top_units = list_units(src_dir, is_crate_root=True)
     aliases = collect_root_aliases(src_dir, top_units)
+    facades = RootFacades(src_dir, aliases)
     # Also map `crate::session::*` in scribe-store to `contracts::session` for
     # intra-contracts references (lib.rs re-exports contracts::session in an
     # inline `pub mod session`).
@@ -1150,7 +1322,7 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
         for f in sorted(files):
             if f.endswith(".rs"):
                 fp = os.path.join(r, f)
-                file_refs[fp], modules = extract_resolved_refs(fp, src_dir, aliases)
+                file_refs[fp], modules = extract_resolved_refs(fp, src_dir, aliases, facades)
                 clean = strip_comments_and_strings(open(fp, encoding="utf-8").read())
                 for start, end, path, ignored in modules:
                     if ignored:
@@ -1158,10 +1330,7 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
                     # Root compatibility facades made solely of public re-exports
                     # are aliases, not independent implementation units.
                     body = clean[start + 1:end]
-                    facade = (len(path) == 1 and bool(USE_STMT_RE.search(body)) and
-                              not USE_STMT_RE.sub("", body).strip() and
-                              all(re.search(r"\bpub\s+use\b", m.group(0))
-                                  for m in USE_STMT_RE.finditer(body)))
+                    facade = len(path) == 1 and is_facade_body(body)
                     if not facade or (crate_name, ()) in DECLARED_ORDERS:
                         inline_units[path[:-1]].add(path[-1])
 
