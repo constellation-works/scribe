@@ -411,9 +411,8 @@ script. The Makefile formats these files alongside Cargo's module tree.
 
 Checked across the workspace by `clippy.toml` (`clippy::disallowed_types` and
 `clippy::disallowed_methods`, denied workspace-wide in `Cargo.toml`, with
-`#[expect(..., reason = "...")]` on the boundary owners — statement-level on
-`scribe-store/src/db/files.rs` and `scribe-core/src/providers/cli.rs`,
-module-level `#![expect(...)]` elsewhere),
+narrowly scoped `#[expect(..., reason = "...")]` attributes on boundary
+owners for approved operations),
 the independent `clippy::exit` lint for calls outside `main`,
 `scripts/check-dependency-direction.sh`, and (for the terminal)
 `scripts/check-terminal-guard.sh` (STD-02 R6): what a crate edge cannot
