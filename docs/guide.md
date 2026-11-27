@@ -533,7 +533,8 @@ tool fails. `make standards-check` runs `docs/standards/check.sh`.
 
 `clippy` is required, not optional. `make ci-fast` compiles the fixtures that
 `structure` runs (`scripts/tests/check-gates.sh`): the Clippy boundary fixtures
-need `clippy`, and the Rust 2024 comparison fixtures are compiled directly by
+need `clippy`, and the Rust 2024 dependency-direction fixtures (the stringify
+case and the comparison cases) are each compiled directly by
 `rustc --edition=2024 --emit=metadata`. Neither kind builds a Scribe crate.
 `make ci-lint` runs `clippy`. A missing component fails the gate rather than
 skipping it (STD-04 R10); add it with `rustup component add clippy`. The Clippy
