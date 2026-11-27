@@ -1442,6 +1442,28 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-enum-si
 fi
 expect pass check-dependency-direction.sh "$lex_enum_sibling" "type context after an earlier braced enum variant"
 
+# A bare function pointer type is not a function item: it must not end the
+# backwards header scan before the enclosing enum or struct keyword.
+lex_fn_pointer_forms=(
+  'enum Example { A(fn()), B { x: [Result<u8, u16>::std::net::Item; 2] } }|tuple variant sibling'
+  'enum Example { A(fn()), B {}, C { x: [Result<u8, u16>::std::net::Item; 2] } }|tuple sibling before braced sibling'
+  'enum Example { A(unsafe extern "C" fn(u8) -> u8), B { x: [Result<u8, u16>::std::net::Item; 2] } }|qualified fn pointer sibling'
+  'struct Example<T = fn()> { x: [Result<u8, u16>::std::net::Item; 2], y: T }|generic default'
+  'struct Example<T> where T: Into<fn()> { x: [Result<u8, u16>::std::net::Item; 2], y: T }|where header'
+)
+for form in "${lex_fn_pointer_forms[@]}"; do
+  lex_fn_pointer=$(tree lex-fn-pointer)
+  printf 'macro_rules! accept { ($item:item) => {}; }\naccept! {\n    %s\n}\n' "${form%|*}" \
+    >"$lex_fn_pointer/crates/scribe-core/src/config.rs"
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-fn-pointer.rmeta" \
+    "$lex_fn_pointer/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: fn pointer fixture (${form##*|}) did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect pass check-dependency-direction.sh "$lex_fn_pointer" "type context after a bare fn pointer: ${form##*|}"
+done
+
 # Stringify preserves tokens without resolving their generic-qualified paths.
 lex_stringify=$(tree lex-stringify-generic)
 cat >"$lex_stringify/crates/scribe-core/src/config.rs" <<'EOF'

@@ -199,6 +199,19 @@ def _before_attributes(code: Sequence[Token], idx: int) -> int:
     return idx
 
 
+def _is_item_keyword(code: Sequence[Token], idx: int, keywords: Sequence[str]) -> bool:
+    """Return True when `code[idx]` is an item keyword, not a bare `fn(...)` pointer type."""
+    tok = code[idx]
+    if tok.kind != "IDENT" or tok.text not in keywords:
+        return False
+    if tok.text != "fn":
+        return True
+    # A function item names itself (`fn name` or `fn $name`); a bare function
+    # pointer type opens its parameter list straight after `fn`.
+    nxt = code[idx + 1] if idx + 1 < len(code) else None
+    return not (nxt is not None and nxt.kind == "PUNCT" and nxt.text == "(")
+
+
 def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
     """Recognize a struct literal field colon without treating declarations as values."""
     if colon_idx < 2:
@@ -258,18 +271,16 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
                     break
                 header_idx = j
                 while header_idx >= 0 and code[header_idx].text not in ("{", "}", ";"):
-                    tok = code[header_idx]
-                    if tok.kind == "IDENT" and tok.text in item_body_keywords:
+                    if _is_item_keyword(code, header_idx, item_body_keywords):
                         break
                     header_idx -= 1
                 if header_idx >= 0:
-                    tok = code[header_idx]
-                    if tok.kind == "IDENT" and tok.text in item_body_keywords:
+                    if _is_item_keyword(code, header_idx, item_body_keywords):
                         break
                 continue
             if tok.kind == "IDENT" and tok.text in ("struct", "enum", "union"):
                 return False
-            if tok.kind == "IDENT" and tok.text == "fn":
+            if _is_item_keyword(code, j, ("fn",)):
                 return True
             if tok.kind == "PUNCT" and tok.text in ("{", ";"):
                 break
