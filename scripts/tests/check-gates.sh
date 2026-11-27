@@ -2346,6 +2346,19 @@ if ! grep -Fq 'names make target `g.ldens`, which is not a Makefile target' "$wo
   fail=1
 fi
 
+fp_relative_parent="$work/fp-relative-parent"
+fp_relative="$fp_relative_parent/review=tree"
+mkdir -p "$fp_relative/docs"
+printf -- '- make-target: `goldens`\n' >"$fp_relative/docs/footprint-companions.md"
+printf 'goldens:\n\ttrue\n' >"$fp_relative/Makefile"
+if ! (cd "$fp_relative_parent" && \
+  "$GATES/check-footprint-companions.sh" review=tree </dev/null) \
+  >"$work/out" 2>&1; then
+  echo "check-gates: FAIL: check-footprint-companions.sh rejected a relative root containing '='" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # --- generate-feature-board.py: the entry template parses once scaffolded (STD-06 R5, R6) ---
 # The board generator skips _-prefixed folders, so no gate reads the template
 # itself. Scaffold a feature from it the way CONVENTIONS.md tells authors to,
