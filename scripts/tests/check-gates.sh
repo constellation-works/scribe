@@ -2555,6 +2555,44 @@ printf 'LOCKED :=--locked\n' >"$fp_target_header_space_assign/Makefile"
 expect fail check-footprint-companions.sh "$fp_target_header_space_assign" \
   "a companions map naming a target that appears only as a spaced := assignment"
 
+# A line inside a define/endef variable body is the variable's value, not a
+# rule, so it never satisfies the map. Each body below leaves ghost without a
+# rule, which GNU Make reports as "No rule to make target 'ghost'" (ORB-29451).
+n_define=0
+for body in \
+  $'define VARIABLE\n  ghost :\nendef\n' \
+  $'define VARIABLE\nghost :\nendef\n' \
+  $'override define VARIABLE\n  ghost :\nendef\n' \
+  $'export define VARIABLE\n  ghost :\nendef\n' \
+  $'define OUTER\ndefine INNER\nendef\n  ghost :\nendef\n' \
+  $'define VARIABLE\n\tendef\n  ghost :\nendef\n'; do
+  n_define=$((n_define + 1))
+  fp_define="$work/fp-define-body-$n_define"
+  mkdir -p "$fp_define/docs"
+  printf -- '- make-target: `ghost`\n' >"$fp_define/docs/footprint-companions.md"
+  printf '%s' "$body" >"$fp_define/Makefile"
+  expect fail check-footprint-companions.sh "$fp_define" \
+    "a companions map naming a target that appears only in a define body ($n_define)"
+  if ! grep -Fq 'names make target `ghost`, which is not a Makefile target' "$work/out"; then
+    echo "check-gates: FAIL: define body fixture ($n_define) lacks its unknown-target diagnostic" >&2
+    fail=1
+  fi
+done
+
+fp_target_indented_rule="${work}/fp-target-indented-rule"
+mkdir -p "$fp_target_indented_rule/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_target_indented_rule/docs/footprint-companions.md"
+printf '  ghost :\n\t@true\n' >"$fp_target_indented_rule/Makefile"
+expect pass check-footprint-companions.sh "$fp_target_indented_rule" \
+  "a companions map whose target is an indented real rule"
+
+fp_target_after_define="${work}/fp-target-after-define"
+mkdir -p "$fp_target_after_define/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_target_after_define/docs/footprint-companions.md"
+printf 'define VARIABLE\n  other :\nendef # done\n  ghost :\n\t@true\n' >"$fp_target_after_define/Makefile"
+expect pass check-footprint-companions.sh "$fp_target_after_define" \
+  "a companions map whose target is a real rule after a define closed with a comment"
+
 fp_relative_parent="$work/fp-relative-parent"
 fp_relative="$fp_relative_parent/review=tree"
 mkdir -p "$fp_relative/docs"
