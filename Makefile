@@ -1,4 +1,4 @@
-.PHONY: help build test goldens fmt fmt-check clippy deny structure readme-links standards-check ci-fast ci-lint ci install update-plugins clean
+.PHONY: help build test goldens fmt fmt-check clippy deny structure readme-links feature-board-check feature-board standards-check ci-fast ci-lint ci install update-plugins clean
 
 CARGO ?= cargo
 # Every build uses the committed Cargo.lock as is; a stale lock fails instead
@@ -29,12 +29,13 @@ endef
 help:
 	@echo "scribe make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate: fmt, structure, readme-links, standards-check (no scribe build; compiles Clippy fixtures, needs clippy)"
+	@echo "  make ci-fast          Pre-handoff gate: fmt, structure, readme-links, feature-board, standards-check (no scribe build; compiles Clippy fixtures, needs clippy)"
 	@echo "  make ci-lint          clippy -D warnings (required) + cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make goldens          Compare --help and output goldens with the built binary"
 	@echo "  make goldens UPDATE=1 Regenerate goldens after an intended surface change"
 	@echo "  make standards-check  Run the vendored standards check (docs/standards/check.sh)"
+	@echo "  make feature-board    Regenerate docs/design/FEATURES.md"
 	@echo "  make ci               Everything above; what CI runs"
 	@echo "  make update-plugins   Refresh the installed Claude Code and Codex plugins from this checkout"
 	@echo "  make build | fmt | install | clean"
@@ -84,6 +85,12 @@ structure:
 # checked: the gate needs no network.
 readme-links:
 	python3 scripts/check-readme-links.py
+
+feature-board-check:
+	python3 scripts/generate-feature-board.py --check
+
+feature-board:
+	python3 scripts/generate-feature-board.py
 
 clippy:
 	$(CARGO) clippy --workspace --all-targets $(LOCKED) -- -D warnings
@@ -153,7 +160,7 @@ standards-check:
 # of scribe (STD-04 R12). It compiles the small Clippy fixture crates that
 # structure runs, so it needs cargo clippy. Goldens need the binary, so they
 # are their own target.
-ci-fast: fmt-check structure readme-links standards-check
+ci-fast: fmt-check structure readme-links feature-board-check standards-check
 
 ci-lint: clippy deny
 
