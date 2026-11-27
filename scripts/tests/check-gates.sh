@@ -404,6 +404,47 @@ if ! grep -Fq "crate import cycle:" "$work/out"; then
   fail=1
 fi
 
+# A dotted `workspace.dependencies.*` line under [workspace.metadata] or
+# [package.metadata] is metadata, not a workspace dependency (ORB-29133): it
+# must neither mask a banned crate / cycle edge nor taint a clean alias.
+meta_masked=$(tree cycle-workspace-metadata-masked)
+printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nback = { path = "crates/scribe", package = "scribe" }\n\n[workspace.metadata]\nworkspace.dependencies.back = { package = "serde" }\n' \
+  >"$meta_masked/Cargo.toml"
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback.workspace = true\n' \
+  >"$meta_masked/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$meta_masked" "a crate cycle masked by [workspace.metadata] still fails"
+if ! grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing crate import cycle diagnostic for a [workspace.metadata] mask" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+meta_clean=$(tree workspace-metadata-clean)
+printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nmydep = { path = "crates/scribe-core", package = "scribe-core" }\n\n[workspace.metadata]\nworkspace.dependencies.mydep = { package = "rusqlite" }\n' \
+  >"$meta_clean/Cargo.toml"
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.workspace = true\n' \
+  >"$meta_clean/crates/scribe/Cargo.toml"
+expect pass check-dependency-direction.sh "$meta_clean" "a clean alias with a [workspace.metadata] rusqlite mask"
+
+pkgmeta_masked=$(tree cycle-package-metadata-masked)
+printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nback = { path = "crates/scribe", package = "scribe" }\n\n[package.metadata]\nworkspace.dependencies.back = { package = "serde" }\n' \
+  >"$pkgmeta_masked/Cargo.toml"
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback.workspace = true\n' \
+  >"$pkgmeta_masked/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$pkgmeta_masked" "a crate cycle masked by [package.metadata] still fails"
+if ! grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing crate import cycle diagnostic for a [package.metadata] mask" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+pkgmeta_clean=$(tree package-metadata-clean)
+printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nmydep = { path = "crates/scribe-core", package = "scribe-core" }\n\n[package.metadata]\nworkspace.dependencies.mydep = { package = "rusqlite" }\n' \
+  >"$pkgmeta_clean/Cargo.toml"
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.workspace = true\n' \
+  >"$pkgmeta_clean/crates/scribe/Cargo.toml"
+expect pass check-dependency-direction.sh "$pkgmeta_clean" "a clean alias with a [package.metadata] rusqlite mask"
+
 # The same forms without a back edge are legal: an aliased scribe -> scribe-core
 # edge, and an alias that merely reuses an internal crate's name for an
 # external package, are not cycles.

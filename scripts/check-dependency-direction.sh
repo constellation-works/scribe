@@ -85,8 +85,8 @@ policy() {
 #   [dependencies.key]  package = "x"  (and a dotted `dependencies.key = ...`
 #     line outside a dependency table)
 #   key.workspace = true  /  key = { workspace = true }  (the package comes
-#     from the root manifest's [workspace.dependencies], a [workspace.dependencies]
-#     table or top-level `workspace.dependencies.key = ...` dotted keys)
+#     from the root manifest's [workspace.dependencies], a [workspace] table
+#     with `dependencies.*` or top-level `workspace.dependencies.key = ...` dotted keys)
 # in [dependencies], [build-dependencies] and [target.<cfg>.*]; dev-dependencies
 # are exempt. A TOML comment is not part of a declaration, so each line is read
 # without its comment first: `# package = "x"` names no package. POSIX awk only
@@ -185,8 +185,8 @@ function decl(line,    key, rest) {
   else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/)
 }
 { $0 = uncomment($0) }
-FNR == 1 { mode = ""; subkey = ""; tbl = "" }
-/^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
+FNR == 1 { mode = ""; subkey = ""; tbl = ""; top = 1 }
+/^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); top = 0; classify(h); next }
 /^[ \t]*(#|$)/ { next }
 mode == "sub" {
   if ($0 ~ /^[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(subkey, FNR, package_of($0), 0)
@@ -195,13 +195,15 @@ mode == "sub" {
 }
 # A root manifest with no [workspace] header declares [workspace.dependencies] as
 # top-level dotted keys: `workspace.dependencies.<key> = ...` (ORB-29129).
-mode == "" && FILENAME == ARGV[1] && /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*\.[ \t]*(dependencies|"dependencies"|\047dependencies\047)[ \t]*\./ {
+# Only before the first [table] header: the same dotted keys under
+# [workspace.metadata] or [package.metadata] are metadata, not dependencies.
+top && FILENAME == ARGV[1] && /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*\.[ \t]*(dependencies|"dependencies"|\047dependencies\047)[ \t]*\./ {
   line = $0; sub(/^[ \t]+/, "", line)
   sub(/^(workspace|"workspace"|\047workspace\047)[ \t]*\.[ \t]*(dependencies|"dependencies"|\047dependencies\047)[ \t]*\.[ \t]*/, "", line)
   decl(line)
   next
 }
-mode == "table" || mode == "workspace" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\./) {
+mode == "table" || mode == "workspace" || (top && FILENAME != ARGV[1] && /^[ \t]*((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\./) {
   line = $0; sub(/^[ \t]+/, "", line)
   if (mode == "workspace") {
     if (line !~ /^(dependencies|"dependencies"|\047dependencies\047)[ \t]*\./) next
