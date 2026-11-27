@@ -3,9 +3,9 @@ id: STD-11-agent-context
 title: Agent context files — skills and instruction files loaded by an agent harness
 summary: Normative rules for the skills and instruction files an agent harness loads — their source, content, structure, size, links and checks; follow them in every repository agents work in.
 tags: [standard, docs, agents]
-version: 3
+version: 4
 created_date: 2026-11-22
-updated_date: 2026-11-25
+updated_date: 2026-11-26
 last_validated: 2026-11-22
 related: [STD-08-economy, STD-09-project-docs]
 ---
@@ -69,6 +69,7 @@ This standard is a directory. This file holds the binding text: the rules, where
 - **R13.** Where the form of the output matters, the skill MUST give a template in `assets/` or one worked example, not a description of the form.
 - **R14.** A context file MUST describe the repository or procedure as it is now, in the present tense. It MUST NOT tell what changed, when a feature arrived, give phase, slice or version narratives or dates of features, or keep a superseded way beside the current one. That history lives in git, the changelog and the design docs. A rule MAY end with one reference to the incident that caused it.
 - **R15.** A step that writes outside the working tree, deletes, sends, publishes or spends MUST be marked as such, with the confirmation it needs and from whom. A skill grants no authority: it points at the document or person that does.
+- **R26.** *No quoted people in published context.* A published context file (a skill, bundled reference or brief, or instruction file tracked in a public repository or shipped in a public plugin) MUST NOT quote a named person's chat words or carry a dated attribution such as `<Name> (YYYY-MM-DD): "…"`. State the rule in its own words and name a role (the operator, the owner), not a person; keep quotes and attributions in private records (the scribe entry, the task, or a private skill).
 
 ### Size
 

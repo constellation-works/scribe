@@ -31,3 +31,4 @@ One script can carry the gates for R1, R3, R4, R8, R10, R11, R16, R17, R20 and R
 | R23 | review-only. |
 | R24 | review-only. |
 | R25 | A CI step that fails when the bytes of `AGENTS.md` plus any import file beside it exceed 8,000 at the root or 4,000 in a subdirectory. Orbit: none yet. The umbrella: `operations/scripts/check-instruction-contract.sh` (`make instruction-check`), with its own larger budget. Every adopter: `sh docs/standards/check.sh`, vendored by `.orbit-plugin/lib/sync-standards.sh`. |
+| R26 | review-only; a public repository MAY scan tracked context files for dated chat attributions such as `<Name> (YYYY-MM-DD): "` |
