@@ -1,9 +1,13 @@
 # clippy.toml — STD-02 §R3, §R5, §R6, §R15: the file, environment, process,
 # channel, SQLite-open and standard-stream boundaries, resolved by Clippy
 # regardless of path spelling. Allowed boundary owners carry
-# `#[expect(..., reason = "...")]` — statement-level on scribe-store's
-# db/files.rs and scribe-core's providers/cli.rs, module-level `#![expect(...)]`
-# elsewhere.
+# `#[expect(..., reason = "...")]` scoped to the approved operation itself — the
+# statement in scribe-store's db/files.rs and scribe-core's providers/cli.rs,
+# the item (a field, a function or a binding) in scribe-tools' fs.rs,
+# scribe-core's composition.rs and scribe's output/common/console.rs. No module
+# carries a module-wide `#![expect(...)]`, so a path outside its owner's
+# approved operations stays banned in the owner's own module. The independent
+# `clippy::exit` and print-macro lints stay active in every owner.
 
 # STD-02 §R51 counts the receiver as a parameter.
 too-many-arguments-threshold = 7
