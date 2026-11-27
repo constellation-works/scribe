@@ -1420,6 +1420,8 @@ fn nested() {
 fn ty_nested(_: (Result<u8, u16>::std::net::Item, u8)) {}
 struct FieldType { field: [Result<u8, u16>::std::net::Item; 2] }
 enum VariantType { V { field: [Result<u8, u16>::std::net::Item; 2] } }
+struct AttrField { #[allow(unused)] field: [Result<u8, u16>::std::net::Item; 2] }
+enum AttrVariant { V { a: u8, #[allow(unused)] #[doc = "x"] field: [Result<u8, u16>::std::net::Item; 2] } }
 EOF
 expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary, raw-identifier and generic-qualified paths"
 
@@ -1491,6 +1493,8 @@ lex_cmp_forms=(
   $'pub fn f(a: u32, b: u32, c: u32) -> bool {\n    if a < b {}\n    c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()\n}|comparison after if < block'
   $'fn take(_: bool, _: bool) -> bool { true }\npub fn f(a: u32, b: u32, c: u32) -> bool { take(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()) }|comma-separated comparison in call'
   $'pub struct Flags { pub flags: [bool; 2] }\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { flags: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in struct field'
+  $'pub struct Flags { pub flags: [bool; 2] }\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { #[allow(unused)] flags: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in attributed struct field'
+  $'pub struct Flags(pub [bool; 2]);\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { 0: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in numeric struct field'
 )
 for form in "${lex_cmp_forms[@]}"; do
   lex_cmp=$(tree "lex-cmp-$n")
