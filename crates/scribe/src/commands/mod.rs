@@ -289,7 +289,7 @@ pub(crate) fn run(command: Command, ctx: &Context) -> Result<Output, CliError> {
         Command::Tag(command) => tag::run(command, ctx),
         Command::Hook(command) => hook::run(command, ctx),
         Command::Brief(args) => brief::run(&args, ctx),
-        Command::Plugin(command) => plugin::run(command, ctx),
+        Command::Plugin(command) => plugin::run(command),
     }
 }
 
