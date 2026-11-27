@@ -2,9 +2,9 @@
 
 Why each rule in [STD-11](STD-11.md) exists, tied to what was observed or to a published source. Read the entry for a rule when its intent is unclear or before deviating. The rules themselves are in `STD-11.md`; this file explains them and adds none.
 
-The standard starts from the owner's words in the chief's chat on 2026-11-22: "we need a proper, top-quality, SOA standard for skills. bad example: codebases/scribe/skills/scribe/SKILL.md", and "chunk it up into logical groups - and link them in the SKILL.md."
+The standard starts from the owner's direction in the chief's chat on 2026-11-22: skills need a proper, top-quality, SOA standard, with `codebases/scribe/skills/scribe/SKILL.md` as the bad example, and a large skill is to be chunked into logical groups linked from its `SKILL.md`.
 
-The instruction-file rules came from agent-written scribe entry `standard-8`, which quotes Daniel: "I think some of these can be consolidated, e.g. agent-skills + agent-instruction-files."
+The instruction-file rules came from agent-written scribe entry `standard-8`, which records the owner's view that some of these rules can be consolidated, for example agent-skills and agent-instruction-files.
 
 ## Sources
 
@@ -41,7 +41,7 @@ The instruction-file evidence came from the same constellation repositories:
 - **R6 (what SKILL.md holds).** The body is paid for on every use. scribe's file made every use pay for all eight subjects. With the common path and the routing only, a use costs the main file plus the one reference its task needs.
 - **R7 (only what the agent lacks).** The published advice says to add only the context a reader needs; command listings drift and `--help` does not. In v3 the line test and no-restating rule also apply to instruction files, combining their former STD-10 v1 R3, R5 and R6 (scribe standard-8).
 - **R8 (routing by condition).** A file the agent is not told when to open is either never read or always read. Orbit's skill states it in its opening lines: "Read only the reference needed for the current action; this is not a reading checklist."
-- **R9 (one task per reference).** This is the owner's "chunk it up into logical groups". The unit is a task because that is what an agent arrives with. A reference that needs a second one doubles the cost and hides the dependency. The shared prefix is the owner's addition when he approved the draft: the parts of one split subject sort together in the directory and in the routing table, and a reader sees that they were one document.
+- **R9 (one task per reference).** This is the owner's direction to chunk a skill into logical groups. The unit is a task because that is what an agent arrives with. A reference that needs a second one doubles the cost and hides the dependency. The shared prefix is the owner's addition on approving the draft: the parts of one split subject sort together in the directory and in the routing table, and a reader sees that they were one document.
 - **R10 (one level deep, contents list).** The published rules. An agent that follows a link from a reference may read only part of the target; a file linked from `SKILL.md` is read whole. The contents list lets it see the scope of a long file from its first lines.
 - **R11 (form).** A step that grows by one sentence per change is how both large skills got large; a cap on each bullet stops it at the first change. In v3 the 500-character limit and one-rule-per-bullet form also apply to instruction files, as in former STD-10 v1 R8 (scribe standard-8).
 - **R12 (freedom matches risk).** The published "degrees of freedom". A captain's self-clear and a `scribe entry add` with fixed headings fail on a wrong flag, so they get the exact command. A review gets criteria.
@@ -58,3 +58,4 @@ The instruction-file evidence came from the same constellation repositories:
 - **R23 (opening).** Scribe's long introduction grew because it was the only prose in its file. A short introduction gives readers the repository and loading context without becoming a feature history (former STD-10 v1 R7 and R8; scribe standard-8).
 - **R24 (section order).** Five repositories already used `Rules`, `Branching`, `Gates` and `Code` in the same order. Adding `Tests` to that sequence makes the common questions land under familiar headings; the managed block remains last (former STD-10 v1 R9; scribe standard-8).
 - **R25 (instruction-file budget).** "Short" needs a number or it erodes one paragraph at a time. Ten of twelve root files were under 7,300 bytes, and nine of Orbit's ten crate files fit 4,000 bytes; source and imports count together (former STD-10 v1 R10; scribe standard-8).
+- **R26.** Published skills and plugin briefs are read outside the private team, where chat quotes and dated attributions leak internal transcripts and age like narrative history (R14). Formation plugin PR 52 mirrored two dated quotes from the private formation skill into public briefs, beside seven older ones. Stating rules in role terms keeps public context files clean, and the private records keep the provenance (scribe standard-28) (ORB-29003).

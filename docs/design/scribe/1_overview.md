@@ -1,7 +1,8 @@
 ---
 title: scribe — Overview
 owner: claude
-last_updated: 2026-11-26
+created_date: 2026-11-02
+updated_date: 2026-11-26
 last_validated: 2026-11-02
 status: Draft
 stage: building
