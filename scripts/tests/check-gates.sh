@@ -147,12 +147,27 @@ for spec in \
   expect pass check-dependency-direction.sh "$ok" "a downward import in ${spec%%|*}: $(echo "${spec#*|}" | tr -s '\n ' ' ')"
 done
 
-for decl in 'mod extra;' 'pub mod extra;'; do
+for decl in 'mod extra;' 'pub mod extra;' 'mod r#extra;' 'pub mod r#extra;'; do
   bad=$(tree "root-$n")
   printf '//! core\npub mod apps;\n%s\n' "$decl" >"$bad/crates/scribe-core/src/lib.rs"
   printf 'fn extra() {}\n' >"$bad/crates/scribe-core/src/extra.rs"
   expect fail check-dependency-direction.sh "$bad" "a root module declared \`$decl\` with no place"
 done
+
+# A raw identifier names the same root module as its plain spelling (ORB-28902):
+# an unlisted raw root module fails with the canonical name in its diagnostic,
+# and a raw spelling of a listed place still passes.
+raw_root=$(tree root-raw-diagnostic)
+printf '//! core\npub mod apps;\npub mod r#extra;\n' >"$raw_root/crates/scribe-core/src/lib.rs"
+printf 'fn extra() {}\n' >"$raw_root/crates/scribe-core/src/extra.rs"
+expect fail check-dependency-direction.sh "$raw_root" "a root module declared \`pub mod r#extra;\` with no place"
+if ! grep -Fq "lib.rs declares the root module extra, which is not one of the places" "$work/out"; then
+  echo "check-gates: FAIL: raw root module lacks the canonical diagnostic" >&2
+  fail=1
+fi
+raw_place=$(tree root-raw-place)
+printf '//! core\npub mod apps;\npub mod r#config;\n' >"$raw_place/crates/scribe-core/src/lib.rs"
+expect pass check-dependency-direction.sh "$raw_place" "a raw spelling of a listed root place \`pub mod r#config;\`"
 
 # The Models port may not depend on its callers.
 port=$(tree port-clean)

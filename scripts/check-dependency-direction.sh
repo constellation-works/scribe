@@ -1471,8 +1471,9 @@ for manifest in sorted(glob.glob("crates/*/Cargo.toml")):
 # --- 3d. scribe-core's root modules (ROOT_PLACES, ARCHITECTURE.md) ------------
 # A root `mod x;` is read with the attribute run before it (comments and doc
 # strings are not cfgs). A test-only module is exempt, as is one of the places.
+# A raw identifier (`mod r#x;`) names the same module as `mod x;` (ORB-28902).
 ROOT_MOD_RE = re.compile(
-    r'^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;', re.M
+    r'^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+((?:r#)?\w+)\s*;', re.M
 )
 lib_rs = "crates/scribe-core/src/lib.rs"
 if os.path.isfile(lib_rs):
@@ -1481,11 +1482,12 @@ if os.path.isfile(lib_rs):
     places = set(os.environ["ROOT_PLACES"].split())
     undeclared = False
     for m in ROOT_MOD_RE.finditer(clean):
-        if m.group(2) in places or has_test_cfg(raw[m.start(1):m.end(1)]):
+        name = canonical_ident(m.group(2))
+        if name in places or has_test_cfg(raw[m.start(1):m.end(1)]):
             continue
         undeclared = True
         line = 1 + clean.count("\n", 0, m.start(2))
-        err(f"{lib_rs}:{line}: lib.rs declares the root module {m.group(2)}, which is not one of the places")
+        err(f"{lib_rs}:{line}: lib.rs declares the root module {name}, which is not one of the places")
     if undeclared:
         err("scribe-core's root modules: a new root module needs a place (ROOT_PLACES here, ARCHITECTURE.md)")
 
