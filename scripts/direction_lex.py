@@ -204,11 +204,43 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
 
     # A declaration (including an enum's struct variant) contains types.
     # A brace following an expression path is a struct literal instead.
+    item_body_keywords = ("fn", "struct", "enum", "union", "trait", "impl", "mod")
     while j >= 0:
         j -= 1
-        while j >= 0 and code[j].text not in ("{", "}", ";"):
-            if code[j].kind == "IDENT" and code[j].text in ("struct", "enum", "union"):
+        while j >= 0:
+            tok = code[j]
+            if tok.kind == "PUNCT" and tok.text == "}":
+                # Earlier enum variants can have their own braced fields.
+                # Skip a sibling body, but do not cross a previous item body.
+                depth = 1
+                j -= 1
+                while j >= 0 and depth:
+                    tok = code[j]
+                    if tok.kind == "PUNCT":
+                        if tok.text == "}":
+                            depth += 1
+                        elif tok.text == "{":
+                            depth -= 1
+                    j -= 1
+                if depth:
+                    break
+                header_idx = j
+                while header_idx >= 0 and code[header_idx].text not in ("{", "}", ";"):
+                    tok = code[header_idx]
+                    if tok.kind == "IDENT" and tok.text in item_body_keywords:
+                        break
+                    header_idx -= 1
+                if header_idx >= 0:
+                    tok = code[header_idx]
+                    if tok.kind == "IDENT" and tok.text in item_body_keywords:
+                        break
+                continue
+            if tok.kind == "IDENT" and tok.text in ("struct", "enum", "union"):
                 return False
+            if tok.kind == "IDENT" and tok.text == "fn":
+                return True
+            if tok.kind == "PUNCT" and tok.text in ("{", ";"):
+                break
             j -= 1
         if j < 0 or code[j].text != "{":
             break

@@ -1423,6 +1423,23 @@ enum VariantType { V { field: [Result<u8, u16>::std::net::Item; 2] } }
 EOF
 expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary, raw-identifier and generic-qualified paths"
 
+# A braced enum sibling must not hide declaration type context from a later
+# variant's field. The macro parses the item without resolving its field type.
+lex_enum_sibling=$(tree lex-enum-braced-sibling)
+cat >"$lex_enum_sibling/crates/scribe-core/src/config.rs" <<'EOF'
+macro_rules! accept { ($item:item) => {}; }
+accept! {
+    enum Example { A {}, B { x: [Result<u8, u16>::std::net::Item; 2] } }
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-enum-sibling.rmeta" \
+  "$lex_enum_sibling/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: braced enum sibling fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_enum_sibling" "type context after an earlier braced enum variant"
+
 # Stringify preserves tokens without resolving their generic-qualified paths.
 lex_stringify=$(tree lex-stringify-generic)
 cat >"$lex_stringify/crates/scribe-core/src/config.rs" <<'EOF'
