@@ -68,9 +68,10 @@ fmt-check:
 # (STD-04 R2, R12). Two groups of cases in check-gates.sh compile fixtures, and
 # neither builds a Scribe crate. The Clippy cases build small fixture crates
 # with cargo clippy, so structure needs the clippy component and fails without
-# it (STD-04 R10). The Rust 2024 comparison cases compile one fixture file
-# directly with `rustc --edition=2024 --emit=metadata` and need no clippy. The
-# other checks read manifests (cargo metadata, no compile) and source files.
+# it (STD-04 R10). The Rust 2024 dependency-direction cases (the stringify
+# case and the comparison cases) each compile one fixture file directly with
+# `rustc --edition=2024 --emit=metadata` and need no clippy. The other checks
+# read manifests (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
 	./scripts/check-footprint-companions.sh
