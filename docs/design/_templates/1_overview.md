@@ -5,6 +5,8 @@ created_date: YYYY-MM-DD
 updated_date: YYYY-MM-DD
 last_validated: YYYY-MM-DD
 status: Draft
+stage: <idea | designing | building | shipped | parked>
+next: <one line naming the next step and its task; — if shipped; why, if parked>
 feature: <feature-slug>
 doc_role: overview
 type: design

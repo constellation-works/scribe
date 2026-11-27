@@ -2214,6 +2214,43 @@ if ! grep -Fq 'names make target `nosuch`, which is not a Makefile target' "$wor
   fail=1
 fi
 
+# --- generate-feature-board.py: the entry template parses once scaffolded (STD-06 R5, R6) ---
+# The board generator skips _-prefixed folders, so no gate reads the template
+# itself. Scaffold a feature from it the way CONVENTIONS.md tells authors to,
+# with the stage set, and render the board: the generator raises on any key it
+# requires that the template lacks, before it writes anything.
+board_template="$REPO_ROOT/docs/design/_templates/1_overview.md"
+# board_scaffold <tree> <template>: the generator plus one feature folder built from <template>
+board_scaffold() {
+  mkdir -p "$1/scripts" "$1/docs/design/feature-x"
+  cp "$GATES/generate-feature-board.py" "$1/scripts/"
+  sed 's/^stage: .*/stage: idea/' "$2" >"$1/docs/design/feature-x/1_overview.md"
+}
+# expect_board <pass|fail> <tree> <what>: render the board in <tree>
+expect_board() {
+  n=$((n + 1))
+  local got=pass
+  python3 "$2/scripts/generate-feature-board.py" >"$work/out" 2>&1 || got=fail
+  if [[ "$got" != "$1" ]]; then
+    echo "check-gates: FAIL: generate-feature-board.py on $3: expected $1, got $got" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+}
+
+board_clean="$work/board-clean"
+board_scaffold "$board_clean" "$board_template"
+expect_board pass "$board_clean" "a feature scaffolded from the entry template"
+
+board_no_next="$work/board-no-next"
+sed '/^next:/d' "$board_template" >"$work/template-no-next.md"
+board_scaffold "$board_no_next" "$work/template-no-next.md"
+expect_board fail "$board_no_next" "an entry template without a next line"
+if ! grep -Fq "missing next" "$work/out"; then
+  echo "check-gates: FAIL: board fixture lacks its missing-next diagnostic" >&2
+  fail=1
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi
