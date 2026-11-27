@@ -341,7 +341,10 @@ fn show_prints_the_first_five_turns_and_resolves_a_unique_prefix() {
         &setup.ctx,
     )
     .unwrap_err();
-    assert!(matches!(missing, CliError::TranscriptNotFound { .. }));
+    assert!(matches!(
+        missing,
+        CliError::Command(scribe_core::CommandError::TranscriptNotFound { .. })
+    ));
     assert_eq!(missing.code(), "transcript_not_found");
 }
 
