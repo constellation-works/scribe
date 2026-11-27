@@ -128,7 +128,8 @@ Invariants:
 Every top-level command except `plugin` maps to exactly one app.
 
 A `plugin` routine or workflow tool (`session-pass-prepare`, `session-pass-apply`,
-`session-pass-fail`, `consistency-scan`,
+`session-pass-fail`, `session-catalog-begin`, `session-rebuild-prepare`,
+`session-rebuild-apply`, `session-rebuild-finish`, `consistency-scan`,
 `memory-refresh-prepare`, `memory-refresh-apply`, `group-close-prepare`,
 `group-close-apply`) has no flow of its own. The binary's `plugin` handler
 resolves the envelope's root (`Context::at`) and calls the app's `exec` (or
@@ -368,6 +369,11 @@ markers.rs, markers/control.rs   `#scribe` markers, settling lines, `/scribe` co
 origin.rs                        whether a prompt was typed by the user
 payload.rs                       hook payloads -> typed events
 project.rs                       the project a working directory belongs to
+group_close.rs                   pure group-close request and answer shapes
+memory_refresh.rs                pure memory-refresh request, answer, basis and apply shapes
+session_distill.rs               shared inputs, output contracts and prompting rules for session distillation
+session_distill/                 the distillation checks (check.rs, check/repair.rs)
+voice.rs                         the user noun and configurable instruction text for model requests
 text/                            tokens, normalization, verbatim comparison, claims, triggers
 ```
 
@@ -542,10 +548,12 @@ rules:
 - no `apps/common`, `apps/shared` or `apps/util`;
 - no `std::net` in `scribe-core` or `scribe-tools`, only `providers/` names
   `rustix` and `tempfile`, and `composition.rs` imports no app;
-- only the listed model callers import `providers`, with their apps' `mod.rs`
-  (whose `Command` carries the adapter) and `runtime/errors.rs` (whose
-  `CommandError` carries the model failure); `providers/` imports no app
-  and no runtime;
+- only the listed model callers name `providers`, `Models`, `ModelError`,
+  `ModelsOnce` or `ModelsEach`: `apps/memory/refresh.rs`,
+  `apps/group/close.rs`, their apps' `mod.rs` files, and
+  `runtime/errors.rs`; the flows no longer invoke an in-process model — the
+  remaining `ModelError` references are in `apps/group/mod.rs` and
+  `runtime/errors.rs`; `providers/` imports no app and no runtime;
 - the binary names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path;
 - in `scribe-tools`, nothing names `scribe_core`, calls `Store::write`,
