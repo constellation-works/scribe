@@ -170,7 +170,7 @@ Two things the principle asks for that no task covers yet:
 When an entry attributes words to Daniel, it cites his typed turn and keeps
 the checked quote; agent-authored records identify their author. The plugin
 does not expose its tools over MCP. The `ask` command was removed
-([ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed));
+([ORB-27911] removed `ask` and the tmux popup; see the [removal decision](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed));
 agents use the CLI to search and manage records. A session record has a
 rewritable header over an append-only log of segments, and an inactive
 session is hidden rather than removed.

@@ -1235,7 +1235,7 @@ how many.
 ## Ask
 
 Removed with `scribe question ask` and the Orbit tool `scribe.ask`
-([ORB-27911](../4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
+([ORB-27911] removed both; see the [removal decision](../4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 
 ## Plugin envelope
 
