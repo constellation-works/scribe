@@ -59,7 +59,7 @@ for t in ${targets[@]+"${targets[@]}"}; do
       exit
     }
     END { exit !found }
-  ' "$makefile"; then
+  ' < "$makefile"; then
     err "$MAP names make target \`$t\`, which is not a Makefile target"
   fi
 done
