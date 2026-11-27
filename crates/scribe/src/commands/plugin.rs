@@ -111,8 +111,17 @@ struct GroupCloseRequest {
 #[serde(deny_unknown_fields)]
 struct RoutineInput {}
 
+/// Which transcripts a routine's [`Context`] reads.
+enum Transcripts {
+    /// This directory, or none.
+    Fixed(Option<PathBuf>),
+    /// The `transcripts` setting, which a `codex_home` setting may leave
+    /// empty: the context then reads Codex's transcripts only.
+    CodexFallback,
+}
+
 /// Run one `plugin` verb.
-pub(super) fn run(command: PluginCommand, ctx: &Context) -> Result<Output, CliError> {
+pub(super) fn run(command: PluginCommand) -> Result<Output, CliError> {
     match command {
         PluginCommand::Call(CallArgs {}) => {
             let mut raw = Vec::new();
@@ -123,7 +132,7 @@ pub(super) fn run(command: PluginCommand, ctx: &Context) -> Result<Output, CliEr
                     what: String::from("stdin"),
                     source,
                 })?;
-            Ok(Output::Plugin(call(&raw, ctx)))
+            Ok(Output::Plugin(call(&raw)))
         }
     }
 }
@@ -137,7 +146,7 @@ fn failure(code: &'static str, message: impl Into<String>, retryable: bool) -> P
 }
 
 /// Run the call `raw` holds; every outcome is a reply.
-fn call(raw: &[u8], ctx: &Context) -> PluginReply {
+fn call(raw: &[u8]) -> PluginReply {
     let envelope: Envelope = match serde_json::from_slice(raw) {
         Ok(envelope) => envelope,
         Err(e) => {
@@ -173,7 +182,7 @@ fn call(raw: &[u8], ctx: &Context) -> PluginReply {
         | "session-rebuild-prepare"
         | "session-rebuild-apply"
         | "session-rebuild-finish" => session_pass(verb, envelope.input, &envelope.context.config),
-        "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config, ctx),
+        "consistency-scan" => consistency_scan(&envelope.input, &envelope.context.config),
         "memory-refresh-prepare" => {
             memory_refresh_prepare(&envelope.input, &envelope.context.config)
         }
@@ -245,11 +254,61 @@ fn routine_reply(command: &'static str, result: Result<Output, CliError>) -> Plu
             format!("{command} returned no report"),
             false,
         ),
-        Err(err) => {
-            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
-            failure(err.code(), message_of(&err), retryable)
-        }
+        Err(err) => routine_error(&err),
     }
+}
+
+/// The routine's [`Context`] over the plugin's `root` and `codex_home`
+/// settings, or the reply that refuses them.
+fn routine_context(config: &Value, transcripts: Transcripts) -> Result<Context, PluginReply> {
+    let root = store_root(config)?;
+    let codex_home = codex_home(config)?;
+    let (transcripts, codex_only) = match transcripts {
+        Transcripts::Fixed(dir) => (dir, false),
+        Transcripts::CodexFallback => match transcripts_dir(config) {
+            Ok(dir) => (Some(dir), false),
+            Err(_)
+                if codex_home.is_some()
+                    && config
+                        .get("transcripts")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .is_empty() =>
+            {
+                (None, true)
+            }
+            Err(reply) => return Err(reply),
+        },
+    };
+    let routine = Context::at(root, transcripts).with_codex_home(codex_home);
+    Ok(if codex_only {
+        routine.with_provider(scribe_core::Provider::Codex)
+    } else {
+        routine
+    })
+}
+
+/// The failure reply for `err`; `retryable` is the caller's retry rule.
+fn error_reply(err: &CliError, retryable: bool) -> PluginReply {
+    failure(err.code(), message_of(err), retryable)
+}
+
+/// The failure reply for a routine's `err`: retryable only when the store
+/// itself was locked.
+fn routine_error(err: &CliError) -> PluginReply {
+    error_reply(
+        err,
+        matches!(err, CliError::Core(e) if e.code() == "store_locked"),
+    )
+}
+
+/// The crew the setting `key` names, `haiku` when it is unset or blank.
+fn crew_setting<'a>(config: &'a Value, key: &str) -> &'a str {
+    config
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("haiku")
 }
 
 fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
@@ -280,33 +339,10 @@ fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
         Ok(step) => step,
         Err(err) => return failure("invalid_input", message_of(&err), false),
     };
-    let root = match store_root(config) {
-        Ok(root) => root,
+    let routine = match routine_context(config, Transcripts::CodexFallback) {
+        Ok(routine) => routine,
         Err(reply) => return reply,
     };
-    let codex_home = match codex_home(config) {
-        Ok(path) => path,
-        Err(reply) => return reply,
-    };
-    let transcripts = match transcripts_dir(config) {
-        Ok(path) => Some(path),
-        Err(_)
-            if codex_home.is_some()
-                && config
-                    .get("transcripts")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .is_empty() =>
-        {
-            None
-        }
-        Err(reply) => return reply,
-    };
-    let codex_only = transcripts.is_none();
-    let mut routine = Context::at(root, transcripts).with_codex_home(codex_home);
-    if codex_only {
-        routine = routine.with_provider(scribe_core::Provider::Codex);
-    }
     match step.run(&routine) {
         Ok(value) if abort => {
             let message = value["pass"]["session"].as_str().map_or_else(
@@ -324,19 +360,23 @@ fn session_pass(verb: &str, input: Value, config: &Value) -> PluginReply {
         Ok(mut value) => {
             if verb == "session-pass-prepare" || verb == "session-rebuild-prepare" {
                 for key in ["session_distill_crew", "session_header_crew"] {
-                    let crew = config
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or("haiku");
-                    value[key] = Value::String(crew.to_owned());
+                    value[key] = Value::String(crew_setting(config, key).to_owned());
                 }
             }
             PluginReply::Data(value)
         }
-        Err(CliError::Usage(message)) => failure("invalid_input", message, false),
-        Err(err) => failure(err.code(), message_of(&err), err.code() == "store_locked"),
+        Err(err) => session_pass_error(err),
     }
+}
+
+/// The failure reply for a session pass step's `err`: a usage error is
+/// `invalid_input`, and any error carrying the `store_locked` code is
+/// retryable, whether or not it is a [`CliError::Core`].
+fn session_pass_error(err: CliError) -> PluginReply {
+    if let CliError::Usage(message) = err {
+        return failure("invalid_input", message, false);
+    }
+    error_reply(&err, err.code() == "store_locked")
 }
 
 /// Optional explicit provider state root shared by every plugin model path.
@@ -357,19 +397,14 @@ fn codex_home(config: &Value) -> Result<Option<PathBuf>, PluginReply> {
     }
 }
 
-fn consistency_scan(input: &Value, config: &Value, _ctx: &Context) -> PluginReply {
+fn consistency_scan(input: &Value, config: &Value) -> PluginReply {
     if let Err(reply) = routine_input("scribe.consistency-scan", input) {
         return reply;
     }
-    let root = match store_root(config) {
-        Ok(root) => root,
+    let routine = match routine_context(config, Transcripts::Fixed(None)) {
+        Ok(routine) => routine,
         Err(reply) => return reply,
     };
-    let codex_home = match codex_home(config) {
-        Ok(path) => path,
-        Err(reply) => return reply,
-    };
-    let routine = Context::at(root, None).with_codex_home(codex_home);
     let result = consistency::scan(&routine);
     routine_reply(consistency::COMMAND, result)
 }
@@ -379,24 +414,14 @@ fn memory_refresh_prepare(input: &Value, config: &Value) -> PluginReply {
     if let Err(reply) = routine_input("scribe.memory-refresh-prepare", input) {
         return reply;
     }
-    let root = match store_root(config) {
-        Ok(root) => root,
+    let routine = match routine_context(config, Transcripts::Fixed(None)) {
+        Ok(routine) => routine,
         Err(reply) => return reply,
     };
-    let codex_home = match codex_home(config) {
-        Ok(path) => path,
-        Err(reply) => return reply,
-    };
-    let routine = Context::at(root, None).with_codex_home(codex_home);
     match memory::exec(&routine, Command::Prepare) {
         Ok(Outcome::Prepared(prepared)) => match serde_json::to_value(prepared) {
             Ok(mut value) => {
-                let crew = config
-                    .get("profile_refresh_crew")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("haiku");
-                value["crew"] = serde_json::json!(crew);
+                value["crew"] = serde_json::json!(crew_setting(config, "profile_refresh_crew"));
                 PluginReply::Data(value)
             }
             Err(err) => failure(
@@ -410,11 +435,7 @@ fn memory_refresh_prepare(input: &Value, config: &Value) -> PluginReply {
             "unexpected memory refresh prepare result",
             false,
         ),
-        Err(err) => {
-            let err = CliError::from(err);
-            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
-            failure(err.code(), message_of(&err), retryable)
-        }
+        Err(err) => routine_error(&CliError::from(err)),
     }
 }
 
@@ -432,15 +453,10 @@ fn memory_refresh_apply(input: &Value, config: &Value) -> PluginReply {
             );
         }
     };
-    let root = match store_root(config) {
-        Ok(root) => root,
+    let routine = match routine_context(config, Transcripts::Fixed(None)) {
+        Ok(routine) => routine,
         Err(reply) => return reply,
     };
-    let codex_home = match codex_home(config) {
-        Ok(path) => path,
-        Err(reply) => return reply,
-    };
-    let routine = Context::at(root, None).with_codex_home(codex_home);
     let command = Command::Apply {
         provider: routine.provider(),
         request: Box::new(request),
@@ -478,11 +494,7 @@ fn memory_refresh_apply(input: &Value, config: &Value) -> PluginReply {
             "unexpected memory refresh apply result",
             false,
         ),
-        Err(err) => {
-            let err = CliError::from(err);
-            let retryable = matches!(err, CliError::Core(ref e) if e.code() == "store_locked");
-            failure(err.code(), message_of(&err), retryable)
-        }
+        Err(err) => routine_error(&CliError::from(err)),
     }
 }
 
@@ -511,18 +523,10 @@ fn group_close(input: &Value, config: &Value, apply: bool) -> PluginReply {
             false,
         );
     }
-    let root = match store_root(config) {
-        Ok(value) => value,
-        Err(err) => return err,
+    let routine = match routine_context(config, Transcripts::Fixed(transcripts_dir(config).ok())) {
+        Ok(routine) => routine.with_provider(input.provider),
+        Err(reply) => return reply,
     };
-    let transcripts = transcripts_dir(config).ok();
-    let codex = match codex_home(config) {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    let routine = Context::at(root, transcripts)
-        .with_codex_home(codex)
-        .with_provider(input.provider);
     let command = if apply {
         Command::Close(GroupCloseInput {
             session: Some(input.session),
@@ -543,22 +547,114 @@ fn group_close(input: &Value, config: &Value, apply: bool) -> PluginReply {
     };
     match group::exec(&routine, command) {
         Ok(Outcome::Evidence(mut value)) => {
-            value["crew"] = serde_json::json!(
-                config
-                    .get("group_summary_crew")
-                    .and_then(Value::as_str)
-                    .filter(|crew| !crew.trim().is_empty())
-                    .unwrap_or("haiku")
-            );
+            value["crew"] = serde_json::json!(crew_setting(config, "group_summary_crew"));
             PluginReply::Data(value)
         }
         Ok(Outcome::Written(value)) => {
             PluginReply::Data(serde_json::json!({"group": value.group, "changed": value.changed}))
         }
         Ok(_) => failure("internal_error", "unexpected group close result", false),
-        Err(err) => {
-            let err = CliError::from(err);
-            failure(err.code(), message_of(&err), false)
+        Err(err) => error_reply(&CliError::from(err), false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn locked() -> scribe_core::Error {
+        scribe_core::Error::Locked {
+            path: PathBuf::from("/store/scribe.db"),
+            holder: String::from("another scribe"),
+            waited_ms: 5,
         }
+    }
+
+    fn retryable(reply: PluginReply) -> bool {
+        let PluginReply::Error(error) = reply else {
+            panic!("expected an error reply");
+        };
+        error.retryable
+    }
+
+    fn step_locked() -> CliError {
+        CliError::SessionPassStep {
+            code: "store_locked",
+            message: String::from("store locked"),
+        }
+    }
+
+    #[test]
+    fn a_routine_error_is_retryable_only_for_a_locked_core_store() {
+        assert!(retryable(routine_error(&CliError::Core(locked()))));
+        assert!(!retryable(routine_error(&step_locked())));
+        assert!(!retryable(routine_error(&CliError::Usage(String::from(
+            "x"
+        )))));
+    }
+
+    #[test]
+    fn an_error_reply_carries_the_code_message_and_callers_retry_rule() {
+        let err = step_locked();
+        let PluginReply::Error(error) = error_reply(&err, true) else {
+            panic!("expected an error reply");
+        };
+        assert_eq!(error.code, "store_locked");
+        assert_eq!(error.message, "store locked");
+        assert!(error.retryable);
+        // group close passes no retry, even for a locked core store.
+        assert!(!retryable(error_reply(&CliError::Core(locked()), false)));
+    }
+
+    #[test]
+    fn a_session_pass_step_error_with_a_store_locked_code_is_retryable() {
+        let reply = session_pass_error(step_locked());
+        assert!(retryable(reply));
+        let reply = session_pass_error(CliError::Core(locked()));
+        assert!(retryable(reply));
+        let PluginReply::Error(error) = session_pass_error(CliError::Usage(String::from("bad")))
+        else {
+            panic!("expected an error reply");
+        };
+        assert_eq!(error.code, "invalid_input");
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn a_blank_or_missing_crew_setting_is_haiku() {
+        let config = json!({"a": "sonnet", "b": "  ", "c": 7});
+        assert_eq!(crew_setting(&config, "a"), "sonnet");
+        assert_eq!(crew_setting(&config, "b"), "haiku");
+        assert_eq!(crew_setting(&config, "c"), "haiku");
+        assert_eq!(crew_setting(&config, "d"), "haiku");
+    }
+
+    #[test]
+    fn the_routine_context_needs_a_configured_store() {
+        let config = json!({"root": "/var/tmp"});
+        let Err(PluginReply::Error(error)) = routine_context(&config, Transcripts::Fixed(None))
+        else {
+            panic!("an unset root is refused with an error reply");
+        };
+        assert_eq!(error.code, "not_configured");
+    }
+
+    #[test]
+    fn session_pass_falls_back_to_codex_only_when_transcripts_is_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let root = dir.join("root");
+        let codex = dir.join("codex");
+        let both = json!({"root": root, "codex_home": codex});
+        let routine = routine_context(&both, Transcripts::CodexFallback).unwrap();
+        assert_eq!(routine.provider(), scribe_core::Provider::Codex);
+        let no_codex = json!({"root": root});
+        assert!(routine_context(&no_codex, Transcripts::CodexFallback).is_err());
+        let relative = json!({"root": root, "codex_home": codex, "transcripts": "rel"});
+        assert!(routine_context(&relative, Transcripts::CodexFallback).is_err());
+        let set = json!({"root": root, "transcripts": dir});
+        let routine = routine_context(&set, Transcripts::CodexFallback).unwrap();
+        assert_eq!(routine.provider(), scribe_core::Provider::ClaudeCode);
     }
 }
