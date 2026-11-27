@@ -86,10 +86,17 @@ NUMBER_RE = re.compile(
 ITEM_DEF_KEYWORDS = frozenset(
     ("fn", "struct", "enum", "trait", "type", "const", "static", "union", "mod")
 )
-# These keywords can introduce an expression or type and cannot be a plain
-# path segment. Raw identifiers with the same spelling remain path segments.
+# Strict and reserved keywords can precede an absolute `::` path in an
+# expression, type or trait position and cannot be a plain path segment.
+# `crate`, `self`, `super` and `Self` are excluded because they are valid
+# segments. Raw identifiers with the same spelling remain path segments.
 PATH_PREFIX_KEYWORDS = frozenset(
-    ("return", "break", "yield", "if", "while", "match", "in", "let", "as")
+    (
+        "as", "async", "await", "break", "const", "continue", "dyn", "else",
+        "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop",
+        "match", "mod", "move", "mut", "pub", "ref", "return", "static",
+        "struct", "trait", "type", "unsafe", "use", "where", "while", "yield",
+    )
 )
 
 
@@ -961,7 +968,17 @@ def scan_file(
                             code[i - 2].kind == "IDENT"
                             and code[i - 2].text not in PATH_PREFIX_KEYWORDS
                         )
-                        or (code[i - 2].kind == "PUNCT" and code[i - 2].text == ">")
+                        or (
+                            code[i - 2].kind == "PUNCT"
+                            and code[i - 2].text == ">"
+                            # `->` and `=>` end with `>` but open a type or
+                            # expression, so the `::` that follows is leading.
+                            and not (
+                                i >= 3
+                                and code[i - 3].kind == "PUNCT"
+                                and code[i - 3].text in ("-", "=")
+                            )
+                        )
                     )
                 )
             )
