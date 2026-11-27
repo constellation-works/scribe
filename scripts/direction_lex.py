@@ -99,6 +99,19 @@ PATH_PREFIX_KEYWORDS = frozenset(
         "struct", "trait", "type", "unsafe", "use", "where", "while", "yield",
     )
 )
+# Keywords that cannot appear at depth 0 inside `<...>` generic arguments or
+# qualified paths (`as`, `for`, `fn`, `unsafe`, `extern`, `const`, `mut`,
+# `dyn`, `impl`, `async`, `crate`, `self`, `super`, `Self` can).
+_NON_GENERIC_KEYWORDS = frozenset(
+    (
+        "await", "break", "continue", "else", "enum", "if", "in", "let",
+        "loop", "match", "mod", "move", "pub", "ref", "return", "static",
+        "struct", "trait", "type", "use", "where", "while", "yield",
+    )
+)
+_TYPE_DELIM_PREFIX_KEYWORDS = frozenset(
+    ("as", "dyn", "enum", "fn", "impl", "struct", "type", "union")
+)
 
 
 def _is_ident_start(ch: str) -> bool:
@@ -117,6 +130,308 @@ def canonical_ident(name: str) -> str:
 def _is_metavar(code: Sequence[Token], idx: int) -> bool:
     """Return True when `code[idx]` is a macro metavariable name written `$name`."""
     return idx >= 1 and code[idx - 1].kind == "PUNCT" and code[idx - 1].text == "$"
+
+
+def _is_adjacent_punct(
+    code: Sequence[Token], left_idx: int, right_idx: int, left_text: str, right_text: str
+) -> bool:
+    """Return True when two tokens are adjacent punctuation with matching texts."""
+    return (
+        code[left_idx].kind == "PUNCT"
+        and code[right_idx].kind == "PUNCT"
+        and code[left_idx].text == left_text
+        and code[right_idx].text == right_text
+        and code[left_idx].end == code[right_idx].start
+    )
+
+
+def _is_expr_operand_end(
+    code: Sequence[Token], idx: int, include_brace: bool = True
+) -> bool:
+    """Return True when `code[idx]` can end an expression operand."""
+    tok = code[idx]
+    if tok.kind in ("RAW_IDENT", "NUMBER", "STRING", "CHAR"):
+        return True
+    if tok.kind == "IDENT":
+        return tok.text not in PATH_PREFIX_KEYWORDS or _is_metavar(code, idx)
+    if tok.kind == "PUNCT":
+        return tok.text in (")", "]", "}") if include_brace else tok.text in (")", "]")
+    return False
+
+
+def _is_type_alias_rhs(code: Sequence[Token], eq_idx: int) -> bool:
+    """Return True when `=` at `eq_idx` introduces a `type` alias right-hand side."""
+    j = eq_idx - 1
+    while j >= 0:
+        tok = code[j]
+        if tok.kind == "PUNCT" and tok.text in (";", "{", "}"):
+            break
+        if tok.kind == "IDENT" and tok.text == "type" and not _is_metavar(code, j):
+            return True
+        if tok.kind == "IDENT" and tok.text == "let" and not _is_metavar(code, j):
+            return False
+        j -= 1
+    return False
+
+
+def _delim_opens_type(code: Sequence[Token], delim_idx: int) -> Optional[bool]:
+    """Return True/False if `(` or `[` at `delim_idx` is a type delimiter, or None after `,`."""
+    if delim_idx == 0:
+        return False
+    before = code[delim_idx - 1]
+    if before.kind == "PUNCT":
+        if before.text in (":", "<"):
+            return True
+        if (
+            before.text == ">"
+            and delim_idx >= 2
+            and _is_adjacent_punct(code, delim_idx - 2, delim_idx - 1, "-", ">")
+        ):
+            return True
+        if before.text == "=":
+            return _is_type_alias_rhs(code, delim_idx - 1)
+        if before.text == ",":
+            return None
+        return False
+    if before.kind == "IDENT" and not _is_metavar(code, delim_idx - 1):
+        if before.text in _TYPE_DELIM_PREFIX_KEYWORDS or (
+            code[delim_idx].text == "(" and before.text in ("Fn", "FnMut", "FnOnce")
+        ):
+            return True
+        if code[delim_idx].text == "(":
+            return (
+                delim_idx >= 2
+                and code[delim_idx - 2].kind == "IDENT"
+                and code[delim_idx - 2].text in ("struct", "enum", "fn", "trait")
+            )
+    return False
+
+
+def _in_type_delim(code: Sequence[Token], idx: int) -> bool:
+    """Return True when a `,`/`(`/ `[` at `idx` sits in a type context, not a call/tuple expr."""
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    j = idx
+    while j >= 0:
+        tok = code[j]
+        if tok.kind == "PUNCT":
+            if tok.text == ")":
+                paren_depth += 1
+            elif tok.text == "(":
+                if paren_depth == 0:
+                    res = _delim_opens_type(code, j)
+                    if res is not None:
+                        return res
+                    j -= 1
+                    continue
+                paren_depth -= 1
+            elif tok.text == "]":
+                bracket_depth += 1
+            elif tok.text == "[":
+                if bracket_depth == 0:
+                    res = _delim_opens_type(code, j)
+                    if res is not None:
+                        return res
+                    j -= 1
+                    continue
+                bracket_depth -= 1
+            elif tok.text == "}":
+                brace_depth += 1
+            elif tok.text == "{":
+                if brace_depth == 0:
+                    return True
+                brace_depth -= 1
+            elif tok.text == ";" and paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                return True
+        j -= 1
+    return True
+
+
+def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
+    """Return True when `>` at `gt_idx` closes `<...>` rather than `->`, `=>`, or a comparison/shift."""
+    # `->` and `=>` end with `>` but open a type or expression, so `::` after them is leading.
+    if gt_idx >= 1 and (
+        _is_adjacent_punct(code, gt_idx - 1, gt_idx, "-", ">")
+        or _is_adjacent_punct(code, gt_idx - 1, gt_idx, "=", ">")
+    ):
+        return False
+
+    angle_depth = 1
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    saw_comma = False
+    trailing_gt = True
+    saw_non_trailing_gt = False
+    open_idx: Optional[int] = None
+
+    k = gt_idx - 1
+    while k >= 0:
+        tok = code[k]
+        if tok.kind == "PUNCT":
+            if tok.text == ")":
+                paren_depth += 1
+                trailing_gt = False
+                k -= 1
+                continue
+            if tok.text == "(":
+                if paren_depth == 0:
+                    return False
+                paren_depth -= 1
+                k -= 1
+                continue
+            if tok.text == "]":
+                bracket_depth += 1
+                trailing_gt = False
+                k -= 1
+                continue
+            if tok.text == "[":
+                if bracket_depth == 0:
+                    return False
+                bracket_depth -= 1
+                k -= 1
+                continue
+            if tok.text == "}":
+                if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                    # Inside `<...>`, a `{ ... }` const-generic block can only be
+                    # followed at depth 0 by `,` or `>`, never a statement like `c >`.
+                    nxt = code[k + 1]
+                    if not (nxt.kind == "PUNCT" and nxt.text in (",", ">")):
+                        return False
+                brace_depth += 1
+                trailing_gt = False
+                k -= 1
+                continue
+            if tok.text == "{":
+                if brace_depth == 0:
+                    return False
+                brace_depth -= 1
+                if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+                    if k == 0:
+                        return False
+                    prev = code[k - 1]
+                    if not (
+                        (prev.kind == "PUNCT" and prev.text in ("<", ",", "="))
+                        or (prev.kind == "IDENT" and prev.text == "const")
+                    ):
+                        return False
+                k -= 1
+                continue
+
+        if paren_depth > 0 or bracket_depth > 0 or brace_depth > 0:
+            k -= 1
+            continue
+
+        if tok.kind == "PUNCT":
+            if tok.text == ">":
+                if k >= 1 and _is_adjacent_punct(code, k - 1, k, "-", ">"):
+                    trailing_gt = False
+                    k -= 2
+                    continue
+                if k >= 1 and _is_adjacent_punct(code, k - 1, k, "=", ">"):
+                    return False
+                if not trailing_gt:
+                    saw_non_trailing_gt = True
+                angle_depth += 1
+                k -= 1
+                continue
+
+            trailing_gt = False
+
+            if tok.text in (";", "|", "^", "%", "/", "."):
+                return False
+
+            if tok.text == "=" and (
+                (
+                    k >= 1
+                    and code[k - 1].kind == "PUNCT"
+                    and code[k - 1].text in ("=", "!", "<", ">")
+                    and code[k - 1].end == tok.start
+                )
+                or (k + 1 < len(code) and _is_adjacent_punct(code, k, k + 1, "=", "="))
+            ):
+                return False
+
+            if (
+                tok.text == "&"
+                and k >= 1
+                and _is_adjacent_punct(code, k - 1, k, "&", "&")
+                and k >= 2
+                and _is_expr_operand_end(code, k - 2)
+            ):
+                return False
+
+            if tok.text == ",":
+                saw_comma = True
+
+            if tok.text == "<":
+                angle_depth -= 1
+                if angle_depth == 0:
+                    open_idx = k
+                    break
+        else:
+            trailing_gt = False
+            if (
+                tok.kind == "IDENT"
+                and tok.text in _NON_GENERIC_KEYWORDS
+                and not _is_metavar(code, k)
+            ):
+                return False
+
+        k -= 1
+
+    if open_idx is None:
+        return False
+
+    # Second `<` of `<<` cannot match an outer `>` whose inner `<` was unclosed.
+    if open_idx >= 1 and _is_adjacent_punct(code, open_idx - 1, open_idx, "<", "<"):
+        return False
+
+    # `a << 1 >> ::std`: `<<` before an operand with no inner `>` before the tail `>>`.
+    if (
+        open_idx + 1 < gt_idx
+        and _is_adjacent_punct(code, open_idx, open_idx + 1, "<", "<")
+        and not saw_non_trailing_gt
+        and open_idx >= 1
+        and _is_expr_operand_end(code, open_idx - 1)
+    ):
+        return False
+
+    if open_idx >= 1 and code[open_idx - 1].kind == "PUNCT" and code[open_idx - 1].text == "::":
+        return True
+
+    if open_idx == 0:
+        return True
+
+    prev = code[open_idx - 1]
+    is_path_ident = prev.kind == "RAW_IDENT" or (
+        prev.kind == "IDENT"
+        and (prev.text not in PATH_PREFIX_KEYWORDS or _is_metavar(code, open_idx - 1))
+    )
+    if not is_path_ident:
+        # Qualified path `<T as Trait>::...` cannot immediately follow an expression value.
+        return not _is_expr_operand_end(code, open_idx - 1, include_brace=False)
+
+    if not saw_comma:
+        return True
+
+    p = open_idx - 1
+    while (
+        p >= 2
+        and code[p - 1].kind == "PUNCT"
+        and code[p - 1].text == "::"
+        and code[p - 2].kind in ("IDENT", "RAW_IDENT")
+    ):
+        p -= 2
+    if p >= 1 and code[p - 1].kind == "PUNCT" and code[p - 1].text == "::":
+        p -= 1
+    if p == 0 or not (
+        code[p - 1].kind == "PUNCT" and code[p - 1].text in ("(", "[", ",")
+    ):
+        return True
+
+    return _in_type_delim(code, p - 1)
 
 
 def _scan_ident_end(src: str, pos: int) -> int:
@@ -983,13 +1298,7 @@ def scan_file(
                         or (
                             code[i - 2].kind == "PUNCT"
                             and code[i - 2].text == ">"
-                            # `->` and `=>` end with `>` but open a type or
-                            # expression, so the `::` that follows is leading.
-                            and not (
-                                i >= 3
-                                and code[i - 3].kind == "PUNCT"
-                                and code[i - 3].text in ("-", "=")
-                            )
+                            and _is_generic_close(code, i - 2)
                         )
                     )
                 )
