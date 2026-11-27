@@ -2593,6 +2593,63 @@ printf 'define VARIABLE\n  other :\nendef # done\n  ghost :\n\t@true\n' >"$fp_ta
 expect pass check-footprint-companions.sh "$fp_target_after_define" \
   "a companions map whose target is a real rule after a define closed with a comment"
 
+# A CRLF Makefile reads as its LF twin does (ORB-29452): GNU Make joins a
+# backslash-CRLF continuation, so a comment or recipe that continues onto a
+# target name does not define it, and a CRLF endef closes its define body.
+fp_crlf_comment="$work/fp-crlf-comment"
+mkdir -p "$fp_crlf_comment/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_comment/docs/footprint-companions.md"
+printf '# disabled \\\r\nghost:\r\n\ttrue\r\n' >"$fp_crlf_comment/Makefile"
+expect fail check-footprint-companions.sh "$fp_crlf_comment" \
+  "a companions map naming a target that appears only on a CRLF comment continuation"
+if ! grep -Fq 'names make target `ghost`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: CRLF comment continuation fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_crlf_recipe="$work/fp-crlf-recipe"
+mkdir -p "$fp_crlf_recipe/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_recipe/docs/footprint-companions.md"
+printf 'goldens:\r\n\t@echo hi \\\r\nghost:\r\n\ttrue\r\n' >"$fp_crlf_recipe/Makefile"
+expect fail check-footprint-companions.sh "$fp_crlf_recipe" \
+  "a companions map naming a target that appears only on a CRLF recipe continuation"
+if ! grep -Fq 'names make target `ghost`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: CRLF recipe continuation fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_crlf_define_body="$work/fp-crlf-define-body"
+mkdir -p "$fp_crlf_define_body/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_define_body/docs/footprint-companions.md"
+printf 'define VARIABLE\r\n  ghost :\r\nendef\r\n' >"$fp_crlf_define_body/Makefile"
+expect fail check-footprint-companions.sh "$fp_crlf_define_body" \
+  "a companions map naming a target that appears only in a CRLF define body"
+if ! grep -Fq 'names make target `ghost`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: CRLF define body fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_crlf_define_after="$work/fp-crlf-define-after"
+mkdir -p "$fp_crlf_define_after/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_define_after/docs/footprint-companions.md"
+printf 'define VARIABLE\r\n  other :\r\nendef\r\n  ghost :\r\n\t@true\r\n' >"$fp_crlf_define_after/Makefile"
+expect pass check-footprint-companions.sh "$fp_crlf_define_after" \
+  "a companions map whose target is a real CRLF rule after a CRLF define"
+
+fp_crlf_target="$work/fp-crlf-target"
+mkdir -p "$fp_crlf_target/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_target/docs/footprint-companions.md"
+printf 'ghost:\r\n\t@true\r\n' >"$fp_crlf_target/Makefile"
+expect pass check-footprint-companions.sh "$fp_crlf_target" \
+  "a companions map whose target is a genuine CRLF rule"
+
+fp_crlf_continued_comment="$work/fp-crlf-continued-comment"
+mkdir -p "$fp_crlf_continued_comment/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_crlf_continued_comment/docs/footprint-companions.md"
+printf '# disabled \\\r\n  more\r\nghost:\r\n\t@true\r\n' >"$fp_crlf_continued_comment/Makefile"
+expect pass check-footprint-companions.sh "$fp_crlf_continued_comment" \
+  "a companions map whose target is a real CRLF rule after a continued comment ends"
+
 fp_relative_parent="$work/fp-relative-parent"
 fp_relative="$fp_relative_parent/review=tree"
 mkdir -p "$fp_relative/docs"

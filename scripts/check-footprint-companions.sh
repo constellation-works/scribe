@@ -110,6 +110,9 @@ for t in ${targets[@]+"${targets[@]}"}; do
     }
     {
       physical = $0
+      # A CRLF line ends in a carriage return that GNU Make reads as line
+      # ending, so drop it: a backslash before it still continues the line.
+      sub(/\r$/, "", physical)
       # An odd run of trailing backslashes continues onto the next line.
       continued = (physical ~ /(^|[^\\])(\\\\)*\\$/)
       if (continued) {
