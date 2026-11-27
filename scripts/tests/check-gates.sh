@@ -1229,6 +1229,27 @@ lex_sec2_std=$(tree lex-sec2-std-comment)
 printf '//! config\n#[doc = "#[cfg(test)]"]\nuse std::{ /* note */ net };\n' >"$lex_sec2_std/crates/scribe-core/src/config.rs"
 expect fail check-dependency-direction.sh "$lex_sec2_std" "ban_std catches grouped net with inner comment and doc attr"
 
+lex_absolute=$(tree lex-absolute-return)
+cat >"$lex_absolute/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+pub fn result() -> [u8; 4] {
+    return ::std::net::Ipv4Addr::LOCALHOST.octets();
+}
+EOF
+expect fail check-dependency-direction.sh "$lex_absolute" "absolute std::net after return"
+if ! grep -Fq 'config.rs:3:    return ::std::net::Ipv4Addr::LOCALHOST.octets();' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: absolute std::net lacks location or socket diagnostic" >&2
+  fail=1
+fi
+
+lex_nested=$(tree lex-nested-std)
+cat >"$lex_nested/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+fn nested() { foo::std::net::item(); r#return::std::net::item(); }
+EOF
+expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary and raw-identifier paths"
+
 lex_sec2_app=$(tree lex-sec2-app-raw)
 mkdir -p "$lex_sec2_app/crates/scribe-core/src/apps/entry"
 printf '#[doc = "#[cfg(test)]"]\nuse super::r#session::Entry;\n' >"$lex_sec2_app/crates/scribe-core/src/apps/entry/mod.rs"
