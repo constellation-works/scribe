@@ -11,7 +11,7 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
 fail=0
-declares() { # declares <file> <module>: the file has `mod <module>;`
+declares() {
   [[ -f "$1" ]] && grep -qE "^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?mod[[:space:]]+$2[[:space:]]*;" "$1"
 }
 
