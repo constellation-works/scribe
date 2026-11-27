@@ -33,12 +33,13 @@ scribe  ->  scribe-core  ->  scribe-store
 | `scribe-store` | The data root and `scribe.db`, one repository per record, and the record shapes (`contracts/`). The only crate that touches the data root. Its file layer is the kit's `cw-fs` (durable writes, owner-only checks, capped reads, the advisory lock) and its SQLite open, configuration, migration and WAL-checkpoint layer is the kit's `cw-sqlite` (using `cw-sqlite`'s re-exported `rusqlite`); the store keeps no copy. | — | `clap`, `tracing-subscriber`, any terminal crate, direct `rusqlite` |
 | `scribe-tools` | The functions hooks and activities are built from, each subject whole in one place: transcripts found, read and parsed, the pass window, `#scribe` markers and control lines, hook payloads, project lookup, the origin guard and the text primitives. Its own `fs.rs` is its only file access. | `scribe-store` | `clap`, `tracing-subscriber`, any terminal crate, `rusqlite`, `cw-sqlite`, `tempfile` |
 
-The banned crates are normal dependencies only. Dev-dependencies are exempt:
-the tests of `scribe-core` and `scribe` stage database states with
-`rusqlite`, and use `tempfile` for their roots. The script reads the
-`[dependencies]`, `[build-dependencies]` and target-specific tables, never
-`[dev-dependencies]`. In the core, `rustix` and `tempfile` are normal
-dependencies for `providers/` only.
+The banned crates are normal and build dependencies across all targets.
+Dev-dependencies are exempt: the tests of `scribe-core` and `scribe` stage
+database states with `rusqlite`, and use `tempfile` for their roots. The
+script checks `[dependencies]`, `[build-dependencies]`,
+`[target.<cfg>.dependencies]` and `[target.<cfg>.build-dependencies]`, never
+`[dev-dependencies]` or `[target.<cfg>.dev-dependencies]`. In the core,
+`rustix` and `tempfile` are normal dependencies for `providers/` only.
 
 The binary's normal dependencies are `scribe-core`, the argument, output and
 host crates (`clap`, `serde`, `serde_json`, `thiserror`, `time`, `tracing`,
