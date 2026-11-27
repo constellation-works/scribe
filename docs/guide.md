@@ -512,17 +512,18 @@ plugin/.orbit-plugin/  Orbit plugin (Claude-oriented)
 plugin/orbit-codex/    Orbit plugin variant for Codex model calls
 skills/scribe/         canonical skill, embedded by scribe init
 docs/design/scribe/    design, decisions and specs
-scripts/               gates run by make ci-fast (structure, README links)
+scripts/               gates run by make ci-fast (structure, README links, feature board)
 ```
 
 ## Development
 
 ```sh
-make ci-fast          # fmt, structure checks, README links, standards-check; builds no scribe crate, but compiles the Clippy fixtures
+make ci-fast          # fmt, structure checks, README links, feature-board check, standards-check; builds no scribe crate, but compiles the Clippy fixtures
 make ci-lint          # clippy -D warnings, plus cargo-deny
 make test             # nextest when installed, else cargo test; then doctests
 make goldens          # compare help and output with the built binary
 make goldens UPDATE=1 # regenerate after an intended surface change
+make feature-board    # regenerate docs/design/FEATURES.md
 make ci               # all of the above; what CI runs
 ```
 
