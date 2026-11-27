@@ -514,7 +514,10 @@ individual statements; other owners use module-level
 - `std::env` reads and directory discovery (`var`, `var_os`, `vars`,
   `vars_os`, `current_dir`, `home_dir`, `temp_dir`) and the process snapshot
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
-  binary has no exemption);
+  binary has no exemption for environment reads);
+- `std::io::{stdout,stderr}` and `std::io::IsTerminal::is_terminal` (only
+  `scribe/src/output/common/console.rs`, the CLI output and log-subscriber
+  boundary under STD-02 R15);
 - `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`,
   statement-scoped on `supervise`'s `Command::spawn` call so other disallowed
   paths remain banned across `providers/cli.rs` and `providers/cli/codex.rs`);

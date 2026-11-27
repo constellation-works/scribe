@@ -4,6 +4,11 @@
 //! This is the only module that writes directly to stdout or stderr or probes
 //! terminal state (STD-01 R12, R13, R17; STD-02 R15).
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "console.rs is the CLI output and log-subscriber boundary (STD-02 R15); every other module writes through Sink or tracing"
+)]
+
 use super::printable::Printable;
 use super::record::WarningPayload;
 use super::usage::raw_args_request_json;
