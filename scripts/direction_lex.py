@@ -394,6 +394,82 @@ def _has_local_module(code: Sequence[Token], name: str) -> bool:
     )
 
 
+def _names_crate(tok: Token, name: str) -> bool:
+    """Return True when `tok` spells the identifier `name`, raw or not."""
+    return tok.kind in ("IDENT", "RAW_IDENT") and canonical_ident(tok.text) == name
+
+
+def _has_extern_crate_alias(code: Sequence[Token], name: str) -> bool:
+    """Return True when the file renames a crate to `name` with `extern crate ... as name;`."""
+    for i, tok in enumerate(code):
+        if tok.kind != "IDENT" or tok.text != "extern":
+            continue
+        if i + 1 >= len(code) or code[i + 1].text != "crate":
+            continue
+        j = i + 2
+        while j + 1 < len(code) and code[j].text != ";":
+            if code[j].text == "as" and _names_crate(code[j + 1], name):
+                return True
+            j += 1
+    return False
+
+
+def _use_binds_name(code: Sequence[Token], name: str) -> bool:
+    """Return True when a `use` item binds `name` to something other than the builtin crate.
+
+    A bare `use std;` / `use ::std;` re-binds the builtin crate itself. A rename
+    (`use helper as std;`) or a path ending in the name (`use crate::std;`,
+    `use crate::{std, x}`) can bind a local module or macro-exporting alias.
+    """
+    n = len(code)
+    for i, tok in enumerate(code):
+        if tok.kind != "IDENT" or tok.text != "use":
+            continue
+        if i + 1 < n and code[i + 1].text == "<":
+            continue  # precise-capturing `use<'a, T>` bound, not an import
+        groups: List[bool] = []  # whether each open `{` has a non-empty path prefix
+        j = i + 1
+        while j < n and code[j].text != ";":
+            cur = code[j]
+            prev = code[j - 1]
+            if cur.kind == "PUNCT" and cur.text == "{":
+                has_prefix = bool(groups and groups[-1]) or (
+                    prev.text == "::" and not (j >= 2 and code[j - 2].text == "use")
+                )
+                groups.append(has_prefix)
+            elif cur.kind == "PUNCT" and cur.text == "}":
+                if groups:
+                    groups.pop()
+            elif _names_crate(cur, name):
+                nxt = code[j + 1] if j + 1 < n else None
+                if prev.text == "as":
+                    return True
+                if nxt is not None and nxt.text in ("::", "as"):
+                    pass
+                else:
+                    first = prev.text == "use" or (
+                        prev.text == "::" and j >= 2 and code[j - 2].text == "use"
+                    )
+                    in_open_group = (
+                        prev.text in ("{", ",") and bool(groups) and not groups[-1]
+                    )
+                    if not (first or in_open_group):
+                        return True
+            j += 1
+    return False
+
+
+def _has_shadowing_binding(code: Sequence[Token], name: str, absolute: bool) -> bool:
+    """Return True when the file binds `name` so `name::stringify!` may not be builtin.
+
+    An `extern crate ... as name;` alias redirects even a rooted `::name::`
+    path. A local module or a `use` import only shadows an unrooted path.
+    """
+    if _has_extern_crate_alias(code, name):
+        return True
+    return not absolute and (_has_local_module(code, name) or _use_binds_name(code, name))
+
+
 def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
     """Find preceding textual definitions in the invocation's enclosing scopes."""
     scopes = [False]
@@ -470,13 +546,12 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
                             ):
                                 continue
                             absolute = True
-                    # A local module can shadow the extern-prelude crate and
-                    # re-export an evaluating macro. Only treat an unrooted
-                    # std/core path as builtin when this file has no module
-                    # declaration with that name. An explicit `::std::` or
-                    # `::core::` path remains rooted at the builtin crate.
-                    return absolute or not _has_local_module(
-                        code, canonical_ident(code[p].text)
+                    # A local module, `use` alias or `extern crate` alias can
+                    # shadow the std/core crate name and re-export an evaluating
+                    # macro. Only an `extern crate` alias redirects a rooted
+                    # `::std::` / `::core::` path.
+                    return not _has_shadowing_binding(
+                        code, canonical_ident(code[p].text), absolute
                     )
     return False
 
