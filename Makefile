@@ -29,7 +29,7 @@ endef
 help:
 	@echo "scribe make targets"
 	@echo ""
-	@echo "  make ci-fast          Pre-handoff gate: fmt, structure, readme-links, feature-board, standards-check (no scribe build; compiles Clippy fixtures, needs clippy)"
+	@echo "  make ci-fast          Pre-handoff gate: fmt, structure, readme-links, feature-board, standards-check (no scribe crate build; compiles Clippy and rustc fixtures, needs clippy)"
 	@echo "  make ci-lint          clippy -D warnings (required) + cargo-deny (skipped locally if not installed)"
 	@echo "  make test             All tests (nextest when installed, else cargo test) + doctests"
 	@echo "  make goldens          Compare --help and output goldens with the built binary"
@@ -65,10 +65,12 @@ fmt-check:
 # terminal/stream ownership (STD-01 R17), one-level parent paths (STD-12 R26),
 # current-format claims in the store spec against FORMAT, and the cases that
 # test those gates themselves
-# (STD-04 R2, R12). Only the Clippy cases in check-gates.sh compile: they build
-# small fixture crates with cargo clippy, so structure needs the clippy
-# component and fails without it (STD-04 R10). The other checks read manifests
-# (cargo metadata, no compile) and source files.
+# (STD-04 R2, R12). Two groups of cases in check-gates.sh compile fixtures, and
+# neither builds a Scribe crate. The Clippy cases build small fixture crates
+# with cargo clippy, so structure needs the clippy component and fails without
+# it (STD-04 R10). The Rust 2024 comparison cases compile one fixture file
+# directly with `rustc --edition=2024 --emit=metadata` and need no clippy. The
+# other checks read manifests (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
 	./scripts/check-footprint-companions.sh
@@ -159,9 +161,10 @@ standards-check:
 	fi
 
 # Pre-handoff gate for agents: every parity check CI runs that needs no build
-# of scribe (STD-04 R12). It compiles the small Clippy fixture crates that
-# structure runs, so it needs cargo clippy. Goldens need the binary, so they
-# are their own target.
+# of scribe (STD-04 R12). It compiles the fixtures that structure runs, not
+# the Scribe crates: the Clippy cases need cargo clippy, so the gate needs it,
+# and the rustc cases compile one file directly. Goldens need the binary, so
+# they are their own target.
 ci-fast: fmt-check structure readme-links feature-board-check standards-check
 
 ci-lint: clippy deny
