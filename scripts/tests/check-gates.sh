@@ -312,7 +312,7 @@ done
 
 # Quoted structural keys, whitespace in target headers and root workspace
 # dotted declarations resolve to the same package as their conventional forms.
-for form in quoted-inline quoted-dotted quoted-top-dotted quoted-subtable spaced-target workspace-dotted workspace-table; do
+for form in quoted-inline quoted-dotted quoted-top-dotted quoted-subtable quoted-attr-subkey spaced-target workspace-dotted workspace-top-dotted workspace-table; do
   for package in rusqlite serde; do
     fixture=$(tree "dependency-spelling-$form-$package")
     case "$form" in
@@ -325,8 +325,14 @@ sql.version = '1'" ;;
       quoted-subtable) decl="[\"dependencies\" . sql]
 'package' = '$package'
 version = '1'" ;;
+      quoted-attr-subkey) decl="[dependencies]
+$package.\"version\" = '1'" ;;
       spaced-target) decl="[target . 'cfg(unix)' . \"dependencies\"]
 $package = '1'" ;;
+      workspace-top-dotted)
+        printf 'workspace.members = ["crates/scribe", "crates/scribe-core"]\nworkspace.dependencies.sql = { version = "1", package = "%s" }\n' "$package" >"$fixture/Cargo.toml"
+        decl="[dependencies]
+sql.'workspace' = true" ;;
       workspace-dotted|workspace-table)
         if [[ "$form" == workspace-dotted ]]; then
           printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\ndependencies.sql = { version = "1", package = "%s" }\n' "$package" >"$fixture/Cargo.toml"
@@ -352,6 +358,35 @@ sql.'workspace' = true" ;;
     fi
   done
 done
+
+# A quoted dotted subkey declares its dependency as the bare spelling does: the
+# `scribe."path"` back edge closes the crate cycle, and its acyclic twin passes.
+# A root `workspace.dependencies.<alias>` written as top-level dotted keys
+# (no [workspace] header) names the package a member inherits (ORB-29129).
+cyc_quoted=$(tree cycle-crate-quoted-subkey)
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nscribe."path" = "../scribe"\n' \
+  >"$cyc_quoted/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$cyc_quoted" "a crate cycle closed by a quoted dotted subkey"
+if ! grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing crate import cycle diagnostic for a quoted dotted subkey" >&2
+  fail=1
+fi
+cyc_quoted_ok=$(tree cycle-crate-quoted-subkey-clean)
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nserde."version" = "1"\n' \
+  >"$cyc_quoted_ok/crates/scribe-core/Cargo.toml"
+expect pass check-dependency-direction.sh "$cyc_quoted_ok" "an acyclic quoted dotted subkey"
+
+cyc_ws_top=$(tree cycle-workspace-top-dotted)
+printf 'workspace.members = ["crates/scribe", "crates/scribe-core"]\nworkspace.dependencies.back = { path = "crates/scribe", package = "scribe" }\n' \
+  >"$cyc_ws_top/Cargo.toml"
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback.workspace = true\n' \
+  >"$cyc_ws_top/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$cyc_ws_top" "a crate cycle through a top-level workspace.dependencies alias"
+if ! grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: missing crate import cycle diagnostic for a top-level workspace alias" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
 
 # The same forms without a back edge are legal: an aliased scribe -> scribe-core
 # edge, and an alias that merely reuses an internal crate's name for an
