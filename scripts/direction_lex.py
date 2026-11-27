@@ -355,8 +355,22 @@ def _in_type_delim(code: Sequence[Token], idx: int) -> bool:
     return True
 
 
+def _is_stringify_name(tok: Token) -> bool:
+    """Return True when `tok` spells the builtin `stringify` macro name."""
+    return (tok.kind == "IDENT" and tok.text == "stringify") or (
+        tok.kind == "RAW_IDENT" and canonical_ident(tok.text) == "stringify"
+    )
+
+
+def _is_stringify_crate(tok: Token) -> bool:
+    """Return True when `tok` spells a crate that re-exports the builtin `stringify`."""
+    return (tok.kind == "IDENT" and tok.text in ("std", "core")) or (
+        tok.kind == "RAW_IDENT" and canonical_ident(tok.text) in ("std", "core")
+    )
+
+
 def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
-    """Recognize an enclosing unqualified stringify invocation's token tree."""
+    """Recognize an enclosing builtin stringify invocation's token tree."""
     closing = {')': '(', ']': '[', '}': '{'}
     stack: List[str] = []
     for j in range(idx, -1, -1):
@@ -372,22 +386,52 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
             elif (
                 j >= 2
                 and code[j - 1].text == "!"
-                and code[j - 2].kind == "IDENT"
-                and code[j - 2].text == "stringify"
-                and (j < 3 or code[j - 3].text not in ("::", "$"))
+                and _is_stringify_name(code[j - 2])
+                and not _is_metavar(code, j - 2)
             ):
-                # A preceding local macro_rules definition can shadow the builtin
-                # and evaluate its arguments. Conservatively count definitions
-                # anywhere earlier in this file, without attempting macro scope.
-                return not any(
-                    code[k].kind == "IDENT"
-                    and code[k].text == "macro_rules"
-                    and code[k + 1].kind == "PUNCT"
-                    and code[k + 1].text == "!"
-                    and code[k + 2].kind in ("IDENT", "RAW_IDENT")
-                    and canonical_ident(code[k + 2].text) == "stringify"
-                    for k in range(j - 2)
-                )
+                s = j - 2
+                if s == 0 or code[s - 1].text != "::":
+                    # A preceding local macro_rules definition can shadow the builtin
+                    # and evaluate its arguments. Conservatively count definitions
+                    # anywhere earlier in this file, without attempting macro scope.
+                    return not any(
+                        code[k].kind == "IDENT"
+                        and code[k].text == "macro_rules"
+                        and code[k + 1].kind == "PUNCT"
+                        and code[k + 1].text == "!"
+                        and code[k + 2].kind in ("IDENT", "RAW_IDENT")
+                        and canonical_ident(code[k + 2].text) == "stringify"
+                        for k in range(j - 2)
+                    )
+                if (
+                    s >= 2
+                    and code[s - 1].text == "::"
+                    and _is_stringify_crate(code[s - 2])
+                    and not _is_metavar(code, s - 2)
+                ):
+                    p = s - 2
+                    if p >= 1 and code[p - 1].text == "::":
+                        if p - 1 == 0:
+                            return True
+                        prev2 = code[p - 2]
+                        if prev2.kind == "RAW_IDENT":
+                            continue
+                        if prev2.kind == "IDENT" and (
+                            prev2.text not in PATH_PREFIX_KEYWORDS
+                            or _is_metavar(code, p - 2)
+                        ):
+                            continue
+                    elif p == 0:
+                        return True
+                    else:
+                        # `$std::stringify` is already rejected by the
+                        # metavariable check above; any other preceding
+                        # delimiter keeps `std` leading.
+                        pass
+                    # A qualified `std::`/`core::` path names the builtin
+                    # macro, which a local `macro_rules! stringify` cannot
+                    # shadow, so its tokens never use the shown paths.
+                    return True
     return False
 
 
