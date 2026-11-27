@@ -52,7 +52,14 @@ for t in ${targets[@]+"${targets[@]}"}; do
     BEGIN { wanted = ENVIRON["footprint_target"] }
     index($0, wanted ":") == 1 {
       rest = substr($0, length(wanted) + 1)
-      if (substr(rest, 1, 2) == ":=" || substr(rest, 1, 3) == "::=") {
+      # These are variable assignments, not target rules. In particular,
+      # :::= is the immediate-expansion assignment operator used by GNU make.
+      if (rest ~ /^(:::=|::=|:=|\?=|\+=|!=|=)/) {
+        next
+      }
+      # A target-specific assignment has whitespace after the target colon
+      # and then a variable assignment rather than a prerequisite list.
+      if (rest ~ /^:[ \t]+((export|unexport|override|private)[ \t]+)*[^ \t]+[ \t]*(:::=|::=|:=|\?=|\+=|!=|=)/) {
         next
       }
       found = 1

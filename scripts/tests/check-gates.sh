@@ -2292,6 +2292,13 @@ printf 'map\n' >"$fp_clean/ARCHITECTURE.md"
 printf 'goldens:\n\ttrue\n' >"$fp_clean/Makefile"
 expect pass check-footprint-companions.sh "$fp_clean" "a companions map whose entries all exist"
 
+fp_double_colon="$work/fp-double-colon"
+mkdir -p "$fp_double_colon/docs"
+printf -- '- make-target: `goldens`\n' >"$fp_double_colon/docs/footprint-companions.md"
+printf 'goldens::\n\ttrue\n' >"$fp_double_colon/Makefile"
+expect pass check-footprint-companions.sh "$fp_double_colon" \
+  "a companions map whose target has a genuine double-colon rule"
+
 fp_missing="$work/fp-missing"
 mkdir -p "$fp_missing/docs"
 printf -- '- path: `ARCHITECTURE.md`\n- make-target: `goldens`\n' >"$fp_missing/docs/footprint-companions.md"
@@ -2332,6 +2339,28 @@ expect fail check-footprint-companions.sh "$fp_target_double_colon_assign" \
   "a companions map naming a target that appears only as a ::= variable assignment"
 if ! grep -Fq 'names make target `LOCKED`, which is not a Makefile target' "$work/out"; then
   echo "check-gates: FAIL: ::= assignment fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_target_immediate_assign="${work}/fp-target-immediate-assign"
+mkdir -p "$fp_target_immediate_assign/docs"
+printf -- '- make-target: `LOCKED`\n' >"$fp_target_immediate_assign/docs/footprint-companions.md"
+printf 'LOCKED:::=--locked\n' >"$fp_target_immediate_assign/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_immediate_assign" \
+  "a companions map naming a target that appears only as a :::= variable assignment"
+if ! grep -Fq 'names make target `LOCKED`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: :::= assignment fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_target_specific_assign="${work}/fp-target-specific-assign"
+mkdir -p "$fp_target_specific_assign/docs"
+printf -- '- make-target: `LOCKED`\n' >"$fp_target_specific_assign/docs/footprint-companions.md"
+printf 'LOCKED: VALUE = --locked\n' >"$fp_target_specific_assign/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_specific_assign" \
+  "a companions map naming a target that appears only in a target-specific assignment"
+if ! grep -Fq 'names make target `LOCKED`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: target-specific assignment fixture lacks its unknown-target diagnostic" >&2
   fail=1
 fi
 
