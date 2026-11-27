@@ -2,7 +2,7 @@
 title: scribe — Design
 owner: claude
 created_date: 2026-11-02
-updated_date: 2026-11-26
+updated_date: 2026-11-27
 last_validated: 2026-11-24
 status: Draft
 feature: scribe
@@ -6226,6 +6226,14 @@ so no kind is ever unreadable outside the binary.
 - The persisted author kind `daniel` becomes `user`.
 
 ### 15.9 Phases
+
+The accepted order put all meaning before storage, but the memory shape needs
+tables for pending `now` candidates, history and profile revisions. The
+refined order puts meaning that needs no storage first, then the SQLite
+foundation and messages table, then the memory shape and profile job.
+Building the memory shape on files first would build those tables twice;
+putting all storage first would delay the observed `m-3` failure and
+unsettleable claims. Cost: the existing memory shape remains until phase 5.
 
 The meaning comes before the storage. Each phase leaves a store the next
 phase's build reads, and lands with its `specs/` and skill updates and its

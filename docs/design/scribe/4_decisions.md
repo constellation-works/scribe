@@ -31,6 +31,7 @@ were dropped with [ORB-21747]; they are in git history at `c9807fa`.
 ## Superseded and stale entries are hidden, not removed
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/apps/search/rules.rs::search`; `crates/scribe-core/src/apps/hook/proposal_command.rs`.
 
 ### Context
 
@@ -60,10 +61,16 @@ removal from answers.
   reader expecting the routine to delete must learn that only `forget`
   does.
 
+### Alternative
+
+Automatically delete superseded and stale entries. That loses history and makes
+a mistaken supersession irreversible.
+
 ## One Markdown file per record, metadata in YAML frontmatter
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/codec.rs::split_frontmatter`, `::decode_session`, `::encode_entry`; `::decode_entry` is test-support only since phase 8 (ORB-26657)
+**Code anchors:** `crates/scribe-store/src/db/codec.rs::split_frontmatter`, `crates/scribe-store/src/db/codec.rs::decode_session`, `crates/scribe-store/src/db/codec/entry.rs::encode_entry` (current export codec)
+**Superseded by:** [Approved entries live in SQLite with a Markdown export (proposed)](#approved-entries-live-in-sqlite-with-a-markdown-export-proposed) (storage); [The file store's archives move into scribe.db once](#the-file-stores-archives-move-into-scribedb-once) (file readers and archives).
 
 ### Context
 
@@ -142,7 +149,7 @@ The existing 15 are not moved.
 ## ask ranks in memory with no persisted index
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/ask/` (from S5; now `crates/scribe-core/src/apps/search/rules.rs`)
+**Code anchors:** `crates/scribe-core/src/apps/search/rules.rs` (the retained in-memory ranking)
 
 **Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in part)
 
@@ -177,6 +184,8 @@ passes 20,000 records.
 ## No migration of orbit-office scribe records
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Standing rule:** Do not automatically import orbit-office records into the
+new store; an opt-in importer remains a future direction.
 
 ### Context
 
@@ -205,6 +214,8 @@ start empty; the first entries are Daniel's first `#scribe` lines.
 ## Only decisions and preferences ship by default
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs::TagTable`; later
+entries amend the original defaults.
 
 ### Context
 
@@ -307,10 +318,14 @@ is advertised.
   surface. See
   [agents read and write through the CLI](#agents-read-and-write-through-the-cli-taught-by-one-skill).
 
+### Alternative
+
+Advertise the mutating routine tools to agents. That would enlarge the agent capability surface beyond the requested read-only question tool.
+
 ## Models are called through the claude CLI
 
 **Recorded:** 2026-11 · [ORB-21747]
-**Code anchors:** `crates/scribe/src/models.rs::ClaudeCliModels` (from S3)
+**Code anchors:** `crates/scribe-core/src/providers/cli.rs::ClaudeCliModels`
 
 ### Context
 
@@ -344,6 +359,7 @@ ids and credential names come from `config.toml`.
 ## Haiku for capture-side work, a decision model for ask
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/config.rs::ModelIds` (model defaults); the later removal decision supersedes `ask`.
 
 **Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in part)
 
@@ -375,10 +391,15 @@ is enough there.
   agent question; a model id that is retired breaks its use until the
   config changes.
 
+### Alternative
+
+Use the stronger decision model for every call. Frequent capture-side calls
+would then cost more; code checks and approval bound the small model’s role.
+
 ## Session passes run from an Orbit routine, not a detached hook child
 
 **Recorded:** 2026-11 · [ORB-21747]
-**Code anchors:** `plugin/.orbit-plugin/definitions/routines/scribe-session-pass.yaml` (from S4)
+**Code anchors:** `plugin/.orbit-plugin/routines/session_pass.yaml` (now targets the session-pass job)
 
 **Superseded by:** [Session passes run as an Orbit job, not an in-process model call](#session-passes-run-as-an-orbit-job-not-an-in-process-model-call) (in part); [A failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand) (its cadence)
 
@@ -414,6 +435,7 @@ sessions per run.
 ## A session record covers the whole opted-in session
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
+**Standing rule:** Catalog an opted-in session from its first message, including turns before opt-in. Other sessions require a named request; group capture and its explicit backfill follow their later consent rules.
 
 ### Context
 
@@ -449,7 +471,7 @@ transcripts it was not switched on for.
 ## The #scribe grammar is model-free
 
 **Recorded:** 2026-11 · [ORB-21747]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (from S2)
+**Code anchors:** `crates/scribe-tools/src/markers.rs::parse`
 
 ### Context
 
@@ -477,6 +499,7 @@ exactly one entry.
 ## Proposals are settled only by #scribe in a typed turn
 
 **Recorded:** 2026-11 · [ORB-21747]
+**Code anchors:** `crates/scribe-core/src/apps/hook/proposal_command.rs`; the later settlement decision supersedes the original exclusive channel.
 
 **Superseded by:** [Entries Daniel wrote are settled only by Daniel](#entries-daniel-wrote-are-settled-only-by-daniel)
 
@@ -508,7 +531,7 @@ proposal or changes an entry's status.
 ## Persisted free text passes one redactor
 
 **Recorded:** 2026-11 · [ORB-21747]
-**Code anchors:** `crates/scribe-core/src/store/redact.rs::Redactor`, `::REDACTED_FIELDS`
+**Code anchors:** `crates/scribe-store/src/redact.rs::Redactor`
 
 ### Context
 
@@ -553,6 +576,10 @@ alternatives, so one may legitimately be unset.
   check against its source, and a secret in no known shape that scribe was
   not told about is not masked.
 
+### Alternative
+
+Let each writer redact independently. A new writer or field could bypass a check that belongs at the durability boundary.
+
 ## A domain library crate and a CLI crate
 
 **Recorded:** 2026-09 · [ORB-13117]
@@ -587,10 +614,14 @@ these two.
 - Cost: two manifests, a `[workspace.dependencies]` table, and `pub` on the
   core's API where one crate would use `pub(crate)`.
 
+### Alternative
+
+Keep domain and CLI in one crate. Module visibility alone would then have to prevent CLI dependencies from reaching the domain.
+
 ## Persistence is one module inside the core crate
 
 **Recorded:** 2026-09-26
-**Code anchors:** `crates/scribe-core/src/store/mod.rs` (now `crates/scribe-store/src/lib.rs`); `scripts/check-dependency-direction.sh` (the `store | tests` loop, removed)
+**Code anchors:** `crates/scribe-store/src/lib.rs` (the extracted store); `scripts/check-dependency-direction.sh`
 
 **Superseded by:** [Four crates: domain, store, use cases and CLI](#four-crates-domain-store-use-cases-and-cli)
 
@@ -631,7 +662,7 @@ core module. When persistence earns its own crate, `store/` moves out whole.
 > the tools. The step-by-step method (no behaviour change per step) stands.
 
 **Recorded:** 2026-11-24 · [ORB-27707] · **Daniel's direction**
-**Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh::policy` and `DOMAIN_RINGS`; `ARCHITECTURE.md`
+**Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh`; `ARCHITECTURE.md` (current layout; the earlier domain rings were removed)
 
 Supersedes [A domain library crate and a CLI crate](#a-domain-library-crate-and-a-cli-crate)
 for the crate count, and [Persistence is one module inside the core crate](#persistence-is-one-module-inside-the-core-crate).
@@ -712,6 +743,10 @@ ARCHITECTURE.md names the import behind each.
   other. `scribe-core` keeps re-export shims so that public paths did not
   change. The store tests that stayed in `scribe-core` reach store internals
   through a test-only module rather than directly.
+
+### Alternative
+
+Keep the existing flat core and rely on module checks. The store and business rules would remain interdependent and a flow would remain split across layers.
 
 ## Scribe is laid out by app, in four crates: scribe, core, store and tools
 
@@ -853,10 +888,15 @@ Every surface follows `<tool> <noun> <verb>` (STD-01@2 §R1): the CLI form of
 - Cost: the command tree is spread across modules, so the help goldens are
   its review surface; and `question ask` is wordier than a bare `ask`.
 
+### Alternative
+
+Put all flags and dispatch in one file. As verbs grow, the single file becomes
+harder to read.
+
 ## Mutating commands are audited through one guard
 
 **Recorded:** 2026-09-26
-**Code anchors:** `crates/scribe/src/audit_middleware.rs::AuditGuard`; `crates/scribe/src/commands/mod.rs::Command::audit`, `::run`
+**Code anchors:** `crates/scribe-core/src/runtime/audit.rs::AuditGuard`; `crates/scribe-core/src/apps/entry/mod.rs::Command` (app audit declaration)
 
 ### Context
 
@@ -881,6 +921,11 @@ fails open with a warning (STD-02@4 §R31).
 - Cost: every audited command pays a second lock and an `fsync`, and the
   log grows without rotation.
 
+### Alternative
+
+Have each mutating handler write its own audit line. A central guard makes the
+declaration exhaustive and includes failures.
+
 ## --json is the one alias for --format json
 
 **Recorded:** 2026-09 · [ORB-13117]
@@ -902,10 +947,15 @@ usage error (exit 2).
 - Scripts can rely on `--json` everywhere, humans on `--format`.
 - Cost: two spellings of one mode and a hand-written conflict check.
 
+### Alternative
+
+Add separate aliases for each output format. That would multiply spellings for
+one concept.
+
 ## A list's JSON is an envelope with total and truncated
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/output/render.rs::Envelope`
+**Code anchors:** `crates/scribe/src/output/common/record.rs::Envelope`
 
 ### Context
 
@@ -937,10 +987,15 @@ stable.
 - Cost: `jq '.entries[]'` instead of `jq '.[]'`, and every list verb
   inherits the envelope.
 
+### Alternative
+
+Return a bare JSON array. A consumer could not tell a truncated page from a complete result without another contract.
+
 ## The store lock uses std file locks, not a crate
 
 **Recorded:** 2026-09 · [ORB-13117]
-**Code anchors:** `crates/scribe-core/src/store/fsio.rs::LockGuard::acquire`
+**Code anchors:** `crates/scribe-core/src/store/fsio.rs::LockGuard` at `312fb78d9444` (historical; the file layer later moved to cw-fs)
+**Superseded by:** [The file layer is the cw-kit's cw-fs](#the-file-layer-is-the-cw-kits-cw-fs) (lock implementation).
 
 ### Context
 
@@ -958,6 +1013,10 @@ need.
 - One fewer dependency to audit.
 - Cost: no blocking-with-timeout primitive, so the wait is a 20 ms poll;
   concurrent `#scribe` lines in several sessions queue on it.
+
+### Alternative
+
+Use an external locking crate. At the time the standard library supplied the required advisory lock, so the extra dependency added an audit burden.
 
 ## clap without color or terminal-width features
 
@@ -980,10 +1039,15 @@ clap is built with `default-features = false`, without `color` or
 - Help renders byte-identically everywhere, so goldens are stable.
 - Cost: no colored or wrapped help.
 
+### Alternative
+
+Enable clap color and help wrapping. Its terminal checks would compete with the
+central TTY decision and make help goldens machine-dependent.
+
 ## Usage errors keep clap's rendering
 
 **Recorded:** 2026-09 · [ORB-13117]
-**Code anchors:** `crates/scribe/src/output/mod.rs::finish_parse_error`
+**Code anchors:** `crates/scribe/src/output/common/console.rs::finish_parse_error`
 
 ### Context
 
@@ -1002,6 +1066,11 @@ In human mode usage errors keep clap's multi-line rendering (first line
 - Wrappers branch on exit code 2 and the stable `code`.
 - Cost: human-mode stderr has several lines for a usage error and one for a
   command failure.
+
+### Alternative
+
+Replace clap’s usage message with a custom human rendering. The existing
+rendering already supplies the actionable usage and help pointer.
 
 ## standards-check warns locally and fails in CI
 
@@ -1024,10 +1093,16 @@ Without `docs/standards/check.sh`, `make standards-check` warns and exits
 - Cost: a local `make ci` can pass while CI fails, until the standards are
   vendored.
 
+### Alternative
+
+Fail every local run when the vendored checker is absent. The chosen local
+warning allows a checkout to be built before standards are synced; CI remains
+strict.
+
 ## Store format upgrades are an append-only registry
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `crates/scribe-core/src/store/codec.rs::FORMAT`
+**Code anchors:** `crates/scribe-store/src/db/codec.rs::FORMAT`; `crates/scribe-core/src/store/format.rs::UPGRADES` at `3d8aa6abf85e` (historical file-store upgrades)
 
 **Superseded by:** [The file store's archives move into scribe.db once](#the-file-stores-archives-move-into-scribedb-once)
 
@@ -1060,10 +1135,14 @@ carried over because no scribe store exists yet.
   which matters because an older scribe binary left on `PATH` refuses the
   store until it is replaced.
 
+### Alternative
+
+Change a shipped format in place. An older reader could then rewrite a document while dropping fields it does not understand.
+
 ## Store state is owner-only and checked on every load
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/fsio.rs::create_private_dir`, `::inspect_dir`, `::inspect_subdir`, `::inspect_file`, `::LockGuard::acquire`
+**Code anchors:** `crates/scribe-store/src/db/files.rs` (current file boundary); `crates/scribe-core/src/store/fsio.rs` at `312fb78d9444` (historical checks)
 
 **Superseded by:** [Store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit) (in part)
 
@@ -1092,10 +1171,15 @@ non-unix platforms the checks are no-ops.
   and other write bits, so a group or other read bit was accepted. See
   [store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit).
 
+### Alternative
+
+Repair unsafe permissions during reads. That would turn a read into a write and
+hide the condition from the user.
+
 ## Store state refuses any group or other mode bit
 
 **Recorded:** 2026-11-10 · [ORB-24006]
-**Code anchors:** `crates/scribe-core/src/store/fsio.rs::check_owner_and_mode`, `crates/scribe-core/src/error.rs::Error::Permissions`
+**Code anchors:** `crates/scribe-store/src/db/files.rs` (current file boundary); `crates/scribe-core/src/store/fsio.rs` at `312fb78d9444` (historical mode checks)
 
 ### Context
 
@@ -1124,10 +1208,15 @@ This supersedes the write-only check recorded above.
 - STD-05@1 §R9 requires less than this (no group or other write). Owner-only
   is stricter than the standard, so it is a tightening, not a deviation.
 
+### Alternative
+
+Continue refusing only group and other write bits. That leaves personal data
+readable by other local users.
+
 ## One malformed record makes its file corrupt
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe-core/src/store/mod.rs::Store::load_entries`, `::Skipped`, `crates/scribe-core/src/store/codec.rs::parse_frontmatter`
+**Code anchors:** `crates/scribe-store/src/db/codec.rs::parse_frontmatter`; `crates/scribe-store/src/repository/entries.rs`
 
 ### Context
 
@@ -1155,6 +1244,11 @@ since they say the store, not one record, cannot be trusted.
   proposal hides them all (and one bad switch, every session's `on`) until
   it is fixed by hand.
 
+### Alternative
+
+Skip the malformed item within a file and rewrite the rest. A whole-file rewrite
+would silently discard that item.
+
 ## Missing gate tools warn locally and fail in CI
 
 **Recorded:** 2026-09 · [ORB-13134]
@@ -1177,10 +1271,15 @@ fails.
 - A fresh clone passes `make ci` with only cargo installed.
 - Cost: a local green `make ci` without those tools is weaker than CI's.
 
+### Alternative
+
+Fail locally whenever an optional gate tool is absent. The local fallback keeps
+development possible; CI enforces tool availability.
+
 ## Environment settings fall back rather than refuse
 
 **Recorded:** 2026-09 · [ORB-13134]
-**Code anchors:** `crates/scribe/src/output/mod.rs::Console::detect`; `crates/scribe/src/output/mod.rs::init_logging`
+**Code anchors:** `crates/scribe/src/output/common/console.rs::Console`; `crates/scribe/src/output/common/console.rs::init_logging`
 
 ### Context
 
@@ -1200,9 +1299,14 @@ it replies with that error instead of capturing.
 - A stray variable never stops a command.
 - Cost: an unrecognized `SCRIBE_FORMAT` gives no warning.
 
+### Alternative
+
+Reject an unrecognized environment value. That would stop a command for a stray environment setting and conflict with the output-format fallback requirement.
+
 ## Standard rules the plugin brings into force
 
 **Recorded:** 2026-11 · [ORB-21747]
+**Standing rule:** Apply each adopted standard from the slice that first exercises the behavior it governs.
 
 ### Context
 
@@ -1240,10 +1344,15 @@ Still not exercised: destructive CLI verbs (STD-01@2 §R5; `forget` is a
 - Cost: the list goes stale unless the slice that starts doing one of these
   things also edits it.
 
+### Alternative
+
+Leave the template’s non-applicability assessment in place. That would miss
+rules when the plugin begins to exercise their governed behavior.
+
 ## Frontmatter is parsed by yaml_serde, and config.toml by toml
 
 **Recorded:** 2026-11 · [ORB-21753]
-**Code anchors:** `Cargo.toml` (`yaml_serde`, `toml`, `unicode-normalization`), `crates/scribe-core/src/store/codec.rs::parse_frontmatter`, `crates/scribe-core/src/config.rs::Config::parse`
+**Code anchors:** `Cargo.toml` (`yaml_serde`, `toml`, `unicode-normalization`); `crates/scribe-store/src/db/codec.rs::parse_frontmatter`; `crates/scribe-core/src/config.rs::Config::parse`
 
 ### Context
 
@@ -1280,7 +1389,7 @@ reads `config.toml`, and `unicode-normalization` gives the NFC for
 
 ## S2 refuses forms 3 and 4 rather than guessing
 
-**Code anchors:** `crates/scribe-core/src/capture.rs`
+**Code anchors:** `crates/scribe-core/src/capture.rs` at `bcdb05ad79a0` (historical S2 grammar; forms 1–3 were later removed)
 
 **Superseded by:** [A referent with nothing before it is refused](#a-referent-with-nothing-before-it-is-refused) (for form 3)
 
@@ -1308,8 +1417,7 @@ echoing the refusal. A form-3 line whose tag is not configured is refused as
 ## A referent with nothing before it is refused
 
 **Recorded:** 2026-11 · [ORB-21778]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (`window`, `resolve`,
-`Refusal::NoReferent`); `crates/scribe/src/commands/hook/user_prompt_submit.rs`
+**Code anchors:** `crates/scribe-core/src/capture.rs::resolve` at `a8c8a5789e25` (historical; the referent call was later removed)
 
 ### Context
 
@@ -1336,6 +1444,11 @@ again.
 - Cost: "one instruction never produces zero entries" has one exception,
   and Daniel must retype a referent typed as a session's first prompt.
 
+### Alternative
+
+Create an entry from a nonexistent prior message or call the model with no
+referent. Neither has evidence to cite.
+
 ## One audit line per hook outcome, none for a no-op
 
 **Further refined by ORB-27172:** The log holds the outcomes a hook reports,
@@ -1353,15 +1466,7 @@ holding member's cursor passes turns already stored (`ON CONFLICT DO NOTHING`
 counts zero new rows). Claude capture also advances the transcript byte
 position through records that produce no eligible turn. That bookkeeping is unlogged, as
 [§17](./2_design.md#17-session-groups-and-seats) records.
-**Code anchors:** `crates/scribe/src/audit_middleware.rs`;
-`crates/scribe/src/output/payload.rs` (`HookOutcome`);
-`crates/scribe/src/commands/hook/scribe_command.rs` (the switch outcomes);
-`crates/scribe/src/commands/hook/session_start.rs` (the deferred check);
-`crates/scribe/src/commands/hook/user_prompt_submit.rs` (its consume);
-`crates/scribe/src/commands/hook/group_turns.rs` (the capture outcome);
-`crates/scribe-core/src/store/db/groups.rs` (`capture_group_turns`,
-`skip_displaced_turns`);
-`crates/scribe-core/src/store/db/groups/claude.rs` (`capture_claude_group_turns`)
+**Code anchors:** `crates/scribe-core/src/runtime/audit.rs::HookOutcome`; `crates/scribe-core/src/apps/hook/scribe_command.rs`; `crates/scribe-core/src/apps/hook/session_start.rs`; `crates/scribe-store/src/db/groups.rs`
 
 ### Context
 
@@ -1421,9 +1526,14 @@ a missing file passes. A failure records nothing and replies
   like the rest of the check this is an accident guard (STD-05@1 §R5), not
   a defence against a same-user process ([2_design.md §9](./2_design.md#9-concerns--honest-limitations)).
 
+### Alternative
+
+Refuse a missing transcript. Claude Code can submit the first prompt before
+creating it, so that would reject a legitimate first turn.
+
 ## sha2 hashes the prompt
 
-**Code anchors:** `Cargo.toml`; `crates/scribe-core/src/capture.rs` (`prompt_sha256`)
+**Code anchors:** `Cargo.toml`; `crates/scribe-store/src/digest.rs::prompt_sha256`
 
 ### Context
 
@@ -1438,6 +1548,11 @@ workspace dependency of `scribe-core`; it passes `cargo deny`.
 ### Consequences
 
 - Cost: one more small dependency tree to track.
+
+### Alternative
+
+Implement SHA-256 locally. Using the established pure-Rust crate avoids
+maintaining a cryptographic implementation.
 
 ## The Claude Code package installs from a local marketplace
 
@@ -1461,10 +1576,14 @@ installs it. The hooks run `scribe` from `PATH` (`make install`).
 - Cost: the package and the binary are installed separately and can drift;
   a missing binary makes each hook fail visibly in Claude Code.
 
+### Alternative
+
+Publish the package to a remote marketplace. A local marketplace installs
+directly from the checkout without a publication dependency.
+
 ## A session pass counts its failures from the audit log
 
-**Code anchors:** `crates/scribe-core/src/store/mod.rs` (`failures_in_a_row`);
-`crates/scribe/src/commands/session/pass.rs`
+**Code anchors:** `crates/scribe-core/src/store/mod.rs` at `312fb78d9444` (historical); `crates/scribe-core/src/apps/session/rules/control.rs` (later failure counter)
 
 **Superseded by:** [A failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)
 
@@ -1563,13 +1682,15 @@ The `scribe-session-pass` routine was switched off that day.
   enabled routine checks every 5 minutes and the manual command remains
   available.
 
+### Alternative
+
+Clear `due` after three failures. That left enabled sessions without records
+after a persistent missing-model error.
+
 ## Consecutive windows and bounded retries keep session passes cheap
 
 **Recorded:** 2026-11-10 · [ORB-23853] · **Overridable by Daniel**
-**Code anchors:** `scribe-core::pass::window_with_limits`,
-`scribe-core::control::fail`, `Store::checkpoint_pass`,
-`store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `SessionRequest::prompt`,
-`commands/session/pass.rs`
+**Code anchors:** `crates/scribe-tools/src/window.rs::window_with_limits`; `crates/scribe-core/src/apps/session/rules/control.rs`; `crates/scribe-core/src/apps/session/pass/mod.rs`
 
 ### Context
 
@@ -1658,6 +1779,11 @@ from the transcript's first message.
 - Cost: one directory listing per due session; a transcript moved out of
   the projects directory leaves the pass `waiting`.
 
+### Alternative
+
+Persist the transcript path in control state. That would require a
+persisted-format change for information recoverable by session id.
+
 ## `/scribe off` clears a pending pass
 
 **Code anchors:** `crates/scribe-core/src/apps/session/rules/control.rs` (`switch`)
@@ -1678,6 +1804,11 @@ session that is on and due. Messages after the last pass are not recorded.
 - `off` means no model reads the session again until `on`.
 - Cost: turns between the last pass and `off` stay out of the record;
   `/scribe on` again marks a pass due that picks them up.
+
+### Alternative
+
+Leave an already-due pass queued. It could run after the user had turned capture
+off.
 
 ## `/scribe` ships a command file that expands to itself
 
@@ -1704,6 +1835,11 @@ own.
 - `/scribe` works whichever way Claude Code delivers it.
 - Cost: unverified live until the operator's check
   ([2_design.md §9](./2_design.md#9-concerns--honest-limitations)).
+
+### Alternative
+
+Ship no command file. Claude Code can reject the command as unknown before the
+hook receives it.
 
 ## The plugin backend serves `ask` alone until S6
 
@@ -1754,7 +1890,7 @@ the tree never holds a file named like the binary it runs.
 
 ## `ask` reads Orbit tasks through `orbit tool run`
 
-**Code anchors:** `crates/scribe/src/tasks.rs` (`OrbitTasks`; removed by ORB-27911)
+**Code anchors:** `crates/scribe/src/tasks.rs` at `e6e3673cd877` (historical; removed by ORB-27911)
 
 **Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)
 
@@ -1801,7 +1937,7 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
 ## The routine tools start no unit after a deadline and audit inside the call
 
 **Recorded:** 2026-11 · [ORB-21795]
-**Code anchors:** `crates/scribe/src/commands/plugin.rs::audited`, `crates/scribe/src/commands/mod.rs::RunLimits`
+**Code anchors:** `crates/scribe-core/src/runtime/mod.rs::RunLimits`; `crates/scribe-core/src/runtime/audit.rs::AuditGuard`
 
 **Superseded by:** [Session passes run as an Orbit job, not an in-process model call](#session-passes-run-as-an-orbit-job-not-an-in-process-model-call) (in part)
 
@@ -1864,10 +2000,14 @@ has run.
 - Cost: a sentinel default the code must recognise, and two places that
   start an audit guard instead of one.
 
+### Alternative
+
+Start all configured units without a deadline, or audit before reading the plugin envelope. The first risks Orbit killing unfinished work; the second cannot select the store to audit.
+
 ## Approving needs the older entry active
 
 **Recorded:** 2026-11 · [ORB-21795]
-**Code anchors:** `crates/scribe-core/src/consistency.rs::settle`
+**Code anchors:** `crates/scribe-core/src/apps/proposal/rules.rs::settle`
 
 ### Context
 
@@ -1891,7 +2031,7 @@ is `active`; the proposal stays open, and `#scribe reject` closes it.
 ## Forgetting an entry blanks the proposals' copies of it
 
 **Recorded:** 2026-11 · [ORB-21795]
-**Code anchors:** `crates/scribe-core/src/consistency.rs::settle`
+**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs::forget_proposals`
 
 ### Context
 
@@ -1912,6 +2052,11 @@ stay.
 - Cost: a proposal about a forgotten entry no longer says why it was
   opened, or what the other entry's quote was contrasted with.
 
+### Alternative
+
+Blank only the entry itself. Proposal quotes and reasons would retain its
+content.
+
 ## `session-start` is read-only except for handoff restoration and seat inheritance
 
 **Recorded:** 2026-11 · [ORB-21795]
@@ -1921,8 +2066,8 @@ continue-handoff path and §17 group seat inheritance across a clear,
 child's `continues` link and inherited switch, and inheriting a group seat
 appends the child to the predecessor's open seat; both audit their writes.
 **Further refined by ORB-27153 and ORB-27176:** An eligible start whose transcript is not yet written records an audited deferred ancestry check; the first unblocked typed prompt once the transcript is readable (or once the session already has a continuation link or seat) consumes it and performs the same restoration and seat inheritance. Blocked `/scribe` prompts and prompts while the transcript is still missing keep the check pending.
-**Code anchors:** `crates/scribe/src/commands/hook/session_start.rs`,
-`crates/scribe/src/commands/hook/continuation.rs` (the restoration)
+**Code anchors:** `crates/scribe-core/src/apps/hook/session_start.rs`,
+`crates/scribe-core/src/apps/hook/continuation.rs` (the restoration)
 
 ### Context
 
@@ -1976,7 +2121,7 @@ are audited. A missing transcript also writes an audited deferred-check marker, 
 new transcript. A continue handoff authorizes the hook to record that link
 and carry the recording switch ([design §16.7](./2_design.md#167-continuing-after-a-clear)).
 
-**Code anchors:** `crates/scribe-core/src/session.rs` (`SessionLink`, `check_link`, `children`), `crates/scribe-core/src/apps/session/rules/control.rs` (`link`), `crates/scribe-core/src/store/mod.rs` (`link_session`), `crates/scribe/src/commands/hook/scribe_command.rs`
+**Code anchors:** `crates/scribe-store/src/contracts/session.rs`; `crates/scribe-core/src/apps/session/rules/control.rs`; `crates/scribe-core/src/apps/session/verbs.rs`
 
 ### Context
 
@@ -2032,7 +2177,7 @@ are structured.
 ## A session record is a rewritable header over an append-only log
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe-core/src/session.rs`, `crates/scribe-core/src/apps/session/rules/pass.rs`, `store/codec.rs` (from S8, S9; `store/format.rs` before phase 8, ORB-26657)
+**Code anchors:** `crates/scribe-store/src/contracts/session.rs`; `crates/scribe-core/src/apps/session/rules/pass.rs`; `crates/scribe-store/src/db/codec.rs`
 
 ### Context
 
@@ -2078,6 +2223,7 @@ One record per session, in two parts
 ## Outcome folds into the log
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-store/src/contracts/session.rs::Segment`; `crates/scribe-core/src/apps/session/pass/mod.rs`.
 
 ### Context
 
@@ -2104,6 +2250,7 @@ old record's outcome into segment 1, after its summary.
 ## A segment seals when it is full, when the thread changes, or after three windows
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/apps/session/pass/run.rs`; `crates/scribe-core/src/config.rs::Config` (`segment_windows`).
 
 ### Context
 
@@ -2136,7 +2283,7 @@ decided, by a fixed size, segments would cut threads in the middle.
 ## Store format 4 carries the log, active and author in one step
 
 **Recorded:** 2026-11-10 · [ORB-23892]
-**Code anchors:** `store/format.rs::UPGRADES` (from S8) (removed in phase 8, ORB-26657)
+**Code anchors:** `crates/scribe-core/src/store/format.rs::UPGRADES` at `3d8aa6abf85e` (historical file-store upgrades; removed in ORB-26657)
 
 ### Context
 
@@ -2193,10 +2340,15 @@ Every change is audited and reversible with `session activate`.
   and inactive are both possible), and hidden sessions can surprise a
   reader who forgets the flag.
 
+### Alternative
+
+Use session status as the activity signal. Ended and obsolete describe different
+properties, so one field cannot represent both.
+
 ## Removal of the feature is the main deactivation route; age is a generous backstop
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/apps/session/rules/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
+**Code anchors:** `crates/scribe-core/src/apps/session/rules/activity.rs`; `crates/scribe-core/src/consistency.rs` at `4e61ac72b7c9` (historical removal scan)
 
 **Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model)
 
@@ -2241,7 +2393,7 @@ features.
 ## Removal evidence is Daniel-authored entries only
 
 **Recorded:** 2026-11-10 · [ORB-24005] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`; removed by ORB-27911)
+**Code anchors:** `crates/scribe-core/src/consistency.rs` at `4e61ac72b7c9` (historical; removed by ORB-27911)
 
 **Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model)
 
@@ -2282,10 +2434,15 @@ from `ask` (reversible and audited, but silent until looked for).
   `#scribe` entry) no longer deactivates anything; the session waits
   for the age route, a pin, or a manual `session deactivate`.
 
+### Alternative
+
+Accept model-written session text or agent-written entries as removal evidence.
+Either can be influenced without a verified user instruction.
+
 ## Agents read and write through the CLI, taught by one skill
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `plugin/claude-code/skills/scribe/SKILL.md`, `crates/scribe/src/commands/record.rs` (from S11–S13)
+**Code anchors:** `plugin/claude-code/skills/scribe/SKILL.md`; `crates/scribe/src/commands/entry/mod.rs`
 
 ### Context
 
@@ -2324,10 +2481,14 @@ is summarizing and cataloging sessions; agents do the direct writes.
   distinctive claim ([3_vision.md](./3_vision.md)); the author field and the
   guard on Daniel's entries are what keep his words distinguishable.
 
+### Alternative
+
+Expose separate MCP tools for each read and write. That would enlarge the agent tool surface for operations the CLI already supports.
+
 ## Every entry and proposal records its author
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/record.rs` (`Author`, from S8)
+**Code anchors:** `crates/scribe-store/src/contracts/record.rs::Author`
 
 ### Context
 
@@ -2356,10 +2517,15 @@ verify who ran a CLI command: any process running as Daniel can.
   agent; `--author` is an unchecked label; `cite` can now be `null` in an
   entry's JSON, which readers of agent entries must handle.
 
+### Alternative
+
+Treat every entry as Daniel’s. Agent-written entries would then be attributed
+and weighted as his words.
+
 ## Agent-created tags live in the store, and config tags win
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/tag.rs`, `store/` (`tags.json`, from S12)
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs`, `store/` (`tags.json`, from S12)
 
 ### Context
 
@@ -2384,10 +2550,15 @@ adding it to his config.
 - Cost: tags live in two places; `tag list` shows a `source` column so a
   reader can tell which.
 
+### Alternative
+
+Write agent tags into `config.toml`. That would rewrite Daniel’s configuration
+and its comments outside the store’s lock and audit.
+
 ## Entries Daniel wrote are settled only by Daniel
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/consistency.rs` (`settle`, from S12)
+**Code anchors:** `crates/scribe-core/src/apps/proposal/rules.rs::settle`; `crates/scribe-core/src/apps/entry/rules.rs`
 
 ### Context
 
@@ -2419,7 +2590,7 @@ Daniel wrote, an agent could hide his words.
 ## Humans browse scribe in a tmux popup over fzf
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
-**Code anchors:** `crates/scribe/src/commands/tmux.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13; removed by ORB-27911)
+**Code anchors:** `crates/scribe/src/popup.rs` at `bdeefc71a4b0` (historical; removed by ORB-27911)
 
 **Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)
 
@@ -2506,6 +2677,10 @@ project a session was about.
 - Cost: the attribution is a heuristic that a session touching many repos
   can fool; each catalog is a full model run over a long transcript.
 
+### Alternative
+
+Automatically backfill every old session. Daniel explicitly wanted a selected set because older, unrelated sessions add noise.
+
 ## Audit lines name the agent and the resolved target; rebuilds persist their author
 
 **Recorded:** 2026-11-10 · **Implementation decision** (ORB-24003, against
@@ -2590,7 +2765,7 @@ sketch's format numbering no longer matches the shipped steps.
 channel and the between-agents ownership rule (`not_author`, the
 self-settle guard) are gone. The reserved names, `entry_not_active`, the
 Daniel-entry rules and the settle `--reason` rule still hold.
-**Code anchors:** `crates/scribe-core/src/store/agent.rs` (`check_agent_author`, the agent write guards), `crates/scribe/src/commands/session/catalog.rs`
+**Code anchors:** `crates/scribe-core/src/apps/tag/rules.rs::check_agent_author`; `crates/scribe-core/src/apps/entry/verbs.rs`
 
 ### Context
 
@@ -2652,7 +2827,7 @@ retire or settle against Daniel's entries" (STD-05@1 §R1, §R2, §R5).
 **Recorded:** 2026-11-15 · [ORB-24030] · **Daniel's decision**
 **Supersedes:** the `session catalog` Daniel channel and the between-agents
 rule of "Agent writes use their own name and edit only their own work"
-**Code anchors:** `crates/scribe/src/commands/hook/scribe_command.rs` (`run_catalog`), `crates/scribe/src/commands/session/catalog.rs` (`begin`), `crates/scribe/src/commands/session/pass.rs` (a catalog switch passed as a catalog), `crates/scribe-core/src/store/agent.rs`
+**Code anchors:** `crates/scribe-core/src/apps/hook/scribe_command.rs::run_catalog`; `crates/scribe-core/src/apps/entry/verbs.rs`; `crates/scribe/src/commands/session/catalog.rs`
 
 ### Context
 
@@ -2851,7 +3026,7 @@ deactivation waits for the human's explicit yes.
 ## A typed line is global only when it opens with #scribe/global
 
 **Recorded:** 2026-11-15 · [ORB-25080]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (`GLOBAL_OPENER`, `FORMS`)
+**Code anchors:** `crates/scribe-tools/src/markers.rs::GLOBAL_OPENER`; `crates/scribe-tools/src/markers.rs::parse`
 
 ### Context
 
@@ -2895,7 +3070,7 @@ is settled. The refusal's forms text includes `#scribe/global`.
 ## Action tags are marked in config, and three ship
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config/tags.rs` (`RawTag`)
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config/tags.rs` (`RawTag`)
 
 **Superseded by:** [`task` and `friction` no longer ship as action tags](#task-and-friction-no-longer-ship-as-action-tags) (in part, the shipped set); [Config tags merge with the shipped set](#config-tags-merge-with-the-shipped-set) (in part, config tags that claim a shipped name)
 
@@ -2941,10 +3116,14 @@ for them.
   them; an entry nobody picks up shows in the stuck line instead of
   disappearing.
 
+### Alternative
+
+Hard-code every action tag and its behavior. Adding a new kind of work would then require a code change.
+
 ## An action entry's window is capped at 40 turns and 12,000 characters
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`; removed by ORB-27911)
+**Code anchors:** `crates/scribe-core/src/capture.rs` at `4e61ac72b7c9` (historical; action-window capture was removed by ORB-27911)
 
 **Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model) (in part)
 
@@ -2972,7 +3151,7 @@ start; the consumer can still read the session transcript through the
 ## Agent entries have a five-minute cancel window
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`CANCEL_WINDOW`), `crates/scribe-core/src/store/pickups.rs`
+**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`CANCEL_WINDOW`), `crates/scribe-store/src/repository/pickups.rs`
 
 Agents write action entries unasked and announce them in one line; the
 human cancels with `#scribe retire <id>`. That only works if no consumer
@@ -2991,7 +3170,7 @@ revisit.
 ## Pickups live in their own document
 
 **Recorded:** 2026-11-15 · [ORB-25112]
-**Code anchors:** `crates/scribe-core/src/store/pickups.rs`, `crates/scribe-core/src/store/codec.rs` (`PickupsDocument`)
+**Code anchors:** `crates/scribe-store/src/repository/pickups.rs`; `crates/scribe-store/src/db/codec.rs::PickupsDocument`
 
 A consumer must record that it took an entry, and later that the human
 rejected its result, without rewriting the entry (entries are the human's
@@ -3010,7 +3189,7 @@ later forgotten stays as a dangling note.
 ## An action entry is stuck after one hour without a pickup
 
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`STUCK_AFTER`), `crates/scribe/src/commands/hook/session_start.rs`
+**Code anchors:** `crates/scribe-core/src/apps/entry/rules.rs` (`STUCK_AFTER`), `crates/scribe-core/src/apps/hook/session_start.rs`
 
 The `SessionStart` hook prints one line counting active action entries
 older than one hour with no pickup, per tag, and nothing otherwise. An
@@ -3018,6 +3197,11 @@ intake that runs at least hourly has picked up anything older, so the
 line means a consumer is down or the entry is under a tag nobody reads.
 Cost: with no intake running at all, every session start repeats the
 line until the entries are picked up or retired.
+
+### Alternative
+
+Use a shorter threshold. It would flag work before an hourly intake has had a
+chance to pick it up.
 
 ## The quote check runs in the CLI against this host's transcript
 
@@ -3073,12 +3257,14 @@ network code and never calls Orbit.
 - Cost: the intake depends on the Mac being awake and reachable; entries
   wait, and are counted as stuck, while it is not.
 
+### Alternative
+
+Replicate the store to the owner host and write there. Independent writers would not share the store lock or id allocation.
 
 ## Session passes propose unmarked statements; Daniel alone creates their entries
 
 **Recorded:** 2026-11-15 · ORB-25163 · background-agents candidate use 6
-**Code anchors:** `pass/candidates.rs`, `store/candidates.rs`, `proposal.rs`,
-`commands/session/pass.rs`, `skills/scribe/SKILL.md`
+**Code anchors:** `crates/scribe-core/src/apps/session/pass/mod.rs::open_pass_candidates`; `crates/scribe-store/src/contracts/proposal.rs::EntryCandidate`; `plugin/claude-code/skills/scribe/SKILL.md`
 
 Daniel approved the background-agent uses on 2026-11-15. The opted-in pass
 already reads these turns, so it returns up to three candidate preferences
@@ -3129,8 +3315,7 @@ approval keeps an exact quotation.
 ## Findings are scribe entries with no worker
 
 **Recorded:** 2026-11-16 · ORB-25177 · background-agents candidate use 9
-**Code anchors:** `tag.rs`, `entry.rs`, `store/agent.rs`, `store/codec.rs`,
-`pass/candidates.rs`, `ask.rs`, `search.rs`, `skills/scribe/SKILL.md`
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs`; `crates/scribe-store/src/contracts/entry.rs`; `crates/scribe-core/src/apps/entry/verbs.rs`; `plugin/claude-code/skills/scribe/SKILL.md`
 
 Daniel (2026-11-16) asked scribe to catalogue what agents state across
 sessions instead of letting it be forgotten or re-derived, and approved a
@@ -3178,7 +3363,7 @@ that measured more must choose.
 ## `task` and `friction` no longer ship as action tags
 
 **Recorded:** 2026-11-20 · [ORB-25977] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`), `crates/scribe-core/src/models.rs` (session-pass candidate prompt)
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs` (shipped tags)
 
 ### Context
 
@@ -3222,9 +3407,15 @@ is still listed, shown and settled by id.
   and settleable, but they no longer show in `tag list` or count in the
   session-start stuck line unless config declares the tag again.
 
+### Alternative
+
+Keep shipping `task` and `friction` as action tags. Work and friction can
+instead be filed directly in Orbit.
+
 ## Decisions are recorded on their Orbit task, not in a shipped tag
 
 **Recorded:** 2026-11-20 · [ORB-25980] · **Overridable by Daniel**
+**Standing rule:** Record a choice about one piece of work on its Orbit task and a design choice in the repository decision log; later decisions amend the treatment of standing choices.
 
 ### Context
 
@@ -3275,7 +3466,7 @@ settled by id.
 ## Claims carry a statement, tags carry capture rules, and issues are their own record
 
 **Recorded:** 2026-11-21 · [ORB-26214] · **Overridable by Daniel** · proposed, not built
-**Paths:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `FINDING_TAG`), `crates/scribe-core/src/apps/proposal/rules/candidates.rs`, `crates/scribe-core/src/store/candidates.rs`, `crates/scribe/src/commands/hook/user_prompt_submit.rs` — design §11
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs::CaptureRules`; `crates/scribe-store/src/contracts/proposal.rs::EntryCandidate`; `crates/scribe-core/src/apps/proposal/rules.rs`
 
 ### Context
 
@@ -3395,7 +3586,7 @@ guards stay; ORB-25987's content becomes the statement and its point 4
 
 **Recorded:** 2026-11-21 · [ORB-26204] · **Overridable by Daniel** · proposed, not built
 **Refines:** "Daniel writes only through his typed prompt; agent names are attribution" (no CLI path records `{kind: daniel}`), "Entries Daniel wrote are settled only by Daniel", and §5.3's "Agents cannot settle or edit candidate proposals"
-**Paths:** `crates/scribe-core/src/store/agent.rs` (`change_agent_proposal`, the `daniel_only` refusal of a candidate), `crates/scribe-core/src/apps/entry/verify.rs` (quote verification), `crates/scribe/src/commands/entry/retire.rs` (`RetireArgs`), `crates/scribe/src/commands/proposal.rs` — design §12
+**Code anchors:** `crates/scribe-core/src/apps/entry/verify.rs`; `crates/scribe-core/src/apps/proposal/verbs.rs::settle_candidate_on_instruction`; `crates/scribe/src/commands/entry/retire.rs`
 
 ### Context
 
@@ -3488,7 +3679,7 @@ Alternatives considered:
 
 **Recorded:** 2026-11-21 · [ORB-26219] · **Overridable by Daniel** · steps (a) built (ORB-26258, store format 19), (b) built (ORB-26259, store format 20) and (c) built (ORB-26260, store format 21)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
-**Paths:** `crates/scribe-core/src/apps/session/rules/pass.rs` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
+**Code anchors:** `crates/scribe-core/src/apps/session/rules/pass.rs`; `crates/scribe-core/src/apps/consistency/scan.rs`; `crates/scribe-core/src/apps/hook/session_start.rs`
 
 **Superseded by:** [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions) (in part, points 2 and 9)
 
@@ -3667,7 +3858,7 @@ since items are scribe-authored; personal life is kept only with
 **Recorded:** 2026-11-21 · [ORB-26240] · **Overridable by Daniel** · proposed, not built · **points 1–7 parked 2026-11-21** ([ORB-26256], below)
 **Supersedes in part:** [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval), points 2 (on sessions as the only source) and 9 (`personal = false` by default, and the presets)
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "Scanning or cataloging sessions on scribe's own initiative", for the personal base and light catalog entries of interactive sessions only
-**Paths:** `crates/scribe-core/src/apps/session/rules/pass.rs`, `crates/scribe-core/src/apps/session/rules/control.rs`, `crates/scribe/src/commands/hook/` (`stop`, `session-start`) — design §13.12–§13.16
+**Code anchors:** `crates/scribe-core/src/memory.rs::MemoryConfig` at `1d102b175130` (`personal`, the surviving default at the time; the personal base was parked).
 
 > **Parked 2026-11-21 ([ORB-26256]).** Daniel: "park 2-5, keep 1, 6, 7".
 > Points 1–7 below (the base pass, `/scribe private`, light catalog
@@ -3811,7 +4002,7 @@ recent-sessions list prefers sessions switched on in the last 14 days.
 
 **Recorded:** 2026-11-21 · [ORB-26256] · **Overridable by Daniel**
 **Supersedes in part:** [3_vision.md §1](./3_vision.md#1-open-questions) question 9's three routes (a ChatGPT export import, an app connector, always-on capture), and the "importing a ChatGPT export, an app connector" lines of [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval) and of design §13.11
-**Paths:** none (a scope decision; no code or store shape changes) — design §13.11, 3_vision.md §1
+**Standing rule:** Read only Claude Code and Codex transcripts; do not add a hosted service, connector or ChatGPT export import without a new decision.
 
 ### Context
 
@@ -3870,7 +4061,7 @@ Differences from the chief's proposal: none; this records his words.
 
 **Recorded:** 2026-11-21 · [ORB-26256] · **Overridable by Daniel** · design only; nothing parked was built
 **Parks:** points 1–7 of [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions), and the settings they need; their text is kept for when he unparks them
-**Paths:** none (a sequencing decision) — design §13.10, §13.12–§13.16
+**Standing rule:** Keep the personal base, people, recurring dates and light catalog work parked until Daniel changes that direction; the on-session memory work remains in scope.
 
 ### Context
 
@@ -3943,7 +4134,7 @@ Alternatives considered:
 ## Stop recovery keeps a line covered when it was typed
 
 **Recorded:** 2026-11 · [ORB-26349]
-**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_instruction_lines`
+**Code anchors:** `crates/scribe-core/src/pass/candidates.rs::covers_turn` at `3248515f36a7` (historical Stop recovery)
 
 ### Context
 
@@ -3998,7 +4189,7 @@ a line that may have been covered is the worse miss.
 ## Stop coverage ends when the entry left active, in whole seconds
 
 **Recorded:** 2026-11 · [ORB-26360]
-**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs::covers_turn`, `crates/scribe-core/src/store/mod.rs::covered_draft`, `crates/scribe-core/src/store/format.rs::entry_inactive_since` (removed in phase 8, ORB-26657)
+**Code anchors:** `crates/scribe-store/src/contracts/entry.rs` (`inactive_since`); `crates/scribe-core/src/pass/candidates.rs::covers_turn` at `3248515f36a7` (historical Stop recovery)
 
 ### Context
 
@@ -4044,7 +4235,7 @@ entries already inactive, since no better time exists in an older record.
 ## Config tags merge with the shipped set
 
 **Recorded:** 2026-11-21 · [ORB-26405] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/config.rs` (`Config::parse`), `crates/scribe-core/src/config/tags.rs` (`merge_with_shipped`), `crates/scribe-core/src/tag.rs` (`TagTable::shipped`, `TagTable::defaults`)
+**Code anchors:** `crates/scribe-core/src/config.rs` (`Config::parse`), `crates/scribe-core/src/config/tags.rs` (`merge_with_shipped`), `crates/scribe-store/src/contracts/tag.rs` (`TagTable::shipped`, `TagTable::defaults`)
 
 ### Context
 
@@ -4109,7 +4300,7 @@ a file Daniel already uses into a store nothing can read.
 
 **Recorded:** 2026-11-21 · [ORB-26244] · **Overridable by Daniel** · built
 **Refines:** §5.3's covered approval ("there is no new closed reason and no format bump") and "An agent settles claims and deletes records on Daniel's checked instruction"
-**Paths:** `crates/scribe-core/src/store/candidates.rs` (`reapply_candidates`), `crates/scribe-core/src/store/mod.rs` (`Store::settle`), `crates/scribe-core/src/store/agent.rs` (`settle_candidate_on_instruction`), `crates/scribe-core/src/store/format.rs` (`instructed_approval`, step 14→15) (removed in phase 8, ORB-26657) — design §12.3, §12.7
+**Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs::reapply_candidates`; `crates/scribe-core/src/apps/proposal/verbs.rs::settle_candidate_on_instruction`
 
 ### Context
 
@@ -4157,7 +4348,7 @@ reserved id would point at nothing.
 ## The session pass writes Daniel's ideas itself, with their outcome
 
 **Recorded:** 2026-11-21 · [ORB-26265] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-core/src/store/candidates.rs` (`open_pass_candidates`, `pass_entry`, `written_from`), `crates/scribe-core/src/apps/proposal/rules/candidates.rs` (`check`, `checked_outcome`, `write_exclusions`), `crates/scribe-core/src/entry.rs` (`Outcome`), `crates/scribe-core/src/tag.rs` (the shipped `idea` capture rules)
+**Code anchors:** `crates/scribe-core/src/apps/session/pass/mod.rs::open_pass_candidates`; `crates/scribe-core/src/apps/proposal/rules.rs::pass_entry`; `crates/scribe-core/src/apps/proposal/rules.rs::checked_outcome`; `crates/scribe-store/src/contracts/entry.rs::Outcome`
 
 ### Context
 
@@ -4211,7 +4402,7 @@ searched. nebula stays curated: nothing here writes to it.
 
 **Recorded:** 2026-11-21 · [ORB-26244], [ORB-26503] · **Overridable by Daniel** · built
 **Refines:** "Every mutating command is audited" (audit lines carry ids and codes, never values)
-**Paths:** `crates/scribe-core/src/store/audit.rs` (`AUDIT_FORMAT`), `crates/scribe/src/audit_middleware.rs`, `crates/scribe/src/commands/instruction.rs` (`check`), `crates/scribe-core/src/instruction.rs` (`located_message`) — design §12.4, specs/output-contract.md
+**Code anchors:** `crates/scribe-core/src/runtime/audit.rs`; `crates/scribe-core/src/apps/entry/instruction.rs`; `crates/scribe-store/src/repository/audit.rs`
 
 ### Context
 
@@ -4249,7 +4440,7 @@ his word needs.
 
 **Recorded:** 2026-11-21 · [ORB-26503] · **Overridable by Daniel** · built
 **Refines:** "An agent settles claims and deletes records on Daniel's checked instruction" (one `instruction` per entry)
-**Paths:** `crates/scribe-core/src/entry.rs` (`Entry::removal_instruction`), `crates/scribe-core/src/store/agent.rs` (`retire_agent_entry`, `forget_entry`), `crates/scribe-core/src/store/format.rs` (`removal_instruction`, step 17→18; `EntryV16`) (removed in phase 8, ORB-26657); the check is `store/codec.rs::validate_entry` — design §12.3, §12.4, §12.7
+**Code anchors:** `crates/scribe-store/src/contracts/entry.rs` (`removal_instruction`); `crates/scribe-core/src/apps/entry/verbs.rs`; `crates/scribe-store/src/db/codec/entry.rs::validate_entry`
 
 ### Context
 
@@ -4299,7 +4490,7 @@ as the approval's evidence.
 
 **Recorded:** 2026-11-21 · [ORB-26510] · **Overridable by Daniel** · approved 2026-11-21 ("Approve as proposed"); step 1 built ([ORB-26529], store format 22), steps 2 and 3 not built
 **Refines:** [`#scribe` capture in 2_design.md §4](./2_design.md#4-scribe), [A claim carries a statement (§11.1)](./2_design.md#111-a-claim-carries-a-statement)
-**Paths:** `crates/scribe-core/src/capture/**`, `crates/scribe/src/hook/**`, `crates/scribe-core/src/store/**`, `docs/design/scribe/2_design.md` §14
+**Code anchors:** `crates/scribe-tools/src/markers.rs`; `crates/scribe-core/src/apps/hook/annotation.rs` (current handoff, amended below)
 
 **Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model) (in part)
 
@@ -4419,8 +4610,7 @@ rewritten.
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** ("your proposal sounds good", 2026-11-22). He confirms it when he approves the design.
 **Would supersede, once approved:** [One Markdown file per record, metadata in YAML frontmatter](#one-markdown-file-per-record-metadata-in-yaml-frontmatter), [ask ranks in memory with no persisted index](#ask-ranks-in-memory-with-no-persisted-index) for messages, and the five sections and switches of [scribe keeps a descriptive memory the pass writes without approval](#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval). The task that lands each phase adds the `**Superseded by:**` line.
-**Code anchors:** `crates/scribe-core/src/tag.rs::CaptureRules`, `::SHIPPED_CAPTURE`, `crates/scribe-core/src/models.rs::SessionRequest::memory_prompt`, `crates/scribe-core/src/memory/mod.rs::Section`, `crates/scribe-core/src/store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `crates/scribe-core/src/store/fsio.rs::LockGuard`
-**Paths:** `docs/design/scribe/2_design.md` §15
+**Code anchors:** `crates/scribe-store/src/contracts/tag.rs::CaptureRules`; `crates/scribe-store/src/db/mod.rs`; `crates/scribe-core/src/apps/memory/mod.rs`
 
 ### Context
 
@@ -4505,7 +4695,7 @@ name`. The output contract stays fixed in code.
 ## Approved entries live in SQLite with a Markdown export (proposed)
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 1 of the accepted proposal)
-**Code anchors:** `crates/scribe-core/src/store/mod.rs::load_entries`, `::entry_path`
+**Code anchors:** `crates/scribe-store/src/repository/entries.rs`; `crates/scribe-store/src/repository/sessions/export.rs`
 
 ### Context
 
@@ -4538,7 +4728,7 @@ them in today's file shape. An entry is corrected through the CLI
 ## `issue` is a catcher tag, not a record kind (proposed)
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice**. It replaces decision 2 of the accepted proposal ("issue records and findings are agent-written kinds, not catchers: outside this redesign").
-**Code anchors:** `crates/scribe-core/src/issue.rs`, `crates/scribe-core/src/store/issues.rs`, `crates/scribe-core/src/issue_trigger.rs`, `crates/scribe-core/src/tag.rs::TagTable::issue_capture`, `crates/scribe/src/commands/issue.rs`
+**Code anchors:** `crates/scribe/src/commands/issue.rs` at `cd69111b56cc` (historical issue commands); `crates/scribe-store/src/contracts/tag.rs::CaptureRules`
 **Would supersede, once approved:** [Claims carry a statement, tags carry capture rules, and issues are their own record](#claims-carry-a-statement-tags-carry-capture-rules-and-issues-are-their-own-record), for issues only
 
 ### Context
@@ -4606,7 +4796,7 @@ audit log holds one issue trigger fire.
 ## The store keeps only the assistant turns a claim cites (proposed)
 
 **Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 3 of the accepted proposal)
-**Code anchors:** `crates/scribe-core/src/apps/proposal/rules/candidates.rs` (the `Speaker::User` filter), `crates/scribe-core/src/proposal.rs::EntryCandidate::role`
+**Code anchors:** `crates/scribe-store/src/contracts/proposal.rs::EntryCandidate`; `crates/scribe-core/src/apps/proposal/rules/candidates.rs`
 
 ### Context
 
@@ -4634,53 +4824,6 @@ stored.
   only.
 - Cost: an answer that needs what the assistant said elsewhere in the
   session reads the segment summaries, or the transcript while it exists.
-
-## The meaning lands before the storage, and the messages table opens the storage (proposed)
-
-**Recorded:** 2026-11-22 · [ORB-26640] · **Daniel's choice** (decision 4 of the accepted proposal), refined by the design
-**Paths:** `docs/design/scribe/2_design.md` §15.9
-
-### Context
-
-The accepted order put all of the meaning first (tags, claims, the brief,
-the memory shape, de-personalising), then the storage, starting with the
-new messages table. Three parts of the memory shape need tables:
-
-- pending undated `now` candidates;
-- removed `now` history;
-- profile revisions, and the verbatim messages the profile job reads.
-
-### Decision
-
-**Option chosen:** the meaning that needs no storage goes first:
-
-1. stop writing `working` memory;
-2. generic prompts and catchers;
-3. claims with context and the brief.
-
-Then comes the SQLite foundation, with the messages table first. The memory
-shape and the profile job come next, then sessions, then the remaining
-kinds. Last, the file store is removed after the compatibility window.
-This is the order of the accepted decision, with one move: the memory
-shape goes after the SQLite foundation, because building its tables on the
-file store first would mean building them twice.
-
-### Alternatives
-
-- **The memory shape before any SQLite,** as accepted.
-  - Cost: pending candidates, history and revisions would need file
-    documents and format steps, which phase 7 would then throw away.
-  - The profile job would read verbatim turns from provider transcripts,
-    which may have been removed.
-- **Storage first.**
-  - Cost: the observed failure (`m-3`) and the claims nobody can settle
-    would wait behind the largest change.
-
-### Consequences
-
-- The `m-3` class of item stops in phase 1, a small change.
-- Cost: memory keeps its current shape, minus `working` and `projects`,
-  until phase 5.
 
 ## Search is a top-level verb
 
@@ -4730,9 +4873,7 @@ update`, `orbit search` etc. can you adjust the standard?"
 **Recorded:** 2026-11-22 · [ORB-26709] · **Daniel's choice** (design §15.8,
 part of the §15 proposal he accepted, [ORB-26640]; shipped in PR #133 under
 [ORB-26650])
-**Code anchors:** `crates/scribe/src/output/payload.rs::TranscriptPayload`,
-`crates/scribe-core/src/error.rs::WriteRefusal::code`,
-`crates/scribe-core/src/record.rs::AuthorKind`
+**Code anchors:** `crates/scribe/src/output/transcript.rs::TranscriptPayload`; `crates/scribe-store/src/error.rs::WriteRefusal`; `crates/scribe-store/src/contracts/record.rs::AuthorKind`
 
 ### Context
 
@@ -4883,8 +5024,7 @@ Daniel said in the chief's chat on [ORB-26869] (`ws_constellation`) at
 own session, then we should respect it.” At 03:03 UTC he chose the route,
 “A: typed lines only”.
 
-**Code anchors:** `crates/scribe-core/src/store/sessions.rs::Store::forget_session_locked`
-and `crates/scribe/src/commands/hook/proposal_command.rs::run`.
+**Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs::forget_session`; `crates/scribe-core/src/apps/entry/erase.rs::erase_session_documents`
 
 ### Decision
 
@@ -4906,6 +5046,7 @@ deletion has no CLI route.
 ## The current holder of the opener's seat may close a group
 
 **Recorded:** 2026-11-23 · [ORB-27567] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/apps/group/rules.rs::GroupCloser`; `crates/scribe-core/src/apps/group/verbs/close.rs`.
 
 ### Context
 
@@ -4953,7 +5094,7 @@ owner but not the mode, so a transcript another user could write still passed
 as the record of Daniel's own turns. The Codex rollout read already refused a
 group- or other-writable file, but its path preflight did not.
 
-**Code anchors:** `crates/scribe/src/commands/hook/payload.rs::private_to_this_user`.
+**Code anchors:** `crates/scribe-tools/src/transcript/mod.rs::private_to_this_user`
 
 ### Decision
 
@@ -4976,6 +5117,7 @@ writable rollout too. Read bits are not refused.
 ## A quoted request may close a group from any session
 
 **Recorded:** 2026-11-23 · [ORB-27597] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/apps/group/rules.rs::GroupConsent`; `crates/scribe-core/src/apps/group/close.rs`.
 
 ### Context
 
@@ -5027,9 +5169,15 @@ close` line was not added.
   the opener's seat chain. Only a typed quote grants it, so a session cannot
   close a group on its own word.
 
+### Alternative
+
+Require a throwaway session to join the opener’s seat with `--replace`. That
+adds a seat change solely to close a group whose opener has ended.
+
 ## A member is captured from the start of its own session
 
 **Recorded:** 2026-11-23 · [ORB-27633] · **Overridable by Daniel**
+**Code anchors:** `crates/scribe-core/src/apps/group/verbs/capture.rs::backfill_group_turns`.
 
 ### Context
 
@@ -5089,6 +5237,7 @@ backfills its own transcript only.
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 
 **Recorded:** 2026-11-23 · [ORB-27638] · **Overridable by Daniel** · record and settling steps built ([ORB-27655], [ORB-27656])
+**Standing rule:** Record decisions that outlive a task and open items in scribe; choices confined to one task remain on that task, and design choices remain in the repository decision log.
 
 ### Context
 
@@ -5159,7 +5308,7 @@ chat.
 
 ## Session aliases in piped output and the brief
 
-**Code anchors:** `crates/scribe-store/src/contracts/session.rs` (`set_aliases`); `specs/output-contract.md` (group and session ids)
+**Code anchors:** `crates/scribe-store/src/contracts/session.rs` (`set_aliases`); `docs/design/scribe/specs/output-contract.md` (group and session ids)
 
 Daniel chose “Yes, s-<n> alias for open-item-7” after asking “can we only show first n letters of the session_id column?”. Piped session ids, the session-start brief and group show use the stable `s-<n>` where a sessions row exists; otherwise they use the shortest unique prefix of at least eight characters. JSON and stored references retain the full provider id. This supersedes our earlier reading of STD-01@2 §R15 for piped session ids: the accepted alias is a complete, stable identifier, and keeps agent output concise.
 
@@ -5183,8 +5332,7 @@ session. Its args are the model id. `scribe group backfill g-3` stored
 `/model` and the app's line carry the same fields, so origin cannot tell them
 apart.
 
-**Code anchors:** `crates/scribe-core/src/transcript.rs::SETTINGS_COMMANDS`,
-`crates/scribe-core/src/transcript.rs::slash_command_args`.
+**Code anchors:** `crates/scribe-tools/src/markers.rs::slash_command_args`, `crates/scribe-tools/src/markers.rs::SETTINGS_COMMANDS`
 
 ### Decision
 
@@ -5207,6 +5355,11 @@ commands, such as `/formation` and skills, are still his turns.
 - Cost: a built-in value command that is not on the list still stores its args
   until it is added.
 
+### Alternative
+
+Treat settings-command arguments as typed words. App-generated model changes are
+indistinguishable and would be stored as user turns.
+
 ## The file store's archives move into scribe.db once
 
 **Recorded:** 2026-11-23 · [ORB-26657] · **Overridable by Daniel**
@@ -5222,9 +5375,7 @@ archives alone, and phase 8 was to drop them after a 30-day window. Daniel:
 decoders) and "no need for compatibility window. we haven't had any release
 yet."
 
-**Code anchors:** `crates/scribe-core/src/store/archive.rs`,
-`crates/scribe-core/src/store/db/archive.rs::V20`,
-`crates/scribe-core/src/store/documents.rs::Store::import_at_write`.
+**Code anchors:** `crates/scribe-store/src/db/archive.rs`; `crates/scribe-store/src/db/documents.rs::import_at_write`
 
 ### Decision
 
@@ -5327,6 +5478,10 @@ behave as before. Step 2 removes the remaining in-process model calls.
   agent reads the ranked records `search` returns and writes its own
   answer. The tests that exercised the ranking's project and topic
   narrowing through `ask` went with it.
+
+### Alternative
+
+Keep the model-backed `ask`, Orbit task adapter and tmux popup. That retains the agent invocation and extra surfaces Daniel directed the project to remove.
 
 ## The consistency scan and Stop call no model
 
@@ -5612,9 +5767,9 @@ files can be reassessed when their responsibilities change.
 
 **Recorded:** 2026-11-26 · ORB-28766
 **Standard:** [STD-02@8 §R40 and §R24](../../standards/STD-02-rust-architecture-and-errors/STD-02.md)
-**Code anchors:** `db/codec/entry.rs::validate_entry`,
-`db/docs.rs::entries` and `put_entry`, `db/memory.rs::Writer::scrub_journal`
-in `scribe-store`, and `apps/proposal/verbs.rs::write_candidate_entry` in
+**Code anchors:** `crates/scribe-store/src/db/codec/entry.rs::validate_entry`,
+`crates/scribe-store/src/db/docs.rs::entries` and `put_entry`, `crates/scribe-store/src/db/memory.rs::Writer::scrub_journal`
+in `scribe-store`, and `crates/scribe-core/src/apps/proposal/verbs.rs::write_candidate_entry` in
 `scribe-core`.
 
 ### Decision
@@ -5647,7 +5802,7 @@ An app-only entry-format check would require each consumer, including reads
 inside the store, to reject the same malformed row. A replay-only journal
 filter would leave erased text in closed journal rows.
 
-**Cost:** Changes to the entry format or journal representation must
+Cost: Changes to the entry format or journal representation must
 account for existing records and check that they still read and replay.
 
 ## Opening, configuring and migrating scribe.db goes through cw-sqlite
@@ -5757,7 +5912,7 @@ cw-sqlite” diagnostic.
 
 - The adapter can make its required filesystem calls while the raw SQLite-open
   ban remains active there.
-- **Cost:** each permitted direct filesystem call needs its own reasoned
+- Cost: each permitted direct filesystem call needs its own reasoned
   expectation, and the fixture must keep checking that the exception scope
   does not weaken the SQLite boundary.
 
@@ -5793,7 +5948,7 @@ an unbounded `mpsc::channel()` in `providers/cli/codex.rs` all fail.
 - `Command::spawn` remains allowed in `supervise` while `std::sync::mpsc::channel`
   and every other disallowed method stay rejected throughout `providers/cli.rs`
   (including `drain`) and `providers/cli/codex.rs`.
-- **Cost:** any future allowed `Command` spawn in `providers/` needs its own
+- Cost: any future allowed `Command` spawn in `providers/` needs its own
   reasoned statement-level expectation, and the gate fixture must continue to
   check both the passing adapter and the negative channel cases.
 
@@ -5884,7 +6039,7 @@ operations on the store.
 ## Stdout and its terminal decision are the cw-kit's cw-cli
 
 **Recorded:** 2026-11-26 · ORB-28613
-**Code anchors:** `crates/scribe/src/output/mod.rs` (`Console`, `finish`, `emit`), `crates/scribe/src/output/render.rs`, `crates/scribe/src/output/render/detail.rs`
+**Code anchors:** `crates/scribe/src/output/common/console.rs::Console`; `crates/scribe/src/output/mod.rs`; `crates/scribe/src/output/common/`
 
 ### Context
 
@@ -5986,8 +6141,13 @@ Path reading: §R49 names `src/command/`. Scribe's CLI is `src/commands/`, which
 
 ### Consequences
 
-- Cost: `make ci-fast`, `make ci-lint` and `make goldens` pass with this change, and `sh docs/standards/check.sh` passes. No Rust source changes.
+- The adoption changed no Rust source; `make ci-fast`, `make ci-lint`, `make goldens` and `sh docs/standards/check.sh` passed.
 - Cost: the rules marked not met stay unchecked until their tasks land. ORB-28926, ORB-28927 and ORB-28929 carry the moves and the parameter work.
+
+### Alternative
+
+Keep the earlier pinned standards. That would leave the newly published rules
+unadopted in this repository.
 
 ## STD-12@4 gates deferred at adoption are recorded per rule
 
@@ -6025,6 +6185,11 @@ At adoption, §R20 and §R23 had cited adoption deviations pending ORB-28950. Th
 - Cost: the counts come from one run and will move as the code does. Rows marked not measured have no count yet.
 - The adoption measurement for §R20 and §R23 was 341 primary diagnostic locations in 158 files (311 and 30 above), taken with both canonical lints verified on 1.96.0 fixtures. ORB-28950 enabled the lints at warn, corrected one missed ordering site in `memory/verbs.rs`, and verified the current workspace with `make ci-lint`.
 
+### Alternative
+
+Defer the missing gates without recording each rule. Reviewers would lack the
+specific deviations and follow-up evidence.
+
 ## Pre-release migrations and file-store archives stay until Daniel exports them (STD-14@1 §R1)
 
 **Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction** (export requirement from the store design)
@@ -6053,10 +6218,15 @@ Resolve the conflict as a recorded deviation, not by deleting code now:
 - Proposed, not filed: "export the file-store archive tables, then retire the archive importer and the `MIGRATIONS` chain (STD-14@1 §R1)", gated on Daniel's approval.
 - ORB-28930 (superseded memory CLI and config inputs) and ORB-28931 (catcher spellings) are reused as the kickoff proposed. Before removing either, check for stored values; any value the removed code still reads joins the export gate.
 
+### Alternative
+
+Delete pre-release migrations and archive readers immediately. Existing stores
+could become unopenable or archive text unreadable before export.
+
 ## STD-02@10 §R51: parameter-count deviation closed
 
 **Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
-**Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs`, `apps/session/pass/mod.rs`, `apps/entry/verbs.rs`, `apps/memory/verbs.rs:628`, `apps/session/rules/pass.rs`, `apps/session/pass/run/workflow.rs`, `crates/scribe/tests/support/goldens.rs`
+**Code anchors:** `crates/scribe-core/src/apps/proposal/verbs.rs`, `crates/scribe-core/src/apps/session/pass/mod.rs`, `crates/scribe-core/src/apps/entry/verbs.rs`, `crates/scribe-core/src/apps/memory/verbs.rs:628`, `crates/scribe-core/src/apps/session/rules/pass.rs`, `crates/scribe-core/src/apps/session/pass/run/workflow.rs`, `crates/scribe/tests/support/goldens.rs`
 
 ### Context
 
@@ -6090,7 +6260,7 @@ to zero.
 ## Legacy readers, migrations and the importer stay spread (STD-02 R44)
 
 **Recorded:** 2026-11-26 · [ORB-28767] · **Daniel's direction** (option 2 of decision request dr-e28c0eede7f9afde)
-**Code anchors:** `crates/scribe-store/src/db/mod.rs` (`MIGRATIONS`, `database`); `db/documents.rs` (`import_at_write`, `file_store_items`, `refuse_file_store`); `db/import.rs`, `db/import/forget.rs`, `db/archive.rs`; `db/write.rs` (`begin`, `after_commit`, `import_file_store`); `crates/scribe-core/src/apps/store/migrate.rs`
+**Code anchors:** `crates/scribe-store/src/db/mod.rs` (`MIGRATIONS`, `database`); `crates/scribe-store/src/db/documents.rs` (`import_at_write`, `file_store_items`, `refuse_file_store`); `crates/scribe-store/src/db/import.rs`, `crates/scribe-store/src/db/import/forget.rs`, `crates/scribe-store/src/db/archive.rs`; `crates/scribe-store/src/db/write.rs` (`begin`, `after_commit`, `import_file_store`); `crates/scribe-core/src/apps/store/migrate.rs`
 
 ### Context
 
@@ -6184,6 +6354,7 @@ Each boundary below is a deviation from STD-02@10 §R44 and is retained as state
 - [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
 - [ORB-28889] — recorded the provider spawn adapter's statement-scoped STD-02 §R6 deviation.
 - [ORB-28142] — ran the session pass as an Orbit job of prepare, apply and fail steps.
+- [ORB-20383] — removed the `agent_invoke` activity from Orbit.
 - [ORB-29305] — brought the entries to STD-06@3 §R10 and §R11: `Cost:` lines, alternatives, and `**Superseded by:**` title links.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
