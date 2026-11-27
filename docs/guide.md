@@ -518,7 +518,7 @@ scripts/               gates run by make ci-fast (structure, README links, featu
 ## Development
 
 ```sh
-make ci-fast          # fmt, structure checks, README links, feature-board check, standards-check; builds no scribe crate, but compiles the Clippy fixtures
+make ci-fast          # fmt, structure checks, README links, feature-board check, standards-check; builds no scribe crate, but compiles the Clippy and rustc fixtures
 make ci-lint          # clippy -D warnings, plus cargo-deny
 make test             # nextest when installed, else cargo test; then doctests
 make goldens          # compare help and output with the built binary
@@ -531,12 +531,14 @@ make ci               # all of the above; what CI runs
 skips or falls back). CI installs both at pinned versions, and there a missing
 tool fails. `make standards-check` runs `docs/standards/check.sh`.
 
-`clippy` is required, not optional. `make ci-fast` compiles the Clippy boundary
-fixtures that `structure` runs (`scripts/tests/check-gates.sh`), and `make ci-lint`
-runs `clippy`. A missing component fails the gate rather than skipping it
-(STD-04 R10); add it with `rustup component add clippy`. The fixtures first
-fetch the locked kit dependencies, so a cold cargo cache needs network for that
-step. CI installs `clippy` with its pinned toolchain.
+`clippy` is required, not optional. `make ci-fast` compiles the fixtures that
+`structure` runs (`scripts/tests/check-gates.sh`): the Clippy boundary fixtures
+need `clippy`, and the Rust 2024 comparison fixtures are compiled directly by
+`rustc --edition=2024 --emit=metadata`. Neither kind builds a Scribe crate.
+`make ci-lint` runs `clippy`. A missing component fails the gate rather than
+skipping it (STD-04 R10); add it with `rustup component add clippy`. The Clippy
+fixtures first fetch the locked kit dependencies, so a cold cargo cache needs
+network for that step. CI installs `clippy` with its pinned toolchain.
 
 Every line in the root [README](../README.md) and every command example in this
 guide that starts with `scribe ` is parsed by
