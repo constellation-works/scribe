@@ -60,8 +60,9 @@ fmt-check:
 
 # Structure checks: the architecture map (STD-02 R43), dependency
 # direction (STD-02 R1-R6), unit-test module reachability (STD-02 R19),
-# terminal/stream ownership (STD-01 R17), current-format claims in the store
-# spec against FORMAT, and the cases that test those gates themselves
+# terminal/stream ownership (STD-01 R17), one-level parent paths (STD-12 R26),
+# current-format claims in the store spec against FORMAT, and the cases that
+# test those gates themselves
 # (STD-04 R2, R12). Only the Clippy cases in check-gates.sh compile: they build
 # small fixture crates with cargo clippy, so structure needs the clippy
 # component and fails without it (STD-04 R10). The other checks read manifests
@@ -73,6 +74,7 @@ structure:
 	./scripts/check-dependency-direction.sh
 	./scripts/check-test-modules.sh
 	./scripts/check-terminal-guard.sh
+	./scripts/check-source-style.sh
 	python3 scripts/check-store-format-claims.py
 	python3 scripts/check-session-id-outcomes.py
 	./scripts/tests/check-gates.sh

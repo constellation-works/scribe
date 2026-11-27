@@ -1,6 +1,6 @@
 //! Bounded reads on append and retry, independent of elapsed time.
 
-use super::super::claude::read_window;
+use crate::transcript::claude::read_window;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 

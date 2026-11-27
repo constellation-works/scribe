@@ -1,6 +1,6 @@
 //! Deterministic checks for typed group additions.
 
-use super::super::group_add::{self, run_with_transcript_reader};
+use crate::commands::hook::group_add::{self, run_with_transcript_reader};
 use crate::commands::hook::group_turns;
 use crate::output::Output;
 use scribe_core::GroupVerbs;

@@ -4,7 +4,7 @@
 //! final and off, a live one stays due, and a failure resumes without
 //! moving `since`.
 
-use super::super::catalog::{self, CatalogArgs};
+use crate::commands::session::catalog::{self, CatalogArgs};
 use crate::output::Output;
 use crate::output::PassFailure;
 use scribe_core::apps::session::{self as app, ApplyStatus, Command, Outcome, PassReport};

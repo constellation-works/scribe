@@ -25,7 +25,7 @@ pub(crate) struct ForgetArgs {
     #[arg(long)]
     confirm: bool,
     #[command(flatten)]
-    instruction: super::super::instruction::InstructionArgs,
+    instruction: crate::commands::instruction::InstructionArgs,
 }
 
 pub(super) fn run(args: ForgetArgs, ctx: &Context) -> Result<Output, CliError> {

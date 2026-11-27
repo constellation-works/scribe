@@ -566,7 +566,7 @@ fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
         "the line waited {:?}",
         started.elapsed()
     );
-    let spool = dir.path().join(super::super::write::AUDIT_SPOOL_DIR);
+    let spool = dir.path().join(crate::tests::write::AUDIT_SPOOL_DIR);
     assert_eq!(fs::read_dir(&spool).unwrap().count(), 1);
     let (events, _) = store.audit_events().unwrap();
     assert_eq!(

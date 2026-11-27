@@ -3,7 +3,6 @@
 //! writer processes (a harness of child processes of this test binary,
 //! never load on a real host).
 
-use super::super::db::{self, DB_FILE};
 use super::private_tempdir;
 use crate::GroupVerbs;
 use crate::ProposalVerbs;
@@ -15,6 +14,7 @@ use crate::store::{AuditEvent, AuditStatus, Redactor, Store};
 use crate::testing::StoreTestInternals;
 use crate::testing::ViewTestReads;
 use crate::tests::T0;
+use crate::tests::db::{self, DB_FILE};
 use std::path::Path;
 use std::time::Duration;
 

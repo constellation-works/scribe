@@ -22,7 +22,7 @@ pub(crate) struct RetireArgs {
     #[arg(long)]
     reason: String,
     #[command(flatten)]
-    instruction: super::super::instruction::InstructionArgs,
+    instruction: crate::commands::instruction::InstructionArgs,
 }
 
 pub(super) fn run(args: RetireArgs, ctx: &Context) -> Result<Output, CliError> {

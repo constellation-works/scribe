@@ -8,7 +8,7 @@ mod redact;
 pub(crate) mod store;
 mod voice;
 pub(crate) use scribe_store::fixtures::{T0, entry, session};
-// `super::super::db` and `::write` in `store/`, as inside the store.
+// `crate::tests::{db, write}` in `store/`, as inside the store.
 use crate::store::{db, write};
 
 /// The `idea` catcher scribe shipped until 2_design.md §15.9 phase 2, now

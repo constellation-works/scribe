@@ -7,7 +7,7 @@
 //!   column, named as the field, as the session tables store theirs; a
 //!   claim's candidate fields are `c_<field>` beside `has_candidate`. A row
 //!   is read back through the same serde shape and the same checks a file
-//!   gets ([`super::super::codec`]), so a hand-edited row is refused as a
+//!   gets ([`crate::db::codec`]), so a hand-edited row is refused as a
 //!   hand-edited file was.
 //! - **Writes.** An entry or a claim is written by its id (UPDATE, then
 //!   INSERT for a new one); tags, marks and pickups are small lists,
