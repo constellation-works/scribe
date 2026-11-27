@@ -81,10 +81,12 @@ policy() {
 # `package = "..."` renames it, so the policy and the crate graph see the crate
 # Cargo resolves, not the alias. Every declaration form is read:
 #   [dependencies]  key = "1"  /  key = { package = "x" }  /  key.package = "x"
+#     /  key."version" = "1"  (a bare or quoted subkey declares key too)
 #   [dependencies.key]  package = "x"  (and a dotted `dependencies.key = ...`
 #     line outside a dependency table)
 #   key.workspace = true  /  key = { workspace = true }  (the package comes
-#     from the root manifest's [workspace.dependencies])
+#     from the root manifest's [workspace.dependencies], a [workspace.dependencies]
+#     table or top-level `workspace.dependencies.key = ...` dotted keys)
 # in [dependencies], [build-dependencies] and [target.<cfg>.*]; dev-dependencies
 # are exempt. A TOML comment is not part of a declaration, so each line is read
 # without its comment first: `# package = "x"` names no package. POSIX awk only
@@ -171,6 +173,17 @@ function classify(h,    root) {
   }
   if (mode == "sub") note(subkey, FNR, "", 0)
 }
+# One declaration line once its table part is gone: `key = ...`, `key.subkey = ...`
+# or `key.workspace = true`. A subkey may be bare or quoted (ORB-29129).
+function decl(line,    key, rest) {
+  if (!match(line, /^("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)/)) return
+  key = unquote(substr(line, 1, RLENGTH)); rest = substr(line, RLENGTH + 1)
+  sub(/^[ \t]+/, "", rest)
+  if (rest ~ /^\.[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(key, FNR, package_of(rest), 0)
+  else if (rest ~ /^\.[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(key, FNR, "", 1)
+  else if (rest ~ /^\.[ \t]*("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)[ \t]*=/) note(key, FNR, "", 0)
+  else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/)
+}
 { $0 = uncomment($0) }
 FNR == 1 { mode = ""; subkey = ""; tbl = "" }
 /^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); classify(h); next }
@@ -178,6 +191,14 @@ FNR == 1 { mode = ""; subkey = ""; tbl = "" }
 mode == "sub" {
   if ($0 ~ /^[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(subkey, FNR, package_of($0), 0)
   else if ($0 ~ /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(subkey, FNR, "", 1)
+  next
+}
+# A root manifest with no [workspace] header declares [workspace.dependencies] as
+# top-level dotted keys: `workspace.dependencies.<key> = ...` (ORB-29129).
+mode == "" && FILENAME == ARGV[1] && /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*\.[ \t]*(dependencies|"dependencies"|\047dependencies\047)[ \t]*\./ {
+  line = $0; sub(/^[ \t]+/, "", line)
+  sub(/^(workspace|"workspace"|\047workspace\047)[ \t]*\.[ \t]*(dependencies|"dependencies"|\047dependencies\047)[ \t]*\.[ \t]*/, "", line)
+  decl(line)
   next
 }
 mode == "table" || mode == "workspace" || (mode == "" && FILENAME != ARGV[1] && /^[ \t]*((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\./) {
@@ -191,13 +212,7 @@ mode == "table" || mode == "workspace" || (mode == "" && FILENAME != ARGV[1] && 
     tbl = unquote(substr(line, 1, RLENGTH))
     sub(/^((build-)?dependencies|"(build-)?dependencies"|\047(build-)?dependencies\047)[ \t]*\.[ \t]*/, "", line)
   }
-  if (!match(line, /^("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)/)) next
-  key = unquote(substr(line, 1, RLENGTH)); rest = substr(line, RLENGTH + 1)
-  sub(/^[ \t]+/, "", rest)
-  if (rest ~ /^\.[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(key, FNR, package_of(rest), 0)
-  else if (rest ~ /^\.[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(key, FNR, "", 1)
-  else if (rest ~ /^\.[ \t]*[A-Za-z0-9_-]+[ \t]*=/) note(key, FNR, "", 0)
-  else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/)
+  decl(line)
   next
 }
 END {
