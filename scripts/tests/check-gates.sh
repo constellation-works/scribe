@@ -504,6 +504,68 @@ printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.w
   >"$pkgmeta_clean/crates/scribe/Cargo.toml"
 expect pass check-dependency-direction.sh "$pkgmeta_clean" "a clean alias with a [package.metadata] rusqlite mask"
 
+# Top-level multiline arrays and multiline strings whose continuation lines
+# begin with `[` must not clear top-level state (`top`) before subsequent
+# `workspace.dependencies.*` declarations (ORB-29207).
+for ml_kind in array basic-str literal-str; do
+  case "$ml_kind" in
+    array)
+      ml_val=$'workspace.metadata.grid = [\n  ["a"],\n]' ;;
+    basic-str)
+      ml_val=$'workspace.metadata.note = """\n[note]\nworkspace.dependencies.clean = { package = "rusqlite" }\n"""' ;;
+    literal-str)
+      ml_val=$'workspace.metadata.note = \x27\x27\x27\n[note]\nworkspace.dependencies.clean = { package = "rusqlite" }\n\x27\x27\x27' ;;
+  esac
+
+  ml_bad=$(tree "multiline-$ml_kind-bad")
+  printf 'workspace.members = ["crates/scribe", "crates/scribe-core"]\n%s\nworkspace.dependencies.bad = { path = "crates/scribe", package = "scribe" }\n' \
+    "$ml_val" >"$ml_bad/Cargo.toml"
+  printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nbad.workspace = true\n' \
+    >"$ml_bad/crates/scribe-core/Cargo.toml"
+  expect fail check-dependency-direction.sh "$ml_bad" "a crate cycle after a top-level multiline $ml_kind starting with ["
+  if ! grep -Fq "crate import cycle:" "$work/out"; then
+    echo "check-gates: FAIL: missing crate import cycle diagnostic after multiline $ml_kind" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+
+  ml_banned=$(tree "multiline-$ml_kind-banned")
+  printf 'workspace.members = ["crates/scribe", "crates/scribe-core"]\n%s\nworkspace.dependencies.sql = { version = "0.43", package = "rusqlite" }\n' \
+    "$ml_val" >"$ml_banned/Cargo.toml"
+  printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\nsql.workspace = true\n' \
+    >"$ml_banned/crates/scribe/Cargo.toml"
+  expect fail check-dependency-direction.sh "$ml_banned" "a banned crate after a top-level multiline $ml_kind starting with ["
+  if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+    echo "check-gates: FAIL: missing rusqlite diagnostic after multiline $ml_kind" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+
+  ml_clean=$(tree "multiline-$ml_kind-clean")
+  printf 'workspace.members = ["crates/scribe", "crates/scribe-core"]\n%s\nworkspace.dependencies.clean = { path = "crates/scribe-core", package = "scribe-core" }\n' \
+    "$ml_val" >"$ml_clean/Cargo.toml"
+  printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nclean.workspace = true\n' \
+    >"$ml_clean/crates/scribe/Cargo.toml"
+  expect pass check-dependency-direction.sh "$ml_clean" "a clean alias after a top-level multiline $ml_kind starting with ["
+done
+
+# Member top-level dotted `dependencies.*` after a multiline array starting with
+# `[` stays enforced, while `[package.metadata]` dotted keys stay ignored.
+member_ml_bad=$(tree member-multiline-bad)
+printf 'package.metadata.grid = [\n  ["a"],\n]\ndependencies.sql = { version = "0.43", package = "rusqlite" }\n\n[package]\nname = "scribe"\nversion = "0.1.0"\n' \
+  >"$member_ml_bad/crates/scribe/Cargo.toml"
+expect fail check-dependency-direction.sh "$member_ml_bad" "member top-level dotted dependency after multiline array starting with ["
+if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+  echo "check-gates: FAIL: missing rusqlite diagnostic for member top-level multiline array" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+member_meta_clean=$(tree member-metadata-clean)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n\n[package.metadata]\ndependencies.rusqlite = "0.43"\n' \
+  >"$member_meta_clean/crates/scribe/Cargo.toml"
+expect pass check-dependency-direction.sh "$member_meta_clean" "member [package.metadata] dotted dependencies.rusqlite is ignored"
+
 # The same forms without a back edge are legal: an aliased scribe -> scribe-core
 # edge, and an alias that merely reuses an internal crate's name for an
 # external package, are not cycles.
