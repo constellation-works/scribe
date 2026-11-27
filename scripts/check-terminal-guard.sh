@@ -4,17 +4,18 @@
 # `root` defaults to the repository; scripts/tests/check-gates.sh points it at
 # fixture trees. Over the non-test Rust sources, two rules:
 #
-#   1. Terminal state and the std streams belong to the CLI's output module
-#      only. Anything else that asks whether a stream is a terminal, decides
-#      the terminal, or writes to a stream would make a second, disagreeing
-#      decision.
+#   1. Terminal state (`cw_cli::Terminal` / `cw_cli::Probe`) belongs to the
+#      CLI's output module only. Anything else that decides or probes the
+#      terminal would make a second, disagreeing decision.
 #   2. The environment names the terminal decision and the log filter read
 #      are declared and captured in composition only, and passed down as
 #      values. A module that names one reads the environment itself. Composition
 #      may capture them; it never decides the color, the width or the format.
 #
-# Environment reads as such (`std::env::var` and its kin) are clippy's
-# (clippy.toml), not this script's.
+# Environment reads (`std::env::var` and its kin), standard stream handles
+# (`std::io::stdout`, `std::io::stderr`, `std::io::IsTerminal::is_terminal`),
+# and `print!`/`eprint!`/`println!`/`eprintln!` are Clippy's (`clippy.toml` and
+# `Cargo.toml`), not this script's (STD-02 R6, R15).
 set -euo pipefail
 root="${1:-$(dirname "$0")/..}"
 if ! cd "$root"; then
@@ -24,7 +25,7 @@ fi
 
 OUTPUT_DIR=crates/scribe/src/output
 COMPOSITION=crates/scribe-core/src/composition.rs
-TERMINAL='is_terminal|IsTerminal|Terminal::(decide|detect)|Probe::detect|io::stdout|io::stderr|println!|eprintln!|print!|eprint!'
+TERMINAL='Terminal::(decide|detect)|Probe::detect'
 ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG'
 
 # Matches outside tests, in code rather than a comment. A doc comment naming
@@ -126,7 +127,7 @@ if [[ "$filter_rc" -ne 0 ]]; then
 fi
 if [[ -n "$terminal_hits" ]]; then
   echo "$terminal_hits" >&2
-  echo "terminal-guard: terminal state and std streams belong to $OUTPUT_DIR only" >&2
+  echo "terminal-guard: terminal state and probes belong to $OUTPUT_DIR only" >&2
   status=1
 fi
 

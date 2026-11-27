@@ -428,19 +428,22 @@ express. "Module" includes any file added later.
   `vars_os`, `current_dir`, `home_dir`, `temp_dir`), the process snapshot
   `cw_app::env::Env::capture`,
   `std::process::Command::{output,status,spawn}`, `std::process::exit`,
-  `std::sync::mpsc::channel`, and `rusqlite::Connection::open` (including its
-  `open_with_flags` forms) regardless of how a path is imported or aliased.
+  `std::sync::mpsc::channel`, `rusqlite::Connection::open` (including its
+  `open_with_flags` forms), and `std::io::{stdout,stderr}` plus
+  `std::io::IsTerminal::is_terminal` regardless of how a path is imported or
+  aliased.
   Production exemptions are confined to the boundary owners:
   `scribe-store/src/db/files.rs` (individual `std::fs` operations beside `cw-fs`),
   `scribe-tools/src/fs.rs` (host `std::fs` adapter),
   `scribe-core/src/composition.rs` (environment capture, the `cw-app`
-  snapshot and `PATH` metadata) and `scribe-core/src/providers/cli.rs`
+  snapshot and `PATH` metadata), `scribe-core/src/providers/cli.rs`
   (statement-level on `supervise`'s `Command::spawn` call only; its drain
   result travels on capacity-one `std::sync::mpsc::sync_channel`, which is not
   a banned path, so `std::sync::mpsc::channel` and other disallowed methods
-  remain banned throughout `providers/cli.rs` and `providers/cli/codex.rs`).
-  The binary has no exemption:
-  `main` and the output layer receive captured values.
+  remain banned throughout `providers/cli.rs` and `providers/cli/codex.rs`),
+  and `scribe/src/output/common/console.rs` (the CLI output and log-subscriber
+  boundary for `std::io::{stdout,stderr}`, STD-02 R15; `main` and the rest of
+  the binary have no exemption and receive captured values).
   `std::process::exit` calls outside `main` are also denied by `clippy::exit`,
   which remains active in the exempt modules; the disallowed-path lint covers
   `main` (commands return errors or `ExitCode` instead). `rusqlite::Connection::open*` has no production
@@ -491,11 +494,13 @@ express. "Module" includes any file added later.
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
-  `commands`; only `output/` touches stdout or stderr and asks whether a stream
-  is a terminal, and only `composition.rs` names the color, width, format and
-  log variables. The terminal variables come through the full process
-  snapshot; `SCRIBE_LOG` is read separately and passed to logging
-  (`scripts/check-terminal-guard.sh`).
+  `commands`; `clippy.toml` and `Cargo.toml` keep `std::io::{stdout,stderr}`,
+  `IsTerminal::is_terminal`, `print!`/`eprint!` and `dbg!` out of everything
+  except `output/common/console.rs`, while `scripts/check-terminal-guard.sh`
+  keeps `Terminal::(decide|detect)` and `Probe::detect` in `output/` and the
+  color, width, format and log environment names in `composition.rs` (where
+  the terminal variables come through the full process snapshot and
+  `SCRIBE_LOG` is read separately and passed to logging).
 - **Upgrade boundary (STD-02 R44):** no gate. No `legacy` or `migrate` unit
   exists for a check to hold, so the rule is review-only; see
   [the upgrade boundary](#upgrade-boundary).

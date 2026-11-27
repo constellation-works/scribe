@@ -1653,15 +1653,17 @@ expect fail check-session-id-outcomes.py "$outcomes" "a stale session-ID outcome
 
 # --- check-terminal-guard.sh: one terminal decision, and its environment names --
 # Composition captures the log and terminal names; the output module decides
-# the terminal; any other module that decides, prints or names one fails
-# (STD-01 R17, STD-02 R3). A doc comment or a test names one harmlessly.
+# the terminal; any other module that decides, probes or names one fails
+# (STD-01 R17, STD-02 R3, R15). Standard streams and print macros are enforced
+# by Clippy (`clippy.toml` and `Cargo.toml`). A doc comment or a test names one
+# harmlessly.
 guard_tree() {
   local root="$work/$1"
   mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src/output/tests" \
     "$root/crates/scribe/src/commands"
   printf '//! composition\npub const LOG_ENV: &str = "SCRIBE_LOG";\n' \
     >"$root/crates/scribe-core/src/composition.rs"
-  printf '//! output\npub(crate) fn decide() -> bool {\n    std::io::stdout().is_terminal() && cw_cli::Terminal::detect(&env, "scribe", None).is_some()\n}\n' \
+  printf '//! output\npub(crate) fn decide() -> bool {\n    cw_cli::Probe::detect().is_some() && cw_cli::Terminal::detect(&env, "scribe", None).is_some()\n}\n' \
     >"$root/crates/scribe/src/output/mod.rs"
   printf '#[test]\nfn no_color() {\n    let _ = Env::from_vars([("NO_COLOR", "1")]);\n}\n' \
     >"$root/crates/scribe/src/output/tests/render.rs"
@@ -1676,7 +1678,7 @@ expect pass check-terminal-guard.sh "$clean" \
   "composition captures the log name, output decides, a doc comment and a test name a variable"
 
 decision=$(guard_tree guard-second-decision)
-printf 'pub(crate) fn f() -> bool {\n    std::io::stdout().is_terminal()\n}\n' \
+printf 'pub(crate) fn f() -> bool {\n    cw_cli::Terminal::detect(&env, "scribe", None).is_some()\n}\n' \
   >>"$decision/crates/scribe/src/commands/entry.rs"
 expect fail check-terminal-guard.sh "$decision" "a second terminal decision in a command module"
 
@@ -1684,10 +1686,6 @@ probe=$(guard_tree guard-probe)
 printf 'pub(crate) fn g() {\n    let _ = cw_cli::Probe::detect();\n}\n' \
   >>"$probe/crates/scribe/src/cli.rs"
 expect fail check-terminal-guard.sh "$probe" "a terminal probe in the CLI outside output"
-
-printing=$(guard_tree guard-print)
-printf 'pub(crate) fn h() {\n    println!("hi");\n}\n' >>"$printing/crates/scribe/src/commands/entry.rs"
-expect fail check-terminal-guard.sh "$printing" "a print from a command module"
 
 raw=$(guard_tree guard-raw-color)
 printf 'pub(crate) fn k() -> bool {\n    std::env::var_os("NO_COLOR").is_some()\n}\n' \
@@ -1742,7 +1740,7 @@ fi
 # directory is the only cause of the failure.
 absent_tmp="$work/absent-tmpdir"
 guard_violation=$(guard_tree guard-violation-tmp)
-printf 'pub(crate) fn h() {\n println!("hi");\n}\n' >>"$guard_violation/crates/scribe/src/commands/entry.rs"
+printf 'pub(crate) fn h() {\n    let _ = cw_cli::Probe::detect();\n}\n' >>"$guard_violation/crates/scribe/src/commands/entry.rs"
 guard_clean=$(guard_tree guard-clean-tmp)
 
 for tree in "$guard_violation" "$guard_clean"; do
@@ -1764,7 +1762,7 @@ TMPDIR="$work" expect fail check-terminal-guard.sh "$guard_violation" \
 # lets the same root pass.
 tests_only="$work/guard-tests-only"
 mkdir -p "$tests_only/crates/scribe/tests"
-printf '#[test]\nfn example() { println!("ok in test"); }\n' \
+printf '#[test]\nfn example() { let _ = cw_cli::Probe::detect(); }\n' \
   >"$tests_only/crates/scribe/tests/example.rs"
 expect fail check-terminal-guard.sh "$tests_only" \
   "a root containing only crates/scribe/tests/*.rs (excluded from scan)"
@@ -1778,7 +1776,7 @@ fi
 
 nested_tests_only="$work/guard-nested-tests-only"
 mkdir -p "$nested_tests_only/crates/scribe/src/output/tests"
-printf '#[test]\nfn render() { println!("ok in test"); }\n' \
+printf '#[test]\nfn render() { let _ = cw_cli::Probe::detect(); }\n' \
   >"$nested_tests_only/crates/scribe/src/output/tests/render.rs"
 expect fail check-terminal-guard.sh "$nested_tests_only" \
   "a root containing only nested src/.../tests/*.rs (excluded from scan)"
@@ -2019,15 +2017,93 @@ pub fn bail() -> ! {
 EOF
 )" "clippy::disallowed-methods" "scribe-core importing std::process::exit by name"
 
+expect_clippy fail "$(clippy_tree clippy-stdout-qualified <<'EOF'
+//! Core config fixture.
+
+/// Reaches stdout directly via qualified std::io::stdout.
+pub fn out() -> std::io::Stdout {
+    std::io::stdout()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core calling std::io::stdout()"
+
+expect_clippy fail "$(clippy_tree clippy-stdout-named <<'EOF'
+//! Core config fixture.
+
+use std::io::stdout;
+
+/// Reaches stdout directly via named stdout import.
+pub fn out() -> std::io::Stdout {
+    stdout()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core importing std::io::stdout by name"
+
+expect_clippy fail "$(clippy_tree clippy-stderr-qualified <<'EOF'
+//! Core config fixture.
+
+/// Reaches stderr directly via qualified std::io::stderr.
+pub fn err() -> std::io::Stderr {
+    std::io::stderr()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core calling std::io::stderr()"
+
+expect_clippy fail "$(clippy_tree clippy-stderr-named <<'EOF'
+//! Core config fixture.
+
+use std::io::stderr;
+
+/// Reaches stderr directly via named stderr import.
+pub fn err() -> std::io::Stderr {
+    stderr()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core importing std::io::stderr by name"
+
+expect_clippy fail "$(clippy_tree clippy-is-terminal <<'EOF'
+//! Core config fixture.
+
+use std::io::IsTerminal;
+
+/// Probes terminal state directly via std::io::IsTerminal::is_terminal.
+pub fn tty(stream: &impl IsTerminal) -> bool {
+    stream.is_terminal()
+}
+EOF
+)" "clippy::disallowed-methods" "scribe-core calling std::io::IsTerminal::is_terminal"
+
+expect_clippy fail "$(clippy_tree clippy-print-stdout <<'EOF'
+//! Core config fixture.
+
+/// Prints to stdout directly via println!.
+pub fn speak() {
+    println!("hi");
+}
+EOF
+)" "clippy::print-stdout" "scribe-core calling println!"
+
+expect_clippy fail "$(clippy_tree clippy-print-stderr <<'EOF'
+//! Core config fixture.
+
+/// Prints to stderr directly via eprintln!.
+pub fn warn() {
+    eprintln!("hi");
+}
+EOF
+)" "clippy::print-stderr" "scribe-core calling eprintln!"
+
 # Copy each module-level adapter expectation, then compile a representative
 # allowed operation before adding an exit call. This exercises the independent
 # lint under the same exemption that previously hid direct exit calls.
-for adapter in composition fs; do
+for adapter in composition fs console; do
   case "$adapter" in
     composition) source="$REPO_ROOT/crates/scribe-core/src/composition.rs"
       operation='pub fn host() { let _ = std::env::var_os("PATH"); }' ;;
     fs) source="$REPO_ROOT/crates/scribe-tools/src/fs.rs"
       operation='pub fn host() { let _ = std::fs::read("unused"); let _: Option<std::fs::File> = None; }' ;;
+    console) source="$REPO_ROOT/crates/scribe/src/output/common/console.rs"
+      operation='pub fn host() { let _ = (std::io::stdout(), std::io::stderr()); }' ;;
   esac
   fixture=$(clippy_tree "clippy-exit-$adapter" <<EOF
 //! Host adapter fixture.
@@ -2040,6 +2116,7 @@ EOF
   case "$adapter" in
     composition) module=composition ;;
     fs) module=fs ;;
+    console) module=console ;;
   esac
   fixture_src="$fixture/crates/scribe-core/src"
   mkdir -p "$(dirname "$fixture_src/$module.rs")"

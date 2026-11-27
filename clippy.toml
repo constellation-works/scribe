@@ -1,8 +1,9 @@
-# clippy.toml — STD-02 §R3, §R5, §R6: the file, environment, process, channel
-# and SQLite-open boundaries, resolved by Clippy regardless of path spelling.
-# Allowed boundary owners carry `#[expect(..., reason = "...")]` — statement-level
-# on scribe-store's db/files.rs and scribe-core's providers/cli.rs, module-level
-# `#![expect(...)]` elsewhere.
+# clippy.toml — STD-02 §R3, §R5, §R6, §R15: the file, environment, process,
+# channel, SQLite-open and standard-stream boundaries, resolved by Clippy
+# regardless of path spelling. Allowed boundary owners carry
+# `#[expect(..., reason = "...")]` — statement-level on scribe-store's
+# db/files.rs and scribe-core's providers/cli.rs, module-level `#![expect(...)]`
+# elsewhere.
 
 # STD-02 §R51 counts the receiver as a parameter.
 too-many-arguments-threshold = 7
@@ -61,6 +62,11 @@ disallowed-methods = [
     { path = "rusqlite::Connection::open", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
     { path = "rusqlite::Connection::open_with_flags", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
     { path = "rusqlite::Connection::open_with_flags_and_vfs", reason = "open scribe.db through cw-sqlite in scribe_store::db" },
+
+    # std::io — standard streams and terminal probing belong to the CLI output layer (output/common/console.rs) (STD-02 R15)
+    { path = "std::io::stdout", reason = "write command output and errors through scribe::output::common::console (STD-02 R15)" },
+    { path = "std::io::stderr", reason = "write diagnostics through tracing or scribe::output::common::console (STD-02 R15)" },
+    { path = "std::io::IsTerminal::is_terminal", reason = "probe terminal state through cw_cli::Probe::detect in scribe::output::common::console (STD-02 R15)" },
 ]
 
 # STD-12 §R20 and §R23: top-level item order in a Rust file and struct literal
