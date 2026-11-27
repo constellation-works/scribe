@@ -82,8 +82,8 @@ policy() {
 # Cargo resolves, not the alias. Every declaration form is read:
 #   [dependencies]  key = "1"  /  key = { package = "x" }  /  key.package = "x"
 #     /  key."version" = "1"  (a bare or quoted subkey declares key too)
-#   [dependencies.key]  package = "x"  (and a dotted `dependencies.key = ...`
-#     line outside a dependency table)
+#   [dependencies.key]  package = "x"  (and a top-level dotted
+#     `dependencies.key = ...` line before the first table header)
 #   key.workspace = true  /  key = { workspace = true }  (the package comes
 #     from the root manifest's [workspace.dependencies], a [workspace] table
 #     with `dependencies.*` or top-level `workspace.dependencies.key = ...` dotted keys)
@@ -93,16 +93,37 @@ policy() {
 # (macOS ships BWK awk, not gawk). The first file is the root manifest, the
 # second the member's.
 DECLARED_DEPS_AWK='
-# The line without its TOML comment and trailing blanks. A "#" outside a basic
-# ("...", with backslash escapes) or literal (single-quoted) string starts the
-# comment.
-function uncomment(text,    i, c, q, out) {
-  q = ""; out = ""
-  for (i = 1; i <= length(text); i++) {
+# The line without its TOML comment and trailing blanks, while tracking
+# multiline string (""" or \047\047\047) and bracket/brace nesting depth so
+# continuation lines starting with `[` are not mistaken for table headers.
+# A "#" outside any string starts the comment.
+function scan_line(text,    i, n, c, c3, q, out, k) {
+  q = ""; out = ""; n = length(text)
+  for (i = 1; i <= n; i++) {
     c = substr(text, i, 1)
+    if (ml_str != "") {
+      if (ml_str == "\"\"\"" && c == "\\") {
+        i++
+      } else if (substr(text, i, 3) == ml_str) {
+        c3 = substr(ml_str, 1, 1)
+        for (k = 0; k < 5 && i <= n && substr(text, i, 1) == c3; k++) i++
+        i--
+        ml_str = ""
+      }
+      continue
+    }
     if (q == "") {
       if (c == "#") break
+      c3 = substr(text, i, 3)
+      if (c3 == "\"\"\"" || c3 == "\047\047\047") {
+        ml_str = c3
+        out = out c3
+        i += 2
+        continue
+      }
       if (c == "\"" || c == "\047") q = c
+      else if (c == "[" || c == "{") depth++
+      else if ((c == "]" || c == "}") && depth > 0) depth--
     } else if (c == "\\" && q == "\"") {
       out = out c; i++; c = substr(text, i, 1)
     } else if (c == q) q = ""
@@ -184,10 +205,10 @@ function decl(line,    key, rest) {
   else if (rest ~ /^\.[ \t]*("[^"]*"|\047[^\047]*\047|[A-Za-z0-9_-]+)[ \t]*=/) note(key, FNR, "", 0)
   else if (rest ~ /^=/) note(key, FNR, package_of(rest), rest ~ /[{,][ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/)
 }
-{ $0 = uncomment($0) }
-FNR == 1 { mode = ""; subkey = ""; tbl = ""; top = 1 }
-/^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); top = 0; classify(h); next }
-/^[ \t]*(#|$)/ { next }
+FNR == 1 { mode = ""; subkey = ""; tbl = ""; top = 1; ml_str = ""; depth = 0 }
+{ in_ml = (ml_str != "" || depth > 0); $0 = scan_line($0) }
+!in_ml && /^[ \t]*\[/ { h = $0; sub(/[ \t]*#.*$/, "", h); sub(/^[ \t]+/, "", h); top = 0; classify(h); next }
+in_ml || /^[ \t]*(#|$)/ { next }
 mode == "sub" {
   if ($0 ~ /^[ \t]*(package|"package"|\047package\047)[ \t]*=/) note(subkey, FNR, package_of($0), 0)
   else if ($0 ~ /^[ \t]*(workspace|"workspace"|\047workspace\047)[ \t]*=[ \t]*true/) note(subkey, FNR, "", 1)
