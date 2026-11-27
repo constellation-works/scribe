@@ -850,9 +850,10 @@ def find_dep_location(rel_manifest, dep):
         return rel_manifest
 
     for lineno, raw_line in enumerate(lines, 1):
-        in_ml = ml_delim is not None
         line, ml_delim = _strip_toml_comment(raw_line, ml_delim)
-        if in_ml or not line:
+        # A multiline string may close before TOML syntax on the same line.
+        # Keep that suffix so array depth can account for a trailing `]`.
+        if ml_delim is not None or not line:
             continue
         if array_depth > 0:
             array_depth += _bracket_delta(line)

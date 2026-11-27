@@ -567,6 +567,26 @@ if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-cor
   fail=1
 fi
 
+# A multiline string can close on the same line as its enclosing array. Keep
+# the trailing `]` visible to array-depth tracking so the next dependency is
+# still located (and the cycle diagnostic cites its declaration line).
+for ml_kind in basic-str literal-str; do
+  case "$ml_kind" in
+    basic-str) ml_val=$'package.metadata.rows = ["""row\n"""]' ;;
+    literal-str) ml_val=$(printf "package.metadata.rows = ['''row\n''']") ;;
+  esac
+
+  ml_cycle_string=$(tree "multiline-cycle-string-$ml_kind")
+  printf 'package.name = "scribe-core"\npackage.version = "0.1.0"\npackage.edition = "2024"\n%s\ndependencies.back = { path = "../scribe", package = "scribe" }\n' \
+    "$ml_val" >"$ml_cycle_string/crates/scribe-core/Cargo.toml"
+  expect fail check-dependency-direction.sh "$ml_cycle_string" "a crate cycle after a multiline $ml_kind closed with its array"
+  if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:6" "$work/out"; then
+    echo "check-gates: FAIL: the cycle diagnostic does not cite crates/scribe-core/Cargo.toml:6 after a multiline $ml_kind closed with its array" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
 # Member top-level dotted `dependencies.*` after a multiline array starting with
 # `[` stays enforced, while `[package.metadata]` dotted keys stay ignored.
 member_ml_bad=$(tree member-multiline-bad)
