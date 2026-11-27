@@ -1478,6 +1478,24 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
 fi
 expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified paths in stringify tokens"
 
+# A macro in a closed module does not shadow a later root builtin.
+lex_stringify_local=$(tree lex-stringify-local-module)
+cat >"$lex_stringify_local/crates/scribe-core/src/config.rs" <<'EOF'
+#[allow(dead_code)]
+mod local {
+    macro_rules! stringify { ($value:expr) => { $value }; }
+    pub const VALUE: usize = stringify!(1);
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-local.rmeta" \
+  "$lex_stringify_local/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: module-local stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_stringify_local" "builtin stringify after a module-local shadow"
+
 # Qualified and raw builtin stringify calls preserve tokens without
 # resolving their generic-qualified paths.
 lex_stringify_qualified=$(tree lex-stringify-qualified)
