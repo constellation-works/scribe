@@ -637,9 +637,7 @@ fn host_name() -> Option<String> {
 
 #[cfg(not(unix))]
 fn host_name() -> Option<String> {
-    std::env::var(COMPUTERNAME.name_for(APP))
-        .ok()
-        .filter(|n| !n.is_empty())
+    env_var(COMPUTERNAME.name_for(APP)).filter(|n| !n.is_empty())
 }
 
 /// The data-directory precedence, separated so tests can check it directly.

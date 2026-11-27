@@ -2474,6 +2474,55 @@ if ! grep -Fq 'std::env::var(' "$composition_clippy/src/lib.rs"; then
   fail=1
 fi
 expect_clippy pass "$composition_clippy" "" "the production composition adapter's scoped expectations"
+
+# The non-Unix host_name branch is not compiled on Unix CI. Extract its actual
+# body, omit only the target cfg, and compile it under the repository lint
+# configuration so this host-independent fixture covers the Windows path.
+non_unix_host_name=$(awk '
+  /^#\[cfg\(not\(unix\)\)\]$/ { seek = 1; next }
+  seek && /^fn host_name\(/ { capture = 1; seek = 0 }
+  seek { seek = 0 }
+  capture { print }
+  capture && /^}/ { exit }
+' "$REPO_ROOT/crates/scribe-core/src/composition.rs")
+if [[ -z "$non_unix_host_name" ]]; then
+  echo "check-gates: FAIL: cannot find the non-Unix host_name implementation" >&2
+  fail=1
+else
+  host_name_clippy=$(adapter_clippy composition-host-name)
+  {
+    printf '//! Non-Unix composition host-name fixture.\n#![allow(dead_code)]\n'
+    printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+    cat <<'EOF'
+const APP: &str = "scribe";
+const COMPUTERNAME: FixtureEnvVar = FixtureEnvVar;
+
+struct FixtureEnvVar;
+
+impl FixtureEnvVar {
+    fn name_for(&self, _: &str) -> &'static str {
+        "COMPUTERNAME"
+    }
+}
+
+EOF
+    expect_items "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+    printf '\n%s\n' "$non_unix_host_name"
+  } >"$host_name_clippy/src/lib.rs"
+  expect_clippy pass "$host_name_clippy" "" "the production non-Unix host_name implementation"
+  host_name_good=$(cat "$host_name_clippy/src/lib.rs")
+  host_name_bad=$(printf '%s\n' "$host_name_good" | sed \
+    's/env_var(COMPUTERNAME.name_for(APP))/std::env::var(COMPUTERNAME.name_for(APP)).ok()/')
+  if [[ "$host_name_good" == "$host_name_bad" ]]; then
+    echo "check-gates: FAIL: cannot build the raw-read host_name twin" >&2
+    fail=1
+  else
+    printf '%s\n' "$host_name_bad" >"$host_name_clippy/src/lib.rs"
+    expect_clippy fail "$host_name_clippy" "clippy::disallowed-methods" \
+      "a raw environment read in the non-Unix host_name implementation"
+  fi
+fi
+
 composition_good=$(cat "$composition_clippy/src/lib.rs")
 printf '%s\n' "$composition_good" >"$composition_clippy/src/lib.rs"
 cat >>"$composition_clippy/src/lib.rs" <<'EOF'
