@@ -174,13 +174,56 @@ def _is_type_alias_rhs(code: Sequence[Token], eq_idx: int) -> bool:
     return False
 
 
+def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
+    """Recognize a struct literal field colon without treating declarations as values."""
+    if colon_idx < 2 or code[colon_idx - 1].kind not in ("IDENT", "RAW_IDENT"):
+        return False
+    if code[colon_idx - 2].text not in ("{", ","):
+        return False
+
+    # Find the enclosing brace, skipping complete earlier field expressions.
+    pairs = { ")": "(", "]": "[", "}": "{" }
+    stack: List[str] = []
+    j = colon_idx - 2
+    while j >= 0:
+        tok = code[j]
+        if tok.kind == "PUNCT":
+            if tok.text in pairs:
+                stack.append(pairs[tok.text])
+            elif tok.text in ("(", "[", "{"):
+                if stack:
+                    if stack.pop() != tok.text:
+                        return False
+                elif tok.text == "{":
+                    break
+                else:
+                    return False
+        j -= 1
+    if j < 0:
+        return False
+
+    # A declaration (including an enum's struct variant) contains types.
+    # A brace following an expression path is a struct literal instead.
+    while j >= 0:
+        j -= 1
+        while j >= 0 and code[j].text not in ("{", "}", ";"):
+            if code[j].kind == "IDENT" and code[j].text in ("struct", "enum", "union"):
+                return False
+            j -= 1
+        if j < 0 or code[j].text != "{":
+            break
+    return True
+
+
 def _delim_opens_type(code: Sequence[Token], delim_idx: int) -> Optional[bool]:
     """Return True/False if `(` or `[` at `delim_idx` is a type delimiter, or None after `,`."""
     if delim_idx == 0:
         return False
     before = code[delim_idx - 1]
     if before.kind == "PUNCT":
-        if before.text in (":", "<"):
+        if before.text == ":":
+            return not _field_value_colon(code, delim_idx - 1)
+        if before.text == "<":
             return True
         if (
             before.text == ">"
