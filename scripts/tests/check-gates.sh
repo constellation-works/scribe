@@ -1456,6 +1456,21 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
 fi
 expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified paths in stringify tokens"
 
+# Qualified and raw builtin stringify calls preserve tokens without
+# resolving their generic-qualified paths.
+lex_stringify_qualified=$(tree lex-stringify-qualified)
+cat >"$lex_stringify_qualified/crates/scribe-core/src/config.rs" <<'EOF'
+pub const EXAMPLE: &str = std::stringify!([Result<u8, u16>::std::net::Item]);
+pub const RAW_EXAMPLE: &str = r#stringify!([Result<u8, u16>::std::net::Item]);
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-qualified.rmeta" \
+  "$lex_stringify_qualified/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: qualified stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_stringify_qualified" "generic-qualified paths in qualified and raw stringify tokens"
+
 # A local macro can shadow stringify and evaluate its arguments. Its
 # comparison must not be mistaken for a generic-qualified path.
 lex_shadow_stringify=$(tree lex-shadow-stringify)
