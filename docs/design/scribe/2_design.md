@@ -6227,22 +6227,23 @@ so no kind is ever unreadable outside the binary.
 
 ### 15.9 Phases
 
-The accepted order put all meaning before storage, but the memory shape needs
-tables for pending `now` candidates, history and profile revisions. The
-refined order puts meaning that needs no storage first, then the SQLite
-foundation and messages table, then the memory shape and profile job.
-Building the memory shape on files first would build those tables twice;
-putting all storage first would delay the observed `m-3` failure and
-unsettleable claims. Cost: the existing memory shape remains until phase 5.
+Phase 1 first stops writing `working` and `projects` to address `m-3`. Phases
+2–3 then add the meaning changes that need no new storage. Phase 4 adds the
+SQLite foundation and messages table; phase 5 introduces the rest of the
+memory redesign and profile job. Building the memory shape on files first
+would build those tables twice; putting all storage first would delay the
+observed `m-3` failure and unsettleable claims. Cost: after phase 1 stops
+writing `working` and `projects`, the rest of the existing memory shape
+remains until phase 5.
 
-The meaning comes before the storage. Each phase leaves a store the next
-phase's build reads, and lands with its `specs/` and skill updates and its
-goldens. Each line gives what the phase does, then what it proves.
+The `m-3` fix comes first; phases 2–3 add meaning without new storage, phase 4
+adds SQLite, and phase 5 adds the memory shape. Each phase leaves a store the
+next phase's build reads, and lands with its `specs/` and skill updates and
+its goldens. Each line gives what the phase does, then what it proves.
 
-1. **Stop writing `working` memory.**
-   - Does: the pass no longer asks for `working` or `projects` items or
-     writes them, and the working-to-preference proposal (§13.7) is
-     removed.
+1. **Stop writing `working` and `projects` memory.**
+   - Does: the pass no longer asks for or writes `working` or `projects`
+     items, and the working-to-preference proposal (§13.7) is removed.
    - Proves: the `m-3` class of item is no longer written. This is the
      observed failure, fixed first and small.
    Alongside it, and needing nothing from phases 2–5: **the brief**
