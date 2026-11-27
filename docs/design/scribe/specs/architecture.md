@@ -532,8 +532,9 @@ individual statements; other owners use module-level
 `scripts/check-dependency-direction.sh` holds the crate, socket and module
 rules:
 
-- the banned crates per crate, from the table above (normal dependencies
-  only, as today);
+- the banned crates per crate, from the table above (normal and build
+  dependencies across all targets; dev-dependencies are exempt, including
+  under `[target.*]`);
 - unit import cycles and declared in-layer orders (STD-02 R6, R39): the
   import graph is acyclic between crates, between the top-level modules of
   every crate, and between the sibling modules of every layer and module
