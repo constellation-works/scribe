@@ -92,7 +92,8 @@ environment variable, or branches on a record's state.
 
 `plugin call` serves the Orbit plugin's tools. Its routine and workflow tools
 (`session-pass-prepare`, `session-pass-apply`, `session-pass-fail`,
-`consistency-scan`, `memory-refresh-prepare`,
+`session-catalog-begin`, `session-rebuild-prepare`, `session-rebuild-apply`,
+`session-rebuild-finish`, `consistency-scan`, `memory-refresh-prepare`,
 `memory-refresh-apply`, `group-close-prepare`, `group-close-apply`) have no
 flow of their own. The handler resolves the envelope's root with `Context::at`
 and calls the app's `exec` (or command handler that owns the work). `plugin` is
