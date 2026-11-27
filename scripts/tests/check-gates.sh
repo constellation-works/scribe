@@ -1542,6 +1542,105 @@ EOF
   fi
 done
 
+# A `use` alias can rebind std/core to a module that re-exports an evaluating
+# macro as stringify, and an `extern crate ... as core;` alias redirects even a
+# rooted `::core::` path. Each shadowed call must report its socket line while
+# the rooted builtin `::std::stringify!` call on line 3 stays exempt.
+for alias_crate in std core; do
+  lex_shadow_use=$(tree "lex-shadow-use-${alias_crate}")
+  cat <<'EOF' | sed "s/@CRATE@/$alias_crate/g" >"$lex_shadow_use/crates/scribe-core/src/config.rs"
+mod helper { macro_rules! custom { ($($x:tt)*) => { $($x)* } } pub(crate) use custom as stringify; }
+use helper as @CRATE@;
+pub const BUILTIN: &str = ::std::stringify!([Result<u8, u16>::std::net::Item]);
+pub fn f(a: usize, b: usize) -> bool {
+    @CRATE@::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-use-${alias_crate}.rmeta" \
+    "$lex_shadow_use/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: use-aliased $alias_crate::stringify fixture did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_shadow_use" "use-aliased $alias_crate shadowing $alias_crate::stringify"
+  if ! grep -Fq 'config.rs:5:    '"$alias_crate"'::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)' "$work/out" || \
+     ! grep -Fq 'scribe-core opens no socket' "$work/out" || grep -Fq 'config.rs:3:' "$work/out"; then
+    echo "check-gates: FAIL: use-aliased $alias_crate::stringify did not isolate the socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+# A module imported from another file (`use crate::std;`) shadows std too.
+lex_shadow_import=$(tree lex-shadow-imported-std)
+cat >"$lex_shadow_import/crates/scribe-core/src/lib.rs" <<'EOF'
+pub mod std {
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+pub mod config;
+EOF
+cat >"$lex_shadow_import/crates/scribe-core/src/config.rs" <<'EOF'
+use crate::std;
+pub fn f(a: usize, b: usize) -> bool {
+    std::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-import.rmeta" \
+  "$lex_shadow_import/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: imported std shadow fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_shadow_import" "cross-file use crate::std shadowing std::stringify"
+if ! grep -Fq 'config.rs:3:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: imported std shadow lacks line 3 or socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+# `extern crate self as core;` makes a rooted `::core::stringify!` evaluating.
+lex_shadow_extern=$(tree lex-shadow-extern-core)
+cat >"$lex_shadow_extern/crates/scribe-core/src/config.rs" <<'EOF'
+macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+pub(crate) use custom as stringify;
+extern crate self as core;
+pub fn f(a: usize, b: usize) -> bool {
+    ::core::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-extern.rmeta" \
+  "$lex_shadow_extern/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: extern crate alias shadow fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_shadow_extern" "extern crate self as core shadowing ::core::stringify"
+if ! grep -Fq 'config.rs:5:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: extern crate alias shadow lacks line 5 or socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+# Unshadowed builtin stringify calls, with ordinary `use std`/`core` imports in
+# the file, keep their generic tokens exempt in all four spellings.
+lex_builtin_all=$(tree lex-builtin-stringify-all)
+cat >"$lex_builtin_all/crates/scribe-core/src/config.rs" <<'EOF'
+use core::fmt as core_fmt;
+use std::{fmt, io::{self, Read}};
+pub const A: &str = std::stringify!([Result<u8, u16>::std::net::Item]);
+pub const B: &str = core::stringify!([Result<u8, u16>::std::net::Item]);
+pub const C: &str = ::std::stringify!([Result<u8, u16>::std::net::Item]);
+pub const D: &str = ::core::stringify!([Result<u8, u16>::std::net::Item]);
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-builtin-all.rmeta" \
+  "$lex_builtin_all/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: builtin stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_builtin_all" "unshadowed std/core stringify beside ordinary std/core imports"
+
 # A local macro can shadow stringify and evaluate its arguments. Its
 # comparison must not be mistaken for a generic-qualified path.
 lex_shadow_stringify=$(tree lex-shadow-stringify)
