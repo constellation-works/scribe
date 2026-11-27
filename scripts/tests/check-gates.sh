@@ -2025,6 +2025,35 @@ if ! grep -Fq "use a bounded channel (std::sync::mpsc::sync_channel)" "$work/out
   fail=1
 fi
 
+# --- check-footprint-companions.sh: the companions map matches the tree ---
+fp_clean="$work/fp-clean"
+mkdir -p "$fp_clean/docs"
+printf -- '- path: `ARCHITECTURE.md`\n- make-target: `goldens`\n' >"$fp_clean/docs/footprint-companions.md"
+printf 'map\n' >"$fp_clean/ARCHITECTURE.md"
+printf 'goldens:\n\ttrue\n' >"$fp_clean/Makefile"
+expect pass check-footprint-companions.sh "$fp_clean" "a companions map whose entries all exist"
+
+fp_missing="$work/fp-missing"
+mkdir -p "$fp_missing/docs"
+printf -- '- path: `ARCHITECTURE.md`\n- make-target: `goldens`\n' >"$fp_missing/docs/footprint-companions.md"
+printf 'goldens:\n\ttrue\n' >"$fp_missing/Makefile"
+expect fail check-footprint-companions.sh "$fp_missing" "a companions map naming a path that does not exist"
+if ! grep -Fq 'names `ARCHITECTURE.md`, which does not exist' "$work/out"; then
+  echo "check-gates: FAIL: footprint fixture lacks its missing-path diagnostic" >&2
+  fail=1
+fi
+
+fp_target="$work/fp-target"
+mkdir -p "$fp_target/docs"
+printf -- '- path: `ARCHITECTURE.md`\n- make-target: `nosuch`\n' >"$fp_target/docs/footprint-companions.md"
+printf 'map\n' >"$fp_target/ARCHITECTURE.md"
+printf 'goldens:\n\ttrue\n' >"$fp_target/Makefile"
+expect fail check-footprint-companions.sh "$fp_target" "a companions map naming a target the Makefile does not define"
+if ! grep -Fq 'names make target `nosuch`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: footprint fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
 if [[ "$fail" -eq 0 ]]; then
   echo "check-gates: ok ($n cases)"
 fi

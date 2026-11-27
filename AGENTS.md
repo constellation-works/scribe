@@ -22,6 +22,7 @@ scribe is a standalone Rust CLI and Orbit plugin that records explicitly marked 
 ## Code
 
 - Follow [ARCHITECTURE.md](ARCHITECTURE.md) for layer boundaries and ownership.
+- Declare coupled files up front using [the footprint companions map](docs/footprint-companions.md).
 - Store writes go through `Store::write`, or `Store::transaction` for a whole command, so the write and its audit row commit in one `scribe.db` transaction ([db/write.rs](crates/scribe-store/src/db/write.rs)).
 - Never hold a `Store::transaction` across a model call ([db/write.rs](crates/scribe-store/src/db/write.rs)).
 - Reads never write or lock.

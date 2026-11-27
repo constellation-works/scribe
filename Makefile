@@ -59,8 +59,9 @@ fmt-check:
 	$(CARGO) fmt --all -- --check
 	rustfmt --check $(TEST_CASES)
 
-# Structure checks: the architecture map (STD-02 R43), dependency
-# direction (STD-02 R1-R6), unit-test module reachability (STD-02 R19),
+# Structure checks: the architecture map (STD-02 R43), the footprint
+# companions map, dependency direction (STD-02 R1-R6), unit-test module
+# reachability (STD-02 R19),
 # terminal/stream ownership (STD-01 R17), one-level parent paths (STD-12 R26),
 # current-format claims in the store spec against FORMAT, and the cases that
 # test those gates themselves
@@ -70,6 +71,7 @@ fmt-check:
 # (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
+	./scripts/check-footprint-companions.sh
 	python3 scripts/sync-skills.py --check
 	python3 scripts/sync-orbit-packages.py --check
 	./scripts/check-dependency-direction.sh
