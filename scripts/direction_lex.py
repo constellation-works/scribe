@@ -89,7 +89,8 @@ ITEM_DEF_KEYWORDS = frozenset(
 # Strict and reserved keywords can precede an absolute `::` path in an
 # expression, type or trait position and cannot be a plain path segment.
 # `crate`, `self`, `super` and `Self` are excluded because they are valid
-# segments. Raw identifiers with the same spelling remain path segments.
+# segments. Raw identifiers with the same spelling remain path segments, and
+# so does a keyword spelled after `$`, which is a macro metavariable.
 PATH_PREFIX_KEYWORDS = frozenset(
     (
         "as", "async", "await", "break", "const", "continue", "dyn", "else",
@@ -111,6 +112,11 @@ def _is_ident_continue(ch: str) -> bool:
 def canonical_ident(name: str) -> str:
     """Return the canonical name for a plain or raw Rust identifier."""
     return name[2:] if name.startswith("r#") else name
+
+
+def _is_metavar(code: Sequence[Token], idx: int) -> bool:
+    """Return True when `code[idx]` is a macro metavariable name written `$name`."""
+    return idx >= 1 and code[idx - 1].kind == "PUNCT" and code[idx - 1].text == "$"
 
 
 def _scan_ident_end(src: str, pos: int) -> int:
@@ -947,9 +953,11 @@ def scan_file(
             continue
 
         # Inline paths outside `use` statements: crate::..., super::..., self::..., std::...
+        # `$std::...` names a metavariable, so only `$crate` can root a path.
         if (
             tok.kind == "IDENT"
             and tok.text in ("crate", "super", "self", "std")
+            and (tok.text == "crate" or not _is_metavar(code, i))
             and i + 2 < n
             and code[i + 1].kind == "PUNCT"
             and code[i + 1].text == "::"
@@ -966,7 +974,11 @@ def scan_file(
                         code[i - 2].kind == "RAW_IDENT"
                         or (
                             code[i - 2].kind == "IDENT"
-                            and code[i - 2].text not in PATH_PREFIX_KEYWORDS
+                            and (
+                                code[i - 2].text not in PATH_PREFIX_KEYWORDS
+                                # `$for::...` qualifies a path with a metavariable
+                                or _is_metavar(code, i - 2)
+                            )
                         )
                         or (
                             code[i - 2].kind == "PUNCT"

@@ -1389,6 +1389,41 @@ fn nested() { foo::std::net::item(); r#return::std::net::item(); r#for::std::net
 EOF
 expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary and raw-identifier paths"
 
+# A keyword or `std` spelled after `$` is a macro metavariable (ORB-29336),
+# so `$for::std::net` qualifies a local module and must pass. A real `for`
+# keyword beside it still makes `::std::net` absolute and must report.
+lex_metavar=$(tree lex-metavar-keyword)
+cat >"$lex_metavar/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+macro_rules! m { ($for:ident) => { $for::std::net::X }; }
+pub fn f() { let _ = m!(bar); }
+mod bar { pub mod std { pub mod net { pub const X: u8 = 0; } } }
+EOF
+expect pass check-dependency-direction.sh "$lex_metavar" "keyword-named metavariable qualifying a local std::net module"
+
+lex_metavar_std=$(tree lex-metavar-std)
+cat >"$lex_metavar_std/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+macro_rules! m { ($std:ident) => { $std::net::X }; }
+pub fn f() { let _ = m!(bar); }
+mod bar { pub mod std { pub mod net { pub const X: u8 = 0; } } }
+EOF
+expect pass check-dependency-direction.sh "$lex_metavar_std" "std-named metavariable qualifying a local net module"
+
+lex_metavar_abs=$(tree lex-metavar-abs)
+cat >"$lex_metavar_abs/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+macro_rules! m { ($for:ident) => { $for::std::net::X }; }
+pub trait T {}
+impl T for ::std::net::Ipv4Addr {}
+EOF
+expect fail check-dependency-direction.sh "$lex_metavar_abs" "absolute std::net after a real for beside a metavariable"
+if ! grep -Fq 'config.rs:4:' "$work/out" || grep -Fq 'config.rs:2:' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: metavariable fixture reports the wrong line or lacks the socket diagnostic" >&2
+  fail=1
+fi
+
 lex_sec2_app=$(tree lex-sec2-app-raw)
 mkdir -p "$lex_sec2_app/crates/scribe-core/src/apps/entry"
 printf '#[doc = "#[cfg(test)]"]\nuse super::r#session::Entry;\n' >"$lex_sec2_app/crates/scribe-core/src/apps/entry/mod.rs"
