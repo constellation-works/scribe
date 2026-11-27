@@ -6354,7 +6354,7 @@ Each boundary below is a deviation from STD-02@10 §R44 and is retained as state
 - [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
 - [ORB-28889] — recorded the provider spawn adapter's statement-scoped STD-02 §R6 deviation.
 - [ORB-28142] — ran the session pass as an Orbit job of prepare, apply and fail steps.
-- [ORB-20383] — removed the `agent_invoke` activity from Orbit.
+- [ORB-20383] — removed the `orbit run agent` command, the `orbit.agent.invoke` tool and the worker behind them from Orbit.
 - [ORB-29305] — brought the entries to STD-06@3 §R10 and §R11: `Cost:` lines, alternatives, and `**Superseded by:**` title links.
 
 > Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
