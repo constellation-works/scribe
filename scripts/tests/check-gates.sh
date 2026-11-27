@@ -44,6 +44,65 @@ if ! grep -Fq "STD-12 R26 forbids multi-level super paths" "$work/out"; then
   fail=1
 fi
 
+# Fail closed when there is nothing to scan or enumeration/read fails
+# (STD-04 R10): an empty crates/ tree, an unreadable Rust source (grep
+# exits > 1), and an unreadable directory (find exits non-zero) must fail
+# with a cannot-scan diagnostic and never print ok. The one-level clean
+# tree above is the passing twin, so a gate that refuses everything cannot
+# pass these cases.
+style_empty="$work/style-empty"
+mkdir -p "$style_empty/crates"
+expect fail check-source-style.sh "$style_empty" "a crates tree with no Rust sources"
+if ! grep -Fq "source-style: cannot scan" "$work/out" || grep -Fq "source-style: ok" "$work/out"; then
+  echo "check-gates: FAIL: empty crates/ did not report cannot-scan without ok" >&2
+  fail=1
+fi
+
+style_unreadable_file="$work/style-unreadable-file"
+mkdir -p "$style_unreadable_file/crates/scribe/src"
+printf 'use super::super::foo;\n' >"$style_unreadable_file/crates/scribe/src/lib.rs"
+chmod 000 "$style_unreadable_file/crates/scribe/src/lib.rs"
+expect fail check-source-style.sh "$style_unreadable_file" "an unreadable Rust source"
+if ! grep -Fq "source-style: cannot scan" "$work/out" || grep -Fq "source-style: ok" "$work/out"; then
+  echo "check-gates: FAIL: unreadable file did not report cannot-scan without ok" >&2
+  fail=1
+fi
+chmod 644 "$style_unreadable_file/crates/scribe/src/lib.rs"
+
+style_unreadable_dir="$work/style-unreadable-dir"
+mkdir -p "$style_unreadable_dir/crates/scribe/src"
+printf 'use super::super::foo;\n' >"$style_unreadable_dir/crates/scribe/src/lib.rs"
+chmod 000 "$style_unreadable_dir/crates/scribe/src"
+expect fail check-source-style.sh "$style_unreadable_dir" "an unreadable source directory"
+if ! grep -Fq "source-style: cannot scan" "$work/out" || grep -Fq "source-style: ok" "$work/out"; then
+  echo "check-gates: FAIL: unreadable directory did not report cannot-scan without ok" >&2
+  fail=1
+fi
+chmod 755 "$style_unreadable_dir/crates/scribe/src"
+
+# The plugin conformance test compiles into crates/scribe/tests/plugin.rs
+# via #[path], so a multi-level path there fails the same R26 rule while
+# its clean twin passes.
+style_plugin_bad="$work/style-plugin-bad"
+mkdir -p "$style_plugin_bad/crates/scribe/src" "$style_plugin_bad/plugin/.orbit-plugin/tests"
+printf 'fn main() {}\n' >"$style_plugin_bad/crates/scribe/src/main.rs"
+printf 'use super::super::x;\n' >"$style_plugin_bad/plugin/.orbit-plugin/tests/conformance.rs"
+expect fail check-source-style.sh "$style_plugin_bad" "a multi-level path in plugin conformance.rs"
+if ! grep -Fq "STD-12 R26 forbids multi-level super paths" "$work/out"; then
+  echo "check-gates: FAIL: plugin conformance fixture lacks its R26 diagnostic" >&2
+  fail=1
+fi
+if ! grep -Fq "plugin/.orbit-plugin/tests/conformance.rs" "$work/out"; then
+  echo "check-gates: FAIL: plugin conformance fixture does not name the offending file" >&2
+  fail=1
+fi
+
+style_plugin_clean="$work/style-plugin-clean"
+mkdir -p "$style_plugin_clean/crates/scribe/src" "$style_plugin_clean/plugin/.orbit-plugin/tests"
+printf 'fn main() {}\n' >"$style_plugin_clean/crates/scribe/src/main.rs"
+printf 'use crate::x;\n' >"$style_plugin_clean/plugin/.orbit-plugin/tests/conformance.rs"
+expect pass check-source-style.sh "$style_plugin_clean" "a clean plugin conformance.rs beside a clean crates/"
+
 # tree <name>: a fresh fixture root holding a minimal two-crate workspace.
 tree() {
   local root="$work/$1"
