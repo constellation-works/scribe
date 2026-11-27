@@ -3,12 +3,6 @@
 //! scribe opens a host file it does not own (beneath a root, without following
 //! a link, without blocking on a pipe) is decided here.
 
-#![expect(
-    clippy::disallowed_methods,
-    clippy::disallowed_types,
-    reason = "fs.rs is scribe-tools' file-system adapter; every other tool module goes through it"
-)]
-
 use std::ffi::OsString;
 pub use std::fs::Metadata;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -16,7 +10,13 @@ use std::path::{Component, Path, PathBuf};
 
 /// A host file handle opened through [`open_beneath`] or [`open_no_follow`].
 #[derive(Debug)]
-pub struct File(std::fs::File);
+pub struct File(
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the host file handle this adapter wraps"
+    )]
+    std::fs::File,
+);
 
 impl File {
     /// Query metadata for the underlying open file handle.
@@ -43,7 +43,13 @@ impl Seek for File {
 
 /// One entry returned by [`read_dir`].
 #[derive(Debug)]
-pub struct DirEntry(std::fs::DirEntry);
+pub struct DirEntry(
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the host directory entry this adapter wraps"
+    )]
+    std::fs::DirEntry,
+);
 
 impl DirEntry {
     /// The full path to the entry.
@@ -70,7 +76,13 @@ impl DirEntry {
 
 /// Iterator over directory entries returned by [`read_dir`].
 #[derive(Debug)]
-pub struct ReadDir(std::fs::ReadDir);
+pub struct ReadDir(
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the host directory iterator this adapter wraps"
+    )]
+    std::fs::ReadDir,
+);
 
 impl Iterator for ReadDir {
     type Item = io::Result<DirEntry>;
@@ -99,6 +111,7 @@ pub enum Owned {
 /// # Errors
 ///
 /// When `path` does not exist or cannot be resolved.
+#[expect(clippy::disallowed_methods, reason = "resolve host paths for callers")]
 pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     std::fs::canonicalize(path)
 }
@@ -108,6 +121,7 @@ pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
 /// # Errors
 ///
 /// When `path` does not exist or cannot be inspected.
+#[expect(clippy::disallowed_methods, reason = "stat host paths for callers")]
 pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     std::fs::metadata(path)
 }
@@ -117,6 +131,10 @@ pub fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
 /// # Errors
 ///
 /// When `path` does not exist or cannot be inspected.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "stat host paths without following links"
+)]
 pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     std::fs::symlink_metadata(path)
 }
@@ -126,6 +144,10 @@ pub fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
 /// # Errors
 ///
 /// When `path` is not a readable directory.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "list host directories for callers"
+)]
 pub fn read_dir(path: impl AsRef<Path>) -> io::Result<ReadDir> {
     std::fs::read_dir(path).map(ReadDir)
 }
@@ -172,7 +194,12 @@ pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
         }
         dir = openat(&dir, part.as_os_str(), flags, Mode::empty())?;
     }
-    Ok(File(std::fs::File::from(dir)))
+    #[expect(
+        clippy::disallowed_types,
+        reason = "wrap the descriptor opened beneath the root"
+    )]
+    let file = std::fs::File::from(dir);
+    Ok(File(file))
 }
 
 /// [`open_beneath`] off Unix: a plain open of the joined path.
@@ -184,7 +211,12 @@ pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
 pub fn open_beneath(root: &Path, parts: &[Component<'_>]) -> io::Result<File> {
     let mut path = root.to_path_buf();
     path.extend(parts.iter().map(|part| part.as_os_str()));
-    std::fs::File::open(path).map(File)
+    #[expect(
+        clippy::disallowed_types,
+        reason = "plain open of a host file where descriptor-relative opens are unavailable"
+    )]
+    let opened = std::fs::File::open(path);
+    opened.map(File)
 }
 
 /// Open `path` read-only. `NOFOLLOW` refuses a link at the last name, and
@@ -202,7 +234,12 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
-    Ok(File(std::fs::File::from(fd)))
+    #[expect(
+        clippy::disallowed_types,
+        reason = "wrap the descriptor opened without following a link"
+    )]
+    let file = std::fs::File::from(fd);
+    Ok(File(file))
 }
 
 /// [`open_no_follow`] off Unix: a link at `path` is refused before the open.
@@ -218,7 +255,12 @@ pub fn open_no_follow(path: &Path) -> io::Result<File> {
             "the Git metadata file is a link",
         ));
     }
-    std::fs::File::open(path).map(File)
+    #[expect(
+        clippy::disallowed_types,
+        reason = "plain open of a host file where descriptor-relative opens are unavailable"
+    )]
+    let opened = std::fs::File::open(path);
+    opened.map(File)
 }
 
 /// Inspect `path` without following a link: whether it is a directory

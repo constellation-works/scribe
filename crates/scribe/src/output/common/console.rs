@@ -4,11 +4,6 @@
 //! This is the only module that writes directly to stdout or stderr or probes
 //! terminal state (STD-01 R12, R13, R17; STD-02 R15).
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "console.rs is the CLI output and log-subscriber boundary (STD-02 R15); every other module writes through Sink or tracing"
-)]
-
 use super::printable::Printable;
 use super::record::WarningPayload;
 use super::usage::raw_args_request_json;
@@ -123,7 +118,7 @@ pub(crate) fn init_logging(log: Option<&OsStr>) {
     let filter = match log.map(OsStr::to_str) {
         Some(Some(spec)) => EnvFilter::try_new(spec).unwrap_or_else(|e| {
             let _ = writeln!(
-                io::stderr().lock(),
+                stderr_lock(),
                 "warning: ignoring {log_name}={spec:?} ({e}); logging at warn"
             );
             default()
@@ -131,7 +126,7 @@ pub(crate) fn init_logging(log: Option<&OsStr>) {
         None => default(),
         Some(None) => {
             let _ = writeln!(
-                io::stderr().lock(),
+                stderr_lock(),
                 "warning: ignoring {log_name}: not valid UTF-8; logging at warn"
             );
             default()
@@ -139,7 +134,7 @@ pub(crate) fn init_logging(log: Option<&OsStr>) {
     };
     // Ignore the error: it only means a subscriber is already installed.
     let _ = tracing_subscriber::fmt()
-        .with_writer(io::stderr)
+        .with_writer(stderr_handle)
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
@@ -182,9 +177,7 @@ pub(crate) fn finish<T: RenderOutput>(
 pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString], terminal: &Env) -> ExitCode {
     let code = u8::try_from(err.exit_code()).unwrap_or(2);
     if !err.use_stderr() {
-        let written = io::stdout()
-            .lock()
-            .write_all(err.render().to_string().as_bytes());
+        let written = stdout_lock().write_all(err.render().to_string().as_bytes());
         return match written {
             Err(e) if e.kind() != io::ErrorKind::BrokenPipe => ExitCode::from(1),
             _ => ExitCode::from(code),
@@ -195,7 +188,7 @@ pub(crate) fn finish_parse_error(err: &clap::Error, args: &[OsString], terminal:
     if raw_args_request_json(args, env_format) {
         write_json_error(&usage_message(&rendered), "usage_error");
     } else {
-        let _ = io::stderr().lock().write_all(rendered.as_bytes());
+        let _ = stderr_lock().write_all(rendered.as_bytes());
     }
     ExitCode::from(code)
 }
@@ -258,7 +251,7 @@ fn report_error(json: bool, err: &CliError) {
     if json {
         write_json_error(&message, err.code());
     } else {
-        let _ = writeln!(io::stderr().lock(), "error: {message}");
+        let _ = writeln!(stderr_lock(), "error: {message}");
     }
 }
 
@@ -267,8 +260,35 @@ fn write_json_error(message: &str, code: &str) {
         error: message,
         code,
     };
-    let mut err = Printable::new(io::stderr().lock());
+    let mut err = Printable::new(stderr_lock());
     if serde_json::to_writer(&mut err, &payload).is_ok() {
         let _ = writeln!(err);
     }
+}
+
+/// The locked standard output stream.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "console.rs is the CLI output boundary for stdout (STD-02 R15)"
+)]
+fn stdout_lock() -> io::StdoutLock<'static> {
+    io::stdout().lock()
+}
+
+/// The locked standard error stream.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "console.rs is the CLI output boundary for stderr (STD-02 R15)"
+)]
+fn stderr_lock() -> io::StderrLock<'static> {
+    io::stderr().lock()
+}
+
+/// The standard error handle the log subscriber writes through.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "console.rs is the CLI log-subscriber boundary for stderr (STD-02 R15)"
+)]
+fn stderr_handle() -> io::Stderr {
+    io::stderr()
 }

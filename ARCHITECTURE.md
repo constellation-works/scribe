@@ -432,20 +432,30 @@ express. "Module" includes any file added later.
   `open_with_flags` forms), and `std::io::{stdout,stderr}` plus
   `std::io::IsTerminal::is_terminal` regardless of how a path is imported or
   aliased.
-  Production exemptions are confined to the boundary owners:
+  Production exemptions are confined to the boundary owners and scoped to the
+  approved operation, never to a whole module: no owner carries a module-wide
+  `#![expect]`, so a path its owner has not approved stays banned inside the
+  owner's own module (a standard stream in the file or composition adapters, an
+  unbounded channel in the console module):
   `scribe-store/src/db/files.rs` (individual `std::fs` operations beside `cw-fs`),
-  `scribe-tools/src/fs.rs` (host `std::fs` adapter),
-  `scribe-core/src/composition.rs` (environment capture, the `cw-app`
-  snapshot and `PATH` metadata), `scribe-core/src/providers/cli.rs`
+  `scribe-tools/src/fs.rs` (host `std::fs` adapter; item-scoped on its wrapped
+  handle types and on each `std::fs` operation it forwards),
+  `scribe-core/src/composition.rs` (item-scoped on the helpers that read an
+  environment variable, resolve the working directory, take the `cw-app`
+  snapshot and read `PATH` metadata), `scribe-core/src/providers/cli.rs`
   (statement-level on `supervise`'s `Command::spawn` call only; its drain
   result travels on capacity-one `std::sync::mpsc::sync_channel`, which is not
   a banned path, so `std::sync::mpsc::channel` and other disallowed methods
   remain banned throughout `providers/cli.rs` and `providers/cli/codex.rs`),
-  and `scribe/src/output/common/console.rs` (the CLI output and log-subscriber
-  boundary for `std::io::{stdout,stderr}`, STD-02 R15; `main` and the rest of
-  the binary have no exemption and receive captured values).
+  and `scribe/src/output/common/console.rs` (item-scoped on the helpers that
+  take the locked or raw `std::io::{stdout,stderr}` handles, STD-02 R15; `main`
+  and the rest of the binary have no exemption and receive captured values).
+  `scripts/tests/check-gates.sh` compiles each adapter with its real
+  expectations and requires an appended standard-stream access, an unrelated
+  disallowed method or a direct exit to fail.
   `std::process::exit` calls outside `main` are also denied by `clippy::exit`,
-  which remains active in the exempt modules; the disallowed-path lint covers
+  which remains active in the exempt modules, as do `print!`/`eprint!` and the
+  other macro bans, which no expectation touches; the disallowed-path lint covers
   `main` (commands return errors or `ExitCode` instead). `rusqlite::Connection::open*` has no production
   exemption (`scribe-store` opens `scribe.db` only through `cw-sqlite`).
   `std::sync::mpsc::channel` has no production exemption.

@@ -497,12 +497,22 @@ denied workspace-wide in `Cargo.toml`) and
 (STD-02 R6). The ring map for `scribe-domain` was removed with the crate.
 
 `clippy.toml` holds the path boundaries (resolved regardless of import
-spelling), with lint expectations only on boundary owners. The store file
-adapter (`scribe-store/src/db/files.rs`, on its individual filesystem statements)
-and the provider CLI adapter (`scribe-core/src/providers/cli.rs`, on
-`supervise`'s `Command::spawn` statement) scope their expectations to
-individual statements; other owners use module-level
-`#![expect(..., reason = "...")]`:
+spelling), with lint expectations only on boundary owners, each scoped to the
+approved operation and never to a whole module. The store file adapter
+(`scribe-store/src/db/files.rs`) and the provider CLI adapter
+(`scribe-core/src/providers/cli.rs`, on `supervise`'s `Command::spawn`
+statement) scope their expectations to individual statements; the host
+file-system adapter (`scribe-tools/src/fs.rs`), composition
+(`scribe-core/src/composition.rs`) and the console module
+(`scribe/src/output/common/console.rs`) scope theirs to the item (a wrapped
+handle field or a small helper function) that performs the operation. No owner
+uses a module-level `#![expect(...)]`: a module-wide expectation would also
+silence every other disallowed path in that module, so a standard stream in
+the file or composition adapters or an unbounded channel in the console module
+would lint clean. The independent `clippy::exit` lint and the print-macro
+bans stay active in every owner. `scripts/tests/check-gates.sh` compiles each
+adapter's real expectations and requires an unapproved standard stream, an
+unrelated disallowed method and a direct exit to fail. The boundaries:
 
 - `std::fs` I/O types (`File`, `OpenOptions`, `ReadDir`, `DirEntry`,
   `DirBuilder`) and filesystem functions (`read`, `read_to_string`, `write`,

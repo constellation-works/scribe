@@ -10,11 +10,6 @@
 //! [`Context`]'s ports and its own failures report a
 //! [`CommandError`](crate::runtime::errors::CommandError).
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "composition.rs is scribe-core's host composition root (STD-02 R3); it reads selected environment values, captures the terminal snapshot and checks executable metadata on PATH"
-)]
-
 mod host;
 
 use crate::config::{
@@ -174,7 +169,7 @@ impl Env {
             codex_home: read(&CODEX_HOME),
             claude_entrypoint: read(&CLAUDE_CODE_ENTRYPOINT),
             log: read(&LOG),
-            terminal: cw_app::Env::capture(),
+            terminal: capture_process(),
         }
     }
 }
@@ -275,9 +270,7 @@ impl Context {
     /// ([`caller_env`]), or `None` when it is unset or not a session id.
     #[must_use]
     pub fn caller(&self) -> Option<SessionId> {
-        std::env::var(caller_env(self.provider).name_for(APP))
-            .ok()
-            .and_then(|s| s.parse().ok())
+        env_var(caller_env(self.provider).name_for(APP)).and_then(|s| s.parse().ok())
     }
 
     /// The Claude Code session this process runs under
@@ -285,16 +278,14 @@ impl Context {
     /// refresh.
     #[must_use]
     pub fn claude_session(&self) -> Option<String> {
-        std::env::var(CLAUDE_CODE_SESSION_ID.name_for(APP)).ok()
+        env_var(CLAUDE_CODE_SESSION_ID.name_for(APP))
     }
 
     /// The project of the working directory, or `None` when it cannot be
     /// read: what `brief` lists first when no `--project` is given.
     #[must_use]
     pub fn cwd_project(&self) -> Option<crate::Project> {
-        std::env::current_dir()
-            .ok()
-            .map(|cwd| scribe_tools::project::of(&cwd))
+        working_dir().map(|cwd| scribe_tools::project::of(&cwd))
     }
 
     /// The data directory.
@@ -402,7 +393,7 @@ impl Context {
             let found = read(&PATH).is_some_and(|path| {
                 std::env::split_paths(&path).any(|dir| {
                     let path = dir.join(program);
-                    std::fs::metadata(path).is_ok_and(|m| {
+                    path_metadata(&path).is_ok_and(|m| {
                         #[cfg(unix)]
                         {
                             use std::os::unix::fs::PermissionsExt;
@@ -462,7 +453,7 @@ impl Context {
         ///
         /// [`CommandError::RedactEnvUnset`] when a name has no value.
         fn redactor(&self, config: &Config) -> Result<Redactor, CommandError> {
-            let missing = unresolved_redact_env(config, |name| std::env::var(name).ok());
+            let missing = unresolved_redact_env(config, |name| env_var(name));
             if !missing.is_empty() {
                 tracing::warn!(
                     names = %missing.join(","),
@@ -471,7 +462,7 @@ impl Context {
                 return Err(CommandError::RedactEnvUnset(missing));
             }
             Ok(Redactor::from_config(config, |name| {
-                std::env::var(name).ok()
+                env_var(name)
             }))
         }
     }
@@ -486,7 +477,7 @@ impl Context {
         if config.models.provider == Provider::Codex {
             credentials.push(codex_home.clone());
         }
-        let mut env = allowed_env(&credentials, |name| std::env::var_os(name));
+        let mut env = allowed_env(&credentials, |name| env_var_os(name));
         if config.models.provider == Provider::Codex
             && let Some(root) = self.codex_transcripts.as_ref().and_then(|p| p.parent())
         {
@@ -504,9 +495,7 @@ impl Context {
         ClaudeCliModels::new(env)
             .with_provider(config.models.provider)
             .with_credentials(&named)
-            .with_redactor(Redactor::from_config(config, |name| {
-                std::env::var(name).ok()
-            }))
+            .with_redactor(Redactor::from_config(config, |name| env_var(name)))
     }
 
     state_accessor! {
@@ -583,7 +572,52 @@ fn cell(text: &str) -> String {
 /// The value of `var` in the process environment, as set. An empty value is
 /// returned as set: each reader decides what empty means.
 fn read(var: &EnvVar) -> Option<OsString> {
-    std::env::var_os(var.name_for(APP))
+    env_var_os(var.name_for(APP))
+}
+
+/// The process environment, captured once for the terminal decision.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition captures the process snapshot the output layer decides from (STD-02 R3)"
+)]
+fn capture_process() -> cw_app::Env {
+    cw_app::Env::capture()
+}
+
+/// The value of the variable `name` when it is set to valid Unicode.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition reads the variables it hands down as values (STD-02 R3)"
+)]
+fn env_var(name: impl AsRef<std::ffi::OsStr>) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// The value of the variable `name` as set, without requiring Unicode.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition reads the variables it hands down as values (STD-02 R3)"
+)]
+fn env_var_os(name: impl AsRef<std::ffi::OsStr>) -> Option<OsString> {
+    std::env::var_os(name)
+}
+
+/// The process's working directory, when it can be read.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition resolves the working directory (STD-02 R3)"
+)]
+fn working_dir() -> Option<PathBuf> {
+    std::env::current_dir().ok()
+}
+
+/// Metadata for `path`, for checking that an executable is on `PATH`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "composition checks executable metadata on PATH"
+)]
+fn path_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    std::fs::metadata(path)
 }
 
 /// The transcripts directory precedence, separated so tests can check it.

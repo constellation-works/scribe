@@ -2154,43 +2154,6 @@ pub fn warn() {
 EOF
 )" "clippy::print-stderr" "scribe-core calling eprintln!"
 
-# Copy each module-level adapter expectation, then compile a representative
-# allowed operation before adding an exit call. This exercises the independent
-# lint under the same exemption that previously hid direct exit calls.
-for adapter in composition fs console; do
-  case "$adapter" in
-    composition) source="$REPO_ROOT/crates/scribe-core/src/composition.rs"
-      operation='pub fn host() { let _ = std::env::var_os("PATH"); }' ;;
-    fs) source="$REPO_ROOT/crates/scribe-tools/src/fs.rs"
-      operation='pub fn host() { let _ = std::fs::read("unused"); let _: Option<std::fs::File> = None; }' ;;
-    console) source="$REPO_ROOT/crates/scribe/src/output/common/console.rs"
-      operation='pub fn host() { let _ = (std::io::stdout(), std::io::stderr()); }' ;;
-  esac
-  fixture=$(clippy_tree "clippy-exit-$adapter" <<EOF
-//! Host adapter fixture.
-$(sed -n '/^#!\[expect(/,/^)]/p' "$source")
-/// Exercises the approved host operation without running it.
-$operation
-EOF
-  )
-  # Place the twin at the production module's relative path.
-  case "$adapter" in
-    composition) module=composition ;;
-    fs) module=fs ;;
-    console) module=console ;;
-  esac
-  fixture_src="$fixture/crates/scribe-core/src"
-  mkdir -p "$(dirname "$fixture_src/$module.rs")"
-  mv "$fixture_src/config.rs" "$fixture_src/$module.rs"
-  printf '//! Core fixture.\npub mod %s;\n' "$module" >"$fixture_src/lib.rs"
-  expect_clippy pass "$fixture" "" "approved $adapter host operation"
-  cat >>"$fixture_src/$module.rs" <<'EOF'
-/// Direct exit must remain forbidden under the adapter expectation.
-pub fn bail() -> ! { std::process::exit(1) }
-EOF
-  expect_clippy fail "$fixture" "clippy::exit" "direct exit in the $adapter exemption"
-done
-
 # Compile the actual store file adapter with the pinned kit dependencies. The
 # bad twin appends a raw open to that same module; both run the real lint
 # configuration, without ever executing the open. The fixture resolves offline
@@ -2201,6 +2164,126 @@ if ! cargo fetch --locked --manifest-path "$REPO_ROOT/Cargo.toml" >"$work/fetch.
   sed 's/^/  | /' "$work/fetch.out" >&2
   exit 1
 fi
+# The host adapters' expectations are scoped to their approved operations, so
+# the same disallowed paths stay banned in the rest of each adapter module.
+# Each fixture compiles the production code under the real lint configuration:
+# fs.rs whole, and the expectation-carrying helpers of composition.rs and
+# console.rs (the rest of those modules needs their crates). A forbidden call
+# appended to the module must fail, as must a direct exit, which the
+# independent `clippy::exit` lint bans in every exempt module.
+adapter_clippy() {
+  local name="$1" root="$work/clippy-adapter-$1"
+  mkdir -p "$root/src"
+  cp "$REPO_ROOT/clippy.toml" "$root/clippy.toml"
+  cp "$REPO_ROOT/Cargo.lock" "$root/Cargo.lock"
+  {
+    printf '[workspace]\nresolver = "3"\n\n[package]\nname = "adapter-%s-fixture"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\n' "$name"
+    grep -E '^cw-app = ' "$REPO_ROOT/Cargo.toml"
+    printf "\n[target.'cfg(unix)'.dependencies]\n"
+    printf 'rustix = { version = "1", default-features = false, features = ["std", "process", "fs"] }\n'
+    printf '\n[lints]\nworkspace = true\n\n%s\n' "$clippy_lints"
+  } >"$root/Cargo.toml"
+  echo "$root"
+}
+
+# The top-level items of $1 that carry an `#[expect(` attribute.
+expect_items() {
+  awk '/^#\[expect\(/ { on = 1 } on { print } on && /^}/ { on = 0 }' "$1"
+}
+
+fs_clippy=$(adapter_clippy fs)
+cp "$REPO_ROOT/crates/scribe-tools/src/fs.rs" "$fs_clippy/src/lib.rs"
+expect_clippy pass "$fs_clippy" "" "the production file-system adapter with item-scoped expectations"
+fs_good=$(cat "$fs_clippy/src/lib.rs")
+printf '%s\n' "$fs_good" >"$fs_clippy/src/lib.rs"
+cat >>"$fs_clippy/src/lib.rs" <<'EOF'
+
+/// A stream handle the adapter has no business taking.
+pub fn leak() -> std::io::Stderr { std::io::stderr() }
+EOF
+expect_clippy fail "$fs_clippy" "clippy::disallowed-methods" "std::io::stderr in the file-system adapter"
+printf '%s\n' "$fs_good" >"$fs_clippy/src/lib.rs"
+cat >>"$fs_clippy/src/lib.rs" <<'EOF'
+
+/// A file read outside the approved operations.
+pub fn raw(path: &str) -> std::io::Result<Vec<u8>> { std::fs::read(path) }
+EOF
+expect_clippy fail "$fs_clippy" "clippy::disallowed-methods" "an unapproved std::fs::read in the file-system adapter"
+printf '%s\n' "$fs_good" >"$fs_clippy/src/lib.rs"
+cat >>"$fs_clippy/src/lib.rs" <<'EOF'
+
+/// A direct exit.
+pub fn bail() -> ! { std::process::exit(1) }
+EOF
+expect_clippy fail "$fs_clippy" "clippy::exit" "direct exit in the file-system adapter"
+
+composition_clippy=$(adapter_clippy composition)
+{
+  printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+  expect_items "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+} >"$composition_clippy/src/lib.rs"
+if ! grep -Fq 'std::env::var(' "$composition_clippy/src/lib.rs"; then
+  echo "check-gates: FAIL: the composition adapter fixture holds no environment read" >&2
+  fail=1
+fi
+expect_clippy pass "$composition_clippy" "" "the production composition adapter's scoped expectations"
+composition_good=$(cat "$composition_clippy/src/lib.rs")
+printf '%s\n' "$composition_good" >"$composition_clippy/src/lib.rs"
+cat >>"$composition_clippy/src/lib.rs" <<'EOF'
+
+/// A stream handle composition has no business taking.
+pub fn leak() -> std::io::Stdout { std::io::stdout() }
+EOF
+expect_clippy fail "$composition_clippy" "clippy::disallowed-methods" "std::io::stdout in the composition adapter"
+printf '%s\n' "$composition_good" >"$composition_clippy/src/lib.rs"
+cat >>"$composition_clippy/src/lib.rs" <<'EOF'
+
+/// An unbounded channel.
+pub fn queue() { let _ = std::sync::mpsc::channel::<u8>(); }
+EOF
+expect_clippy fail "$composition_clippy" "clippy::disallowed-methods" "an unbounded channel in the composition adapter"
+printf '%s\n' "$composition_good" >"$composition_clippy/src/lib.rs"
+cat >>"$composition_clippy/src/lib.rs" <<'EOF'
+
+/// A direct exit.
+pub fn bail() -> ! { std::process::exit(1) }
+EOF
+expect_clippy fail "$composition_clippy" "clippy::exit" "direct exit in the composition adapter"
+
+console_clippy=$(adapter_clippy console)
+{
+  printf '//! Console adapter fixture.\n#![allow(dead_code)]\nuse std::io;\n\n'
+  expect_items "$REPO_ROOT/crates/scribe/src/output/common/console.rs"
+} >"$console_clippy/src/lib.rs"
+if ! grep -Fq 'io::stdout()' "$console_clippy/src/lib.rs"; then
+  echo "check-gates: FAIL: the console adapter fixture holds no stream handle" >&2
+  fail=1
+fi
+expect_clippy pass "$console_clippy" "" "the production console adapter's scoped expectations"
+console_good=$(cat "$console_clippy/src/lib.rs")
+printf '%s\n' "$console_good" >"$console_clippy/src/lib.rs"
+cat >>"$console_clippy/src/lib.rs" <<'EOF'
+
+/// An unbounded channel, unrelated to the stream boundary.
+pub fn queue() { let _ = std::sync::mpsc::channel::<u8>(); }
+EOF
+expect_clippy fail "$console_clippy" "clippy::disallowed-methods" "an unbounded channel in the console module"
+printf '%s\n' "$console_good" >"$console_clippy/src/lib.rs"
+cat >>"$console_clippy/src/lib.rs" <<'EOF'
+
+/// An environment read, unrelated to the stream boundary.
+pub fn home() -> Option<String> { std::env::var("HOME").ok() }
+EOF
+expect_clippy fail "$console_clippy" "clippy::disallowed-methods" "an environment read in the console module"
+printf '%s\n' "$console_good" >"$console_clippy/src/lib.rs"
+cat >>"$console_clippy/src/lib.rs" <<'EOF'
+
+/// A direct exit.
+pub fn bail() -> ! { std::process::exit(1) }
+EOF
+expect_clippy fail "$console_clippy" "clippy::exit" "direct exit in the console module"
+
 store_clippy="$work/clippy-store-files"
 mkdir -p "$store_clippy/src/db"
 cp "$REPO_ROOT/clippy.toml" "$store_clippy/clippy.toml"
