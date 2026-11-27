@@ -86,6 +86,11 @@ NUMBER_RE = re.compile(
 ITEM_DEF_KEYWORDS = frozenset(
     ("fn", "struct", "enum", "trait", "type", "const", "static", "union", "mod")
 )
+# These keywords can introduce an expression or type and cannot be a plain
+# path segment. Raw identifiers with the same spelling remain path segments.
+PATH_PREFIX_KEYWORDS = frozenset(
+    ("return", "break", "yield", "if", "while", "match", "in", "let", "as")
+)
 
 
 def _is_ident_start(ch: str) -> bool:
@@ -949,7 +954,11 @@ def scan_file(src: str, base_mod: Sequence[str] = ()) -> ScannedFile:
                 and (
                     i >= 2
                     and (
-                        code[i - 2].kind in ("IDENT", "RAW_IDENT")
+                        code[i - 2].kind == "RAW_IDENT"
+                        or (
+                            code[i - 2].kind == "IDENT"
+                            and code[i - 2].text not in PATH_PREFIX_KEYWORDS
+                        )
                         or (code[i - 2].kind == "PUNCT" and code[i - 2].text == ">")
                     )
                 )
