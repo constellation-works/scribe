@@ -1470,7 +1470,7 @@ cat >"$lex_metavar_std/crates/scribe-core/src/config.rs" <<'EOF'
 //! config
 macro_rules! m { ($std:ident) => { $std::net::X }; }
 pub fn f() { let _ = m!(bar); }
-mod bar { pub mod std { pub mod net { pub const X: u8 = 0; } } }
+mod bar { pub mod net { pub const X: u8 = 0; } }
 EOF
 expect pass check-dependency-direction.sh "$lex_metavar_std" "std-named metavariable qualifying a local net module"
 
