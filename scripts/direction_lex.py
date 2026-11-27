@@ -389,7 +389,7 @@ def _split_top_level_commas(toks: Sequence[Token]) -> List[List[Token]]:
     return groups
 
 
-def is_test_only_cfg_pred(toks: Sequence[Token]) -> bool:
+def is_test_only_cfg_pred(toks: Sequence[Token], test_support: bool = True) -> bool:
     """True when a cfg(...) predicate can hold only under test or test-support."""
     if not toks:
         return False
@@ -405,7 +405,7 @@ def is_test_only_cfg_pred(toks: Sequence[Token]) -> bool:
         and toks[1].text == "="
         and toks[2].kind == "STRING"
     ):
-        return unquote_rust_string(toks[2]) == "test-support"
+        return test_support and unquote_rust_string(toks[2]) == "test-support"
     # Compound predicate: `any(...)`, `all(...)`, `not(...)`
     if (
         len(toks) >= 3
@@ -418,16 +418,16 @@ def is_test_only_cfg_pred(toks: Sequence[Token]) -> bool:
         inner = toks[2:-1]
         if op == "any":
             preds = _split_top_level_commas(inner)
-            return bool(preds) and all(is_test_only_cfg_pred(p) for p in preds)
+            return bool(preds) and all(is_test_only_cfg_pred(p, test_support) for p in preds)
         if op == "all":
             preds = _split_top_level_commas(inner)
-            return any(is_test_only_cfg_pred(p) for p in preds)
+            return any(is_test_only_cfg_pred(p, test_support) for p in preds)
         if op == "not":
             return False
     return False
 
 
-def is_test_cfg_attr(attr_body: Sequence[Token]) -> bool:
+def is_test_cfg_attr(attr_body: Sequence[Token], test_support: bool = True) -> bool:
     """True when the tokens inside `#[ ... ]` form a test-only `cfg(...)` attribute."""
     if (
         len(attr_body) >= 3
@@ -437,13 +437,13 @@ def is_test_cfg_attr(attr_body: Sequence[Token]) -> bool:
         and attr_body[1].text == "("
         and _find_matching_delim(attr_body, 1, "(", ")") == len(attr_body) - 1
     ):
-        return is_test_only_cfg_pred(attr_body[2:-1])
+        return is_test_only_cfg_pred(attr_body[2:-1], test_support)
     return False
 
 
-def has_test_cfg(attrs: Sequence[Sequence[Token]]) -> bool:
+def has_test_cfg(attrs: Sequence[Sequence[Token]], test_support: bool = True) -> bool:
     """True when any attribute body in `attrs` is a test-only `cfg(...)`."""
-    return any(is_test_cfg_attr(body) for body in attrs)
+    return any(is_test_cfg_attr(body, test_support) for body in attrs)
 
 
 def parse_visibility(toks: Sequence[Token], idx: int) -> Tuple[Optional[str], int]:
@@ -704,7 +704,9 @@ class _Frame(NamedTuple):
     line: int
 
 
-def scan_file(src: str, base_mod: Sequence[str] = ()) -> ScannedFile:
+def scan_file(
+    src: str, base_mod: Sequence[str] = (), test_support: bool = True
+) -> ScannedFile:
     """Parse modules, `use` statements, inline paths, and item defs in one pass."""
     tokens = tuple(tokenize(src))
     code = tuple(t for t in tokens if t.kind not in ("WS", "COMMENT"))
@@ -764,7 +766,7 @@ def scan_file(src: str, base_mod: Sequence[str] = ()) -> ScannedFile:
             and code[i + 1].text == "["
         ):
             attrs, next_i = _parse_outer_attrs(code, i)
-            if has_test_cfg(attrs):
+            if has_test_cfg(attrs, test_support):
                 pending_test_cfg = True
             i = next_i
             continue

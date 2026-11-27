@@ -318,10 +318,10 @@ def read_nocomment(path):
     return _nocomment_cache[path]
 
 
-def read_scanned(path, base_mod=()):
-    key = (path, tuple(base_mod))
+def read_scanned(path, base_mod=(), test_support=True):
+    key = (path, tuple(base_mod), test_support)
     if key not in _scan_cache:
-        _scan_cache[key] = lex.scan_file(read_raw(path), base_mod)
+        _scan_cache[key] = lex.scan_file(read_raw(path), base_mod, test_support)
     return _scan_cache[key]
 
 
@@ -384,7 +384,8 @@ def ban_std(path, modules, msg):
     mod_set = set(modules)
     hits = []
     for fp in iter_rs_files(path):
-        scanned = read_scanned(fp)
+        # Cargo features can be enabled in production; only cfg(test) excludes sockets.
+        scanned = read_scanned(fp, test_support=False)
         raw_lines = read_raw(fp).splitlines()
         seen_lines = set()
         for stmt in scanned.use_stmts:

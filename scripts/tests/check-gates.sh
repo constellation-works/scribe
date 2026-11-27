@@ -1268,6 +1268,30 @@ use crate::error::Error;
 EOF
 expect pass check-dependency-direction.sh "$lex_sec2_clean" "section 2 guards ignore comments, strings and test-only cfgs via shared lexer"
 
+socket_feature=$(tree socket-feature)
+cat >"$socket_feature/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+#[cfg(feature = "test-support")]
+pub fn production() -> Option<std::net::TcpStream> { None }
+EOF
+expect fail check-dependency-direction.sh "$socket_feature" "socket under production-enabled test-support feature"
+if ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: feature socket fixture lacks socket diagnostic" >&2
+  fail=1
+fi
+
+socket_any=$(tree socket-feature-any)
+printf '#[cfg(any(test, feature = "test-support"))]\nuse std::net::TcpStream;\n' >"$socket_any/crates/scribe-core/src/config.rs"
+expect fail check-dependency-direction.sh "$socket_any" "socket under any(test, test-support)"
+if ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: any feature socket fixture lacks socket diagnostic" >&2
+  fail=1
+fi
+
+socket_test=$(tree socket-test-only)
+printf '#[cfg(all(test, feature = "test-support"))]\nmod tests { use std::net::TcpStream; }\n' >"$socket_test/crates/scribe-core/src/config.rs"
+expect pass check-dependency-direction.sh "$socket_test" "socket exclusively under cfg(test)"
+
 lex_sec2_std=$(tree lex-sec2-std-comment)
 printf '//! config\n#[doc = "#[cfg(test)]"]\nuse std::{ /* note */ net };\n' >"$lex_sec2_std/crates/scribe-core/src/config.rs"
 expect fail check-dependency-direction.sh "$lex_sec2_std" "ban_std catches grouped net with inner comment and doc attr"
