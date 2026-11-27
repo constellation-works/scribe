@@ -8,7 +8,8 @@
 #   (b) a `- path: `...`` line in the map's Checked entries block names
 #       a path that does not exist under the root;
 #   (c) a `- make-target: `...`` line in the map names a target the root
-#       Makefile does not define;
+#       Makefile does not define as a rule (a line inside a define/endef
+#       variable body is the variable's value, not a rule);
 #   (d) the map names no checked entries at all (fail closed, STD-04 R10).
 #
 # `root` defaults to the repository; scripts/tests/check-gates.sh points it
@@ -49,7 +50,7 @@ for p in ${paths[@]+"${paths[@]}"}; do
 done
 for t in ${targets[@]+"${targets[@]}"}; do
   if [[ ! -f "$makefile" ]] || ! footprint_target="$t" awk '
-    BEGIN { wanted = ENVIRON["footprint_target"] }
+    BEGIN { wanted = ENVIRON["footprint_target"]; depth = 0 }
     # Judge one logical line: physical lines joined across trailing
     # backslashes, as GNU make reads them.
     function judge(line,    rest) {
@@ -80,6 +81,33 @@ for t in ${targets[@]+"${targets[@]}"}; do
       }
       return 1
     }
+    # A define line opens a variable body. Its first word follows any export,
+    # override or private modifiers, and a tab-led line is a recipe, never one.
+    function opens_define(line,    word) {
+      if (line ~ /^\t/) {
+        return 0
+      }
+      word = line
+      sub(/^[ \t]+/, "", word)
+      while (word ~ /^(export|override|private)([ \t]|$)/) {
+        sub(/^[a-z]+[ \t]*/, "", word)
+      }
+      return word ~ /^define([ \t]|$)/
+    }
+    # Inside a body, GNU make reads only define and endef lines, and a tab-led
+    # line is never either. A nested define adds a level; endef closes one.
+    function track_body(line,    word) {
+      if (line ~ /^\t/) {
+        return
+      }
+      word = line
+      sub(/^[ \t]+/, "", word)
+      if (word ~ /^define([ \t]|$)/) {
+        depth++
+      } else if (word ~ /^endef([ \t]|$)/) {
+        depth--
+      }
+    }
     {
       physical = $0
       # An odd run of trailing backslashes continues onto the next line.
@@ -91,14 +119,18 @@ for t in ${targets[@]+"${targets[@]}"}; do
       if (continued) {
         next
       }
-      if (judge(logical)) {
+      if (depth > 0) {
+        track_body(logical)
+      } else if (opens_define(logical)) {
+        depth = 1
+      } else if (judge(logical)) {
         found = 1
         exit
       }
       logical = ""
     }
     END {
-      if (!found && logical != "" && judge(logical)) {
+      if (!found && logical != "" && depth == 0 && judge(logical)) {
         found = 1
       }
       exit !found
