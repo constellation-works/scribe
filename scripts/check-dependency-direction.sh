@@ -799,6 +799,37 @@ def _strip_toml_comment(line, ml_delim):
     return "".join(out).strip(), ml_delim
 
 
+def _bracket_delta(s):
+    """Count unquoted `[` as +1 and `]` as -1 for array-depth tracking."""
+    delta = 0
+    quote = None
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if quote is not None:
+            if quote == '"' and ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            if s.startswith(ch * 3, i):
+                i += 3
+                continue
+            quote = ch
+            i += 1
+            continue
+        if ch == "[":
+            delta += 1
+        elif ch == "]":
+            delta -= 1
+        i += 1
+    return delta
+
+
 def find_dep_location(rel_manifest, dep):
     """Locate the declaration line for a cargo-metadata dependency for diagnostics."""
     key = dep.get("rename") or dep["name"]
@@ -810,6 +841,7 @@ def find_dep_location(rel_manifest, dep):
     cur_subkey = None
     top_level = True
     ml_delim = None
+    array_depth = 0
 
     try:
         with open(rel_manifest, encoding="utf-8") as fh:
@@ -821,6 +853,11 @@ def find_dep_location(rel_manifest, dep):
         in_ml = ml_delim is not None
         line, ml_delim = _strip_toml_comment(raw_line, ml_delim)
         if in_ml or not line:
+            continue
+        if array_depth > 0:
+            array_depth += _bracket_delta(line)
+            if array_depth < 0:
+                array_depth = 0
             continue
         if line.startswith("[") and line.endswith("]") and not line.startswith("[["):
             top_level = False
@@ -846,10 +883,16 @@ def find_dep_location(rel_manifest, dep):
             continue
 
         if "=" not in line:
+            array_depth += _bracket_delta(line)
+            if array_depth < 0:
+                array_depth = 0
             continue
         lhs = line.split("=", 1)[0].strip()
         lhs_keys = _split_toml_keys(lhs)
         if not lhs_keys:
+            array_depth += _bracket_delta(line)
+            if array_depth < 0:
+                array_depth = 0
             continue
         if cur_kind == want_kind and cur_target == want_target and cur_subkey is None:
             if lhs_keys[0] == key:
@@ -871,6 +914,9 @@ def find_dep_location(rel_manifest, dep):
                 and lhs_keys[3] == key
             ):
                 return f"{rel_manifest}:{lineno}"
+        array_depth += _bracket_delta(line)
+        if array_depth < 0:
+            array_depth = 0
 
     return rel_manifest
 

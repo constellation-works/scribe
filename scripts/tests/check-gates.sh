@@ -555,6 +555,18 @@ for ml_kind in array basic-str literal-str; do
   expect pass check-dependency-direction.sh "$ml_clean" "a clean alias after a top-level multiline $ml_kind starting with ["
 done
 
+# A cycle closed by a top-level dotted dependency after a multiline array with
+# a bare nested array (no trailing comma) cites the declaration line (ORB-29298).
+ml_cycle_no_comma=$(tree multiline-cycle-no-comma)
+printf 'package.name = "scribe-core"\npackage.version = "0.1.0"\npackage.edition = "2024"\npackage.metadata.grid = [\n["row"]\n]\ndependencies.back = { path = "../scribe", package = "scribe" }\n' \
+  >"$ml_cycle_no_comma/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$ml_cycle_no_comma" "a crate cycle closed by a dotted dependency after a bare nested array"
+if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:7" "$work/out"; then
+  echo "check-gates: FAIL: the cycle diagnostic does not cite crates/scribe-core/Cargo.toml:7 after a bare nested array" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # Member top-level dotted `dependencies.*` after a multiline array starting with
 # `[` stays enforced, while `[package.metadata]` dotted keys stay ignored.
 member_ml_bad=$(tree member-multiline-bad)
