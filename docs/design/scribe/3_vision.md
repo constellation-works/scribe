@@ -108,7 +108,7 @@ Agents read and write through the CLI and the scribe skill.
   reaches `preferences` only as a candidate he approves
   ([4_decisions.md](./4_decisions.md#scribe-keeps-a-descriptive-memory-the-pass-writes-without-approval)).
 - A desktop or web UI. The CLI and the SessionStart line are the views
-  (the tmux popup was one until [ORB-27911](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
+  (the tmux popup was one until [ORB-27911] removed it; see the [removal decision](./4_decisions.md#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
 - Scanning or cataloging sessions on scribe's own initiative. Backfill
   catalogs only sessions Daniel names.
 
