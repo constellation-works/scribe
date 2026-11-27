@@ -212,6 +212,25 @@ def _is_item_keyword(code: Sequence[Token], idx: int, keywords: Sequence[str]) -
     return not (nxt is not None and nxt.kind == "PUNCT" and nxt.text == "(")
 
 
+def _inside_unclosed_angle(code: Sequence[Token], start: int, end: int) -> bool:
+    """Return True when `code[start..=end]` leaves a `<` unclosed.
+
+    A braced block after such a `<` is a braced const generic argument or
+    default (`struct S<const N: usize = { 1 }>`), part of the item header
+    rather than a finished item body.
+    """
+    depth = 0
+    for k in range(start + 1, end + 1):
+        tok = code[k]
+        if tok.kind != "PUNCT":
+            continue
+        if tok.text == "<":
+            depth += 1
+        elif tok.text == ">" and not _is_adjacent_punct(code, k - 1, k, "-", ">"):
+            depth -= 1
+    return depth > 0
+
+
 def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
     """Recognize a struct literal field colon without treating declarations as values."""
     if colon_idx < 2:
@@ -275,7 +294,9 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
                         break
                     header_idx -= 1
                 if header_idx >= 0:
-                    if _is_item_keyword(code, header_idx, item_body_keywords):
+                    if _is_item_keyword(
+                        code, header_idx, item_body_keywords
+                    ) and not _inside_unclosed_angle(code, header_idx, j):
                         break
                 continue
             if tok.kind == "IDENT" and tok.text in ("struct", "enum", "union"):

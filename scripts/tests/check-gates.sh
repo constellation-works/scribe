@@ -1464,6 +1464,27 @@ for form in "${lex_fn_pointer_forms[@]}"; do
   expect pass check-dependency-direction.sh "$lex_fn_pointer" "type context after a bare fn pointer: ${form##*|}"
 done
 
+# A braced const generic default closes inside the item header: it is not a
+# finished item body, so the field type context after it must survive, with or
+# without an outer attribute on the field.
+lex_braced_default_forms=(
+  'struct Example<const N: usize = { 1 }> { x: [Result<u8, u16>::std::net::Item; 2] }|plain field'
+  'struct Example<const N: usize = { 1 }> {\n        #[allow(unused)]\n        x: [Result<u8, u16>::std::net::Item; 2]\n    }|attributed field'
+  'struct Example<const N: usize = { 1 }, T = fn() -> u8> { #[allow(unused)] x: [Result<u8, u16>::std::net::Item; 2], y: T }|attributed field after fn pointer default'
+)
+for form in "${lex_braced_default_forms[@]}"; do
+  lex_braced_default=$(tree lex-braced-default)
+  printf 'macro_rules! accept { ($item:item) => {}; }\naccept! {\n    %b\n}\n' "${form%|*}" \
+    >"$lex_braced_default/crates/scribe-core/src/config.rs"
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-braced-default.rmeta" \
+    "$lex_braced_default/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: braced default fixture (${form##*|}) did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect pass check-dependency-direction.sh "$lex_braced_default" "type context after a braced const generic default: ${form##*|}"
+done
+
 # Stringify preserves tokens without resolving their generic-qualified paths.
 lex_stringify=$(tree lex-stringify-generic)
 cat >"$lex_stringify/crates/scribe-core/src/config.rs" <<'EOF'
