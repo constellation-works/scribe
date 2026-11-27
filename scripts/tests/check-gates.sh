@@ -2392,6 +2392,31 @@ if ! grep -Fq 'names make target `g.ldens`, which is not a Makefile target' "$wo
   fail=1
 fi
 
+fp_target_comment_cont="${work}/fp-target-comment-cont"
+mkdir -p "$fp_target_comment_cont/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_target_comment_cont/docs/footprint-companions.md"
+printf '# disabled \\\nghost:\n\ttrue\n' >"$fp_target_comment_cont/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_comment_cont" \
+  "a companions map naming a target that appears only on a comment continuation"
+if ! grep -Fq 'names make target `ghost`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: comment continuation fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_target_header_space="${work}/fp-target-header-space"
+mkdir -p "$fp_target_header_space/docs"
+printf -- '- make-target: `ghost`\n' >"$fp_target_header_space/docs/footprint-companions.md"
+printf 'ghost :\n\t@true\n' >"$fp_target_header_space/Makefile"
+expect pass check-footprint-companions.sh "$fp_target_header_space" \
+  "a companions map whose target has whitespace before the rule colon"
+
+fp_target_header_space_assign="${work}/fp-target-header-space-assign"
+mkdir -p "$fp_target_header_space_assign/docs"
+printf -- '- make-target: `LOCKED`\n' >"$fp_target_header_space_assign/docs/footprint-companions.md"
+printf 'LOCKED :=--locked\n' >"$fp_target_header_space_assign/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_header_space_assign" \
+  "a companions map naming a target that appears only as a spaced := assignment"
+
 fp_relative_parent="$work/fp-relative-parent"
 fp_relative="$fp_relative_parent/review=tree"
 mkdir -p "$fp_relative/docs"
