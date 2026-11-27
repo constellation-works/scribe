@@ -1385,9 +1385,53 @@ done
 lex_nested=$(tree lex-nested-std)
 cat >"$lex_nested/crates/scribe-core/src/config.rs" <<'EOF'
 //! config
-fn nested() { foo::std::net::item(); r#return::std::net::item(); r#for::std::net::item(); Vec::<u8>::std::net::item(); }
+fn nested() {
+    foo::std::net::item();
+    r#return::std::net::item();
+    r#for::std::net::item();
+    Vec::<u8>::std::net::item();
+    Option::<Vec<u8>>::std::net::item();
+    Box::<dyn Fn(u32) -> bool>::std::net::item();
+    <Vec<u8> as Tr>::std::net::item();
+    Vec::<&&str>::std::net::item();
+    Result::<u8, u16>::std::net::item();
+    Foo::<{ 1 + 2 }>::std::net::item();
+}
+fn ty_nested(_: (Result<u8, u16>::std::net::Item, u8)) {}
 EOF
-expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary and raw-identifier paths"
+expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary, raw-identifier and generic-qualified paths"
+
+# Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
+# `>>` comparisons/shifts must produce the socket guard diagnostic with their
+# source line, even when `<` comparisons or `<<` shifts appear nearby (ORB-29337).
+lex_cmp_forms=(
+  'pub fn f(a: u32) -> bool { a > ::std::net::Ipv4Addr::LOCALHOST.to_bits() }|greater-than comparison'
+  'pub fn f(a: u32, b: u32) -> bool { a < b && b > ::std::net::Ipv4Addr::LOCALHOST.to_bits() }|comparison after < &&'
+  'pub fn f(a: u32) -> u32 { a >> ::std::net::Ipv4Addr::LOCALHOST.to_bits() }|right-shift operator'
+  'pub fn f(a: u32) -> bool { a << 1 > ::std::net::Ipv4Addr::LOCALHOST.to_bits() }|greater-than after left-shift'
+  'pub fn f(a: u32) -> u32 { a << 1 >> ::std::net::Ipv4Addr::LOCALHOST.to_bits() }|right-shift after left-shift'
+  $'pub fn f(a: u32, b: u32, c: u32) -> bool {\n    if a < b {}\n    c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()\n}|comparison after if < block'
+  $'fn take(_: bool, _: bool) -> bool { true }\npub fn f(a: u32, b: u32, c: u32) -> bool { take(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()) }|comma-separated comparison in call'
+)
+for form in "${lex_cmp_forms[@]}"; do
+  lex_cmp=$(tree "lex-cmp-$n")
+  printf '//! config\n%s\n' "${form%|*}" >"$lex_cmp/crates/scribe-core/src/config.rs"
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-cmp.rmeta" \
+    "$lex_cmp/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: comparison fixture (${form##*|}) did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_cmp" "absolute std::net after ${form##*|}"
+  want_line=$(grep -n '::std::net' "$lex_cmp/crates/scribe-core/src/config.rs" | cut -d: -f1)
+  want_text=$(sed -n "${want_line}p" "$lex_cmp/crates/scribe-core/src/config.rs")
+  if ! grep -Fq "config.rs:${want_line}:${want_text}" "$work/out" || \
+     ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: comparison fixture (${form##*|}) lacks line ${want_line} or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
 
 # A keyword or `std` spelled after `$` is a macro metavariable (ORB-29336),
 # so `$for::std::net` qualifies a local module and must pass. A real `for`
