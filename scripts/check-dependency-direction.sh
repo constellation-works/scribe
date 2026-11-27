@@ -50,9 +50,11 @@ for tool in cargo python3; do
   fi
 done
 
-if ! metadata=$(cargo metadata --offline --no-deps --format-version 1 2>&1); then
+# stdout is the JSON the readers below parse. Cargo's warnings (a resolver
+# advisory, say) stay on stderr, and a failure's Cargo diagnostic is printed
+# there by cargo itself, so no warning can reach the parser (ORB-29295).
+if ! metadata=$(cargo metadata --offline --no-deps --format-version 1); then
   echo "dependency-direction: cannot run: cargo metadata failed" >&2
-  printf '%s\n' "$metadata" >&2
   exit 2
 fi
 

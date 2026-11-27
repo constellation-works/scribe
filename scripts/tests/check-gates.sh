@@ -1135,6 +1135,49 @@ meta_target_build=$(tree meta-target-build-banned)
 printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[target.'\''cfg(unix)'\''.build-dependencies]\nrusqlite = "0.43"\n' >"$meta_target_build/crates/scribe/Cargo.toml"
 assert_agrees_with_metadata "$meta_target_build" "target build-dependency is enforced" yes
 
+# --- ORB-29295: a warning from a successful cargo metadata stays out of the JSON
+# A virtual workspace on edition 2024 with no `resolver` makes cargo print a
+# resolver advisory on stderr while `cargo metadata` succeeds. The clean one
+# must pass, the banned one must still fail with its own diagnostic, and a
+# member cargo cannot load must fail with cargo's diagnostic.
+advisory_tree() { # advisory_tree <name>: two-member virtual workspace, no resolver
+  local root="$work/$1"
+  mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe-tools/src"
+  printf '[workspace]\nmembers = ["crates/scribe-core", "crates/scribe-tools"]\n' >"$root/Cargo.toml"
+  printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\nedition = "2024"\n' >"$root/crates/scribe-core/Cargo.toml"
+  printf '[package]\nname = "scribe-tools"\nversion = "0.1.0"\nedition = "2024"\n' >"$root/crates/scribe-tools/Cargo.toml"
+  : >"$root/crates/scribe-core/src/lib.rs"
+  : >"$root/crates/scribe-tools/src/lib.rs"
+  echo "$root"
+}
+
+advisory_clean=$(advisory_tree advisory-clean)
+if ! (cd "$advisory_clean" && cargo metadata --offline --no-deps --format-version 1 >/dev/null 2>"$work/advisory.err") \
+  || ! grep -Fq "virtual workspace defaulting to" "$work/advisory.err"; then
+  echo "check-gates: FAIL: the advisory fixture no longer makes cargo metadata print its advisory" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$advisory_clean" "a clean virtual workspace whose cargo metadata prints a resolver advisory"
+
+advisory_banned=$(advisory_tree advisory-banned)
+printf '[package]\nname = "scribe-tools"\nversion = "0.1.0"\nedition = "2024"\n\n[dependencies]\nrusqlite = "0.43"\n' \
+  >"$advisory_banned/crates/scribe-tools/Cargo.toml"
+expect fail check-dependency-direction.sh "$advisory_banned" "a banned dependency beside a resolver advisory"
+if ! grep -Fq "scribe-tools must not depend on rusqlite" "$work/out"; then
+  echo "check-gates: FAIL: banned dependency beside a resolver advisory lacks its diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+advisory_broken=$(advisory_tree advisory-broken)
+printf '[workspace]\nmembers = ["crates/scribe-core", "crates/scribe-tools", "crates/missing"]\n' >"$advisory_broken/Cargo.toml"
+expect fail check-dependency-direction.sh "$advisory_broken" "a workspace member cargo cannot load"
+if ! grep -Fq "cannot run: cargo metadata failed" "$work/out" || ! grep -Fq "failed to load manifest for workspace member" "$work/out"; then
+  echo "check-gates: FAIL: unloadable workspace member lacks the cargo diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # Shared Rust lexer (`scripts/direction_lex.py`): `mod r#store {`, `mod r#name;`,
 # `#[doc = "#[cfg(test)]"]`, `#[cfg(test /* fixture */)]`, and
 # `#[cfg(any(feature = "test-support", test))]` behave as rustc reads them.
