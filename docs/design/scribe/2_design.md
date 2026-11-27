@@ -193,7 +193,7 @@ No tool is advertised over MCP. Agents with a shell use the CLI, and one skill t
 | Want | Command | Model |
 |---|---|---|
 | Words to look for | `scribe search "<terms>" [--kind entry\|session\|message] [--group <id>] [--tag <tag>] [--project <p>] [--topic <t>]… [--since <date>] [--until <date>] [--include-hidden] [--limit <n>]` | none ([§6.8](#68-scribe-search)) |
-| Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind daniel\|agent`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind daniel\|agent\|scribe` | none |
+| Records by metadata | `entry list` and `session list` with `--since <date>`, `--until <date>`, `--status <status>`, repeated `--topic <t>` (every one must match) and repeated `--related <kind:target>` (any may match); `entry list` also `--author <name>` and `--author-kind user\|agent\|scribe`; `session list` also `--include-inactive`; `proposal list` with `--state`, `--since`, `--until`, `--entry <id>` and `--author-kind user\|agent\|scribe` | none |
 | One record | `entry show <id>`, `session show <id> [--log] [--segment <n>]`; `session show session:<id>#<n>` shows one segment | none |
 | Record a note | `scribe entry add --tag <tag> --author <name> [--topic <t>]… [--related <r>]… [--project <p>] <content>` | none |
 | Change a note | `scribe entry update <id> --author <name> [--content <text>] [--add-topic <t>]… [--remove-topic <t>]… [--add-related <r>]… [--remove-related <r>]…`; `scribe entry retire <id> --author <name> --reason <text>` | none |
@@ -3294,7 +3294,7 @@ preference, a question of fact, an idea the session goes on to carry out).
   as an active entry in the same locked step, with no proposal: content is
   the statement, `quote` the span, `author` and `stated_by` are
   `{kind: scribe, name: session-pass}`, `content_from` is his message, and
-  `said` is empty. It is never listed under `--author-kind daniel` (it is
+  `said` is empty. It is never listed under `--author-kind user` (it is
   `--author-kind scribe`), and `ask`, `scribe search` and `entry show`
   label it "captured by the session pass", apart from a typed
   `#scribe idea:` entry. Assistant turns never fire a trigger (`from =
