@@ -1746,9 +1746,10 @@ expect fail check-session-id-outcomes.py "$outcomes" "a stale session-ID outcome
 # --- check-terminal-guard.sh: one terminal decision, and its environment names --
 # Composition captures the log and terminal names; the output module decides
 # the terminal; any other module that decides, probes or names one fails
-# (STD-01 R17, STD-02 R3, R15). Standard streams and print macros are enforced
-# by Clippy (`clippy.toml` and `Cargo.toml`). A doc comment or a test names one
-# harmlessly.
+# (STD-01 R17, STD-02 R3, R15). Standard stream calls and print macros are
+# enforced by Clippy (`clippy.toml` and `Cargo.toml`); this guard also rejects
+# public stdout/stderr reexports outside the output boundary. A doc comment or
+# a test names one harmlessly.
 guard_tree() {
   local root="$work/$1"
   mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src/output/tests" \
@@ -1768,6 +1769,48 @@ guard_tree() {
 clean=$(guard_tree guard-clean)
 expect pass check-terminal-guard.sh "$clean" \
   "composition captures the log name, output decides, a doc comment and a test name a variable"
+
+stream_call=$(guard_tree guard-stream-call)
+printf 'pub(crate) fn write() { let _ = std::io::stdout(); }\n' \
+  >>"$stream_call/crates/scribe/src/commands/entry.rs"
+expect pass check-terminal-guard.sh "$stream_call" \
+  "ordinary stdout calls remain for Clippy to reject"
+
+stream_owner=$(guard_tree guard-stream-owner)
+printf 'pub use std::io::stdout as output_stdout;\n' \
+  >>"$stream_owner/crates/scribe/src/output/mod.rs"
+expect pass check-terminal-guard.sh "$stream_owner" \
+  "the output boundary may reexport its owned stdout handle"
+
+i=0
+for reexport in \
+  'pub use std::io::stdout as handle;' \
+  'pub use std::io::stderr as handle;' \
+  'pub use std::io::{stdout as handle};' \
+  'pub use std::io::{Write, stderr as handle};'; do
+  i=$((i + 1))
+  stream_reexport=$(guard_tree "guard-stream-reexport-$i")
+  printf '%s\n' "$reexport" \
+    >>"$stream_reexport/crates/scribe/src/commands/entry.rs"
+  expect fail check-terminal-guard.sh "$stream_reexport" \
+    "a public stdout/stderr reexport outside output, without a local call: $reexport"
+  if ! grep -Fq "terminal-guard: public standard stream reexports belong" "$work/out"; then
+    echo "check-gates: FAIL: public stream reexport lacks its diagnostic: $reexport" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+stream_reexport_multiline=$(guard_tree guard-stream-reexport-multiline)
+printf 'pub use std::io::{\n    stdout as multiline_handle,\n};\n' \
+  >>"$stream_reexport_multiline/crates/scribe/src/commands/entry.rs"
+expect fail check-terminal-guard.sh "$stream_reexport_multiline" \
+  "a multiline public stdout reexport outside output, without a local call"
+if ! grep -Fq "terminal-guard: public standard stream reexports belong" "$work/out"; then
+  echo "check-gates: FAIL: multiline public stream reexport lacks its diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
 
 decision=$(guard_tree guard-second-decision)
 printf 'pub(crate) fn f() -> bool {\n    cw_cli::Terminal::detect(&env, "scribe", None).is_some()\n}\n' \
@@ -1883,8 +1926,8 @@ printf 'pub fn eligible() {}\n' >"$tests_only/crates/scribe/src/lib.rs"
 expect pass check-terminal-guard.sh "$tests_only" \
   "the same root passes once an eligible non-test Rust source exists"
 
-# A deterministic grep wrapper returning 2 for any of the three filtering calls
-# (comment filter in scan(), terminal allowlist filter, env allowlist filter)
+# A deterministic grep wrapper returning 2 for each filtering kind (comment
+# filter in scan(), terminal or stream allowlist filter, env allowlist filter)
 # must fail nonzero rather than masking the error behind `|| true` and passing a
 # tree with a violation or a clean eligible tree (STD-04 R10).
 real_grep=$(command -v grep)
@@ -1909,6 +1952,14 @@ case "\${FAIL_FILTER_KIND:-}" in
       fi
     done
     ;;
+  stream-allow)
+    for arg in "\$@"; do
+      if [[ "\$arg" == "^crates/scribe/src/output/" ]]; then
+        echo "grep: simulated stream allowlist filter failure" >&2
+        exit 2
+      fi
+    done
+    ;;
   env-allow)
     for arg in "\$@"; do
       if [[ "\$arg" == "^crates/scribe-core/src/composition.rs:" ]]; then
@@ -1925,10 +1976,14 @@ chmod +x "$grep_wrap_dir/grep"
 guard_env_violation=$(guard_tree guard-env-violation-filter)
 printf 'pub(crate) fn f() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
   >>"$guard_env_violation/crates/scribe/src/commands/entry.rs"
+guard_stream_violation=$(guard_tree guard-stream-violation-filter)
+printf 'pub use std::io::stderr as handle;\n' \
+  >>"$guard_stream_violation/crates/scribe/src/commands/entry.rs"
 
-for kind in comment terminal-allow env-allow; do
+for kind in comment terminal-allow stream-allow env-allow; do
   case "$kind" in
     comment|terminal-allow) bad_tree="$guard_violation" ;;
+    stream-allow) bad_tree="$guard_stream_violation" ;;
     env-allow) bad_tree="$guard_env_violation" ;;
   esac
   for target_tree in "$bad_tree" "$guard_clean"; do
