@@ -1454,6 +1454,31 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
 fi
 expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified paths in stringify tokens"
 
+# A local macro can shadow stringify and evaluate its arguments. Its
+# comparison must not be mistaken for a generic-qualified path.
+lex_shadow_stringify=$(tree lex-shadow-stringify)
+cat >"$lex_shadow_stringify/crates/scribe-core/src/config.rs" <<'EOF'
+macro_rules! stringify {
+    ($left:expr, $right:expr) => { ($left, $right) };
+}
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-stringify.rmeta" \
+  "$lex_shadow_stringify/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: shadowed stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_shadow_stringify" "evaluated comparisons in shadowed stringify"
+if ! grep -Fq 'config.rs:5:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: shadowed stringify lacks line 5 or socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
 # `>>` comparisons/shifts must produce the socket guard diagnostic with their
 # source line, even when `<` comparisons or `<<` shifts appear nearby (ORB-29337).

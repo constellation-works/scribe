@@ -344,7 +344,18 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
                 and code[j - 2].text == "stringify"
                 and (j < 3 or code[j - 3].text not in ("::", "$"))
             ):
-                return True
+                # A preceding local macro_rules definition can shadow the builtin
+                # and evaluate its arguments. Conservatively count definitions
+                # anywhere earlier in this file, without attempting macro scope.
+                return not any(
+                    code[k].kind == "IDENT"
+                    and code[k].text == "macro_rules"
+                    and code[k + 1].kind == "PUNCT"
+                    and code[k + 1].text == "!"
+                    and code[k + 2].kind in ("IDENT", "RAW_IDENT")
+                    and canonical_ident(code[k + 2].text) == "stringify"
+                    for k in range(j - 2)
+                )
     return False
 
 
