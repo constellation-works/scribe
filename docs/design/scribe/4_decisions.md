@@ -2,7 +2,7 @@
 title: scribe — Decisions
 owner: claude
 created_date: 2026-11-02
-updated_date: 2026-11-26
+updated_date: 2026-11-27
 last_validated: 2026-11-02
 status: Draft
 feature: scribe
@@ -12,7 +12,7 @@ summary: Why superseded entries are hidden not removed, why one JSON file per ta
 tags: [scribe, decisions]
 paths: ["Cargo.toml", "crates/**", "plugin/**", "Makefile"]
 related_features: [scribe]
-related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904, ORB-28921, ORB-28889]
+related_artifacts: [ORB-21747, ORB-21753, ORB-21764, ORB-21778, ORB-21784, ORB-21787, ORB-21795, ORB-23829, ORB-13117, ORB-13134, ORB-23849, ORB-23892, ORB-24005, ORB-24006, ORB-25080, ORB-25112, ORB-25977, ORB-25980, ORB-26214, ORB-26219, ORB-26240, ORB-26256, ORB-26349, ORB-26360, ORB-26405, ORB-26265, ORB-26510, ORB-26529, ORB-26640, ORB-26650, ORB-26709, ORB-27567, ORB-27597, ORB-27633, ORB-27638, ORB-27684, ORB-26657, ORB-27707, ORB-27911, ORB-28127, ORB-28612, ORB-28613, ORB-28904, ORB-28921, ORB-28889, ORB-28142, ORB-29305]
 ---
 
 # scribe — Decisions
@@ -108,7 +108,7 @@ store lock. There is no git repository: history is the audit log.
 ## Discussions live in the scribe store; the almanac is read-only
 
 **Recorded:** 2026-11 · [ORB-21747] · **Daniel's choice**
-**Code anchors:** `crates/scribe-core/src/store/` (S7)
+**Standing rule:** scribe writes the discussions it distills only to its own store and reads the almanac read-only. S7 (discussions) is unbuilt ([1_overview.md](./1_overview.md) `next`), so no code carries the rule yet.
 
 ### Context
 
@@ -129,14 +129,24 @@ The existing 15 are not moved.
 
 - The almanac stays Daniel's alone; both sets answer the same questions.
 - A discussion Daniel wants in the almanac he copies there himself.
+- Cost: the almanac's 15 discussions and scribe's own live in two places,
+  and nothing moves a discussion from one to the other except Daniel.
+
+### Alternatives
+
+- **Write distilled discussions into the almanac.** Not chosen: the
+  constellation rule is that agents never write the almanac.
+- **Move the existing 15 into the store.** Not chosen: they stay where Daniel
+  keeps them and are read-only evidence.
 
 ## ask ranks in memory with no persisted index
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/ask/` (from S5; now `crates/scribe-core/src/apps/search/rules.rs`)
 
-> **Superseded in part, 2026-11-24 ([ORB-27911]):** `ask` is removed
-> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). The in-memory BM25 ranking it describes stands as
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in part)
+
+> In part (2026-11-24, [ORB-27911]): `ask` is removed. The in-memory BM25 ranking it describes stands as
 > `scribe search`'s.
 
 ### Context
@@ -265,8 +275,9 @@ write for an agent to be granted.
 **Recorded:** 2026-11 · [ORB-21747]
 **Code anchors:** `plugin/.orbit-plugin/plugin.yaml` `spec.tools`; `plugin/.orbit-plugin/tests/conformance/` (from S5)
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** `scribe.ask` is removed
-> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); the plugin advertises no tool to agents.
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in full); [Agents read and write through the CLI, taught by one skill](#agents-read-and-write-through-the-cli-taught-by-one-skill) (in part)
+
+> In full (2026-11-24, [ORB-27911]): `scribe.ask` is removed; the plugin advertises no tool to agents.
 
 ### Context
 
@@ -334,8 +345,9 @@ ids and credential names come from `config.toml`.
 
 **Recorded:** 2026-11 · [ORB-21747] · **Overridable by Daniel**
 
-> **Superseded in part, 2026-11-24 ([ORB-27911]):** `ask` is removed
-> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)). `models.ask` stays only as the group close
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in part)
+
+> In part (2026-11-24, [ORB-27911]): `ask` is removed. `models.ask` stays only as the group close
 > summary's model until step 2 removes the in-process model calls.
 
 ### Context
@@ -368,7 +380,9 @@ is enough there.
 **Recorded:** 2026-11 · [ORB-21747]
 **Code anchors:** `plugin/.orbit-plugin/definitions/routines/scribe-session-pass.yaml` (from S4)
 
-> **Superseded in part, 2026-11-24 ([ORB-28142]):** the routine no longer runs
+**Superseded by:** [Session passes run as an Orbit job, not an in-process model call](#session-passes-run-as-an-orbit-job-not-an-in-process-model-call) (in part); [A failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand) (its cadence)
+
+> In part (2026-11-24, [ORB-28142]): the routine no longer runs
 > `scribe.session-pass`, which is removed. It runs the `scribe-session-pass` job, whose
 > steps are `scribe.session-pass-prepare`, `scribe.session-pass-apply` and
 > `scribe.session-pass-fail` ([2_design.md §19.3.2](./2_design.md#1932-session-pass-scribe-session-pass-job-and-routine)).
@@ -464,6 +478,8 @@ exactly one entry.
 
 **Recorded:** 2026-11 · [ORB-21747]
 
+**Superseded by:** [Entries Daniel wrote are settled only by Daniel](#entries-daniel-wrote-are-settled-only-by-daniel)
+
 ### Context
 
 "Daniel approves" needs a channel only Daniel uses. A CLI verb or an Orbit
@@ -542,9 +558,10 @@ alternatives, so one may legitimately be unset.
 **Recorded:** 2026-09 · [ORB-13117]
 **Code anchors:** `Cargo.toml` `[workspace] members`; `scripts/check-dependency-direction.sh::policy`
 
-> **Superseded for the crate count, 2026-11-24 ([ORB-27707]):** scribe is
-> four crates, `scribe-domain`, `scribe-store`, `scribe-core` and `scribe`
-> ([see below](#four-crates-domain-store-use-cases-and-cli)). The
+**Superseded by:** [Four crates: domain, store, use cases and CLI](#four-crates-domain-store-use-cases-and-cli) (for the crate count)
+
+> For the crate count (2026-11-24, [ORB-27707]): scribe is
+> four crates, `scribe-domain`, `scribe-store`, `scribe-core` and `scribe`. The
 > domain/surface boundary this entry set up stands: clap is still
 > unreachable from every library crate.
 
@@ -575,10 +592,11 @@ these two.
 **Recorded:** 2026-09-26
 **Code anchors:** `crates/scribe-core/src/store/mod.rs` (now `crates/scribe-store/src/lib.rs`); `scripts/check-dependency-direction.sh` (the `store | tests` loop, removed)
 
-> **Superseded, 2026-11-24 ([ORB-27707]):** persistence earned its own
+**Superseded by:** [Four crates: domain, store, use cases and CLI](#four-crates-domain-store-use-cases-and-cli)
+
+> In full (2026-11-24, [ORB-27707]): persistence earned its own
 > crate. `store/` moved out whole as `scribe-store`, and the grep bans that
-> kept `crate::store` out of the business modules became crate edges
-> ([see below](#four-crates-domain-store-use-cases-and-cli)).
+> kept `crate::store` out of the business modules became crate edges.
 
 ### Context
 
@@ -605,9 +623,10 @@ core module. When persistence earns its own crate, `store/` moves out whole.
 
 ## Four crates: domain, store, use cases and CLI
 
-> **Superseded, 2026-11-24 ([ORB-27921]):** scribe is laid out by app, in
-> four crates, `scribe`, `scribe-core`, `scribe-store` and `scribe-tools`
-> ([see below](#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools)).
+**Superseded by:** [Scribe is laid out by app, in four crates: scribe, core, store and tools](#scribe-is-laid-out-by-app-in-four-crates-scribe-core-store-and-tools)
+
+> In full (2026-11-24, [ORB-27921]): scribe is laid out by app, in
+> four crates, `scribe`, `scribe-core`, `scribe-store` and `scribe-tools`.
 > `scribe-domain` dissolves into the store's contracts, the core's apps and
 > the tools. The step-by-step method (no behaviour change per step) stands.
 
@@ -1010,10 +1029,11 @@ Without `docs/standards/check.sh`, `make standards-check` warns and exits
 **Recorded:** 2026-09 · [ORB-13134]
 **Code anchors:** `crates/scribe-core/src/store/format.rs::UPGRADES` (removed in phase 8, ORB-26657), `crates/scribe-core/src/store/codec.rs::FORMAT`
 
-> **Superseded, 2026-11-23 ([ORB-26657]):** the documents live in
+**Superseded by:** [The file store's archives move into scribe.db once](#the-file-stores-archives-move-into-scribedb-once)
+
+> In full (2026-11-23, [ORB-26657]): the documents live in
 > `scribe.db`, whose shape changes are SQL migrations on `user_version`;
-> phase 8 removed `format.rs` and `UPGRADES` with the file decoders
-> ([see below](#the-file-stores-archives-move-into-scribedb-once)). `FORMAT`
+> phase 8 removed `format.rs` and `UPGRADES` with the file decoders. `FORMAT`
 > is now in `store/codec.rs` and versions an export and the stamps.
 
 ### Context
@@ -1044,6 +1064,8 @@ carried over because no scribe store exists yet.
 
 **Recorded:** 2026-09 · [ORB-13134]
 **Code anchors:** `crates/scribe-core/src/store/fsio.rs::create_private_dir`, `::inspect_dir`, `::inspect_subdir`, `::inspect_file`, `::LockGuard::acquire`
+
+**Superseded by:** [Store state refuses any group or other mode bit](#store-state-refuses-any-group-or-other-mode-bit) (in part)
 
 ### Context
 
@@ -1260,6 +1282,8 @@ reads `config.toml`, and `unicode-normalization` gives the NFC for
 
 **Code anchors:** `crates/scribe-core/src/capture.rs`
 
+**Superseded by:** [A referent with nothing before it is refused](#a-referent-with-nothing-before-it-is-refused) (for form 3)
+
 ### Context
 
 Form 3 (`#scribe add it to <tag>`) needs a model to resolve the referent
@@ -1358,10 +1382,18 @@ start records or a typed prompt consumes (`target` `session:<id>`, no
 are none; a hook that fails before a result (an invalid payload) writes one
 failure line.
 
+### Alternatives
+
+- **One audit line per command.** Rejected in the Context: it either loses
+  which `#scribe` line failed or logs every prompt.
+
 ### Consequences
 
 - The audit log shows every outcome a hook reports, with ids and codes only;
   it does not show every row a hook writes (see the refinement above).
+- Cost: the log cannot show that a prompt changed nothing, and it omits
+  bookkeeping such as capture cursors, displaced-turn skips and the transcript
+  byte position, so a reader infers those from the store.
 - A group turn capture shows that a member's turns were stored, once per run,
   with no content; the turns themselves stay out of the log.
 - A replay writes no audit line; it changed nothing.
@@ -1434,6 +1466,8 @@ installs it. The hooks run `scribe` from `PATH` (`make install`).
 **Code anchors:** `crates/scribe-core/src/store/mod.rs` (`failures_in_a_row`);
 `crates/scribe/src/commands/session/pass.rs`
 
+**Superseded by:** [A failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand)
+
 ### Context
 
 [2_design.md §5.3](./2_design.md#53-a-pass) clears `due` after three failed
@@ -1467,7 +1501,9 @@ failure. No persisted shape changes.
 `crates/scribe/src/output/mod.rs` (`finish`); `crates/scribe/src/commands/plugin.rs`
 (`failed_passes`)
 
-> **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
+**Superseded by:** [Session passes run as an Orbit job, not an in-process model call](#session-passes-run-as-an-orbit-job-not-an-in-process-model-call) (in part)
+
+> In part (2026-11-24, [ORB-28142]): `scribe.session-pass` is removed, so
 > no plugin tool answers the `session_pass_failed` and "not retryable" promise in the
 > Decision below. The CLI rule there stands with its streams kept apart: a run with a
 > failed pass prints its report to writable stdout, then exits 1 with a `session_pass_failed`
@@ -1576,6 +1612,13 @@ operator to review, following Orbit's convention.
   the routine starts no further window after its existing 50-second
   start-by deadline and counts the unfinished session in `remaining`.
 
+### Alternatives
+
+- **One prompt for the whole delta.** Rejected: the first pass sent 53,852
+  characters to Haiku and the structured output came back malformed.
+- **A larger model for the long delta.** Rejected: Daniel's point was to use a
+  cheap model.
+
 ### Consequences
 
 A large delta costs several cheap calls instead of one large prompt, and
@@ -1584,6 +1627,12 @@ readable without writes; the next mutation writes format 2. This does not
 fix the Mac clock's missing `claude` PATH entry: the host must make the CLI
 reachable before enabling the routine. Live Haiku validation on Daniel's
 Mac remains an operator check after installation.
+
+- Cost: a large delta takes several model calls over several runs, and a
+  session that keeps failing stays due, retried at most once an hour, never
+  given up.
+- Cost: nothing is summarised until an operator enables the routine on a host,
+  because it ships disabled.
 
 ## A pass finds its transcript by session id
 
@@ -1658,8 +1707,11 @@ own.
 
 ## The plugin backend serves `ask` alone until S6
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** `scribe.ask` is removed
-> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)); the backend serves the three routine tools.
+**Code anchors:** `plugin/.orbit-plugin/plugin.yaml` (`timeout_ms`, `permissions.fs`), `plugin/.orbit-plugin/bin/scribe-plugin`
+
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed) (in full); [The routine tools start no unit after a deadline and audit inside the call](#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call) (in part)
+
+> In full (2026-11-24, [ORB-27911]): `scribe.ask` is removed; the backend serves the three routine tools.
 
 ### Context
 
@@ -1690,11 +1742,24 @@ the tree never holds a file named like the binary it runs.
   takes fewer per call or several calls) and adds the store write grant with
   the routines. Superseded in those parts by
   [the routine tools' deadline](#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call).
+- Cost: the routine tools answer `not_implemented` until S6, and the plugin
+  cannot read the store until the operator sets `root`.
+
+### Alternatives
+
+- **Ship the design's full manifest at S5** (`timeout_ms: 720000`, `fs.write`
+  on the store root, `bin/scribe`, `definitions/`). Not possible on Orbit
+  0.44.0: it caps `timeout_ms` at 300000, renders no `~` or `$HOME`, and
+  refuses a write root that does not exist.
 
 ## `ask` reads Orbit tasks through `orbit tool run`
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** scribe no longer reads Orbit
-> tasks ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)): `tasks.rs`, the `Tasks` port and the plugin's
+**Code anchors:** `crates/scribe/src/tasks.rs` (`OrbitTasks`; removed by ORB-27911)
+
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)
+
+> In full (2026-11-24, [ORB-27911]): scribe no longer reads Orbit
+> tasks: `tasks.rs`, the `Tasks` port and the plugin's
 > `orbit_tools` grant are gone.
 
 ### Context
@@ -1722,13 +1787,25 @@ bound workspace, or the plugin's `task_workspaces`. A failure is logged and
   to go through `models::supervise`.
 - From a terminal outside an Orbit workspace, `question ask` logs one
   warning and answers from the store alone.
+- Cost: `tasks.rs` is a second module allowed to spawn, so the dependency
+  check carries an exception for it; and an `ask` outside an Orbit workspace
+  has less evidence.
+
+### Alternatives
+
+- **Federated `workspaces` search.** Not available: Orbit refuses it inside
+  managed runs, so `ask` searches the bound workspace or `task_workspaces`.
+- **A spawner of its own in `tasks.rs`.** Not chosen: one supervisor
+  (`models::supervise`) covers both spawning modules.
 
 ## The routine tools start no unit after a deadline and audit inside the call
 
 **Recorded:** 2026-11 · [ORB-21795]
 **Code anchors:** `crates/scribe/src/commands/plugin.rs::audited`, `crates/scribe/src/commands/mod.rs::RunLimits`
 
-> **Superseded in part, 2026-11-24 ([ORB-28142]):** `scribe.session-pass` is removed, so
+**Superseded by:** [Session passes run as an Orbit job, not an in-process model call](#session-passes-run-as-an-orbit-job-not-an-in-process-model-call) (in part)
+
+> In part (2026-11-24, [ORB-28142]): `scribe.session-pass` is removed, so
 > the 50-second start cutoff in the Decision applies to `scribe.session-pass-prepare`, which
 > starts no session or window once 50 s have passed since the run's first prepare (or an
 > earlier `deadline_epoch_s`); the run's first window always starts. Catalog mode sets no
@@ -2121,10 +2198,11 @@ Every change is audited and reversible with `session activate`.
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/apps/session/rules/activity.rs`, `crates/scribe-core/src/consistency.rs` (from S10)
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** the consistency scan calls no
+**Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model)
+
+> In full (2026-11-24, [ORB-27911]): the consistency scan calls no
 > model, so no session is deactivated for a removed feature; age is the
-> only automatic route
-> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+> only automatic route.
 
 ### Context
 
@@ -2165,10 +2243,11 @@ features.
 **Recorded:** 2026-11-10 · [ORB-24005] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/consistency.rs` (`later_records`, `judge_removals`; removed by ORB-27911)
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** the consistency scan calls no
+**Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model)
+
+> In full (2026-11-24, [ORB-27911]): the consistency scan calls no
 > model, so no session is deactivated for a removed feature; age is the
-> only automatic route
-> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+> only automatic route.
 
 ### Context
 
@@ -2342,11 +2421,12 @@ Daniel wrote, an agent could hide his words.
 **Recorded:** 2026-11-10 · [ORB-23892] · **Daniel's choice**
 **Code anchors:** `crates/scribe/src/commands/tmux.rs`, `crates/scribe/src/popup.rs`, `crates/scribe/src/popup.sh` (from S13; removed by ORB-27911)
 
-> **Superseded, 2026-11-24 ([ORB-27911]):** Daniel: "delete tmux:
+**Superseded by:** [ask, the Orbit task search and the tmux popup are removed](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)
+
+> In full (2026-11-24, [ORB-27911]): Daniel: "delete tmux:
 > codebases/scribe/crates/scribe/src/popup.sh,
 > codebases/scribe/crates/scribe/src/popup.rs. this is just bad way to do
-> things". `scribe tmux`, its script and `popup.rs` are removed
-> ([see below](#ask-the-orbit-task-search-and-the-tmux-popup-are-removed)).
+> things". `scribe tmux`, its script and `popup.rs` are removed.
 
 ### Context
 
@@ -2430,6 +2510,7 @@ project a session was about.
 
 **Recorded:** 2026-11-10 · **Implementation decision** (ORB-24003, against
 STD-05@1 §R2)
+**Code anchors:** `crates/scribe-store/src/repository/audit.rs` (`AUDIT_FORMAT`), `crates/scribe-store/src/contracts/session.rs` (`rebuilt_by`)
 
 A `session rebuild` replaces a record's header and log, so its audit line,
 which named only `session:<id>`, could not say who replaced them. A refused
@@ -2449,47 +2530,21 @@ The author stays a self-report. The audit line is an accident guard, not an
 OS security boundary (STD-05@1 §R5, as the S12 decision records). `session
 show` prints `rebuilt_by` only in `--json`.
 
-## Task References
+Alternatives:
 
-- [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
-- [ORB-13117] — built the Rust CLI template this project was created from.
-- [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
-- [ORB-21753] — S1: built the domain, the frontmatter store and the read-only CLI.
-- [ORB-21764] — S2: built `#scribe` capture (no model) and the Claude Code package.
-- [ORB-21760] — the operator's live check of the S2 package.
-- [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
-- [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
-- [ORB-21787] — S5: the Orbit plugin tree and `ask`.
-- [ORB-21795] — S6: the consistency routine, the settling verbs and the routines.
-- [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
-- [ORB-23892] — session records with a log, the `active` flag, the CLI agent
-  surface and skill, the tmux popup and backfill by name (designed).
-- [ORB-24006] — store state refuses any group or other mode bit; the
-  redaction script takes its key on stdin.
-- [ORB-24003] — `rebuilt_by` on session records (format 6) and the author and
-  resolved target on audit lines, including refusals (audit format 2).
-- [ORB-24030] — host-controlled identity: Daniel's writes only through his
-  typed prompt, agent author names as attribution only.
-- [ORB-25080] — `#scribe/global` records a typed line with `project: global`.
-- [ORB-26204] — an agent Daniel instructs settles claims and deletes
-  records through the CLI (proposed).
-- [ORB-26240] — the personal memory base and the per-session work layer,
-  `people`, recurring dates and light catalog entries (proposed).
-- [ORB-26349] — extended the duplicate check's negation markers, and made
-  Stop recovery decide coverage as of the turn.
-- [ORB-26360] — entry `inactive_since` (format 12), whole-second Stop
-  coverage, and the coverage check for resolved referents.
-- [ORB-26640] — proposed tags as catchers, the fixed three-part memory and
-  one SQLite store, with the four decisions of the accepted proposal.
-- [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
-- [ORB-28889] — recorded the provider spawn adapter's statement-scoped STD-02 §R6 deviation.
+- **Leave the line naming only `session:<id>`.** Rejected: a rebuild's author
+  and a refusal's target could not be told apart afterwards.
+- **Echo the typed id when it does not resolve.** Rejected: `target` is `null`
+  instead, so a line never records what the caller typed.
 
-> Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
-
+Cost: the author is a name the caller claims, so the line attributes by name,
+not by identity; and readers carry both audit formats, because a format-1 line
+has no author.
 
 ## S12 writes format 5 and preserves write provenance
 
 **Recorded:** 2026-11-10 · **Implementation decision**
+**Standing rule:** a shipped store format is never changed in place; a new shape appends a step and old records stay readable (STD-02@4 §R16, STD-03@2 §R23). The step machinery of that day was removed with the file store ([The file store's archives move into scribe.db once](#the-file-stores-archives-move-into-scribedb-once)).
 
 The S12 sketch called the new tag document and agent entry shape format 4.
 The shipped format-4 reader requires an entry cite and has no `agent`
@@ -2517,11 +2572,21 @@ some synthesized prose in mixed-source answers to enforce that an agent's
 words never become Daniel's. Agent evidence has base weight 1.0×;
 the ordinary named-tag boost is independent of author.
 
+Alternatives:
+
+- **Reuse format 4 and add the agent shape to it.** Rejected: the shipped
+  format-4 reader requires an entry cite and has no `agent` provenance variant,
+  and the rules above forbid changing a shipped format in place.
+- **Rely on prompt labels to keep attribution.** Rejected: labels alone cannot
+  guarantee it.
+
+Cost: mixed-source `ask` answers lose some synthesized prose, and the
+sketch's format numbering no longer matches the shipped steps.
+
 ## Agent writes use their own name and edit only their own work
 
 **Recorded:** 2026-11-10 · [ORB-24002] · **Overridable by Daniel**
-**Superseded in part:** by "Daniel writes only through his typed prompt;
-agent names are attribution" (2026-11-15): the `session catalog` Daniel
+**Superseded by:** [Daniel writes only through his typed prompt; agent names are attribution](#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution) (in part, 2026-11-15): the `session catalog` Daniel
 channel and the between-agents ownership rule (`not_author`, the
 self-settle guard) are gone. The reserved names, `entry_not_active`, the
 Daniel-entry rules and the settle `--reason` rule still hold.
@@ -2626,6 +2691,10 @@ Daniel chose on 2026-11-15, between the candidate shapes in ORB-24030:
   record keeps who wrote and who changed it (`updated_by`,
   `settled_author`), and the design no longer claims that one agent's work
   is protected from another.
+- Cost: no agent can be stopped from editing another agent's note, and a
+  script that matched `not_author` now sees the write succeed.
+- Cost: cataloging a past session by name takes a typed prompt line, not a
+  terminal command, so only Daniel can start it.
 
 ### As built
 
@@ -2649,6 +2718,8 @@ Daniel chose on 2026-11-15, between the candidate shapes in ORB-24030:
   `.claude/skills/orchestration-session/references/learnings.md`.
 
 ## Codex defaults to Luna and shares the domain
+
+**Code anchors:** `crates/scribe-core/src/providers/cli/codex.rs`, `crates/scribe-core/src/providers/models.rs`
 
 Daniel requested complete Codex capture/catalog support, Luna as its default
 scribe, a generic distributable skill and an initializer. Keep the existing
@@ -2678,7 +2749,21 @@ the resolved absolute binary. A local Codex marketplace is an alternate install,
 not a public release. Digest-owned receipts and conflict refusal preserve edits;
 trust remains Codex's digest-bound host action (STD-05 §R21).
 
+Alternatives:
+
+- **Guess the provider or transport from model names.** Rejected: a
+  provider-tagged control upgrade is preferable.
+- **Fall back to Claude when Codex is unavailable.** Rejected: explicit
+  provider and model overrides are honored, with no silent Claude fallback.
+
+Cost: a Codex transcript with no host provenance metadata refuses recording,
+so a Codex session whose metadata is absent records nothing as Daniel; and the
+checks stay accident guards against confused same-user processes, not an
+identity (STD-05 §R5).
+
 ## Narrow provider startup writes use a generated Orbit variant
+
+**Code anchors:** `plugin/orbit-codex/.orbit-plugin/plugin.yaml` (generated), `scripts/sync-orbit-packages.py`
 
 An actual sandboxed Luna pass exposed two startup writes outside Codex's
 ephemeral log/sqlite directories: its `tmp` subtree and existing
@@ -2710,6 +2795,18 @@ still refuse. The [Codex JSONL contract](https://learn.chatgpt.com/docs/non-inte
 documents `error` separately from `turn.failed`; the native runtime probe
 establishes the observed recovery behavior.
 
+Alternatives:
+
+- **Mount the whole provider home writable.** Rejected: that grants write
+  access to sibling auth and configuration files (STD-05 §R1, §R4).
+- **Copy authentication into the sandbox.** Rejected for the same reason.
+- **Conditional template syntax, or a hand-maintained provider manifest.**
+  Rejected: the variant is generated from the canonical package instead.
+
+Cost: a second plugin tree, `plugin/orbit-codex/.orbit-plugin`, must stay
+byte- and mode-identical to its generator's output (checked in `ci-fast`), and
+installing it needs three explicit provider paths and the `codex` executable.
+
 ## The skill briefs the last session and suggests store upkeep
 
 **Code anchors:** `skills/scribe/SKILL.md` (and its packaged copies)
@@ -2736,6 +2833,20 @@ cataloging, and deactivate stale sessions."
   staleness (§5.7): the agent proposes only a session whose feature was
   removed, replaced or superseded, checked against the repository or task
   state.
+
+Alternatives:
+
+- **A `SessionStart` hook carries the brief.** Rejected: the project's own
+  last session is the one that matters, and the umbrella's global
+  last-session hook was removed the day before for being stale and not
+  project-specific.
+- **The agent writes the entries it suggests.** Rejected: entries stay the
+  human's typed `#scribe` lines.
+
+Cost: the brief depends on an agent following the skill, since no hook
+enforces it; a summary can be stale, so the agent labels it as of its writing
+and checks an item before acting on it. Every entry line and every
+deactivation waits for the human's explicit yes.
 
 ## A typed line is global only when it opens with #scribe/global
 
@@ -2786,19 +2897,19 @@ is settled. The refusal's forms text includes `#scribe/global`.
 **Recorded:** 2026-11-15 · [ORB-25112] · **Overridable by Daniel**
 **Code anchors:** `crates/scribe-core/src/tag.rs` (`SHIPPED_ACTION_TAGS`, `ActionTag`), `crates/scribe-core/src/config/tags.rs` (`RawTag`)
 
-> **Superseded in part, 2026-11-20 ([ORB-25977]):** the shipped set. `task`
-> and `friction` no longer ship; `standard`, `remind` and `idea` do
-> ([see below](#task-and-friction-no-longer-ship-as-action-tags)). The
+**Superseded by:** [`task` and `friction` no longer ship as action tags](#task-and-friction-no-longer-ship-as-action-tags) (in part, the shipped set); [Config tags merge with the shipped set](#config-tags-merge-with-the-shipped-set) (in part, config tags that claim a shipped name)
+
+> In part (2026-11-20, [ORB-25977]): the shipped set. `task`
+> and `friction` no longer ship; `standard`, `remind` and `idea` do. The
 > mechanism (config marks `action = true`, the switches, the window, the
 > consequences for entries) stands as written; the sentences below that name
 > `task` and `friction` as shipped describe the original choice.
 >
-> **Superseded in part, 2026-11-21 ([ORB-26405]):** "unless it claims their
+> In part (2026-11-21, [ORB-26405]): "unless it claims their
 > names". A config tag of the same name still overrides only the fields it
 > sets. A different config entry that claims a shipped name or alias does not
 > make the file `config_invalid`: Daniel's config wins, the shipped tag loses
-> only that word, and `tag list` warns
-> ([see below](#config-tags-merge-with-the-shipped-set)).
+> only that word, and `tag list` warns.
 
 ### Context
 
@@ -2835,10 +2946,11 @@ for them.
 **Recorded:** 2026-11-15 · [ORB-25112]
 **Code anchors:** `crates/scribe-core/src/capture.rs` (`action_window`, `WINDOW_TURNS`, `WINDOW_CHARS`, `WINDOW_TURN_CHARS`; removed by ORB-27911)
 
-> **Superseded in part, 2026-11-24 ([ORB-27911]):** a `#scribe` marker no
+**Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model) (in part)
+
+> In part (2026-11-24, [ORB-27911]): a `#scribe` marker no
 > longer writes an entry, so no new entry gets a window, and
-> `action_window` is removed; stored windows stay readable
-> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+> `action_window` is removed; stored windows stay readable.
 
 The window keeps the turns since the previous `#scribe` line, so a
 consumer sees the discussion that produced the entry without a model call.
@@ -2848,9 +2960,14 @@ and 12,000 characters (with any single turn cut to 4,000) hold a typical
 correction thread and match the order of the catalog window
 (`window_chars = 15000`). Oldest turns go first, because the turns nearest
 the line explain it; the prompt itself is always kept, and `truncated` and
-`omitted` say what was dropped. Cost: a correction whose context began
-more than 40 turns back loses its start; the consumer can still read the
-session transcript through the `session:<id>` cite.
+`omitted` say what was dropped.
+
+Alternative: no cap. Rejected: a long session between two `#scribe` lines
+could be megabytes.
+
+Cost: a correction whose context began more than 40 turns back loses its
+start; the consumer can still read the session transcript through the
+`session:<id>` cite.
 
 ## Agent entries have a five-minute cancel window
 
@@ -2863,8 +2980,13 @@ has acted before the human reads the line. For five minutes after an agent wrote
 it, the read surface reports the entry as inside its cancel window and
 `entry pickup` refuses it; the human's own entries have none. Five minutes
 covers reading the reply and typing the retire line in the same session;
-longer would delay every intake run. Cost: an intake polling more often
-sees fresh agent entries it must skip and revisit.
+longer would delay every intake run.
+
+Alternatives: no cancel window (a consumer could act before the human reads
+the line), or one longer than five minutes (it would delay every intake run).
+
+Cost: an intake polling more often sees fresh agent entries it must skip and
+revisit.
 
 ## Pickups live in their own document
 
@@ -2877,8 +2999,12 @@ words or an agent's attributed note, and their files are never rewritten
 by a third party). `pickups.json` holds `{entry, author, at, result,
 rejected}` notes, written by `entry pickup` under the lock and audited;
 the same note twice changes nothing. The stuck count, `tag list`'s rejected
-count and each entry's `action.pickups` are derived from it. Cost: a
-second document to keep consistent; a pickup naming an entry that is
+count and each entry's `action.pickups` are derived from it.
+
+Alternative: record the pickup on the entry itself. Rejected: entry files are
+never rewritten by a third party.
+
+Cost: a second document to keep consistent; a pickup naming an entry that is
 later forgotten stays as a dangling note.
 
 ## An action entry is stuck after one hour without a pickup
@@ -2904,8 +3030,12 @@ span of one of the human's typed turns in the session named by `--related
 session:<id>`. The transcript lives on the host the session ran on, and
 reading it is I/O, so the CLI locates it as the hooks do (with the same
 provenance checks) and refuses `quote_not_found` when the words are not
-there; the store only enforces that a `require_quote` entry has one. Cost:
-an agent on another host than its session's transcript cannot write a
+there; the store only enforces that a `require_quote` entry has one.
+
+Alternative: the store verifies the quote. Rejected: reading the transcript is
+I/O, which the store does not do.
+
+Cost: an agent on another host than its session's transcript cannot write a
 `standard` entry; it files a friction instead.
 
 ## The owner host reads action entries over SSH
@@ -2985,6 +3115,17 @@ in an on session, the skill stops doing that and briefs open proposals instead.
 Off or unknown sessions keep the manual suggestion flow. Action tags remain
 agent-written under their existing rules. Rebuilds create no proposals.
 
+Alternatives:
+
+- **The pass writes the entry itself.** Not chosen: Daniel alone creates these
+  entries, by approving the proposal.
+- **The skill keeps offering ready-to-type lines in an on session.** Replaced:
+  it briefs the open proposals instead.
+
+Cost: the lexical duplicate check may conservatively drop closely related new
+wording, and a candidate whose quote would be redacted is omitted so that
+approval keeps an exact quotation.
+
 ## Findings are scribe entries with no worker
 
 **Recorded:** 2026-11-16 · ORB-25177 · background-agents candidate use 9
@@ -3021,6 +3162,18 @@ never one attributed to him — and `#scribe reject` closes it for good.
 The added output per window stays bounded (design §5.3: at most 3,216
 value characters including an optional 512-character evidence pointer,
 STD-08 §R1, §R3), and no candidate is ever opened from a tool payload.
+
+Alternatives:
+
+- **An action tag with a consumer, transcript window and pickup.** Not
+  chosen: scribe does not become a second task tracker, and `task`, `remind`
+  and `idea` already hold pending work.
+- **List findings in the session-start line and the brief.** Not chosen: the
+  two would grow with history.
+
+Cost: a writing session records at most three findings (`finding_cap`), and
+one with no evidence pointer records none (`evidence_required`), so a session
+that measured more must choose.
 
 ## `task` and `friction` no longer ship as action tags
 
@@ -3337,6 +3490,8 @@ Alternatives considered:
 **Reverses:** [3_vision.md §4](./3_vision.md#4-deliberately-out-of-scope)'s "no inference of preferences from behaviour", for descriptive memory only
 **Paths:** `crates/scribe-core/src/apps/session/rules/pass.rs` (the pass's model output), `crates/scribe-core/src/consistency.rs`, `crates/scribe/src/commands/hook/` (`session-start`) — design §13
 
+**Superseded by:** [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions) (in part, points 2 and 9)
+
 ### Context
 
 Daniel, chief's chat, 2026-11-21 (ws_constellation ORB-26194, relayed by
@@ -3412,12 +3567,10 @@ session start. Measured: 60 Claude auto-memory notes on this host
    presets"), designed in [ORB-26240] after this decision; this one only
    guarantees the settings they set.
 
-   > **Superseded in part, 2026-11-21 ([ORB-26240]):** point 2's source
+   > In part (2026-11-21, [ORB-26240]): point 2's source
    > (on sessions only) and point 9's default and its presets. `personal`
    > ships on in every store, off interactive sessions feed the personal
-   > base, and the separation is per session: see
-   > [Memory has a personal base from every typed session and a work layer from on sessions](#memory-has-a-personal-base-from-every-typed-session-and-a-work-layer-from-on-sessions).
-   > The section switches stand.
+   > base, and the separation is per session. The section switches stand.
 
    > **ORB-26240 parked 2026-11-21 ([ORB-26256]):** point 2 stands again
    > (an on session is the only source). Point 9's default stays as
@@ -4088,7 +4241,9 @@ his word needs.
 ### Consequences
 
 - An audit reader can tie every instructed change or refusal to his turn.
-- Readers must accept both shapes; the format-2 reader test covers it.
+- Cost: readers must accept both shapes; the format-2 reader test covers it.
+- Cost: `instruction_message` is `null` when no turn Daniel typed holds the
+  instruction, so a refusal for that reason ties to no turn.
 
 ## An entry keeps its approval instruction apart from its removal
 
@@ -4146,11 +4301,12 @@ as the approval's evidence.
 **Refines:** [`#scribe` capture in 2_design.md §4](./2_design.md#4-scribe), [A claim carries a statement (§11.1)](./2_design.md#111-a-claim-carries-a-statement)
 **Paths:** `crates/scribe-core/src/capture/**`, `crates/scribe/src/hook/**`, `crates/scribe-core/src/store/**`, `docs/design/scribe/2_design.md` §14
 
-> **Superseded in part, 2026-11-24 ([ORB-27911]):** Stop calls no model:
+**Superseded by:** [The consistency scan and Stop call no model](#the-consistency-scan-and-stop-call-no-model) (in part)
+
+> In part (2026-11-24, [ORB-27911]): Stop calls no model:
 > it hands each open marker to the agent with the `scribe entry add`
 > command that records it, and records the marker `refused`
-> `agent_handoff`. Detection, the submit echo and `marks.json` stay
-> ([see below](#the-consistency-scan-and-stop-call-no-model)).
+> `agent_handoff`. Detection, the submit echo and `marks.json` stay.
 
 ### Context
 
@@ -4564,8 +4720,10 @@ update`, `orbit search` etc. can you adjust the standard?"
 
 ### Consequences
 
-- Callers outside this repository that run `scribe record search` fail with
-  a usage error until they change; a separate task updates the umbrella's.
+- Cost: callers outside this repository that run `scribe record search` fail
+  with a usage error until they change; a separate task updates the umbrella's.
+- Cost: `scribe search` is a standing deviation from `STD-01@2 §R1` until the
+  canon admits a cross-resource verb.
 
 ## Format 23 renames JSON fields and a code without aliases
 
@@ -4629,7 +4787,9 @@ rather than justified as a warning. The config key
 `[tags.<tag>.capture] from = "daniel"` does warn, as deprecated, and is read
 for a 30-day window (`crates/scribe-core/src/config.rs`).
 
-> **Superseded in part, 2026-11-26 ([ORB-28931]):** Under STD-14@1 §§R1–R2 (no
+**Superseded by:** [Scribe adopts STD-02@10, STD-12@4 and STD-14@1 at canon 663451f](#scribe-adopts-std-0210-std-124-and-std-141-at-canon-663451f) (in part)
+
+> In part (2026-11-26, [ORB-28931]): Under STD-14@1 §§R1–R2 (no
 > release tag), the `--author-kind daniel` clap aliases
 > (`crates/scribe/src/commands/entry/mod.rs`, `crates/scribe/src/commands/proposal.rs`)
 > and `[tags.<tag>.capture] from = "daniel"`
@@ -4659,11 +4819,24 @@ for a 30-day window (`crates/scribe-core/src/config.rs`).
 
 ## Typed project-group consent
 
+**Code anchors:** `crates/scribe/src/commands/hook/group_add.rs`, `crates/scribe/src/commands/hook/group_turns.rs`
+
 Daniel asked to keep project sessions together: “I would like to keep different groups by projects. I have an on-going water-economy project, and I want all the sessions stored there.” On 2026-11-23, when offered a typed `/scribe group <slug>` that creates and enrols, terminal group commands, and retained membership after refresh, he answered “sounds good” (chief's chat, ORB-26869). The typed line itself consents to creation and membership; agent `group open` still requires a verbatim quote. Non-typed prompts do not consent. Daniel also answered “No, one group” to membership in two groups; a session already in a group must leave before joining another.
 
 The terminal group commands in that “sounds good” are superseded. They conflicted with the [attribution decision](#daniel-writes-only-through-his-typed-prompt-agent-names-are-attribution) of [ORB-24030], which refuses every CLI path that records `{kind: daniel}` because agents and Daniel run as the same Unix user, and the three-line summary he agreed to did not name the conflict. On 2026-11-23 at 03:03Z (chief's chat, ORB-26869) he chose “A: typed lines only”. Past sessions join a project group through a typed `/scribe group add <slug> <session-id>...` line, read by the prompt hook with the same typed-turn check as `/scribe group <slug>` (ORB-27114), and there is no terminal route. The line creates the group when absent and adds only named sessions; it includes the session where the line is typed only when that session's ID is explicitly named. When a named session has a transcript on disk, the hook reads it through the checked transcript path and stores its typed turns; when no transcript exists, it adds membership only. A present transcript that fails verification or cannot be read refuses the whole line before membership is written, rather than being treated as absent. A Codex transcript that cannot be parsed also refuses the line. Claude Code skips lines that are not valid JSON, so a transcript with no parseable lines can still be added with zero typed turns. A named session already in another group also refuses the whole line, because Daniel's “No, one group” is settled. It is audited with ids only.
 
+Alternatives: terminal group commands (the first reading of “sounds good”) and
+membership in two groups. Both are rejected above, on Daniel's “A: typed lines
+only” and “No, one group”.
+
+Cost: there is no terminal route, so only a typed `/scribe group add <slug>
+<session-id>...` line joins past sessions to a group; one named session with a
+transcript that fails verification, or one already in another group, refuses
+the whole line.
+
 ## Receipts are versioned before they are parsed
+
+**Code anchors:** `crates/scribe-core/src/apps/init/install.rs`
 
 The init receipt gained `skill_files` in ORB-27143 and kept `format: 1`. A
 binary that reads the receipt with a struct denying unknown fields therefore
@@ -4693,9 +4866,9 @@ record across two files.
 
 ### Consequences
 
-- A project initialized by this binary and then run by a pre-ORB-27143 binary
-  still gets `invalid installation receipt`. The workaround is to run the current
-  binary for that project.
+- Cost: a project initialized by this binary and then run by a pre-ORB-27143
+  binary still gets `invalid installation receipt`. The workaround is to run the
+  current binary for that project.
 - A future receipt format is refused as unsupported without being parsed as a
   receipt of this format.
 
@@ -4879,10 +5052,16 @@ open or join stores nothing new. A displaced holder whose seat is restored
 still restarts at its new join time, and a `--replace` or clear successor
 backfills its own transcript only.
 
+### Alternatives
+
+- **Keep the join-time cutoff.** Rejected: the `/formation …` line and the
+  grant line that opened g-3, and Daniel's decision in g-1, were never stored.
+  Daniel chose option 1 of the three the chief offered.
+
 ### Consequences
 
-- The consent a group takes now covers a member's typed turns from before the
-  group, not only after its join.
+- Cost: the consent a group takes now covers a member's typed turns from
+  before the group, not only after its join.
 - An opener's turns stored at open belong to no membership until it takes a
   seat, so group-scoped reads see them only then; `#scribe forget` erases them.
   An opener already in a group, or forgotten, stores none at open.
@@ -4904,6 +5083,8 @@ backfills its own transcript only.
   turns dated since its join; missing a restored one would store a turn typed
   during its displacement without consent, so the upgrade accepts the false
   positive ([ORB-27709]).
+- Cost: the typed `/scribe group <slug>` join and clear-time seat inheritance
+  keep the join-time cutoff, so turns typed before them stay unstored.
 
 ## Decisions that outlive a task are scribe records, and open items wait for Daniel in scribe
 
@@ -4978,7 +5159,15 @@ chat.
 
 ## Session aliases in piped output and the brief
 
+**Code anchors:** `crates/scribe-store/src/contracts/session.rs` (`set_aliases`); `specs/output-contract.md` (group and session ids)
+
 Daniel chose “Yes, s-<n> alias for open-item-7” after asking “can we only show first n letters of the session_id column?”. Piped session ids, the session-start brief and group show use the stable `s-<n>` where a sessions row exists; otherwise they use the shortest unique prefix of at least eight characters. JSON and stored references retain the full provider id. This supersedes our earlier reading of STD-01@2 §R15 for piped session ids: the accepted alias is a complete, stable identifier, and keeps agent output concise.
+
+Alternative: show the first n letters of the provider id, which is what Daniel
+first asked. Not chosen: Daniel accepted the `s-<n>` alias instead.
+
+Cost: piped output, the brief and `group show` no longer carry the full
+provider id, so a consumer that needs it reads `--json`.
 
 ## A settings command's args are a value, not his words
 
@@ -5149,7 +5338,7 @@ and [Removal evidence is Daniel-authored entries only](#removal-evidence-is-dani
 and in part [`#scribe` is an annotation, cataloged at the end of the turn](#scribe-is-an-annotation-cataloged-at-the-end-of-the-turn)
 and [An action entry's window is capped at 40 turns and 12,000 characters](#an-action-entrys-window-is-capped-at-40-turns-and-12000-characters).
 
-> **Superseded in part, 2026-11-24 ([ORB-28127]):** the report keeps the nine counters, always `0` or `[]`, instead of dropping them. This decision names the deletion but cites no deviation from STD-01@2 §R10, and that rule makes removing a `--json` field a breaking change. See `specs/output-contract.md`.
+> **Corrected 2026-11-24 ([ORB-28127]):** the report keeps the nine counters, always `0` or `[]`, instead of dropping them. This decision names the deletion but cites no deviation from STD-01@2 §R10, and that rule makes removing a `--json` field a breaking change. See `specs/output-contract.md`.
 
 ### Context
 
@@ -5194,19 +5383,68 @@ unused. `removal` is no model key: `[models]` and `[codex.models]` refuse
 it as an unknown key, so a config that sets it there fails to load. Existing
 `config.toml` files that set only the accepted keys still load.
 
+### Alternatives
+
+- **Keep the in-process model steps.** Rejected on Daniel's direction: scribe
+  is a CLI tool, and any operation that needs an agent runs as an Orbit job.
+
 ### Consequences
 
-- No supersession is detected: two entries that contradict both stay
+- Cost: no supersession is detected: two entries that contradict both stay
   active until Daniel retires one. `supersedes` proposals opened before
   stay settleable.
-- No session is deactivated because a later entry says its feature was
+- Cost: no session is deactivated because a later entry says its feature was
   removed; it ages out or is deactivated by hand.
-- A marker under an action tag no longer captures the transcript window
+- Cost: a marker under an action tag no longer captures the transcript window
   (§4.6); an entry the agent writes from a marker has none.
-- Whether the agent recorded a handed-over marker is not tracked:
+- Cost: whether the agent recorded a handed-over marker is not tracked:
   `mark list` keeps listing it.
 - The session pass, catalog, rebuild, memory refresh and group close still
   call models; they wait for Daniel's direction on Orbit jobs.
+
+## Session passes run as an Orbit job, not an in-process model call
+
+**Recorded:** 2026-11-24 · [ORB-28142] · **Daniel's direction** (from [ORB-27911]; designed in [2_design.md §19](./2_design.md#19-replacing-the-five-model-callers-with-orbit-jobs-and-cli-primitives-approved))
+**Code anchors:** `plugin/.orbit-plugin/jobs/session_pass.yaml`, `plugin/.orbit-plugin/activities/session_distill.yaml`, `plugin/.orbit-plugin/activities/session_pass_fail.yaml`, `crates/scribe/src/commands/plugin.rs`
+**Supersedes in part:** [Session passes run from an Orbit routine, not a detached hook child](#session-passes-run-from-an-orbit-routine-not-a-detached-hook-child), [A failed pass stays due, and Daniel runs the pass by hand](#a-failed-pass-stays-due-and-daniel-runs-the-pass-by-hand) and [The routine tools start no unit after a deadline and audit inside the call](#the-routine-tools-start-no-unit-after-a-deadline-and-audit-inside-the-call): their rules stand, but the `scribe.session-pass` tool they describe is gone.
+
+### Context
+
+A session pass called a model from inside scribe: the `scribe.session-pass`
+routine tool spawned `claude` or `codex` and applied the answer in one call.
+The ORB-27911 direction is that scribe is a CLI tool for agents to query and
+update, and that any operation that needs an agent runs as an Orbit job.
+
+### Decision
+
+The `scribe-session-pass` routine runs the `scribe-session-pass` job. Three
+plugin tools carry scribe's side: `scribe.session-pass-prepare` picks the next
+window and returns a sealed cursor and the prepared request;
+`scribe.session-pass-apply` checks the answer and commits the window and its
+audit row in one store transaction; `scribe.session-pass-fail` records backoff
+when the provider step fails. The model step is an Orbit `agent_loop` activity
+with no tools and no access to `scribe.db`. All verification (verbatim quotes,
+redaction, sealed segments, the optimistic basis) stays in `apply`.
+`scribe.session-pass` is removed. The cadence, the retry delay and the 50-second
+start-by cutoff keep their rules, now carried by `prepare`.
+
+### Alternatives
+
+- **Keep the in-process model call.** Rejected on Daniel's direction: scribe
+  starts no model and spawns no child process.
+- **An `agent_invoke` activity.** Not available: Orbit removed agent invocation
+  on 2026-11-07 ([ORB-20383]), so the job uses `agent_loop`, as
+  [2_design.md §19.2](./2_design.md#192-core-split-deterministic-scribe-boundary-vs-orbit-agent_loop-jobs) records.
+
+### Consequences
+
+- Cost: no OS lock is held across the three steps. Correctness rests on
+  `max_active_runs: 1` and optimistic checks in `scribe.db`, so a concurrent
+  writer can make `apply` reject and retry a window.
+- Cost: Orbit persists every step output, so a run is bounded to 25 windows and
+  leaves the rest for the next 5-minute run.
+- Cost: a host without Orbit cannot run an automated pass; it needs Orbit or an
+  agent driving the prepare and apply verbs.
 
 ## The file layer is the cw-kit's cw-fs
 
@@ -5243,8 +5481,19 @@ scribe's own, and why:
   its code and sentence; the three refusals scribe did not have (`store_not_regular`,
   `store_too_large`, `store_lock_reentrant`) are new codes.
 
+### Alternatives
+
+- **Keep `db/fsio.rs`.** Not chosen: the cw-kit design took those mechanisms
+  from scribe and four other projects into one crate.
+- **Adopt the kit's read and link rules as they are.** Not chosen: the kit
+  demands a stated read cap, refuses a link at the directory it is asked about
+  and leaves descriptor-relative reads out, so scribe keeps the root-link
+  resolution and the project scaffold reads described above.
+
 ### Consequences
 
+- Cost: the store depends on `cw-fs` at one pinned satellites commit, and moves
+  only with that pin.
 - A file over its cap is refused (`store_too_large`) where it was read whole.
 - A store file that is a directory, FIFO or device is `store_not_regular`; it was
   accepted by the mode check and failed later as `io_error`.
@@ -5260,6 +5509,7 @@ scribe's own, and why:
 
 **Recorded:** 2026-11-26 · ORB-28769
 **Standard:** [STD-02@8 §R18](../../standards/STD-02-rust-architecture-and-errors/STD-02.md#logging-contracts-and-size)
+**Code anchors:** the files marked **Keep** in the table below, each over 800 lines by design (for example `crates/scribe-core/src/apps/session/rebuild.rs` and `crates/scribe-store/src/db/groups.rs`)
 
 ### Context
 
@@ -5337,12 +5587,26 @@ Three parents are exactly at 12 direct declarations (`scribe_core::apps`,
 `scribe_store::contracts` and `scribe_store::repository`). Their existing
 grouping follows app and record boundaries.
 
+### Alternatives
+
+- **Split every file over 800 lines.** Not chosen: R18 uses size to prompt a
+  responsibility check, and the **Keep** rows show files whose steps share one
+  invariant.
+- **Split none.** Not chosen: the **Split** rows show files that held
+  independent responsibilities.
+
 ### Consequences
 
 The splits preserve caller paths through re-exports and move implementations
 with their existing input and output shapes. CLI output, persisted format and
 database migrations retain their existing contracts. The remaining large
 files can be reassessed when their responsibilities change.
+
+- Cost: the **Keep** files stay over 800 lines, so a reader of one holds a
+  whole protocol or aggregate in mind, and a later change to its responsibilities
+  reopens the question.
+- Cost: the measurements are a point-in-time survey (base `d9bdf070`) and age as
+  the code moves.
 
 ## Entry provenance and memory journal scrubbing are storage mechanisms
 
@@ -5428,8 +5692,15 @@ What stays in scribe, per the cw-kit design:
   `Step::checkpoint_truncate_before()` to preserve the schema 8/9 WAL cleanup
   barrier.
 
+### Alternatives
+
+- **Keep scribe's own open flags, pragmas and migration loop in `db/mod.rs`.**
+  Not chosen: the cw-kit design moved those mechanisms into `cw-sqlite`.
+
 ### Consequences
 
+- Cost: `scribe-store` depends on `cw-sqlite` at one pinned satellites
+  revision, and the four behaviour changes below are in force with it.
 - **Foreign keys enforced:** `cw-sqlite` enables `PRAGMA foreign_keys = ON` on
   every writer connection (scribe previously left SQLite's default `OFF`).
   `ON DELETE CASCADE` on `group_claude_progress` and `group_claude_seen` now
@@ -5594,6 +5865,8 @@ operations on the store.
 
 ### Consequences
 
+- Cost: two retained deviations from STD-02@8 §R45 (above): `export` has no
+  unit of its own and `plugin` maps to several units.
 - **No behavior change.** Command spellings, inputs, help, output, exit codes, audit
   lines, the store format and the export document are unchanged. `transcript` reads
   stay unaudited, as `session`'s reads were.
@@ -5648,7 +5921,17 @@ sink writes: a `Table`, a detail view of `TextSpan`s, or the payload's JSON.
   `render.rs::cap_title`: it is scribe's rule about its own column, which the kit's
   fit-to-terminal truncation does not express.
 
+### Alternatives
+
+- **Keep `sink.rs`, `table.rs` and `printable.rs`.** Not chosen: the cw-kit
+  design took scribe's sink as the source of `cw-cli`.
+- **Adopt the kit's error rendering, logging, grouped help and pager too.**
+  Not chosen, for the reasons in the list above.
+
 ### Consequences
+
+- Cost: the binary depends on `cw-cli` at one pinned satellites revision for
+  every kit crate, and the user-visible differences below came with it.
 
 Differences a user can see:
 
@@ -5791,8 +6074,15 @@ reported eight distinct source locations at threshold seven on
 `49ce79d53b75`. The refactor brought the diagnostic and suppression counts
 to zero.
 
+### Alternatives
+
+- **Run the gate as a count that may only fall.** This was the deviation held
+  at adoption; ORB-28929 closed it by refactoring to zero.
+
 ### Consequences
 
+- Cost: the gate has no count to fall back on, so a function that needs an
+  eighth parameter is restructured before merge.
 - `clippy.toml` explicitly sets the threshold to seven. The workspace lint
   is enabled at warn, and the existing CI Clippy command turns warnings into
   errors. STD-02@10 §R51 also requires review to reject source suppressions.
@@ -5858,3 +6148,42 @@ Each boundary below is a deviation from STD-02@10 §R44 and is retained as state
 - Cost: R44 has no gate. The dependency check that `checks.md` names needs a `legacy` or `migrate` unit to check, so it cannot be added before that unit exists. The rule is review-only until then.
 - Cost: the detection on every write is a small I/O cost on the write path. It changes with item 3.
 - Names: the modules are `import`, `archive` and `documents`, not the `legacy` or `migrate` names R44 gives. This entry does not rename them.
+
+## Task References
+
+- [ORB-21747] — designed the standalone scribe plugin and recorded its decisions.
+- [ORB-13117] — built the Rust CLI template this project was created from.
+- [ORB-13134] — brought the template to STD-01..03 v2 and STD-04/05 v1.
+- [ORB-21753] — S1: built the domain, the frontmatter store and the read-only CLI.
+- [ORB-21764] — S2: built `#scribe` capture (no model) and the Claude Code package.
+- [ORB-21760] — the operator's live check of the S2 package.
+- [ORB-21778] — S3: referents (form 3), the `Models` port and `ClaudeCliModels`.
+- [ORB-21784] — S4: `/scribe on|off|status`, session-pass cadence and session records.
+- [ORB-21787] — S5: the Orbit plugin tree and `ask`.
+- [ORB-21795] — S6: the consistency routine, the settling verbs and the routines.
+- [ORB-23849] — session links (`spawned_from`, `continues`) between session records.
+- [ORB-23892] — session records with a log, the `active` flag, the CLI agent
+  surface and skill, the tmux popup and backfill by name (designed).
+- [ORB-24006] — store state refuses any group or other mode bit; the
+  redaction script takes its key on stdin.
+- [ORB-24003] — `rebuilt_by` on session records (format 6) and the author and
+  resolved target on audit lines, including refusals (audit format 2).
+- [ORB-24030] — host-controlled identity: Daniel's writes only through his
+  typed prompt, agent author names as attribution only.
+- [ORB-25080] — `#scribe/global` records a typed line with `project: global`.
+- [ORB-26204] — an agent Daniel instructs settles claims and deletes
+  records through the CLI (proposed).
+- [ORB-26240] — the personal memory base and the per-session work layer,
+  `people`, recurring dates and light catalog entries (proposed).
+- [ORB-26349] — extended the duplicate check's negation markers, and made
+  Stop recovery decide coverage as of the turn.
+- [ORB-26360] — entry `inactive_since` (format 12), whole-second Stop
+  coverage, and the coverage check for resolved referents.
+- [ORB-26640] — proposed tags as catchers, the fixed three-part memory and
+  one SQLite store, with the four decisions of the accepted proposal.
+- [ORB-28904] — recorded the store file adapter's scoped STD-02 §R6 deviation.
+- [ORB-28889] — recorded the provider spawn adapter's statement-scoped STD-02 §R6 deviation.
+- [ORB-28142] — ran the session pass as an Orbit job of prepare, apply and fail steps.
+- [ORB-29305] — brought the entries to STD-06@3 §R10 and §R11: `Cost:` lines, alternatives, and `**Superseded by:**` title links.
+
+> Resolve any task above with `orbit task show <ID>` or `git log --grep=<ID>`.
