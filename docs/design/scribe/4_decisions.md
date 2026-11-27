@@ -2525,7 +2525,7 @@ and weighted as his words.
 ## Agent-created tags live in the store, and config tags win
 
 **Recorded:** 2026-11-10 · [ORB-23892] · **Overridable by Daniel**
-**Code anchors:** `crates/scribe-store/src/contracts/tag.rs`, `store/` (`tags.json`, from S12)
+**Code anchors:** `crates/scribe-store/src/db/docs.rs::tags` (read) and `crates/scribe-store/src/db/docs.rs::put_tags` (write) over the `agent_tags` table; `crates/scribe-store/src/contracts/tag.rs::StoreTag` (the persisted record) and `crates/scribe-store/src/contracts/tag.rs::TagTable` (the merged table); `crates/scribe-core/src/store/tags.rs::add_agent_tag` at `f0a69e3dfe09` (historical; the `tags.json` file store, before the move into `scribe.db`)
 
 ### Context
 
