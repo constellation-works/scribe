@@ -1310,10 +1310,28 @@ if ! grep -Fq 'config.rs:3:    return ::std::net::Ipv4Addr::LOCALHOST.octets();'
   fail=1
 fi
 
+lex_absolute_forms=(
+  'pub fn addr() -> ::std::net::Ipv4Addr { todo!() }|return type arrow'
+  'pub trait T {}\nimpl T for ::std::net::Ipv4Addr {}|for keyword'
+  'pub fn f() where ::std::net::Ipv4Addr: Clone {}|where keyword'
+  'pub fn f() -> impl ::std::net::ToSocketAddrs { ("127.0.0.1", 80) }|impl keyword'
+  'pub fn f(_: &dyn ::std::net::ToSocketAddrs<Iter = It>) {}|dyn keyword'
+  'pub fn f(x: u8) { match x { _ => ::std::net::Ipv4Addr::LOCALHOST }; }|match arm arrow'
+)
+for form in "${lex_absolute_forms[@]}"; do
+  lex_form=$(tree lex-absolute-form)
+  printf '//! config\n%b\n' "${form%|*}" >"$lex_form/crates/scribe-core/src/config.rs"
+  expect fail check-dependency-direction.sh "$lex_form" "absolute std::net after ${form##*|}"
+  if ! grep -Fq 'config.rs:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: absolute std::net after ${form##*|} lacks location or socket diagnostic" >&2
+    fail=1
+  fi
+done
+
 lex_nested=$(tree lex-nested-std)
 cat >"$lex_nested/crates/scribe-core/src/config.rs" <<'EOF'
 //! config
-fn nested() { foo::std::net::item(); r#return::std::net::item(); }
+fn nested() { foo::std::net::item(); r#return::std::net::item(); r#for::std::net::item(); Vec::<u8>::std::net::item(); }
 EOF
 expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary and raw-identifier paths"
 
