@@ -1,5 +1,5 @@
 mod links {
-    use super::super::{T0, session};
+    use crate::apps::session::tests::{T0, session};
     use crate::session::{
         LinkError, LinkType, SessionId, SessionLink, check_link, children, tree_order,
     };

@@ -28,6 +28,22 @@ expect() {
   fi
 }
 
+# --- check-source-style.sh: STD-12 R26 ----------------------------------
+style_one_level="$work/style-one-level"
+mkdir -p "$style_one_level/crates/scribe-core/src/apps/session"
+printf 'use super::entry::Entry;\n' >"$style_one_level/crates/scribe-core/src/apps/session/mod.rs"
+expect pass check-source-style.sh "$style_one_level" "a one-level super path"
+
+style_multi_level="$work/style-multi-level"
+mkdir -p "$style_multi_level/crates/scribe-core/src/apps/session/tests"
+printf '//! See [`super::super::catalog`].\n' \
+  >"$style_multi_level/crates/scribe-core/src/apps/session/tests/mod.rs"
+expect fail check-source-style.sh "$style_multi_level" "a multi-level path in a rustdoc link"
+if ! grep -Fq "STD-12 R26 forbids multi-level super paths" "$work/out"; then
+  echo "check-gates: FAIL: source-style R26 fixture lacks its diagnostic" >&2
+  fail=1
+fi
+
 # tree <name>: a fresh fixture root holding a minimal two-crate workspace.
 tree() {
   local root="$work/$1"

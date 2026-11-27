@@ -5708,7 +5708,7 @@ Path reading: §R49 names `src/command/`. Scribe's CLI is `src/commands/`, which
 ## STD-12@4 gates deferred at adoption are recorded per rule
 
 **Recorded:** 2026-11-26 · [ORB-28921] · **Daniel's direction**
-**Code anchors:** `Makefile` `fmt-check` and `clippy`; `rustfmt.toml`; `clippy.toml`; `Cargo.toml` `[workspace.lints]`; `scripts/` (no source-style script yet)
+**Code anchors:** `Makefile` `fmt-check`, `structure` and `clippy`; `rustfmt.toml`; `clippy.toml`; `Cargo.toml` `[workspace.lints]`; `scripts/check-source-style.sh` (STD-12 §R26)
 
 ### Context
 
@@ -5724,20 +5724,20 @@ At adoption, §R20 and §R23 had cited adoption deviations pending ORB-28950. Th
 |---|---|---|---|---|
 | STD-12@4 §R1, singular names | CI name check | deferred | about 30 plural `.rs` names (`repository/tags.rs`, `db/locks.rs`, `runtime/errors.rs`) and plural directories `apps/`, `commands/`, `contracts/`, `entries/`, `providers/`, `rules/`, `sessions/`, `groups/` | proposed rename task, kept out of the first move |
 | STD-12@4 §R2 (gate §R14), one-letter bindings | `clippy::min_ident_chars` with `allowed-idents-below-min-chars = []` | deferred | 2976 sites | proposed task, sized by count: enable the lint and fix per crate |
-| STD-12@4 §R4 (gate §R12), blank line between items | `scripts/check-source-style.sh` | deferred | script absent; not measured | build the script in the Rust template, then adopt |
-| STD-12@4 §R5 (gate §R13), line width | the same script, width check | deferred | 642 lines over 100 characters by text match, before the string and URL exemption | as §R4 |
+| STD-12@4 §R4 (gate §R12), blank line between items | `scripts/check-source-style.sh` | deferred | not measured; the script currently checks §R26 only | extend the script with the blank-line check |
+| STD-12@4 §R5 (gate §R13), line width | `scripts/check-source-style.sh`, width check | deferred | 642 lines over 100 characters by text match, before the string and URL exemption | extend the script with the width check |
 | STD-12@4 §R15, no glob imports | `clippy::wildcard_imports` and `clippy::enum_glob_use` | deferred | 0 reported sites; 48 text matches, all covered by the lints' default exemptions | enable both lints; no code change |
-| STD-12@4 §R16, one module per `use` | `scripts/check-source-style.sh` | deferred | 21 `use` lines with a brace group holding `::` (text match, not verified) | script in the template |
-| STD-12@4 §R19, `rustfmt::skip` comment | `scripts/check-source-style.sh` | deferred | 0 uses | script in the template; no code change |
+| STD-12@4 §R16, one module per `use` | `scripts/check-source-style.sh` | deferred | 21 `use` lines with a brace group holding `::` (text match, not verified) | extend the script with the one-module-per-use check |
+| STD-12@4 §R19, `rustfmt::skip` comment | `scripts/check-source-style.sh` | deferred | 0 uses; the script currently checks §R26 only | extend the script to reject the comment; no code change |
 | STD-12@4 §R20, top-level item order | `clippy::arbitrary_source_item_ordering` with the STD-12 groupings in `clippy.toml` | met | Enabled at warn; `make ci-lint` passes all workspace targets with `-D warnings` on Clippy 1.96.0. The missed `RefreshCommitState` ordering in `crates/scribe-core/src/apps/memory/verbs.rs` was corrected. | closed by ORB-28950 after ORB-28939 (config) and ORB-28941 to ORB-28949 (disjoint source batches) |
-| STD-12@4 §R21, type adjacent to its impls | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
-| STD-12@4 §R22, order inside an impl | `scripts/check-source-style.sh` | deferred | not measured | separate template style-gate path |
+| STD-12@4 §R21, type adjacent to its impls | `scripts/check-source-style.sh` | deferred | not measured; the script currently checks §R26 only | extend the script with the type-adjacency check |
+| STD-12@4 §R22, order inside an impl | `scripts/check-source-style.sh` | deferred | not measured; the script currently checks §R26 only | extend the script with the impl-order check |
 | STD-12@4 §R23, struct literal field order | `clippy::inconsistent_struct_constructor` with `check-inconsistent-struct-field-initializers = true` | met | Enabled at warn; `make ci-lint` passes all workspace targets with `-D warnings` on Clippy 1.96.0. | closed by ORB-28950 after ORB-28939 (config) and ORB-28941 to ORB-28949 (disjoint source batches) |
-| STD-12@4 §R26, no `super::super` | `scripts/check-source-style.sh` | deferred | 11 text matches: 9 code paths and 2 comments | ORB-28928 (backlog) |
+| STD-12@4 §R26, no `super::super` | `scripts/check-source-style.sh` | met | The 11 audited matches (9 code paths and 2 comments) are removed; `make ci-fast` checks the text-match gate, including a rejecting and accepting fixture. | closed by ORB-28928 |
 
 ### Consequences
 
-- Cost: each row's rule is unchecked in CI until its gate lands. Reviewers check them by hand meanwhile.
+- Cost: each deferred rule is unchecked in CI until its gate lands. Reviewers check them by hand meanwhile.
 - Cost: the counts come from one run and will move as the code does. Rows marked not measured have no count yet.
 - The adoption measurement for §R20 and §R23 was 341 primary diagnostic locations in 158 files (311 and 30 above), taken with both canonical lints verified on 1.96.0 fixtures. ORB-28950 enabled the lints at warn, corrected one missed ordering site in `memory/verbs.rs`, and verified the current workspace with `make ci-lint`.
 
