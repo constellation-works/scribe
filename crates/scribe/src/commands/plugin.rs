@@ -579,10 +579,10 @@ mod tests {
     }
 
     fn step_locked() -> CliError {
-        CliError::SessionPassStep {
+        CliError::from(scribe_core::CommandError::SessionPassStep {
             code: "store_locked",
             message: String::from("store locked"),
-        }
+        })
     }
 
     #[test]
