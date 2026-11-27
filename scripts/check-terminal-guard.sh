@@ -12,10 +12,12 @@
 #      values. A module that names one reads the environment itself. Composition
 #      may capture them; it never decides the color, the width or the format.
 #
-# Environment reads (`std::env::var` and its kin), standard stream handles
-# (`std::io::stdout`, `std::io::stderr`, `std::io::IsTerminal::is_terminal`),
-# and `print!`/`eprint!`/`println!`/`eprintln!` are Clippy's (`clippy.toml` and
-# `Cargo.toml`), not this script's (STD-02 R6, R15).
+# Environment reads (`std::env::var` and its kin), ordinary standard stream
+# calls (`std::io::stdout`, `std::io::stderr`,
+# `std::io::IsTerminal::is_terminal`), and `print!`/`eprint!`/`println!`/
+# `eprintln!` are Clippy's (`clippy.toml` and `Cargo.toml`, STD-02 R6, R15).
+# Public reexports of `std::io::stdout` and `std::io::stderr` are checked here:
+# Clippy's method-path lint does not see an exported use declaration.
 set -euo pipefail
 root="${1:-$(dirname "$0")/..}"
 if ! cd "$root"; then
@@ -27,6 +29,7 @@ OUTPUT_DIR=crates/scribe/src/output
 COMPOSITION=crates/scribe-core/src/composition.rs
 TERMINAL='Terminal::(decide|detect)|Probe::detect'
 ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG'
+STREAM_REEXPORT='pub[[:space:]]+use[[:space:]]+(::)?std::io::(stdout|stderr)([[:space:]]+as[[:space:]]+[[:alpha:]_][[:alnum:]_]*)?[[:space:]]*;|pub[[:space:]]+use[[:space:]]+(::)?std::io::[{]([[:space:]]*|[^}]*[[:space:],])(stdout|stderr)([[:space:]]+as[[:space:]]+[[:alpha:]_][[:alnum:]_]*)?([[:space:],}]|$)'
 
 # Matches outside tests, in code rather than a comment. A doc comment naming
 # the variable it documents is not a read.
@@ -76,6 +79,43 @@ scan() {
     return 2
   fi
   return 0
+}
+
+# Rust use trees can span several lines. Keep the source check focused on
+# complete public use declarations so rustfmt's line wrapping cannot hide one.
+scan_stream_reexports() {
+  local raw
+  if ! raw=$(find crates -type d -name tests -prune -o -type f -name '*.rs' \
+    -exec awk -v pattern="$STREAM_REEXPORT" '
+      function emit() {
+        if (pending && statement ~ pattern) {
+          printf "%s:%d:%s\n", statement_file, statement_line, statement
+        }
+        pending = 0
+        statement = ""
+      }
+      FNR == 1 && NR > 1 { emit() }
+      {
+        line = $0
+        sub(/[[:space:]]*\/\/.*/, "", line)
+        if (line ~ /^[[:space:]]*$/) next
+        if (!pending) {
+          if (line !~ /pub[[:space:]]+use[[:space:]]+/) next
+          pending = 1
+          statement = line
+          statement_file = FILENAME
+          statement_line = FNR
+        } else {
+          statement = statement " " line
+        }
+        if (statement ~ /;/) emit()
+      }
+      END { emit() }
+    ' {} +); then
+    echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
+    return 2
+  fi
+  printf '%s' "$raw"
 }
 
 # Filters allowlisted hits out of a scan result. grep exit 1 is ordinary
@@ -128,6 +168,23 @@ fi
 if [[ -n "$terminal_hits" ]]; then
   echo "$terminal_hits" >&2
   echo "terminal-guard: terminal state and probes belong to $OUTPUT_DIR only" >&2
+  status=1
+fi
+
+if stream_raw=$(scan_stream_reexports); then
+  :
+else
+  scan_rc=$?
+  exit "$scan_rc"
+fi
+filter_rc=0
+stream_hits=$(filter_allowlist "$stream_raw" "$OUTPUT_DIR/") || filter_rc=$?
+if [[ "$filter_rc" -ne 0 ]]; then
+  exit "$filter_rc"
+fi
+if [[ -n "$stream_hits" ]]; then
+  echo "$stream_hits" >&2
+  echo "terminal-guard: public standard stream reexports belong to $OUTPUT_DIR only" >&2
   status=1
 fi
 
