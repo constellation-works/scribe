@@ -174,17 +174,49 @@ def _is_type_alias_rhs(code: Sequence[Token], eq_idx: int) -> bool:
     return False
 
 
+def _before_attributes(code: Sequence[Token], idx: int) -> int:
+    """Return the index of the token before any outer attributes ending at `idx`."""
+    while idx >= 0 and code[idx].kind == "PUNCT" and code[idx].text == "]":
+        depth = 0
+        open_idx = idx
+        while open_idx >= 0:
+            tok = code[open_idx]
+            if tok.kind == "PUNCT":
+                if tok.text == "]":
+                    depth += 1
+                elif tok.text == "[":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            open_idx -= 1
+        if (
+            open_idx < 1
+            or code[open_idx - 1].kind != "PUNCT"
+            or code[open_idx - 1].text != "#"
+        ):
+            return idx
+        idx = open_idx - 2
+    return idx
+
+
 def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
     """Recognize a struct literal field colon without treating declarations as values."""
-    if colon_idx < 2 or code[colon_idx - 1].kind not in ("IDENT", "RAW_IDENT"):
+    if colon_idx < 2:
         return False
-    if code[colon_idx - 2].text not in ("{", ","):
+    label = code[colon_idx - 1]
+    # A field label is an identifier or a tuple-struct index such as `0`.
+    if label.kind not in ("IDENT", "RAW_IDENT") and not (
+        label.kind == "NUMBER" and label.text.isdigit()
+    ):
+        return False
+    sep_idx = _before_attributes(code, colon_idx - 2)
+    if sep_idx < 0 or code[sep_idx].text not in ("{", ","):
         return False
 
     # Find the enclosing brace, skipping complete earlier field expressions.
     pairs = { ")": "(", "]": "[", "}": "{" }
     stack: List[str] = []
-    j = colon_idx - 2
+    j = sep_idx
     while j >= 0:
         tok = code[j]
         if tok.kind == "PUNCT":
