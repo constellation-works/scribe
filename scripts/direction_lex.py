@@ -394,6 +394,31 @@ def _has_local_module(code: Sequence[Token], name: str) -> bool:
     )
 
 
+def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
+    """Find preceding textual definitions in the invocation's enclosing scopes."""
+    scopes = [False]
+    # macro_use can import a child module's macros into its parent. Keep the
+    # earlier conservative treatment when such an import may be present.
+    macro_use = any(tok.kind == "IDENT" and tok.text == "macro_use" for tok in code[:end])
+    seen = False
+    for k, tok in enumerate(code[:end]):
+        if (
+            tok.kind == "IDENT"
+            and tok.text == "macro_rules"
+            and k + 2 < end
+            and code[k + 1].text == "!"
+            and code[k + 2].kind in ("IDENT", "RAW_IDENT")
+            and canonical_ident(code[k + 2].text) == "stringify"
+        ):
+            scopes[-1] = True
+            seen = True
+        elif tok.kind == "PUNCT" and tok.text == "{":
+            scopes.append(False)
+        elif tok.kind == "PUNCT" and tok.text == "}" and len(scopes) > 1:
+            scopes.pop()
+    return any(scopes) or (macro_use and seen)
+
+
 def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
     """Recognize an enclosing builtin stringify invocation's token tree."""
     closing = {')': '(', ']': '[', '}': '{'}
@@ -416,18 +441,8 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
             ):
                 s = j - 2
                 if s == 0 or code[s - 1].text != "::":
-                    # A preceding local macro_rules definition can shadow the builtin
-                    # and evaluate its arguments. Conservatively count definitions
-                    # anywhere earlier in this file, without attempting macro scope.
-                    return not any(
-                        code[k].kind == "IDENT"
-                        and code[k].text == "macro_rules"
-                        and code[k + 1].kind == "PUNCT"
-                        and code[k + 1].text == "!"
-                        and code[k + 2].kind in ("IDENT", "RAW_IDENT")
-                        and canonical_ident(code[k + 2].text) == "stringify"
-                        for k in range(j - 2)
-                    )
+                    # Textual macro scope ends with its enclosing block or module.
+                    return not _has_visible_stringify_macro(code, s)
                 if (
                     s >= 2
                     and code[s - 1].text == "::"
