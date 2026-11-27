@@ -921,26 +921,45 @@ def find_dep_location(rel_manifest, dep):
     return rel_manifest
 
 
+def workspace_dep_target(dep, member_by_instance):
+    """Return the workspace member node a Cargo metadata dependency targets, or None."""
+    if dep.get("source") is not None:
+        return None
+    dep_path = dep.get("path")
+    if not dep_path:
+        return None
+    return member_by_instance.get(
+        (dep["name"], os.path.normpath(os.path.join(ROOT, dep_path)))
+    )
+
+
 members = set(meta.get("workspace_members") or [])
 workspace_packages = [
     pkg for pkg in meta["packages"] if not members or pkg["id"] in members
 ]
 workspace_packages.sort(key=lambda p: os.path.relpath(p["manifest_path"], ROOT))
 
-workspace_crates = {pkg["name"] for pkg in workspace_packages}
+workspace_nodes = []
+member_by_instance = {}
+for pkg in workspace_packages:
+    node = (pkg["name"], pkg["id"])
+    workspace_nodes.append(node)
+    pkg_dir = os.path.normpath(os.path.dirname(os.path.join(ROOT, pkg["manifest_path"])))
+    member_by_instance[(pkg["name"], pkg_dir)] = node
+
 crate_edges = collections.defaultdict(set)
 crate_edge_loc = {}
 
 for pkg in workspace_packages:
-    crate = pkg["name"]
+    src_node = (pkg["name"], pkg["id"])
     rel_manifest = os.path.relpath(pkg["manifest_path"], ROOT)
     for dep in pkg.get("dependencies", []):
         if dep.get("kind") == "dev":
             continue
-        dep_pkg = dep["name"]
-        if dep_pkg in workspace_crates:
-            crate_edges[crate].add(dep_pkg)
-            crate_edge_loc.setdefault((crate, dep_pkg), find_dep_location(rel_manifest, dep))
+        dst_node = workspace_dep_target(dep, member_by_instance)
+        if dst_node is not None:
+            crate_edges[src_node].add(dst_node)
+            crate_edge_loc.setdefault((src_node, dst_node), find_dep_location(rel_manifest, dep))
 
 
 def find_cycles(nodes, edges):
@@ -1014,12 +1033,13 @@ def find_cycles(nodes, edges):
     return cycles
 
 
-for cyc in find_cycles(workspace_crates, crate_edges):
+for cyc in find_cycles(workspace_nodes, crate_edges):
     locs = ", ".join(
         crate_edge_loc.get((cyc[i], cyc[i + 1]), "")
         for i in range(len(cyc) - 1)
     )
-    err(f"crate import cycle: {' -> '.join(cyc)} ({locs})")
+    names = " -> ".join(node[0] for node in cyc)
+    err(f"crate import cycle: {names} ({locs})")
 
 
 # --- 3b. Import resolution via scripts/direction_lex.py ---------------------

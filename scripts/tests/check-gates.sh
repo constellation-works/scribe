@@ -686,19 +686,61 @@ for legal_reuse in \
   expect pass check-dependency-direction.sh "$legal" "a reused key with legal packages, or a dev-only banned one ($n_reuse)"
 done
 for core_reuse in \
-  $'[dependencies]\nscribe = { version = "1", package = "serde" }\n\n[build-dependencies]\nscribe = { version = "0.1.0" }\n' \
-  $'[target.\'cfg(windows)\'.dependencies]\nscribe = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nscribe = { version = "0.1.0" }\n'; do
+  $'[dev-dependencies]\nback = { path = "../scribe", package = "scribe" }\n\n[build-dependencies]\nback = { path = "../scribe", package = "scribe" }\n' \
+  $'[target.\'cfg(windows)\'.dev-dependencies]\nback = { path = "../scribe", package = "scribe" }\n\n[target.\'cfg(unix)\'.build-dependencies]\nback = { path = "../scribe", package = "scribe" }\n'; do
   n_reuse=$((n_reuse + 1))
   cyc_reuse=$(tree "cycle-reused-$n_reuse")
-  printf '[package]\nname = "scribe-core"\n\n%s' "$core_reuse" >"$cyc_reuse/crates/scribe-core/Cargo.toml"
+  printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n%s' "$core_reuse" >"$cyc_reuse/crates/scribe-core/Cargo.toml"
   expect fail check-dependency-direction.sh "$cyc_reuse" "a crate cycle closed by a reused key ($n_reuse)"
-  edge_line=$(grep -n 'version = "0.1.0"' "$cyc_reuse/crates/scribe-core/Cargo.toml" | cut -d: -f1)
-  if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:$edge_line" "$work/out"; then
-    echo "check-gates: FAIL: the cycle diagnostic does not cite the declaration at line $edge_line ($n_reuse)" >&2
+  edge_line=$(grep -n 'back = { path = "../scribe"' "$cyc_reuse/crates/scribe-core/Cargo.toml" | tail -n 1 | cut -d: -f1)
+  if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe/Cargo.toml:6" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:$edge_line" "$work/out"; then
+    echo "check-gates: FAIL: the cycle diagnostic does not cite both manifest locations (crates/scribe/Cargo.toml:6 and crates/scribe-core/Cargo.toml:$edge_line) ($n_reuse)" >&2
     sed 's/^/  | /' "$work/out" >&2
     fail=1
   fi
 done
+
+# Nonmember packages that happen to share a workspace member's name (registry
+# dependencies or excluded path packages) do not close a crate cycle, even when
+# the internal-name rule independently rejects the dependency. A real back edge
+# to the workspace member still reports the cycle with both manifest locations.
+for nonmember_reg in \
+  $'[dependencies]\nscribe = { version = "1", package = "serde" }\n\n[build-dependencies]\nscribe = { version = "0.1.0" }\n' \
+  $'[target.\'cfg(windows)\'.dependencies]\nscribe = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nscribe = { version = "0.1.0" }\n'; do
+  n_reuse=$((n_reuse + 1))
+  reg_same_name=$(tree "nonmember-reg-$n_reuse")
+  printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n%s' "$nonmember_reg" >"$reg_same_name/crates/scribe-core/Cargo.toml"
+  expect fail check-dependency-direction.sh "$reg_same_name" "a registry dependency sharing a member name ($n_reuse)"
+  if ! grep -Fq "scribe-core must not depend on internal crate scribe" "$work/out" || grep -Fq "crate import cycle:" "$work/out"; then
+    echo "check-gates: FAIL: registry dependency sharing a member name reported wrong diagnostic ($n_reuse)" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+excluded_same_name=$(tree "excluded-same-name")
+mkdir -p "$excluded_same_name/external/src"
+printf '[workspace]\nresolver = "2"\nmembers = ["crates/*"]\nexclude = ["external"]\n' >"$excluded_same_name/Cargo.toml"
+printf '[package]\nname = "scribe"\nversion = "0.2.0"\n' >"$excluded_same_name/external/Cargo.toml"
+printf 'pub fn ext() {}\n' >"$excluded_same_name/external/src/lib.rs"
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback = { path = "../../external", package = "scribe" }\n' \
+  >"$excluded_same_name/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$excluded_same_name" "an excluded path package sharing a member name"
+if ! grep -Fq "scribe-core must not depend on internal crate scribe" "$work/out" || grep -Fq "crate import cycle:" "$work/out"; then
+  echo "check-gates: FAIL: excluded same-name package reported wrong diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+real_back_edge=$(tree "real-back-edge")
+printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback = { path = "../scribe", package = "scribe" }\n' \
+  >"$real_back_edge/crates/scribe-core/Cargo.toml"
+expect fail check-dependency-direction.sh "$real_back_edge" "a real aliased back edge to the workspace member"
+if ! grep -Fq "crate import cycle: scribe -> scribe-core -> scribe" "$work/out" || ! grep -Fq "crates/scribe/Cargo.toml:6" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:6" "$work/out"; then
+  echo "check-gates: FAIL: real aliased back edge did not cite both manifest locations" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
 
 # 2. Top-level module cycles inside a crate (direct, relative super::, grouped, 3-node)
 #    plus clean acyclic twins and comment/string non-cycles.
