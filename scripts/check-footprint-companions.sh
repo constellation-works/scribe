@@ -50,22 +50,59 @@ done
 for t in ${targets[@]+"${targets[@]}"}; do
   if [[ ! -f "$makefile" ]] || ! footprint_target="$t" awk '
     BEGIN { wanted = ENVIRON["footprint_target"] }
-    index($0, wanted ":") == 1 {
-      rest = substr($0, length(wanted) + 1)
+    # Judge one logical line: physical lines joined across trailing
+    # backslashes, as GNU make reads them.
+    function judge(line,    rest) {
+      # A tab-indented line is a recipe, and a line whose first non-blank
+      # character is # is a comment, whatever it continues onto.
+      if (line ~ /^\t/ || line ~ /^ *#/) {
+        return 0
+      }
+      sub(/^ +/, "", line)
+      if (index(line, wanted) != 1) {
+        return 0
+      }
+      # Whitespace may separate the target from its colon.
+      rest = substr(line, length(wanted) + 1)
+      sub(/^[ \t]+/, "", rest)
+      if (substr(rest, 1, 1) != ":") {
+        return 0
+      }
       # These are variable assignments, not target rules. In particular,
       # :::= is the immediate-expansion assignment operator used by GNU make.
       if (rest ~ /^(:::=|::=|:=|\?=|\+=|!=|=)/) {
-        next
+        return 0
       }
       # A target-specific assignment has whitespace after the target colon
       # and then a variable assignment rather than a prerequisite list.
       if (rest ~ /^:[ \t]+((export|unexport|override|private)[ \t]+)*[^ \t]+[ \t]*(:::=|::=|:=|\?=|\+=|!=|=)/) {
+        return 0
+      }
+      return 1
+    }
+    {
+      physical = $0
+      # An odd run of trailing backslashes continues onto the next line.
+      continued = (physical ~ /(^|[^\\])(\\\\)*\\$/)
+      if (continued) {
+        sub(/\\$/, " ", physical)
+      }
+      logical = logical physical
+      if (continued) {
         next
       }
-      found = 1
-      exit
+      if (judge(logical)) {
+        found = 1
+        exit
+      }
+      logical = ""
     }
-    END { exit !found }
+    END {
+      if (!found && logical != "" && judge(logical)) {
+        found = 1
+      }
+      exit !found
+    }
   ' < "$makefile"; then
     err "$MAP names make target \`$t\`, which is not a Makefile target"
   fi
