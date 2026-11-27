@@ -2214,6 +2214,39 @@ if ! grep -Fq 'names make target `nosuch`, which is not a Makefile target' "$wor
   fail=1
 fi
 
+fp_target_assign="${work}/fp-target-assign"
+mkdir -p "$fp_target_assign/docs"
+printf -- '- make-target: `LOCKED`\n' >"$fp_target_assign/docs/footprint-companions.md"
+printf 'LOCKED:=--locked\n' >"$fp_target_assign/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_assign" \
+  "a companions map naming a target that appears only as a := variable assignment"
+if ! grep -Fq 'names make target `LOCKED`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: := assignment fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_target_double_colon_assign="${work}/fp-target-double-colon-assign"
+mkdir -p "$fp_target_double_colon_assign/docs"
+printf -- '- make-target: `LOCKED`\n' >"$fp_target_double_colon_assign/docs/footprint-companions.md"
+printf 'LOCKED::=--locked\n' >"$fp_target_double_colon_assign/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_double_colon_assign" \
+  "a companions map naming a target that appears only as a ::= variable assignment"
+if ! grep -Fq 'names make target `LOCKED`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: ::= assignment fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
+fp_target_regex="${work}/fp-target-regex"
+mkdir -p "$fp_target_regex/docs"
+printf -- '- make-target: `g.ldens`\n' >"$fp_target_regex/docs/footprint-companions.md"
+printf 'goldens:\n\ttrue\n' >"$fp_target_regex/Makefile"
+expect fail check-footprint-companions.sh "$fp_target_regex" \
+  "a companions map whose regex metacharacter target name does not match goldens"
+if ! grep -Fq 'names make target `g.ldens`, which is not a Makefile target' "$work/out"; then
+  echo "check-gates: FAIL: literal target fixture lacks its unknown-target diagnostic" >&2
+  fail=1
+fi
+
 # --- generate-feature-board.py: the entry template parses once scaffolded (STD-06 R5, R6) ---
 # The board generator skips _-prefixed folders, so no gate reads the template
 # itself. Scaffold a feature from it the way CONVENTIONS.md tells authors to,

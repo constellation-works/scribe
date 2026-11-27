@@ -12,7 +12,7 @@
 #   (d) the map names no checked entries at all (fail closed, STD-04 R10).
 #
 # `root` defaults to the repository; scripts/tests/check-gates.sh points it
-# at fixture trees. Needs nothing but bash and grep, so the gate runs in
+# at fixture trees. Needs bash, grep, sed, and awk, so the gate runs in
 # `make ci-fast`.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -48,7 +48,18 @@ for p in ${paths[@]+"${paths[@]}"}; do
   fi
 done
 for t in ${targets[@]+"${targets[@]}"}; do
-  if [[ ! -f "$makefile" ]] || ! grep -Eq "^${t}:" "$makefile"; then
+  if [[ ! -f "$makefile" ]] || ! footprint_target="$t" awk '
+    BEGIN { wanted = ENVIRON["footprint_target"] }
+    index($0, wanted ":") == 1 {
+      rest = substr($0, length(wanted) + 1)
+      if (substr(rest, 1, 2) == ":=" || substr(rest, 1, 3) == "::=") {
+        next
+      }
+      found = 1
+      exit
+    }
+    END { exit !found }
+  ' "$makefile"; then
     err "$MAP names make target \`$t\`, which is not a Makefile target"
   fi
 done
