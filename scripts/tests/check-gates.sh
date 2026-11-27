@@ -107,6 +107,7 @@ expect pass check-source-style.sh "$style_plugin_clean" "a clean plugin conforma
 tree() {
   local root="$work/$1"
   mkdir -p "$root/crates/scribe-core/src" "$root/crates/scribe/src"
+  printf '[workspace]\nresolver = "2"\nmembers = ["crates/*"]\n' >"$root/Cargo.toml"
   printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n' >"$root/crates/scribe-core/Cargo.toml"
   printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nscribe-core = { path = "../scribe-core" }\n' \
     >"$root/crates/scribe/Cargo.toml"
@@ -265,7 +266,8 @@ store_tree() {
   local root
   root=$(tree "$1")
   mkdir -p "$root/crates/scribe-store/src/db" "$root/crates/scribe-store/src/repository"
-  printf '[package]\nname = "scribe-store"\n' >"$root/crates/scribe-store/Cargo.toml"
+  printf '[package]\nname = "scribe-store"\nversion = "0.1.0"\n' >"$root/crates/scribe-store/Cargo.toml"
+  printf '//! store\n' >"$root/crates/scribe-store/src/lib.rs"
   printf '//! codec\n' >"$root/crates/scribe-store/src/db/codec.rs"
   printf '//! audit\n' >"$root/crates/scribe-store/src/repository/audit.rs"
   echo "$root"
@@ -486,7 +488,10 @@ printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.w
 expect pass check-dependency-direction.sh "$meta_clean" "a clean alias with a [workspace.metadata] rusqlite mask"
 
 pkgmeta_masked=$(tree cycle-package-metadata-masked)
-printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nback = { path = "crates/scribe", package = "scribe" }\n\n[package.metadata]\nworkspace.dependencies.back = { package = "serde" }\n' \
+rm -rf "$pkgmeta_masked/crates/scribe"
+mkdir -p "$pkgmeta_masked/src"
+printf 'fn main() {}\n' >"$pkgmeta_masked/src/main.rs"
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nscribe-core = { path = "crates/scribe-core" }\n\n[workspace]\nmembers = ["crates/scribe-core"]\n\n[workspace.dependencies]\nback = { path = ".", package = "scribe" }\n\n[package.metadata]\nworkspace.dependencies.back = { package = "serde" }\n' \
   >"$pkgmeta_masked/Cargo.toml"
 printf '[package]\nname = "scribe-core"\nversion = "0.1.0"\n\n[dependencies]\nback.workspace = true\n' \
   >"$pkgmeta_masked/crates/scribe-core/Cargo.toml"
@@ -498,10 +503,11 @@ if ! grep -Fq "crate import cycle:" "$work/out"; then
 fi
 
 pkgmeta_clean=$(tree package-metadata-clean)
-printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies]\nmydep = { path = "crates/scribe-core", package = "scribe-core" }\n\n[package.metadata]\nworkspace.dependencies.mydep = { package = "rusqlite" }\n' \
+rm -rf "$pkgmeta_clean/crates/scribe"
+mkdir -p "$pkgmeta_clean/src"
+printf 'fn main() {}\n' >"$pkgmeta_clean/src/main.rs"
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.workspace = true\n\n[workspace]\nmembers = ["crates/scribe-core"]\n\n[workspace.dependencies]\nmydep = { path = "crates/scribe-core", package = "scribe-core" }\n\n[package.metadata]\nworkspace.dependencies.mydep = { package = "rusqlite" }\n' \
   >"$pkgmeta_clean/Cargo.toml"
-printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nmydep.workspace = true\n' \
-  >"$pkgmeta_clean/crates/scribe/Cargo.toml"
 expect pass check-dependency-direction.sh "$pkgmeta_clean" "a clean alias with a [package.metadata] rusqlite mask"
 
 # Top-level multiline arrays and multiline strings whose continuation lines
@@ -552,7 +558,7 @@ done
 # Member top-level dotted `dependencies.*` after a multiline array starting with
 # `[` stays enforced, while `[package.metadata]` dotted keys stay ignored.
 member_ml_bad=$(tree member-multiline-bad)
-printf 'package.metadata.grid = [\n  ["a"],\n]\ndependencies.sql = { version = "0.43", package = "rusqlite" }\n\n[package]\nname = "scribe"\nversion = "0.1.0"\n' \
+printf 'package.name = "scribe"\npackage.version = "0.1.0"\npackage.metadata.grid = [\n  ["a"],\n]\ndependencies.sql = { version = "0.43", package = "rusqlite" }\n' \
   >"$member_ml_bad/crates/scribe/Cargo.toml"
 expect fail check-dependency-direction.sh "$member_ml_bad" "member top-level dotted dependency after multiline array starting with ["
 if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
@@ -668,13 +674,13 @@ for legal_reuse in \
   expect pass check-dependency-direction.sh "$legal" "a reused key with legal packages, or a dev-only banned one ($n_reuse)"
 done
 for core_reuse in \
-  $'[dependencies]\nscribe = { version = "1", package = "serde" }\n\n[build-dependencies]\nscribe = { path = "../scribe" }\n' \
-  $'[target.\'cfg(windows)\'.dependencies]\nscribe = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nscribe = { path = "../scribe" }\n'; do
+  $'[dependencies]\nscribe = { version = "1", package = "serde" }\n\n[build-dependencies]\nscribe = { version = "0.1.0" }\n' \
+  $'[target.\'cfg(windows)\'.dependencies]\nscribe = { version = "1", package = "serde" }\n\n[target.\'cfg(unix)\'.dependencies]\nscribe = { version = "0.1.0" }\n'; do
   n_reuse=$((n_reuse + 1))
   cyc_reuse=$(tree "cycle-reused-$n_reuse")
   printf '[package]\nname = "scribe-core"\n\n%s' "$core_reuse" >"$cyc_reuse/crates/scribe-core/Cargo.toml"
   expect fail check-dependency-direction.sh "$cyc_reuse" "a crate cycle closed by a reused key ($n_reuse)"
-  edge_line=$(grep -n 'path = "../scribe"' "$cyc_reuse/crates/scribe-core/Cargo.toml" | cut -d: -f1)
+  edge_line=$(grep -n 'version = "0.1.0"' "$cyc_reuse/crates/scribe-core/Cargo.toml" | cut -d: -f1)
   if ! grep -Fq "crate import cycle:" "$work/out" || ! grep -Fq "crates/scribe-core/Cargo.toml:$edge_line" "$work/out"; then
     echo "check-gates: FAIL: the cycle diagnostic does not cite the declaration at line $edge_line ($n_reuse)" >&2
     sed 's/^/  | /' "$work/out" >&2
@@ -1036,6 +1042,206 @@ root_comment=$(tree cfg-root-comment)
 printf '//! core\npub mod apps;\n// #[cfg(test)]\nmod extra;\n' >"$root_comment/crates/scribe-core/src/lib.rs"
 printf 'fn extra() {}\n' >"$root_comment/crates/scribe-core/src/extra.rs"
 expect fail check-dependency-direction.sh "$root_comment" "root module after a line comment that says #[cfg(test)]"
+
+# --- ORB-29106: cargo metadata oracle agreement & shared direction_lex.py ----
+# Verify the gate agrees directly with `cargo metadata --offline --no-deps
+# --format-version 1` across TOML comments, reused keys in [dependencies]/
+# [build-dependencies] and two cfg target tables, quoted/single-quoted keys
+# including 'package', workspace-inherited aliases in dotted and subtable form,
+# and target-scoped dev-dependencies (exempt) vs build-dependencies (checked).
+assert_agrees_with_metadata() {
+  local root="$1" what="$2" want_banned="$3"
+  local meta_has_rusqlite
+  meta_has_rusqlite=$(
+    cd "$root" && cargo metadata --offline --no-deps --format-version 1 \
+      | python3 -I -c '
+import json, sys
+meta = json.load(sys.stdin)
+found = any(
+    dep["name"] == "rusqlite" and dep.get("kind") != "dev"
+    for pkg in meta["packages"] if pkg["name"] == "scribe"
+    for dep in pkg.get("dependencies", [])
+)
+print("yes" if found else "no")
+'
+  )
+  if [[ "$meta_has_rusqlite" != "$want_banned" ]]; then
+    echo "check-gates: FAIL: cargo metadata oracle disagreed with fixture $what (expected $want_banned, got $meta_has_rusqlite)" >&2
+    fail=1
+  fi
+  if [[ "$want_banned" == "yes" ]]; then
+    expect fail check-dependency-direction.sh "$root" "cargo metadata agreement ($what)"
+    if ! grep -Fq "must not depend on rusqlite" "$work/out"; then
+      echo "check-gates: FAIL: missing rusqlite diagnostic for metadata agreement ($what)" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+  else
+    expect pass check-dependency-direction.sh "$root" "cargo metadata agreement ($what)"
+  fi
+}
+
+# Workspace-inherited aliases in subtable form ([workspace.dependencies.sql])
+# and dotted form (workspace.dependencies.sql / [workspace] dependencies.sql),
+# consumed via both `[dependencies.sql] workspace = true` and `sql.workspace = true`.
+for form in ws-subtable-dotted-use ws-subtable-subtable-use ws-dotted-subtable-use; do
+  for pkg in rusqlite serde; do
+    f=$(tree "meta-$form-$pkg")
+    case "$form" in
+      ws-subtable-dotted-use)
+        printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies.sql]\nversion = "0.43"\npackage = "%s"\n' "$pkg" >"$f/Cargo.toml"
+        printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nsql.workspace = true\n' >"$f/crates/scribe/Cargo.toml"
+        ;;
+      ws-subtable-subtable-use)
+        printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\n\n[workspace.dependencies.sql]\nversion = "0.43"\n'\''package'\'' = "%s"\n' "$pkg" >"$f/Cargo.toml"
+        printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies.sql]\nworkspace = true\n' >"$f/crates/scribe/Cargo.toml"
+        ;;
+      ws-dotted-subtable-use)
+        printf '[workspace]\nmembers = ["crates/scribe", "crates/scribe-core"]\ndependencies.sql.version = "0.43"\ndependencies.sql."package" = "%s"\n' "$pkg" >"$f/Cargo.toml"
+        printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies.sql]\nworkspace = true\n' >"$f/crates/scribe/Cargo.toml"
+        ;;
+    esac
+    if [[ "$pkg" == rusqlite ]]; then
+      assert_agrees_with_metadata "$f" "$form ($pkg)" yes
+    else
+      assert_agrees_with_metadata "$f" "$form ($pkg)" no
+    fi
+  done
+done
+
+# Oracle agreement for TOML comments, key reuse across normal/build and two cfg
+# tables, quoted/single-quoted 'package', and target dev vs build dependencies.
+meta_comment_ok=$(tree meta-comment-ok)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1" # package = "rusqlite"\n' >"$meta_comment_ok/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_comment_ok" "TOML comment no false refusal" no
+
+meta_comment_bad=$(tree meta-comment-bad)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nrusqlite = "0.43" # package = "serde"\n' >"$meta_comment_bad/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_comment_bad" "TOML comment no missed dependency" yes
+
+meta_reuse_build=$(tree meta-reuse-build)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[dependencies]\nsql = { version = "1", package = "serde" }\n\n[build-dependencies]\nsql = { version = "0.43", '\''package'\'' = '\''rusqlite'\'' }\n' >"$meta_reuse_build/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_reuse_build" "same key in dependencies and build-dependencies" yes
+
+meta_reuse_cfg=$(tree meta-reuse-cfg)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[target.'\''cfg(unix)'\''.dependencies]\nsql = { version = "1", "package" = "serde" }\n\n[target.'\''cfg(windows)'\''.dependencies]\nsql = { version = "0.43", '\''package'\'' = '\''rusqlite'\'' }\n' >"$meta_reuse_cfg/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_reuse_cfg" "same key in two cfg target tables" yes
+
+meta_target_dev=$(tree meta-target-dev-exempt)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[target.'\''cfg(unix)'\''.dev-dependencies]\nrusqlite = "0.43"\n' >"$meta_target_dev/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_target_dev" "target dev-dependency stays exempt" no
+
+meta_target_build=$(tree meta-target-build-banned)
+printf '[package]\nname = "scribe"\nversion = "0.1.0"\n\n[target.'\''cfg(unix)'\''.build-dependencies]\nrusqlite = "0.43"\n' >"$meta_target_build/crates/scribe/Cargo.toml"
+assert_agrees_with_metadata "$meta_target_build" "target build-dependency is enforced" yes
+
+# Shared Rust lexer (`scripts/direction_lex.py`): `mod r#store {`, `mod r#name;`,
+# `#[doc = "#[cfg(test)]"]`, `#[cfg(test /* fixture */)]`, and
+# `#[cfg(any(feature = "test-support", test))]` behave as rustc reads them.
+mod_rstore_bad=$(commands_tree lex-mod-rstore-upward)
+cat >"$mod_rstore_bad/crates/scribe/src/commands/mod.rs" <<'EOF'
+#[doc = "#[cfg(test)]"]
+mod r#store {
+    use super::brief::Brief;
+}
+EOF
+expect fail check-dependency-direction.sh "$mod_rstore_bad" "mod r#store { under #[doc = \"#[cfg(test)]\"] with upward import"
+if ! grep -Fq "scribe::commands: store imports brief, which is not lower" "$work/out"; then
+  echo "check-gates: FAIL: mod r#store { lacks canonical upward-order diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+mod_rstore_ok=$(commands_tree lex-mod-rstore-clean)
+cat >"$mod_rstore_ok/crates/scribe/src/commands/mod.rs" <<'EOF'
+mod instruction {}
+mod r#store {
+    use super::instruction;
+}
+#[cfg(test /* fixture */)]
+mod r#test_helper {
+    use super::brief::Brief;
+}
+#[cfg(any(feature = "test-support", test))]
+mod r#support_helper {
+    use super::brief::Brief;
+}
+EOF
+expect pass check-dependency-direction.sh "$mod_rstore_ok" "mod r#store { downward edge and test-cfg raw inline modules"
+
+mod_rname_doc=$(tree lex-mod-rname-doc)
+printf '//! core\npub mod apps;\n#[doc = "#[cfg(test)]"]\nmod r#name;\n' >"$mod_rname_doc/crates/scribe-core/src/lib.rs"
+printf 'fn name() {}\n' >"$mod_rname_doc/crates/scribe-core/src/name.rs"
+expect fail check-dependency-direction.sh "$mod_rname_doc" "mod r#name; under #[doc = \"#[cfg(test)]\"]"
+if ! grep -Fq "lib.rs declares the root module name, which is not one of the places" "$work/out"; then
+  echo "check-gates: FAIL: mod r#name; lacks canonical root-module diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+mod_rname_cfg_comment=$(tree lex-mod-rname-cfg-comment)
+printf '//! core\npub mod apps;\n#[cfg(test /* fixture */)]\nmod r#name;\n' >"$mod_rname_cfg_comment/crates/scribe-core/src/lib.rs"
+printf 'fn name() {}\n' >"$mod_rname_cfg_comment/crates/scribe-core/src/name.rs"
+expect pass check-dependency-direction.sh "$mod_rname_cfg_comment" "mod r#name; under #[cfg(test /* fixture */)]"
+
+mod_rname_cfg_any=$(tree lex-mod-rname-cfg-any)
+printf '//! core\npub mod apps;\n#[cfg(any(feature = "test-support", test))]\nmod r#name;\n' >"$mod_rname_cfg_any/crates/scribe-core/src/lib.rs"
+printf 'fn name() {}\n' >"$mod_rname_cfg_any/crates/scribe-core/src/name.rs"
+expect pass check-dependency-direction.sh "$mod_rname_cfg_any" "mod r#name; under #[cfg(any(feature = \"test-support\", test))]"
+
+# Section 2 guards also scan through direction_lex.py: block comments, raw
+# strings, test-only cfgs, and raw identifiers are handled uniformly.
+lex_sec2_clean=$(store_tree lex-sec2-clean)
+mkdir -p "$lex_sec2_clean/crates/scribe-core/src/apps/entry" \
+  "$lex_sec2_clean/crates/scribe-core/src/providers" \
+  "$lex_sec2_clean/crates/scribe-store/src/contracts"
+cat >"$lex_sec2_clean/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+/* use std::{fmt, net}; */
+const S: &str = r#"use std::{fmt, net};"#;
+#[cfg(test /* fixture */)]
+use std::net::TcpStream;
+EOF
+cat >"$lex_sec2_clean/crates/scribe-core/src/apps/entry/mod.rs" <<'EOF'
+/* use super::session::Entry; */
+const S: &str = "use crate::apps::session::Entry;";
+#[cfg(any(feature = "test-support", test))]
+use super::session::Entry;
+EOF
+cat >"$lex_sec2_clean/crates/scribe-core/src/providers/models.rs" <<'EOF'
+/* use crate::{memory}; */
+const S: &str = "use crate::group::Item;";
+EOF
+cat >"$lex_sec2_clean/crates/scribe-store/src/contracts/entry.rs" <<'EOF'
+/* use crate::{db, repository}; */
+EOF
+cat >"$lex_sec2_clean/crates/scribe-store/src/db/mod.rs" <<'EOF'
+//! db
+/* PRAGMA journal_mode = WAL */
+EOF
+cat >"$lex_sec2_clean/crates/scribe-store/src/db/files.rs" <<'EOF'
+use crate::error::Error;
+/* use crate::db::log; */
+EOF
+expect pass check-dependency-direction.sh "$lex_sec2_clean" "section 2 guards ignore comments, strings and test-only cfgs via shared lexer"
+
+lex_sec2_std=$(tree lex-sec2-std-comment)
+printf '//! config\n#[doc = "#[cfg(test)]"]\nuse std::{ /* note */ net };\n' >"$lex_sec2_std/crates/scribe-core/src/config.rs"
+expect fail check-dependency-direction.sh "$lex_sec2_std" "ban_std catches grouped net with inner comment and doc attr"
+
+lex_sec2_app=$(tree lex-sec2-app-raw)
+mkdir -p "$lex_sec2_app/crates/scribe-core/src/apps/entry"
+printf '#[doc = "#[cfg(test)]"]\nuse super::r#session::Entry;\n' >"$lex_sec2_app/crates/scribe-core/src/apps/entry/mod.rs"
+expect fail check-dependency-direction.sh "$lex_sec2_app" "app order catches raw-ident upward import under doc attr"
+
+lex_sec2_contracts=$(store_tree lex-sec2-contracts)
+mkdir -p "$lex_sec2_contracts/crates/scribe-store/src/contracts"
+printf 'use crate::{ /* note */ db };\n' >"$lex_sec2_contracts/crates/scribe-store/src/contracts/entry.rs"
+expect fail check-dependency-direction.sh "$lex_sec2_contracts" "contracts grouped import catches db after inner comment"
+
+lex_sec2_files=$(store_tree lex-sec2-files)
+printf 'use crate::{error::Error, db::log};\n' >"$lex_sec2_files/crates/scribe-store/src/db/files.rs"
+expect fail check-dependency-direction.sh "$lex_sec2_files" "db/files.rs catches non-error import in same grouped use"
 
 # --- check-readme-links.py: README links, anchors and paths (STD-09 R12) -----
 # readme <name>: a fixture root whose README.md is read from stdin, with the
