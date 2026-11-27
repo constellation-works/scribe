@@ -1423,6 +1423,20 @@ enum VariantType { V { field: [Result<u8, u16>::std::net::Item; 2] } }
 EOF
 expect pass check-dependency-direction.sh "$lex_nested" "std inside ordinary, raw-identifier and generic-qualified paths"
 
+# Stringify preserves tokens without resolving their generic-qualified paths.
+lex_stringify=$(tree lex-stringify-generic)
+cat >"$lex_stringify/crates/scribe-core/src/config.rs" <<'EOF'
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+pub const BRACKETS: &str = stringify!([Result<u8, u16>::std::net::Item]);
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify.rmeta" \
+  "$lex_stringify/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified paths in stringify tokens"
+
 # Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
 # `>>` comparisons/shifts must produce the socket guard diagnostic with their
 # source line, even when `<` comparisons or `<<` shifts appear nearby (ORB-29337).

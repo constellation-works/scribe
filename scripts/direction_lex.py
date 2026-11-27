@@ -291,6 +291,31 @@ def _in_type_delim(code: Sequence[Token], idx: int) -> bool:
     return True
 
 
+def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
+    """Recognize an enclosing unqualified stringify invocation's token tree."""
+    closing = {')': '(', ']': '[', '}': '{'}
+    stack: List[str] = []
+    for j in range(idx, -1, -1):
+        tok = code[j]
+        if tok.kind != "PUNCT":
+            continue
+        if tok.text in closing:
+            stack.append(closing[tok.text])
+        elif tok.text in ("(", "[", "{"):
+            if stack:
+                if stack.pop() != tok.text:
+                    return False
+            elif (
+                j >= 2
+                and code[j - 1].text == "!"
+                and code[j - 2].kind == "IDENT"
+                and code[j - 2].text == "stringify"
+                and (j < 3 or code[j - 3].text not in ("::", "$"))
+            ):
+                return True
+    return False
+
+
 def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
     """Return True when `>` at `gt_idx` closes `<...>` rather than `->`, `=>`, or a comparison/shift."""
     # `->` and `=>` end with `>` but open a type or expression, so `::` after them is leading.
@@ -474,7 +499,9 @@ def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
     ):
         return True
 
-    return _in_type_delim(code, p - 1)
+    # Stringify accepts arbitrary token trees, so expression-delimiter
+    # heuristics cannot distinguish a generic path from comparisons there.
+    return _in_type_delim(code, p - 1) or _in_stringify_tokens(code, p - 1)
 
 
 def _scan_ident_end(src: str, pos: int) -> int:
