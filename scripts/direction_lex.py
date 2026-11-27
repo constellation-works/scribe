@@ -369,6 +369,20 @@ def _is_stringify_crate(tok: Token) -> bool:
     )
 
 
+def _has_local_module(code: Sequence[Token], name: str) -> bool:
+    """Return True when the file declares a module that could shadow a crate name."""
+    return any(
+        tok.kind == "IDENT"
+        and tok.text == "mod"
+        and i + 2 < len(code)
+        and code[i + 1].kind in ("IDENT", "RAW_IDENT")
+        and canonical_ident(code[i + 1].text) == name
+        and code[i + 2].kind == "PUNCT"
+        and code[i + 2].text in ("{", ";")
+        for i, tok in enumerate(code)
+    )
+
+
 def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
     """Recognize an enclosing builtin stringify invocation's token tree."""
     closing = {')': '(', ']': '[', '}': '{'}
@@ -410,28 +424,34 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
                     and not _is_metavar(code, s - 2)
                 ):
                     p = s - 2
+                    absolute = False
                     if p >= 1 and code[p - 1].text == "::":
                         if p - 1 == 0:
-                            return True
-                        prev2 = code[p - 2]
-                        if prev2.kind == "RAW_IDENT":
-                            continue
-                        if prev2.kind == "IDENT" and (
-                            prev2.text not in PATH_PREFIX_KEYWORDS
-                            or _is_metavar(code, p - 2)
-                        ):
-                            continue
-                    elif p == 0:
-                        return True
-                    else:
-                        # `$std::stringify` is already rejected by the
-                        # metavariable check above; any other preceding
-                        # delimiter keeps `std` leading.
-                        pass
-                    # A qualified `std::`/`core::` path names the builtin
-                    # macro, which a local `macro_rules! stringify` cannot
-                    # shadow, so its tokens never use the shown paths.
-                    return True
+                            absolute = True
+                        else:
+                            prev2 = code[p - 2]
+                            if prev2.kind == "RAW_IDENT":
+                                continue
+                            if prev2.kind == "IDENT" and (
+                                prev2.text not in PATH_PREFIX_KEYWORDS
+                                or _is_metavar(code, p - 2)
+                            ):
+                                continue
+                            if (
+                                prev2.kind == "PUNCT"
+                                and prev2.text == ">"
+                                and _is_generic_close(code, p - 2)
+                            ):
+                                continue
+                            absolute = True
+                    # A local module can shadow the extern-prelude crate and
+                    # re-export an evaluating macro. Only treat an unrooted
+                    # std/core path as builtin when this file has no module
+                    # declaration with that name. An explicit `::std::` or
+                    # `::core::` path remains rooted at the builtin crate.
+                    return absolute or not _has_local_module(
+                        code, canonical_ident(code[p].text)
+                    )
     return False
 
 

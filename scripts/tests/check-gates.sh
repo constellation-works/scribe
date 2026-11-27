@@ -1461,6 +1461,7 @@ expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified pa
 lex_stringify_qualified=$(tree lex-stringify-qualified)
 cat >"$lex_stringify_qualified/crates/scribe-core/src/config.rs" <<'EOF'
 pub const EXAMPLE: &str = std::stringify!([Result<u8, u16>::std::net::Item]);
+pub const CORE_EXAMPLE: &str = core::stringify!([Result<u8, u16>::std::net::Item]);
 pub const RAW_EXAMPLE: &str = r#stringify!([Result<u8, u16>::std::net::Item]);
 EOF
 if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-qualified.rmeta" \
@@ -1470,6 +1471,36 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
   fail=1
 fi
 expect pass check-dependency-direction.sh "$lex_stringify_qualified" "generic-qualified paths in qualified and raw stringify tokens"
+
+# A local std/core module can re-export an evaluating macro under the builtin
+# stringify name. Keep an absolute builtin call in the same fixture to verify
+# its generic tokens remain exempt while the shadowed call exposes its socket.
+for macro_crate in std core; do
+  lex_shadow_qualified=$(tree "lex-shadow-${macro_crate}-stringify")
+  cat <<'EOF' | sed "s/@CRATE@/$macro_crate/g" >"$lex_shadow_qualified/crates/scribe-core/src/config.rs"
+mod @CRATE@ {
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+pub const BUILTIN: &str = ::std::stringify!([Result<u8, u16>::std::net::Item]);
+pub fn f(a: usize, b: usize) -> bool {
+    @CRATE@::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-${macro_crate}-stringify.rmeta" \
+    "$lex_shadow_qualified/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: shadowed $macro_crate::stringify fixture did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_shadow_qualified" "evaluated comparisons in shadowed $macro_crate::stringify"
+  if ! grep -Fq 'config.rs:7:    '"$macro_crate"'::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)' "$work/out" || \
+     ! grep -Fq 'scribe-core opens no socket' "$work/out" || grep -Fq 'config.rs:5:' "$work/out"; then
+    echo "check-gates: FAIL: shadowed $macro_crate::stringify did not isolate the socket diagnostic from absolute builtin stringify" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
 
 # A local macro can shadow stringify and evaluate its arguments. Its
 # comparison must not be mistaken for a generic-qualified path.
