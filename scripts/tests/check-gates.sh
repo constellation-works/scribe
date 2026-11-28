@@ -2414,7 +2414,9 @@ fi
 # the same disallowed paths stay banned in the rest of each adapter module.
 # Each fixture compiles the production code under the real lint configuration:
 # fs.rs whole, and the expectation-carrying helpers of composition.rs and
-# console.rs (the rest of those modules needs their crates). A forbidden call
+# console.rs (the rest of those modules needs their crates), preceded by any
+# module-level `#![expect(...)]` or `#![allow(...)]` from the adapter so a
+# future module-wide weakening still weakens the fixture. A forbidden call
 # appended to the module must fail, as must a direct exit, which the
 # independent `clippy::exit` lint bans in every exempt module.
 adapter_clippy() {
@@ -2435,6 +2437,14 @@ adapter_clippy() {
 # The top-level items of $1 that carry an `#[expect(` attribute.
 expect_items() {
   awk '/^#\[expect\(/ { on = 1 } on { print } on && /^}/ { on = 0 }' "$1"
+}
+
+# The module-level inner attributes of $1 (`#![expect(...)]` or `#![allow(...)]`,
+# single- or multi-line). The adapter fixtures inline module bodies at their
+# crate root, so these must be emitted before any item for the weakening they
+# express to reach the fixture.
+expect_inner() {
+  awk '/^#![[]expect\(/ || /^#![[]allow\(/ { on = 1 } on { print } on && /\)\]/ { on = 0 }' "$1"
 }
 
 fs_clippy=$(adapter_clippy fs)
@@ -2466,6 +2476,7 @@ expect_clippy fail "$fs_clippy" "clippy::exit" "direct exit in the file-system a
 composition_clippy=$(adapter_clippy composition)
 {
   printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$REPO_ROOT/crates/scribe-core/src/composition.rs"
   printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
   expect_items "$REPO_ROOT/crates/scribe-core/src/composition.rs"
 } >"$composition_clippy/src/lib.rs"
@@ -2492,6 +2503,7 @@ else
   host_name_clippy=$(adapter_clippy composition-host-name)
   {
     printf '//! Non-Unix composition host-name fixture.\n#![allow(dead_code)]\n'
+    expect_inner "$REPO_ROOT/crates/scribe-core/src/composition.rs"
     printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
     cat <<'EOF'
 const APP: &str = "scribe";
@@ -2546,9 +2558,29 @@ pub fn bail() -> ! { std::process::exit(1) }
 EOF
 expect_clippy fail "$composition_clippy" "clippy::exit" "direct exit in the composition adapter"
 
+# A module-wide expectation would widen the boundary beyond the approved
+# operations, so the fixture carries it: a weakened twin with a crate-level
+# `#![expect(clippy::disallowed_methods)]` must fail (no disallowed call is
+# left for it to fulfill once every approved operation carries its own).
+weakened_src="$work/composition-weakened.rs"
+{
+  printf '#![expect(clippy::disallowed_methods, reason = "test")]\n'
+  cat "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+} >"$weakened_src"
+weakened_clippy=$(adapter_clippy composition-weakened)
+{
+  printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$weakened_src"
+  printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+  expect_items "$weakened_src"
+} >"$weakened_clippy/src/lib.rs"
+expect_clippy fail "$weakened_clippy" "unfulfilled" "a module-wide expectation in the composition adapter"
+
 console_clippy=$(adapter_clippy console)
 {
-  printf '//! Console adapter fixture.\n#![allow(dead_code)]\nuse std::io;\n\n'
+  printf '//! Console adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$REPO_ROOT/crates/scribe/src/output/common/console.rs"
+  printf 'use std::io;\n\n'
   expect_items "$REPO_ROOT/crates/scribe/src/output/common/console.rs"
 } >"$console_clippy/src/lib.rs"
 if ! grep -Fq 'io::stdout()' "$console_clippy/src/lib.rs"; then
