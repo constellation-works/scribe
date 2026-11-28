@@ -1707,8 +1707,8 @@ def is_test_cfg_attr(attr_body: Sequence[Token], test_support: bool = True) -> b
     """True when the tokens inside `#[ ... ]` form a test-only `cfg(...)` attribute."""
     if (
         len(attr_body) >= 3
-        and attr_body[0].kind == "IDENT"
-        and attr_body[0].text == "cfg"
+        and attr_body[0].kind in ("IDENT", "RAW_IDENT")
+        and canonical_ident(attr_body[0].text) == "cfg"
         and attr_body[1].kind == "PUNCT"
         and attr_body[1].text == "("
         and _find_matching_delim(attr_body, 1, "(", ")") == len(attr_body) - 1

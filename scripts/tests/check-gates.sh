@@ -2313,6 +2313,60 @@ EOF
   expect "${test_cfg_raw_want[$i]}" check-dependency-direction.sh "$lex_test_cfg_raw" "macro_use under raw test cfg '${test_cfg_raw_attrs[$i]}'"
 done
 
+# A `use` of a local `stringify` under a test-only cfg is compiled only for
+# tests, so the production call stays on the builtin. The raw `cfg` attribute
+# name and the raw `test` predicate match their plain spellings, which rustc
+# accepts (ORB-29923). The exact fixture comes first; the loop runs the plain
+# `cfg(test)` and active `cfg(not(test))` controls beside the raw spellings.
+raw_test_use=$(tree lex-stringify-use-raw-test)
+cat >"$raw_test_use/crates/scribe-core/src/config.rs" <<'EOF'
+mod local { macro_rules! custom { ($l:expr, $r:expr) => { ($l, $r) }; } pub(crate) use custom as stringify; }
+#[cfg(r#test)] use local::stringify;
+const EXAMPLE: &str = stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-use-raw-test.rmeta" \
+  "$raw_test_use/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: raw test use fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$raw_test_use" "builtin stringify beside #[cfg(r#test)] use of a local stringify"
+
+use_cfg_attrs=(
+  '#[cfg(test)]'
+  '#[cfg(r#test)]'
+  '#[r#cfg(test)]'
+  '#[r#cfg(r#test)]'
+  '#[cfg(not(test))]'
+  '#[cfg(not(r#test))]'
+  '#[r#cfg(not(test))]'
+)
+use_cfg_want=(pass pass pass pass fail fail fail)
+for i in "${!use_cfg_attrs[@]}"; do
+  lex_use_cfg=$(tree "lex-stringify-use-cfg-$i")
+  cat >"$lex_use_cfg/crates/scribe-core/src/config.rs" <<EOF
+mod local {
+    macro_rules! custom { (\$(\$x:tt)*) => { \$(\$x)* }; }
+    pub(crate) use custom as stringify;
+}
+${use_cfg_attrs[$i]} use local::stringify;
+pub fn f(a: usize, b: usize) {
+    let _ = stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-use-cfg-$i.rmeta" \
+    "$lex_use_cfg/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: stringify use fixture '${use_cfg_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect "${use_cfg_want[$i]}" check-dependency-direction.sh "$lex_use_cfg" "stringify use under '${use_cfg_attrs[$i]}'"
+  if [[ "${use_cfg_want[$i]}" == fail ]] && ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: active stringify use under '${use_cfg_attrs[$i]}' lacks its socket diagnostic" >&2
+    fail=1
+  fi
+done
+
 # The same mention as an inner `#![cfg(not(macro_use))]` on the module itself
 # takes the inner-attribute path of the scanner and still imports nothing.
 lex_inner_mention=$(tree lex-stringify-inner-macro-use-mention)
