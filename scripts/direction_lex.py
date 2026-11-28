@@ -613,12 +613,12 @@ def _cfg_pred_always_true(toks: Sequence[Token]) -> bool:
         return False
     if (
         len(toks) >= 3
-        and toks[0].kind == "IDENT"
+        and toks[0].kind in ("IDENT", "RAW_IDENT")
         and toks[1].kind == "PUNCT"
         and toks[1].text == "("
         and _find_matching_delim(toks, 1, "(", ")") == len(toks) - 1
     ):
-        op = toks[0].text
+        op = canonical_ident(toks[0].text)
         inner = toks[2:-1]
         if op == "all":
             preds = _split_top_level_commas(inner)
@@ -645,12 +645,12 @@ def _cfg_pred_inactive_outside_test(toks: Sequence[Token], test_ok: bool = True)
         return test_ok and name == "test"
     if (
         len(toks) >= 3
-        and toks[0].kind == "IDENT"
+        and toks[0].kind in ("IDENT", "RAW_IDENT")
         and toks[1].kind == "PUNCT"
         and toks[1].text == "("
         and _find_matching_delim(toks, 1, "(", ")") == len(toks) - 1
     ):
-        op = toks[0].text
+        op = canonical_ident(toks[0].text)
         inner = toks[2:-1]
         if op == "all":
             preds = _split_top_level_commas(inner)
@@ -1650,9 +1650,9 @@ def is_test_only_cfg_pred(toks: Sequence[Token], test_support: bool = True) -> b
     """True when a cfg(...) predicate can hold only under test or test-support."""
     if not toks:
         return False
-    # Single identifier: `test`
+    # Single identifier: `test` (plain or raw)
     if len(toks) == 1:
-        return toks[0].kind == "IDENT" and toks[0].text == "test"
+        return toks[0].kind in ("IDENT", "RAW_IDENT") and canonical_ident(toks[0].text) == "test"
     # Key-value predicate: `feature = "test-support"`
     if (
         len(toks) == 3
@@ -1663,15 +1663,15 @@ def is_test_only_cfg_pred(toks: Sequence[Token], test_support: bool = True) -> b
         and toks[2].kind == "STRING"
     ):
         return test_support and unquote_rust_string(toks[2]) == "test-support"
-    # Compound predicate: `any(...)`, `all(...)`, `not(...)`
+    # Compound predicate: `any(...)`, `all(...)`, `not(...)` (plain or raw)
     if (
         len(toks) >= 3
-        and toks[0].kind == "IDENT"
+        and toks[0].kind in ("IDENT", "RAW_IDENT")
         and toks[1].kind == "PUNCT"
         and toks[1].text == "("
         and _find_matching_delim(toks, 1, "(", ")") == len(toks) - 1
     ):
-        op = toks[0].text
+        op = canonical_ident(toks[0].text)
         inner = toks[2:-1]
         if op == "any":
             preds = _split_top_level_commas(inner)
