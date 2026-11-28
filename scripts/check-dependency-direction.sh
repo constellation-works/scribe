@@ -318,10 +318,15 @@ def read_nocomment(path):
     return _nocomment_cache[path]
 
 
-def read_scanned(path, base_mod=(), test_support=True):
-    key = (path, tuple(base_mod), test_support)
+def read_scanned(path, base_mod=(), test_support=True, crate_exports_stringify=None):
+    key = (path, tuple(base_mod), test_support, crate_exports_stringify)
     if key not in _scan_cache:
-        _scan_cache[key] = lex.scan_file(read_raw(path), base_mod, test_support)
+        _scan_cache[key] = lex.scan_file(
+            read_raw(path),
+            base_mod,
+            test_support,
+            crate_exports_stringify=crate_exports_stringify,
+        )
     return _scan_cache[key]
 
 
@@ -383,9 +388,48 @@ def ban_crate(path, pattern, msg):
 def ban_std(path, modules, msg):
     mod_set = set(modules)
     hits = []
-    for fp in iter_rs_files(path):
+    files = list(iter_rs_files(path))
+    is_dir = os.path.isdir(path)
+
+    def mod_parts_for(fp):
+        if is_dir:
+            return file_mod_parts(path, fp)
+        base = os.path.basename(fp)
+        return [] if base in ("lib.rs", "main.rs") else [base[:-3]]
+
+    file_mods_by_path = {fp: mod_parts_for(fp) for fp in files}
+    # A root module declared solely under #[cfg(test)] in lib.rs/main.rs
+    # (such as `#[cfg(test)] mod tests;` backed by `tests.rs`) is not compiled
+    # in production and cannot export macros to the crate root.
+    root_decls = collections.defaultdict(list)
+    for fp, parts in file_mods_by_path.items():
+        if not parts:
+            root_scanned = read_scanned(fp, (), test_support=False)
+            for fm in root_scanned.file_mods:
+                if fm.brace_depth == 0:
+                    root_decls[fm.name].append(fm.is_test_only)
+    test_only_root_mods = {
+        name for name, flags in root_decls.items() if flags and all(flags)
+    }
+
+    active_files = [
+        fp
+        for fp in files
+        if not (file_mods_by_path[fp] and file_mods_by_path[fp][0] in test_only_root_mods)
+    ]
+    crate_exports_stringify = any(
+        lex.has_exported_stringify_macro(read_raw(fp), test_support=False)
+        for fp in active_files
+    )
+
+    for fp in active_files:
         # Cargo features can be enabled in production; only cfg(test) excludes sockets.
-        scanned = read_scanned(fp, test_support=False)
+        scanned = read_scanned(
+            fp,
+            base_mod=file_mods_by_path[fp],
+            test_support=False,
+            crate_exports_stringify=crate_exports_stringify,
+        )
         raw_lines = read_raw(fp).splitlines()
         seen_lines = set()
         for stmt in scanned.use_stmts:

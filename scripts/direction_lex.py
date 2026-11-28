@@ -570,16 +570,27 @@ def _has_shadowing_binding(code: Sequence[Token], name: str, absolute: bool) -> 
     return not absolute and (_has_local_module(code, name) or _use_binds_name(code, name))
 
 
-def _is_stringify_macro_def(code: Sequence[Token], k: int, end: int) -> bool:
-    """Return True when `code[k]` starts `macro_rules! stringify` ending before `end`."""
-    return (
-        code[k].kind == "IDENT"
+def _macro_rules_body_end(code: Sequence[Token], k: int) -> Optional[int]:
+    """Return the closing delimiter index when `code[k]` starts `macro_rules! name <delim>`."""
+    if (
+        k + 3 < len(code)
+        and code[k].kind == "IDENT"
         and code[k].text == "macro_rules"
-        and k + 2 < end
+        and not _is_metavar(code, k)
+        and (
+            k == 0
+            or not (code[k - 1].kind == "PUNCT" and code[k - 1].text in ("::", "."))
+        )
+        and code[k + 1].kind == "PUNCT"
         and code[k + 1].text == "!"
         and code[k + 2].kind in ("IDENT", "RAW_IDENT")
-        and canonical_ident(code[k + 2].text) == "stringify"
-    )
+        and code[k + 3].kind == "PUNCT"
+        and code[k + 3].text in ("{", "(", "[")
+    ):
+        pairs = {"{": "}", "(": ")", "[": "]"}
+        open_ch = code[k + 3].text
+        return _find_matching_delim(code, k + 3, open_ch, pairs[open_ch])
+    return None
 
 
 def _cfg_pred_always_true(toks: Sequence[Token]) -> bool:
@@ -733,46 +744,176 @@ def _is_macro_use_attr(code: Sequence[Token], k: int) -> bool:
     return False
 
 
-def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
+def _scan_stringify_macros(
+    code: Sequence[Token],
+    end: int,
+    test_support: bool = True,
+    stop_on_export: bool = False,
+) -> Tuple[bool, bool, bool, bool]:
+    """Scan `code[:end]` for active `macro_rules! stringify` visibility and exports.
+
+    Returns `(textual_visible, at_mod_root, macro_use_seen, found_export)`.
+    """
+    limit = min(end, len(code))
+    scopes = [False]
+    # Parallel to `scopes`: whether each open block is a `mod name { ... }` or `#[cfg(test)]` body.
+    in_mod = [False]
+    in_test = [False]
+    pending_test_cfg = False
+    paren_depth = 0
+    bracket_depth = 0
+    at_item_start = True
+    macro_use = False
+    seen_textual = False
+    found_export = False
+    k = 0
+    while k < limit:
+        tok = code[k]
+        # Inner attribute `#![...]` (does not attach to the following item)
+        if (
+            paren_depth == 0
+            and bracket_depth == 0
+            and k + 2 < limit
+            and tok.kind == "PUNCT"
+            and tok.text == "#"
+            and code[k + 1].kind == "PUNCT"
+            and code[k + 1].text == "!"
+            and code[k + 2].kind == "PUNCT"
+            and code[k + 2].text == "["
+        ):
+            close = _find_matching_delim(code, k + 2, "[", "]")
+            if not in_test[-1] and any(
+                _is_macro_use_attr(code, m) for m in range(k + 3, min(close, limit))
+            ):
+                macro_use = True
+            k = close + 1
+            continue
+
+        # Outer attributes `#[...]` at item/statement start
+        if (
+            at_item_start
+            and paren_depth == 0
+            and bracket_depth == 0
+            and tok.kind == "PUNCT"
+            and tok.text == "#"
+            and k + 1 < limit
+            and code[k + 1].kind == "PUNCT"
+            and code[k + 1].text == "["
+        ):
+            attrs, next_k = _parse_outer_attrs(code, k)
+            if has_test_cfg(attrs, test_support):
+                pending_test_cfg = True
+            if not (in_test[-1] or pending_test_cfg) and any(
+                _is_macro_use_attr(code, m) for m in range(k, min(next_k, limit))
+            ):
+                macro_use = True
+            k = next_k
+            continue
+
+        body_end = _macro_rules_body_end(code, k)
+        if body_end is not None:
+            is_test = in_test[-1] or pending_test_cfg
+            if not is_test and canonical_ident(code[k + 2].text) == "stringify":
+                scopes[-1] = True
+                seen_textual = True
+                if _has_macro_export_attr(code, k):
+                    found_export = True
+                    if stop_on_export:
+                        return (any(scopes), not any(in_mod), macro_use and seen_textual, True)
+            if body_end >= limit:
+                break
+            k = body_end + 1
+            pending_test_cfg = False
+            at_item_start = True
+            continue
+
+        if tok.kind == "PUNCT":
+            if tok.text == "(":
+                paren_depth += 1
+                at_item_start = False
+            elif tok.text == ")":
+                paren_depth = max(0, paren_depth - 1)
+                at_item_start = False
+            elif tok.text == "[":
+                bracket_depth += 1
+                at_item_start = False
+            elif tok.text == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+                at_item_start = False
+            elif tok.text == "{":
+                scopes.append(False)
+                in_mod.append(
+                    k >= 2
+                    and code[k - 1].kind in ("IDENT", "RAW_IDENT")
+                    and code[k - 2].kind == "IDENT"
+                    and code[k - 2].text == "mod"
+                    and not _is_metavar(code, k - 2)
+                )
+                in_test.append(in_test[-1] or pending_test_cfg)
+                pending_test_cfg = False
+                at_item_start = True
+            elif tok.text == "}":
+                if len(scopes) > 1:
+                    scopes.pop()
+                    in_mod.pop()
+                    in_test.pop()
+                pending_test_cfg = False
+                at_item_start = paren_depth == 0 and bracket_depth == 0
+            elif tok.text == ";" and paren_depth == 0 and bracket_depth == 0:
+                pending_test_cfg = False
+                at_item_start = True
+            else:
+                at_item_start = False
+        else:
+            at_item_start = False
+        k += 1
+
+    return (any(scopes), not any(in_mod), macro_use and seen_textual, found_export)
+
+
+def has_exported_stringify_macro(
+    src_or_tokens: object, test_support: bool = False
+) -> bool:
+    """Return True when non-test Rust source defines a `#[macro_export] macro_rules! stringify`."""
+    code = code_tokens(src_or_tokens) if isinstance(src_or_tokens, str) else src_or_tokens
+    _, _, _, found_export = _scan_stringify_macros(
+        code, len(code), test_support=test_support, stop_on_export=True
+    )
+    return found_export
+
+
+def _has_visible_stringify_macro(
+    code: Sequence[Token],
+    end: int,
+    is_crate_root: bool = True,
+    crate_exports_stringify: Optional[bool] = None,
+    test_support: bool = True,
+) -> bool:
     """Find definitions of `stringify!` that can shadow the builtin at `end`.
 
     Textual definitions are visible after their definition, until the end of
-    the enclosing block or module. A `#[macro_export]` definition is also
-    visible by path at the crate root, wherever in the file it appears.
+    the enclosing block or module. A non-test `#[macro_export]` definition is
+    also visible by path at the crate root, wherever in the crate it appears.
     """
-    scopes = [False]
-    # Parallel to `scopes`: whether each open block is a `mod name { ... }` body.
-    in_mod = [False]
-    # macro_use can import a child module's macros into its parent. Keep the
-    # earlier conservative treatment when such an import may be present.
-    macro_use = any(_is_macro_use_attr(code, k) for k in range(min(end, len(code))))
-    seen = False
-    for k, tok in enumerate(code[:end]):
-        if _is_stringify_macro_def(code, k, end):
-            scopes[-1] = True
-            seen = True
-        elif tok.kind == "PUNCT" and tok.text == "{":
-            scopes.append(False)
-            in_mod.append(
-                k >= 2
-                and code[k - 1].kind in ("IDENT", "RAW_IDENT")
-                and code[k - 2].kind == "IDENT"
-                and code[k - 2].text == "mod"
-            )
-        elif tok.kind == "PUNCT" and tok.text == "}" and len(scopes) > 1:
-            scopes.pop()
-            in_mod.pop()
-    if any(scopes) or (macro_use and seen):
-        return True
-    # A `#[macro_export]` macro lives in the crate root's path scope, so a call
-    # outside every `mod` body sees it even before the definition.
-    return not any(in_mod) and any(
-        _is_stringify_macro_def(code, k, len(code)) and _has_macro_export_attr(code, k)
-        for k in range(len(code))
+    textual_visible, at_mod_root, macro_use_seen, found_export = _scan_stringify_macros(
+        code, end, test_support=test_support, stop_on_export=False
     )
+    if textual_visible or macro_use_seen:
+        return True
+    if not is_crate_root or not at_mod_root:
+        return False
+    if crate_exports_stringify is not None:
+        return crate_exports_stringify
+    return found_export or has_exported_stringify_macro(code, test_support=test_support)
 
 
-def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
+def _in_stringify_tokens(
+    code: Sequence[Token],
+    idx: int,
+    is_crate_root: bool = True,
+    crate_exports_stringify: Optional[bool] = None,
+    test_support: bool = True,
+) -> bool:
     """Recognize an enclosing builtin stringify invocation's token tree."""
     closing = {')': '(', ']': '[', '}': '{'}
     stack: List[str] = []
@@ -795,7 +936,13 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
                 s = j - 2
                 if s == 0 or code[s - 1].text != "::":
                     # Textual macro scope ends with its enclosing block or module.
-                    return not _has_visible_stringify_macro(code, s)
+                    return not _has_visible_stringify_macro(
+                        code,
+                        s,
+                        is_crate_root=is_crate_root,
+                        crate_exports_stringify=crate_exports_stringify,
+                        test_support=test_support,
+                    )
                 if (
                     s >= 2
                     and code[s - 1].text == "::"
@@ -819,7 +966,13 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
                             if (
                                 prev2.kind == "PUNCT"
                                 and prev2.text == ">"
-                                and _is_generic_close(code, p - 2)
+                                and _is_generic_close(
+                                    code,
+                                    p - 2,
+                                    is_crate_root=is_crate_root,
+                                    crate_exports_stringify=crate_exports_stringify,
+                                    test_support=test_support,
+                                )
                             ):
                                 continue
                             absolute = True
@@ -833,7 +986,13 @@ def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
     return False
 
 
-def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
+def _is_generic_close(
+    code: Sequence[Token],
+    gt_idx: int,
+    is_crate_root: bool = True,
+    crate_exports_stringify: Optional[bool] = None,
+    test_support: bool = True,
+) -> bool:
     """Return True when `>` at `gt_idx` closes `<...>` rather than `->`, `=>`, or a comparison/shift."""
     # `->` and `=>` end with `>` but open a type or expression, so `::` after them is leading.
     if gt_idx >= 1 and (
@@ -1018,7 +1177,13 @@ def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
 
     # Stringify accepts arbitrary token trees, so expression-delimiter
     # heuristics cannot distinguish a generic path from comparisons there.
-    return _in_type_delim(code, p - 1) or _in_stringify_tokens(code, p - 1)
+    return _in_type_delim(code, p - 1) or _in_stringify_tokens(
+        code,
+        p - 1,
+        is_crate_root=is_crate_root,
+        crate_exports_stringify=crate_exports_stringify,
+        test_support=test_support,
+    )
 
 
 def _turbofish_open_idx(code: Sequence[Token], gt_idx: int) -> Optional[int]:
@@ -1647,13 +1812,23 @@ class _Frame(NamedTuple):
 
 
 def scan_file(
-    src: str, base_mod: Sequence[str] = (), test_support: bool = True
+    src: str,
+    base_mod: Sequence[str] = (),
+    test_support: bool = True,
+    crate_exports_stringify: Optional[bool] = None,
 ) -> ScannedFile:
     """Parse modules, `use` statements, inline paths, and item defs in one pass."""
     tokens = tuple(tokenize(src))
     code = tuple(t for t in tokens if t.kind not in ("WS", "COMMENT"))
     n = len(code)
     base_tuple = tuple(base_mod)
+    is_crate_root = not base_tuple
+    if not is_crate_root:
+        exports_stringify = False
+    elif crate_exports_stringify is not None:
+        exports_stringify = bool(crate_exports_stringify)
+    else:
+        exports_stringify = has_exported_stringify_macro(code, test_support=test_support)
 
     inline_mods: List[InlineMod] = []
     file_mods: List[FileMod] = []
@@ -1912,7 +2087,13 @@ def scan_file(
                         or (
                             code[i - 2].kind == "PUNCT"
                             and code[i - 2].text == ">"
-                            and _is_generic_close(code, i - 2)
+                            and _is_generic_close(
+                                code,
+                                i - 2,
+                                is_crate_root=is_crate_root,
+                                crate_exports_stringify=exports_stringify,
+                                test_support=test_support,
+                            )
                         )
                     )
                 )
