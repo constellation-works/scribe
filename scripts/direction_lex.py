@@ -341,6 +341,13 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
                     j -= 1
                     continue
                 if paren_depth == 0 and bracket_depth == 0:
+                    if tok.text == ">":
+                        # A turbofish's commas separate its generic arguments, not
+                        # variants, so skip the whole `::<...>` before reading `,`/`=`.
+                        turbofish_open = _turbofish_open_idx(code, j)
+                        if turbofish_open is not None:
+                            j = turbofish_open - 1
+                            continue
                     if tok.text == ",":
                         saw_comma = True
                     elif not saw_comma and _is_plain_eq(code, j):
@@ -916,6 +923,33 @@ def _is_generic_close(code: Sequence[Token], gt_idx: int) -> bool:
     # Stringify accepts arbitrary token trees, so expression-delimiter
     # heuristics cannot distinguish a generic path from comparisons there.
     return _in_type_delim(code, p - 1) or _in_stringify_tokens(code, p - 1)
+
+
+def _turbofish_open_idx(code: Sequence[Token], gt_idx: int) -> Optional[int]:
+    """Return the `<` of the turbofish `::<...>` that the `>` at `gt_idx` closes, else None."""
+    if not _is_generic_close(code, gt_idx):
+        return None
+    angle_depth = 0
+    nest_depth = 0
+    for k in range(gt_idx, -1, -1):
+        tok = code[k]
+        if tok.kind != "PUNCT":
+            continue
+        if tok.text in (")", "]", "}"):
+            nest_depth += 1
+        elif tok.text in ("(", "[", "{"):
+            nest_depth -= 1
+            if nest_depth < 0:
+                return None
+        elif nest_depth == 0 and tok.text == ">":
+            if not (k >= 1 and _is_adjacent_punct(code, k - 1, k, "-", ">")):
+                angle_depth += 1
+        elif nest_depth == 0 and tok.text == "<":
+            angle_depth -= 1
+            if angle_depth == 0:
+                after_path = k >= 1 and code[k - 1].kind == "PUNCT" and code[k - 1].text == "::"
+                return k if after_path else None
+    return None
 
 
 def _scan_ident_end(src: str, pos: int) -> int:
