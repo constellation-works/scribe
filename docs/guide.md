@@ -541,9 +541,10 @@ export, comparison cases including a multi-argument turbofish discriminant,
 and a braced-variant declaration after a turbofish discriminant) are compiled
 directly by
 `rustc --edition=2024 --emit=metadata`. The terminal-guard alias-scoping
-fixtures (the `self::`, `super::` and `crate::` stream reexports, and the
-block-local, test-only and module-level `std::io` aliases) are compiled the same
-way. The bare
+fixtures (the `self::`, `super::` and `crate::` stream reexports, the
+block-local, test-only and module-level `std::io` aliases, and an absolute
+`::` extern path beside a same-named local module) are compiled the same
+way; the extern path also passes `--extern`. The bare
 function-pointer cases include three enum sibling fixtures: two with `fn()`
 variants and one with an `unsafe extern "C" fn` variant. The other two are
 standalone struct declarations, one with a function-pointer type default and one

@@ -8,6 +8,15 @@ import sys
 import direction_lex as lex
 
 
+def use_paths(stmt):
+    """Flatten `stmt` with a leading `::` kept.
+
+    Stored `paths` drop that marker, so `::elsewhere` would match a local
+    module named `elsewhere`.
+    """
+    return lex.flatten_use_tokens(stmt.tree_toks, keep_absolute=True)
+
+
 def scan(path):
     source = path.read_text(encoding="utf-8")
     statements = tuple(
@@ -23,7 +32,7 @@ def scan(path):
     while changed:
         changed = False
         for stmt in statements:
-            for segments, alias in stmt.paths:
+            for segments, alias in use_paths(stmt):
                 if not segments or segments[-1] == "*":
                     continue
                 resolved = expand(segments, stmt.mod_path, aliases, crate_root)
@@ -40,7 +49,7 @@ def scan(path):
         if any(
             expand(segments, stmt.mod_path, aliases, crate_root)
             in (("std", "io", "stdout"), ("std", "io", "stderr"), ("std", "io", "*"))
-            for segments, _ in stmt.paths
+            for segments, _ in use_paths(stmt)
         ):
             print(f"{path}:{stmt.line}: public standard stream reexport")
 
@@ -59,7 +68,14 @@ def expand(segments, module, aliases, crate_root=False):
     current module, `super` its parent and `crate` the crate root. A parent of
     the file's top level, or the crate root of a file that is not a crate root,
     lies outside the file: the path then stays as written and matches no alias.
+
+    A leading `::` segment is an absolute extern-prelude path. Rust 2024
+    resolves it to an external crate, never a same-named local module, so this
+    file's aliases are not consulted. Stripping the marker leaves `::std::...`
+    as a `std` path.
     """
+    if segments[:1] == (lex.ABSOLUTE_PATH_SEGMENT,):
+        return segments[1:]
     if not segments or segments[0] == "std":
         return segments
     scope, rest = module, segments

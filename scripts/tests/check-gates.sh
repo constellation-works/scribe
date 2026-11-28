@@ -3033,6 +3033,73 @@ rustc_fixture "$crate_walk_bad/crates/scribe/src/main.rs" guard-stream-crate-wal
 expect fail check-terminal-guard.sh "$crate_walk_bad" \
   "a crate::-prefixed stream reexport through a child module's alias"
 
+# Rust 2024 resolves `::elsewhere` from the extern prelude, not from the local
+# module of the same name (ORB-29922). The local `h` alias of std::io must not
+# make that reexport look like std::io::stdout. `const _: fn() = stdout`
+# type-checks only the external function: std::io::stdout returns Stdout.
+extern_absolute=$(guard_tree guard-stream-extern-absolute)
+cat >"$work/elsewhere-stdout.rs" <<'EOF'
+pub mod h {
+    pub fn stdout() {}
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --crate-name elsewhere --emit=metadata \
+  -o "$work/libelsewhere.rmeta" "$work/elsewhere-stdout.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: rustc rejected the elsewhere crate" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+else
+  cat >"$extern_absolute/crates/scribe/src/main.rs" <<'EOF'
+mod elsewhere {
+    pub(crate) use std::io as h;
+}
+pub use ::elsewhere::h::stdout;
+pub use ::elsewhere::{h::stdout as grouped_stdout};
+pub use ::{elsewhere::h::stdout as rooted_stdout};
+const _: fn() = stdout;
+const _: fn() = grouped_stdout;
+const _: fn() = rooted_stdout;
+fn main() {}
+EOF
+  if ! rustc --edition=2024 --emit=metadata \
+    --extern elsewhere="$work/libelsewhere.rmeta" \
+    -o "$work/guard-stream-extern-absolute.rmeta" \
+    "$extern_absolute/crates/scribe/src/main.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: rustc rejected guard-stream-extern-absolute" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  else
+    expect pass check-terminal-guard.sh "$extern_absolute" \
+      "an absolute extern-prelude path is not the same-named local std::io alias"
+    if grep -Fq 'public standard stream reexport' "$work/out"; then
+      echo "check-gates: FAIL: absolute extern path produced a stream reexport diagnostic" >&2
+      fail=1
+    fi
+  fi
+fi
+
+# The same local child alias, reached by its bare path, is still std::io::stdout.
+extern_local=$(guard_tree guard-stream-extern-local)
+cat >"$extern_local/crates/scribe/src/main.rs" <<'EOF'
+mod elsewhere {
+    pub(crate) use std::io as h;
+}
+pub use elsewhere::h::stdout;
+fn main() {}
+EOF
+rustc_fixture "$extern_local/crates/scribe/src/main.rs" guard-stream-extern-local
+expect fail check-terminal-guard.sh "$extern_local" \
+  "a bare reexport through the local child alias still names std::io::stdout"
+if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+  echo "check-gates: FAIL: local child alias reexport lacks its diagnostic" >&2
+  fail=1
+fi
+if ! grep -Fq 'crates/scribe/src/main.rs:' "$work/out" || \
+  ! grep -Fq 'public standard stream reexport' "$work/out"; then
+  echo "check-gates: FAIL: local child alias diagnostic is not on main.rs outside output" >&2
+  fail=1
+fi
+
 # rustc compiles commands/mod.rs as the crate root, so it is entry's parent and
 # declares the h that super:: and crate:: reach. entry.rs has its own std::io h
 # that neither path may reach: entry is not a crate root, so its top level has
@@ -3089,6 +3156,7 @@ fi
 i=0
 for reexport in \
   'pub use std::io::stdout as handle;' \
+  'pub use ::std::io::stdout as handle;' \
   'pub use std::io::stderr as handle;' \
   'pub use std::io::{stdout as handle};' \
   'pub use std::io::{Write, stderr as handle};'; do
@@ -3110,6 +3178,8 @@ done
 i=0
 for reexport in \
   'pub use std::{io::stdout as handle};' \
+  'pub use ::std::{io::stdout as handle};' \
+  'pub use ::std::io::*;' \
   'pub use std::{fmt::Debug, io::{Write, stderr as handle}};' \
   'pub use std::io::*;' \
   'pub use std::io::stdout as r#handle;' \
