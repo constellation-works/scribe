@@ -10,7 +10,11 @@ import direction_lex as lex
 
 def scan(path):
     source = path.read_text(encoding="utf-8")
-    statements = lex.scan_file(source).use_stmts
+    statements = tuple(
+        stmt
+        for stmt in lex.scan_file(source).use_stmts
+        if stmt.brace_depth == len(stmt.mod_path) and not stmt.is_test_only
+    )
     # Rust imports are in scope throughout their module, including before their
     # declaration. Resolve chains to a fixed point, without crossing modules.
     aliases = {}
@@ -43,6 +47,10 @@ def scan(path):
 def expand(segments, module, aliases):
     if not segments or segments[0] == "std":
         return segments
+    if segments[0] == "self":
+        segments = segments[1:]
+        if not segments:
+            return module
     return aliases.get((module, segments[0]), (segments[0],)) + segments[1:]
 
 

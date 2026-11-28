@@ -2125,6 +2125,79 @@ printf 'pub use std::io::stdout as output_stdout;\n' \
 expect pass check-terminal-guard.sh "$stream_owner" \
   "the output boundary may reexport its owned stdout handle"
 
+# Each alias-scoping fixture is compiled by rustc before the guard is checked,
+# so these cases exercise valid Rust source rather than lexer-only fragments.
+rustc_fixture() {
+  local source="$1" name="$2"
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata \
+    -o "$work/$name.rmeta" "$source" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: rustc rejected $name" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+}
+
+self_alias_bad=$(guard_tree guard-stream-self-alias-bad)
+cat >>"$self_alias_bad/crates/scribe/src/commands/entry.rs" <<'EOF'
+use std::io as host_io;
+pub use self::host_io::stdout as handle;
+EOF
+rustc_fixture "$self_alias_bad/crates/scribe/src/commands/entry.rs" \
+  guard-stream-self-alias-bad
+expect fail check-terminal-guard.sh "$self_alias_bad" \
+  "a self::-prefixed module-local stream alias reexport outside output"
+if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+  echo "check-gates: FAIL: self::-prefixed stream reexport lacks its diagnostic" >&2
+  fail=1
+fi
+
+self_alias_owner=$(guard_tree guard-stream-self-alias-owner)
+cat >"$self_alias_owner/crates/scribe/src/output/self_alias.rs" <<'EOF'
+use std::io as host_io;
+pub use self::host_io::stdout as handle;
+EOF
+rustc_fixture "$self_alias_owner/crates/scribe/src/output/self_alias.rs" \
+  guard-stream-self-alias-owner
+expect pass check-terminal-guard.sh "$self_alias_owner" \
+  "the output boundary may reexport stdout through a self::-prefixed alias"
+
+block_local_alias=$(guard_tree guard-stream-block-local-alias)
+cat >>"$block_local_alias/crates/scribe/src/commands/entry.rs" <<'EOF'
+pub mod host_io { pub fn stdout() {} }
+pub use host_io::stdout as local_handle;
+pub fn f() { use std::io as host_io; let _ = host_io::stdout; }
+EOF
+rustc_fixture "$block_local_alias/crates/scribe/src/commands/entry.rs" \
+  guard-stream-block-local-alias
+expect pass check-terminal-guard.sh "$block_local_alias" \
+  "a function-local std::io alias does not change a module-local reexport"
+
+test_only_alias=$(guard_tree guard-stream-test-only-alias)
+cat >>"$test_only_alias/crates/scribe/src/commands/entry.rs" <<'EOF'
+#[cfg(test)]
+use std::io as host_io;
+pub mod host_io { pub fn stdout() {} }
+pub use host_io::stdout as local_handle;
+EOF
+rustc_fixture "$test_only_alias/crates/scribe/src/commands/entry.rs" \
+  guard-stream-test-only-alias
+expect pass check-terminal-guard.sh "$test_only_alias" \
+  "a test-only std::io alias does not change a non-test module reexport"
+
+module_level_alias=$(guard_tree guard-stream-module-level-alias)
+cat >>"$module_level_alias/crates/scribe/src/commands/entry.rs" <<'EOF'
+use std::io as host_io;
+pub use host_io::stdout as handle;
+EOF
+rustc_fixture "$module_level_alias/crates/scribe/src/commands/entry.rs" \
+  guard-stream-module-level-alias
+expect fail check-terminal-guard.sh "$module_level_alias" \
+  "a module-level std::io alias still resolves to a public stream reexport"
+if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+  echo "check-gates: FAIL: module-level alias reexport lacks its diagnostic" >&2
+  fail=1
+fi
+
 i=0
 for reexport in \
   'pub use std::io::stdout as handle;' \
