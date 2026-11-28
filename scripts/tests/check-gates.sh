@@ -2223,6 +2223,40 @@ EOF
   expect pass check-dependency-direction.sh "$lex_inactive_raw" "builtin stringify beside inactive '${inactive_raw_attrs[$i]}'"
 done
 
+# A test-only `cfg` in raw spelling gates a `#[macro_use]` module like its plain
+# spelling: outside `cfg(test)` the module is absent, so the root builtin call
+# stays exempt. `r#not(test)` is active outside tests and still imports
+# (ORB-29920).
+test_cfg_raw_attrs=(
+  '#[cfg(r#test)]'
+  '#[cfg(r#any(test))]'
+  '#[cfg(r#all(test, r#any()))]'
+  '#[cfg(r#not(test))]'
+)
+test_cfg_raw_want=(pass pass pass fail)
+for i in "${!test_cfg_raw_attrs[@]}"; do
+  lex_test_cfg_raw=$(tree "lex-stringify-test-cfg-raw-$i")
+  cat >"$lex_test_cfg_raw/crates/scribe-core/src/lib.rs" <<EOF
+${test_cfg_raw_attrs[$i]}
+#[macro_use]
+mod tests {
+    macro_rules! stringify {
+        (\$v:expr) => { \$v };
+    }
+}
+pub fn f(a: usize, b: usize) {
+    let _ = stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-test-cfg-raw-$i.rmeta" \
+    "$lex_test_cfg_raw/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: raw test cfg fixture '${test_cfg_raw_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect "${test_cfg_raw_want[$i]}" check-dependency-direction.sh "$lex_test_cfg_raw" "macro_use under raw test cfg '${test_cfg_raw_attrs[$i]}'"
+done
+
 # The same mention as an inner `#![cfg(not(macro_use))]` on the module itself
 # takes the inner-attribute path of the scanner and still imports nothing.
 lex_inner_mention=$(tree lex-stringify-inner-macro-use-mention)
