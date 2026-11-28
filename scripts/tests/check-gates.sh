@@ -149,6 +149,9 @@ printf '#[test]\nfn t() {}\n' >"$wiring/crates/scribe-core/src/tests/entry.rs"
 printf '//! Unit tests.\n\n#![expect(\n    clippy::disallowed_methods,\n    reason = "stages files"\n)]\n\n// wiring\nmod entry;\n' \
   >"$wiring/crates/scribe-core/src/tests/mod.rs"
 expect pass check-test-modules.sh "$wiring" "a tests/mod.rs of comments, an expectation and mod lines"
+printf '#![expect(clippy::disallowed_methods, reason = "stages files")] // wiring\nmod entry;\n' \
+  >"$wiring/crates/scribe-core/src/tests/mod.rs"
+expect pass check-test-modules.sh "$wiring" "a single-line expectation with a trailing comment"
 printf 'pub(crate) mod entry;\n' >"$wiring/crates/scribe-core/src/tests/mod.rs"
 expect pass check-test-modules.sh "$wiring" "a tests/mod.rs declaring a pub(crate) mod"
 
@@ -159,7 +162,9 @@ for body in \
   $'mod entry;\npub(crate) use scribe_store::fixtures::T0;' \
   $'mod entry;\nuse crate::store::db;' \
   $'mod entry {\n    fn t() {}\n}' \
-  $'#![allow(clippy::disallowed_methods)]\nmod entry;'; do
+  $'#![allow(clippy::disallowed_methods)]\nmod entry;' \
+  $'#![expect(clippy::disallowed_methods)] fn helper() {}\nmod entry;' \
+  $'#![expect(\n    clippy::disallowed_methods\n)] fn helper() {}\nmod entry;'; do
   bad=$(tree "modules-items-$n")
   mkdir -p "$bad/crates/scribe-core/src/tests"
   printf '#[cfg(test)]\nmod tests;\n' >>"$bad/crates/scribe-core/src/lib.rs"

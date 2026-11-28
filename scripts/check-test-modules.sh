@@ -31,9 +31,22 @@ done < <(find crates -path '*/src/*' -path '*/tests/*' -name '*.rs' | sort)
 # a `mod name;` declaration or part of an inner `#![expect(...)]` attribute.
 wiring_only() {
   awk '
-    in_attr { if ($0 ~ /\)\][[:space:]]*$/) in_attr = 0; next }
+    # The attribute ends at the first `)]`; only a comment may follow it on that
+    # line, so an item cannot hide behind the closing bracket.
+    in_attr {
+      if (match($0, /\)\]/)) {
+        in_attr = 0
+        if (substr($0, RSTART + RLENGTH) !~ /^[[:space:]]*(\/\/.*)?$/) printf "%d: %s\n", NR, $0
+      }
+      next
+    }
     /^[[:space:]]*$/ || /^[[:space:]]*\/\// { next }
-    /^[[:space:]]*#!\[expect\(/ { if ($0 !~ /\)\][[:space:]]*$/) in_attr = 1; next }
+    /^[[:space:]]*#!\[expect\(/ {
+      if (!match($0, /\)\]/)) { in_attr = 1; next }
+      if (substr($0, RSTART + RLENGTH) ~ /^[[:space:]]*(\/\/.*)?$/) next
+      printf "%d: %s\n", NR, $0
+      next
+    }
     /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;[[:space:]]*(\/\/.*)?$/ { next }
     { printf "%d: %s\n", NR, $0 }
   ' "$1"
