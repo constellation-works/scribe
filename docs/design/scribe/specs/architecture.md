@@ -525,12 +525,20 @@ unrelated disallowed method and a direct exit to fail. The boundaries:
   `vars_os`, `current_dir`, `home_dir`, `temp_dir`) and the process snapshot
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
   binary has no exemption for environment reads);
-- `std::io::{stdout,stderr}` (only the three item-scoped helpers in
-  `scribe/src/output/common/console.rs`, the CLI output and log-subscriber
-  boundary under STD-02 R15) and `std::io::IsTerminal::is_terminal` (no
-  exemption anywhere; the terminal is probed through `cw_cli::Probe::detect`);
+- `std::io::{stdout,stderr}` and `std::io::IsTerminal::is_terminal` are listed
+  together under the shared `clippy::disallowed_methods` lint. The three
+  item-scoped `#[expect(clippy::disallowed_methods)]` helpers in
+  `scribe/src/output/common/console.rs` (`stdout_lock`, `stderr_lock`,
+  `stderr_handle`) suppress that lint for every matching call in each helper's
+  body, not only its intended stream call; other items remain subject to the
+  ban. Scribe probes terminal state through the sanctioned
+  `cw_cli::Probe::detect` API at the CLI output boundary (STD-02 R15);
   public reexports of `stdout` and `stderr` are separately restricted to
   `scribe/src/output/` by `scripts/check-terminal-guard.sh`;
+- Print macros and `dbg!` have separate lints: `main.rs` denies
+  `clippy::print_stdout` and `clippy::print_stderr` at the crate root, and
+  `Cargo.toml` denies `clippy::dbg_macro`. These independent macro lints remain
+  active in the helpers;
 - `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`,
   statement-scoped on `supervise`'s `Command::spawn` call so other disallowed
   paths remain banned across `providers/cli.rs` and `providers/cli/codex.rs`);

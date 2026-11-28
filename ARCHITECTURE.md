@@ -431,11 +431,13 @@ express. "Module" includes any file added later.
   `open_with_flags` forms), and `std::io::{stdout,stderr}` plus
   `std::io::IsTerminal::is_terminal` regardless of how a path is imported or
   aliased.
-  Production exemptions are confined to the boundary owners and scoped to the
-  approved operation, never to a whole module: no owner carries a module-wide
-  `#![expect]`, so a path its owner has not approved stays banned inside the
-  owner's own module (a standard stream in the file or composition adapters, an
-  unbounded channel in the console module):
+  Production expectations sit on boundary items, not modules. An item-scoped
+  `#[expect(clippy::disallowed_methods)]` suppresses that lint for every matching
+  call in the annotated item's body, not just its intended operation; other items
+  in the same module remain subject to the ban. No owner carries a module-wide
+  `#![expect]`, so paths outside the annotated items stay banned within their
+  owner's module (a standard stream or unbounded channel outside the console
+  helpers, or an environment read outside the composition helpers):
   `scribe-store/src/db/files.rs` (individual `std::fs` operations beside `cw-fs`),
   `scribe-tools/src/fs.rs` (host `std::fs` adapter; item-scoped on its wrapped
   handle types and on each `std::fs` operation it forwards),
@@ -503,14 +505,19 @@ express. "Module" includes any file added later.
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
-  `commands`; `clippy.toml` and `Cargo.toml` keep `std::io::{stdout,stderr}`
-  out of everything except three item-scoped `#[expect]` helpers in
-  `output/common/console.rs` (`stdout_lock`, `stderr_lock`, `stderr_handle`);
-  `IsTerminal::is_terminal`, `print!`/`println!`/`eprint!`/`eprintln!` and
-  `dbg!` have no exemption in any module (`main.rs` denies the print lints at
-  the crate root, `Cargo.toml` denies `dbg_macro`), while
-  `scripts/check-terminal-guard.sh` keeps public `std::io::{stdout,stderr}`
-  reexports and
+  `commands`; `clippy.toml` lists `std::io::{stdout,stderr}` and
+  `IsTerminal::is_terminal` under the shared `clippy::disallowed_methods` lint,
+  denied workspace-wide in `Cargo.toml`. The three item-scoped
+  `#[expect(clippy::disallowed_methods)]` helpers in
+  `output/common/console.rs` (`stdout_lock`, `stderr_lock`, `stderr_handle`)
+  suppress that lint throughout each helper's body, not only for its intended
+  stream call; every other item remains subject to the ban. Scribe probes
+  terminal state through the sanctioned `cw_cli::Probe::detect` API.
+  Separately, `main.rs` denies `clippy::print_stdout` and
+  `clippy::print_stderr` at the crate root, and `Cargo.toml` denies
+  `clippy::dbg_macro`; these independent macro lints remain active in the
+  helpers. Meanwhile, `scripts/check-terminal-guard.sh` keeps public
+  `std::io::{stdout,stderr}` reexports and
   `Terminal::(decide|detect)` and `Probe::detect` in `output/` and the
   color, width, format and log environment names in `composition.rs` (where
   the terminal variables come through the full process snapshot and
