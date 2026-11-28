@@ -74,8 +74,10 @@ fmt-check:
 # default cases, stringify, comparison cases including a multi-argument turbofish
 # discriminant, and a braced-variant declaration after a turbofish discriminant)
 # each compile one fixture file with `rustc` for Rust 2024 metadata only and
-# need no clippy. The other checks read manifests (cargo metadata, no compile)
-# and source files.
+# need no clippy. The terminal-guard alias-scoping cases (the `self::` stream
+# reexports, and block-local, test-only and module-level `std::io` aliases)
+# compile one fixture file each the same way. Outside these compiled cases, the
+# checks read manifests (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
 	./scripts/check-footprint-companions.sh
