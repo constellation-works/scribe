@@ -1499,9 +1499,11 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
 fi
 expect pass check-dependency-direction.sh "$lex_stringify" "generic-qualified paths in stringify tokens"
 
-# A macro in a closed module does not shadow a later root builtin.
+# A macro in a closed module does not shadow a later root builtin. A plain
+# function named `macro_use` is not a macro_use attribute and changes nothing.
 lex_stringify_local=$(tree lex-stringify-local-module)
 cat >"$lex_stringify_local/crates/scribe-core/src/config.rs" <<'EOF'
+pub fn macro_use() {}
 #[allow(dead_code)]
 mod local {
     macro_rules! stringify { ($value:expr) => { $value }; }
@@ -1516,6 +1518,32 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringi
   fail=1
 fi
 expect pass check-dependency-direction.sh "$lex_stringify_local" "builtin stringify after a module-local shadow"
+
+# A real `#[macro_use]` module import makes its stringify visible in the parent,
+# so an evaluated comparison inside that call is still reported.
+lex_stringify_macro_use=$(tree lex-stringify-macro-use)
+cat >"$lex_stringify_macro_use/crates/scribe-core/src/config.rs" <<'EOF'
+pub fn macro_use() {}
+#[macro_use]
+mod local {
+    macro_rules! stringify { ($($x:tt)*) => { $($x)* }; }
+}
+pub fn f(a: usize, b: usize) -> bool {
+    stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-macro-use.rmeta" \
+  "$lex_stringify_macro_use/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: macro_use stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_stringify_macro_use" "evaluated comparisons in stringify imported through macro_use"
+if ! grep -Fq 'config.rs:7:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: macro_use stringify did not report the socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
 
 # Qualified and raw builtin stringify calls preserve tokens without
 # resolving their generic-qualified paths.
