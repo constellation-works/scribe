@@ -1758,6 +1758,62 @@ EOF
   expect pass check-dependency-direction.sh "$lex_builtin_self" "builtin $builtin::stringify beside '$use_line'"
 done
 
+# A nested `{self}` import binds `std` only in the module that declares it. A
+# crate-root call beside a child module that imports a local `std` keeps the
+# builtin macro, so its evaluated tuple is exempt (ORB-29921).
+lex_self_scope=$(tree lex-self-group-scope)
+cat >"$lex_self_scope/crates/scribe-core/src/lib.rs" <<'EOF'
+mod config;
+mod child {
+    use crate::config::std::{{self}};
+    fn local() -> usize { std::NUMBER }
+}
+const EXAMPLE: &str = std::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+EOF
+printf 'pub mod std { pub const NUMBER: usize = 1; }\n' >"$lex_self_scope/crates/scribe-core/src/config.rs"
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-self-group-scope.rmeta" \
+  "$lex_self_scope/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: out-of-scope nested self import fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_self_scope" "builtin std::stringify beside a child module's nested {self} import"
+
+# The same nested `{self}` import still shadows `std` or `core` for a call in
+# its own module.
+for shadow in std core; do
+  lex_self_scope_hit=$(tree "lex-self-group-scope-hit-$shadow")
+  cat <<'EOF' | sed "s/@CRATE@/$shadow/g" >"$lex_self_scope_hit/crates/scribe-core/src/lib.rs"
+pub mod std {
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+pub mod core {
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+const OUTER: &str = ::std::stringify!(a);
+mod child {
+    use crate::@CRATE@::{{self}};
+    pub fn f(a: usize, b: usize) -> bool {
+        @CRATE@::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+    }
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-self-group-scope-hit-$shadow.rmeta" \
+    "$lex_self_scope_hit/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: in-scope nested self import fixture for $shadow did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_self_scope_hit" "nested {self} import of $shadow shadowing a call in its module"
+  if ! grep -Fq 'lib.rs:13:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: in-scope nested self import of $shadow lacks line 13 or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
 # Unshadowed builtin stringify calls, with ordinary `use std`/`core` imports in
 # the file, keep their generic tokens exempt in all four spellings.
 lex_builtin_all=$(tree lex-builtin-stringify-all)

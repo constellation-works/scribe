@@ -523,8 +523,14 @@ def _group_binds_self(code: Sequence[Token], open_idx: int) -> bool:
     return has_bare_self(code[open_idx + 1 : close])
 
 
-def _use_binds_name(code: Sequence[Token], name: str) -> bool:
+def _use_binds_name(
+    code: Sequence[Token], name: str, scopes: Optional[Set[int]] = None
+) -> bool:
     """Return True when a `use` item binds `name` to something other than the builtin crate.
+
+    With `scopes` (as from `_use_scopes_at`), only a `use` item declared directly
+    in one of those blocks counts: an import in a child module or an unrelated
+    block does not reach the call being classified.
 
     A bare `use std;` / `use ::std;` re-binds the builtin crate itself. A rename
     (`use helper as std;`), a path ending in the name (`use crate::std;`,
@@ -537,6 +543,8 @@ def _use_binds_name(code: Sequence[Token], name: str) -> bool:
             continue
         if i + 1 < n and code[i + 1].text == "<":
             continue  # precise-capturing `use<'a, T>` bound, not an import
+        if scopes is not None and _enclosing_brace(code, i) not in scopes:
+            continue
         groups: List[bool] = []  # whether each open `{` has a non-empty path prefix
         j = i + 1
         while j < n and code[j].text != ";":
@@ -573,15 +581,21 @@ def _use_binds_name(code: Sequence[Token], name: str) -> bool:
     return False
 
 
-def _has_shadowing_binding(code: Sequence[Token], name: str, absolute: bool) -> bool:
-    """Return True when the file binds `name` so `name::stringify!` may not be builtin.
+def _has_shadowing_binding(
+    code: Sequence[Token], name: str, absolute: bool, idx: int
+) -> bool:
+    """Return True when a binding of `name` reaches `idx`, so `name::stringify!` may not be builtin.
 
     An `extern crate ... as name;` alias redirects even a rooted `::name::`
-    path. A local module or a `use` import only shadows an unrooted path.
+    path. A local module only shadows an unrooted path, as does a `use` import
+    in a block that reaches `idx` (see `_use_scopes_at`).
     """
     if _has_extern_crate_alias(code, name):
         return True
-    return not absolute and (_has_local_module(code, name) or _use_binds_name(code, name))
+    return not absolute and (
+        _has_local_module(code, name)
+        or _use_binds_name(code, name, _use_scopes_at(code, idx))
+    )
 
 
 def _macro_rules_body_end(code: Sequence[Token], k: int) -> Optional[int]:
@@ -1131,7 +1145,7 @@ def _in_stringify_tokens(
                     # macro. Only an `extern crate` alias redirects a rooted
                     # `::std::` / `::core::` path.
                     return not _has_shadowing_binding(
-                        code, canonical_ident(code[p].text), absolute
+                        code, canonical_ident(code[p].text), absolute, p
                     )
     return False
 
