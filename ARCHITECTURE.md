@@ -503,10 +503,14 @@ express. "Module" includes any file added later.
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
-  `commands`; `clippy.toml` and `Cargo.toml` keep `std::io::{stdout,stderr}`,
-  `IsTerminal::is_terminal`, `print!`/`eprint!` and `dbg!` out of everything
-  except `output/common/console.rs`, while `scripts/check-terminal-guard.sh`
-  keeps public `std::io::{stdout,stderr}` reexports and
+  `commands`; `clippy.toml` and `Cargo.toml` keep `std::io::{stdout,stderr}`
+  out of everything except three item-scoped `#[expect]` helpers in
+  `output/common/console.rs` (`stdout_lock`, `stderr_lock`, `stderr_handle`);
+  `IsTerminal::is_terminal`, `print!`/`println!`/`eprint!`/`eprintln!` and
+  `dbg!` have no exemption in any module (`main.rs` denies the print lints at
+  the crate root, `Cargo.toml` denies `dbg_macro`), while
+  `scripts/check-terminal-guard.sh` keeps public `std::io::{stdout,stderr}`
+  reexports and
   `Terminal::(decide|detect)` and `Probe::detect` in `output/` and the
   color, width, format and log environment names in `composition.rs` (where
   the terminal variables come through the full process snapshot and
