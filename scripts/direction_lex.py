@@ -582,28 +582,124 @@ def _is_stringify_macro_def(code: Sequence[Token], k: int, end: int) -> bool:
     )
 
 
+def _cfg_pred_always_true(toks: Sequence[Token]) -> bool:
+    """Return True when a cfg predicate holds in every configuration."""
+    if not toks:
+        return False
+    if (
+        len(toks) >= 3
+        and toks[0].kind == "IDENT"
+        and toks[1].kind == "PUNCT"
+        and toks[1].text == "("
+        and _find_matching_delim(toks, 1, "(", ")") == len(toks) - 1
+    ):
+        op = toks[0].text
+        inner = toks[2:-1]
+        if op == "all":
+            preds = _split_top_level_commas(inner)
+            return True if not preds else all(_cfg_pred_always_true(p) for p in preds)
+        if op == "any":
+            preds = _split_top_level_commas(inner)
+            return any(_cfg_pred_always_true(p) for p in preds) if preds else False
+        if op == "not":
+            return _cfg_pred_inactive_outside_test(inner, test_ok=False)
+    return False
+
+
+def _cfg_pred_inactive_outside_test(toks: Sequence[Token], test_ok: bool = True) -> bool:
+    """Return True when a cfg predicate cannot hold outside `cfg(test)`.
+
+    With `test_ok` (the gate's non-test view), the bare `test` predicate
+    counts as inactive. With `test_ok=False`, only predicates that are false
+    in every configuration count, so `not(test)` is active.
+    """
+    if not toks:
+        return True
+    if len(toks) == 1 and toks[0].kind in ("IDENT", "RAW_IDENT"):
+        name = canonical_ident(toks[0].text)
+        return test_ok and name == "test"
+    if (
+        len(toks) >= 3
+        and toks[0].kind == "IDENT"
+        and toks[1].kind == "PUNCT"
+        and toks[1].text == "("
+        and _find_matching_delim(toks, 1, "(", ")") == len(toks) - 1
+    ):
+        op = toks[0].text
+        inner = toks[2:-1]
+        if op == "all":
+            preds = _split_top_level_commas(inner)
+            if not preds:
+                return False
+            return any(_cfg_pred_inactive_outside_test(p, test_ok) for p in preds)
+        if op == "any":
+            preds = _split_top_level_commas(inner)
+            if not preds:
+                return True
+            return all(_cfg_pred_inactive_outside_test(p, test_ok) for p in preds)
+        if op == "not":
+            return _cfg_pred_always_true(inner)
+    return False
+
+
+def _attr_body_exports_macro(body: Sequence[Token]) -> bool:
+    """Return True when the tokens inside `#[...]` export macros.
+
+    Only a top-level `macro_export` path (plain or raw `r#macro_export`,
+    with optional `(args)`) or a `cfg_attr(pred, ..., macro_export, ...)`
+    whose predicate can hold outside `cfg(test)` counts. A bare `cfg(...)`
+    or any other attribute merely mentioning `macro_export` does not.
+    """
+    if not body:
+        return False
+    if body[0].kind in ("IDENT", "RAW_IDENT") and canonical_ident(body[0].text) == "macro_export":
+        if len(body) == 1:
+            return True
+        return (
+            len(body) > 2
+            and body[1].kind == "PUNCT"
+            and body[1].text == "("
+            and _find_matching_delim(body, 1, "(", ")") == len(body) - 1
+        )
+    if (
+        body[0].kind in ("IDENT", "RAW_IDENT")
+        and canonical_ident(body[0].text) == "cfg_attr"
+        and len(body) > 3
+        and body[1].kind == "PUNCT"
+        and body[1].text == "("
+        and _find_matching_delim(body, 1, "(", ")") == len(body) - 1
+    ):
+        parts = _split_top_level_commas(body[2:-1])
+        if len(parts) < 2 or _cfg_pred_inactive_outside_test(parts[0]):
+            return False
+        return any(_attr_body_exports_macro(part) for part in parts[1:])
+    return False
+
+
 def _has_macro_export_attr(code: Sequence[Token], k: int) -> bool:
-    """Return True when an attribute group before `code[k]` names `macro_export`."""
+    """Return True when a structurally parsed attribute before `code[k]` exports macros."""
     j = k - 1
     while j >= 1 and code[j].kind == "PUNCT" and code[j].text == "]":
         depth = 0
-        names_export = False
-        while j >= 0:
-            tok = code[j]
+        open_idx = j
+        while open_idx >= 0:
+            tok = code[open_idx]
             if tok.kind == "PUNCT" and tok.text == "]":
                 depth += 1
             elif tok.kind == "PUNCT" and tok.text == "[":
                 depth -= 1
                 if depth == 0:
                     break
-            elif tok.kind == "IDENT" and tok.text == "macro_export":
-                names_export = True
-            j -= 1
-        if j < 1 or code[j - 1].text != "#":
+            open_idx -= 1
+        if (
+            open_idx < 1
+            or code[open_idx - 1].kind != "PUNCT"
+            or code[open_idx - 1].text != "#"
+        ):
             return False
-        if names_export:
+        if _attr_body_exports_macro(code[open_idx + 1 : j]):
             return True
-        j -= 2
+        j = open_idx - 2
     return False
 
 
