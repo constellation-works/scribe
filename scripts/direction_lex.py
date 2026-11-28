@@ -231,6 +231,22 @@ def _inside_unclosed_angle(code: Sequence[Token], start: int, end: int) -> bool:
     return depth > 0
 
 
+def _is_plain_eq(code: Sequence[Token], idx: int) -> bool:
+    """Return True when `code[idx]` is a standalone `=`, not `==`, `!=`, `<=`, `>=`, or `=>`."""
+    tok = code[idx]
+    if tok.kind != "PUNCT" or tok.text != "=":
+        return False
+    if idx >= 1 and any(
+        _is_adjacent_punct(code, idx - 1, idx, ch, "=") for ch in ("=", "!", "<", ">")
+    ):
+        return False
+    if idx + 1 < len(code) and any(
+        _is_adjacent_punct(code, idx, idx + 1, "=", ch) for ch in ("=", ">")
+    ):
+        return False
+    return True
+
+
 def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
     """Recognize a struct literal field colon without treating declarations as values."""
     if colon_idx < 2:
@@ -270,6 +286,10 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
     # A brace following an expression path is a struct literal instead.
     item_body_keywords = ("fn", "struct", "enum", "union", "trait", "impl", "mod")
     while j >= 0:
+        paren_depth = 0
+        bracket_depth = 0
+        saw_comma = False
+        saw_eq = False
         j -= 1
         while j >= 0:
             tok = code[j]
@@ -299,11 +319,41 @@ def _field_value_colon(code: Sequence[Token], colon_idx: int) -> bool:
                     ) and not _inside_unclosed_angle(code, header_idx, j):
                         break
                 continue
+            if tok.kind == "PUNCT":
+                if tok.text == ")":
+                    paren_depth += 1
+                    j -= 1
+                    continue
+                if tok.text == "(":
+                    if paren_depth == 0:
+                        return True
+                    paren_depth -= 1
+                    j -= 1
+                    continue
+                if tok.text == "]":
+                    bracket_depth += 1
+                    j -= 1
+                    continue
+                if tok.text == "[":
+                    if bracket_depth == 0:
+                        return True
+                    bracket_depth -= 1
+                    j -= 1
+                    continue
+                if paren_depth == 0 and bracket_depth == 0:
+                    if tok.text == ",":
+                        saw_comma = True
+                    elif not saw_comma and _is_plain_eq(code, j):
+                        saw_eq = True
             if tok.kind == "IDENT" and tok.text in ("struct", "enum", "union"):
                 return False
             if _is_item_keyword(code, j, ("fn",)):
                 return True
             if tok.kind == "PUNCT" and tok.text in ("{", ";"):
+                # A standalone `=` directly introducing a braced block inside an
+                # enclosing `{...}` (e.g. an enum discriminant) is expression context.
+                if tok.text == "{" and saw_eq:
+                    return True
                 break
             j -= 1
         if j < 0 or code[j].text != "{":
