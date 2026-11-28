@@ -653,17 +653,17 @@ def _cfg_pred_inactive_outside_test(toks: Sequence[Token], test_ok: bool = True)
     return False
 
 
-def _attr_body_exports_macro(body: Sequence[Token]) -> bool:
-    """Return True when the tokens inside `#[...]` export macros.
+def _attr_body_is_macro_attr(body: Sequence[Token], name: str) -> bool:
+    """Return True when the tokens inside `#[...]` are the `name` macro attribute.
 
-    Only a top-level `macro_export` path (plain or raw `r#macro_export`,
-    with optional `(args)`) or a `cfg_attr(pred, ..., macro_export, ...)`
-    whose predicate can hold outside `cfg(test)` counts. A bare `cfg(...)`
-    or any other attribute merely mentioning `macro_export` does not.
+    Only a top-level `name` path (plain or raw `r#name`, with optional
+    `(args)`) or a `cfg_attr(pred, ..., name, ...)` whose predicate can hold
+    outside `cfg(test)` counts. A bare `cfg(...)` or any other attribute
+    merely mentioning `name` does not.
     """
     if not body:
         return False
-    if body[0].kind in ("IDENT", "RAW_IDENT") and canonical_ident(body[0].text) == "macro_export":
+    if body[0].kind in ("IDENT", "RAW_IDENT") and canonical_ident(body[0].text) == name:
         if len(body) == 1:
             return True
         return (
@@ -683,7 +683,7 @@ def _attr_body_exports_macro(body: Sequence[Token]) -> bool:
         parts = _split_top_level_commas(body[2:-1])
         if len(parts) < 2 or _cfg_pred_inactive_outside_test(parts[0]):
             return False
-        return any(_attr_body_exports_macro(part) for part in parts[1:])
+        return any(_attr_body_is_macro_attr(part, name) for part in parts[1:])
     return False
 
 
@@ -708,39 +708,9 @@ def _has_macro_export_attr(code: Sequence[Token], k: int) -> bool:
             or code[open_idx - 1].text != "#"
         ):
             return False
-        if _attr_body_exports_macro(code[open_idx + 1 : j]):
+        if _attr_body_is_macro_attr(code[open_idx + 1 : j], "macro_export"):
             return True
         j = open_idx - 2
-    return False
-
-
-def _is_macro_use_attr(code: Sequence[Token], k: int) -> bool:
-    """Return True when `code[k]` is a `macro_use` name inside a `#[...]` or `#![...]` attribute.
-
-    An ordinary identifier spelled `macro_use` (a function or variable name) is not.
-    """
-    if not (code[k].kind == "IDENT" and code[k].text == "macro_use"):
-        return False
-    depth = 0
-    j = k - 1
-    while j >= 0:
-        tok = code[j]
-        if tok.kind == "PUNCT":
-            if tok.text in (")", "]"):
-                depth += 1
-            elif tok.text in ("(", "["):
-                if depth == 0:
-                    if tok.text == "(":
-                        j -= 1
-                        continue
-                    before = j - 1
-                    if before >= 0 and code[before].text == "!":
-                        before -= 1
-                    return before >= 0 and code[before].text == "#"
-                depth -= 1
-            elif tok.text in (";", "{", "}") and depth == 0:
-                return False
-        j -= 1
     return False
 
 
@@ -782,9 +752,7 @@ def _scan_stringify_macros(
             and code[k + 2].text == "["
         ):
             close = _find_matching_delim(code, k + 2, "[", "]")
-            if not in_test[-1] and any(
-                _is_macro_use_attr(code, m) for m in range(k + 3, min(close, limit))
-            ):
+            if not in_test[-1] and _attr_body_is_macro_attr(code[k + 3 : close], "macro_use"):
                 macro_use = True
             k = close + 1
             continue
@@ -804,7 +772,7 @@ def _scan_stringify_macros(
             if has_test_cfg(attrs, test_support):
                 pending_test_cfg = True
             if not (in_test[-1] or pending_test_cfg) and any(
-                _is_macro_use_attr(code, m) for m in range(k, min(next_k, limit))
+                _attr_body_is_macro_attr(attr, "macro_use") for attr in attrs
             ):
                 macro_use = True
             k = next_k
