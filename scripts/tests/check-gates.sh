@@ -1691,8 +1691,13 @@ EOF
 self_group_forms=(
   'use crate::std::{self};|std'
   'use crate::std::{self, X};|std'
+  'use crate::std::{{self}};|std'
+  'use crate::std::{X, {self}};|std'
+  'use crate::std::{{{self}}};|std'
   'use crate::{std::{self}};|std'
+  'use crate::{std::{{self}}};|std'
   'use crate::core::{self};|core'
+  'use crate::core::{{self}};|core'
 )
 for i in "${!self_group_forms[@]}"; do
   use_line="${self_group_forms[$i]%|*}"
@@ -1727,8 +1732,10 @@ done
 builtin_self_forms=(
   'use std::{self};|std'
   'use std::{fmt, self};|std'
+  'use std::{{self}};|std'
   'use crate::std::{self as _};|std'
   'use crate::std::{self as other};|std'
+  'use crate::std::{{self as _}};|std'
   'use core::{self};|core'
   'use crate::core::{self as _};|core'
 )
