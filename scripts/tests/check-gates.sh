@@ -2675,12 +2675,13 @@ expect_items() {
   awk '/^#\[expect\(/ { on = 1 } on { print } on && /^}/ { on = 0 }' "$1"
 }
 
-# The module-level inner attributes of $1 (`#![expect(...)]` or `#![allow(...)]`,
-# single- or multi-line). The adapter fixtures inline module bodies at their
-# crate root, so these must be emitted before any item for the weakening they
-# express to reach the fixture.
+# The module-level inner attributes of $1 (`#![expect(...)]`, `#![allow(...)]`,
+# or `#![cfg_attr(...)]` — including conditional `#![cfg_attr(not(test), ...)]`
+# forms — single- or multi-line). The adapter fixtures inline module bodies at
+# their crate root, so these must be emitted before any item for the weakening
+# they express to reach the fixture.
 expect_inner() {
-  awk '/^#![[]expect\(/ || /^#![[]allow\(/ { on = 1 } on { print } on && /\)\]/ { on = 0 }' "$1"
+  awk '/^#![[]expect\(/ || /^#![[]allow\(/ || /^#![[]cfg_attr\(/ { on = 1 } on { print } on && /\)\]/ { on = 0 }' "$1"
 }
 
 fs_clippy=$(adapter_clippy fs)
@@ -2811,6 +2812,83 @@ weakened_clippy=$(adapter_clippy composition-weakened)
   expect_items "$weakened_src"
 } >"$weakened_clippy/src/lib.rs"
 expect_clippy fail "$weakened_clippy" "unfulfilled" "a module-wide expectation in the composition adapter"
+
+# Conditional module-level weakening via `#![cfg_attr(...)]` must also reach
+# the fixture (single- or multi-line, `allow` or `expect`): a future weakening
+# written as `#![cfg_attr(not(test), allow(...))]` silences library builds
+# while `#![cfg_attr(..., expect(...))]` is unfulfilled there, so the fixture
+# must carry both for the boundary to hold.
+cfgattr_expect_src="$work/composition-weakened-cfg-expect.rs"
+{
+  printf '#![cfg_attr(not(test), expect(clippy::disallowed_methods, reason = "test"))]\n'
+  cat "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+} >"$cfgattr_expect_src"
+if ! expect_inner "$cfgattr_expect_src" | grep -Fq 'cfg_attr(not(test), expect(clippy::disallowed_methods'; then
+  echo "check-gates: FAIL: the composition fixture drops conditional module-level expect" >&2
+  fail=1
+fi
+cfgattr_expect_clippy=$(adapter_clippy composition-weakened-cfg-expect)
+{
+  printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$cfgattr_expect_src"
+  printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+  expect_items "$cfgattr_expect_src"
+} >"$cfgattr_expect_clippy/src/lib.rs"
+expect_clippy fail "$cfgattr_expect_clippy" "unfulfilled" "a conditional module-wide expectation in the composition adapter"
+
+cfgattr_allow_src="$work/composition-weakened-cfg-allow.rs"
+{
+  printf '#![cfg_attr(not(test), allow(clippy::disallowed_methods))]\n'
+  cat "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+} >"$cfgattr_allow_src"
+if ! expect_inner "$cfgattr_allow_src" | grep -Fq 'cfg_attr(not(test), allow(clippy::disallowed_methods))'; then
+  echo "check-gates: FAIL: the composition fixture drops conditional module-level allow" >&2
+  fail=1
+fi
+# The multi-line conditional form must survive as well.
+cfgattr_allow_multi_src="$work/composition-weakened-cfg-allow-multi.rs"
+{
+  printf '#![cfg_attr(\n  not(test),\n  allow(clippy::disallowed_methods)\n)]\n'
+  cat "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+} >"$cfgattr_allow_multi_src"
+if ! expect_inner "$cfgattr_allow_multi_src" | grep -Fq 'allow(clippy::disallowed_methods)'; then
+  echo "check-gates: FAIL: the composition fixture drops multi-line conditional module-level allow" >&2
+  fail=1
+fi
+# A conditional allow weakens library builds: a leak appended to the
+# allow-weakened fixture must pass `cargo clippy --lib` (silenced), while the
+# same leak on the clean fixture must fail it. Together they prove the
+# preserved attribute reaches the lib boundary check that `--all-targets`
+# would otherwise mask via its test target.
+cfgattr_allow_clippy=$(adapter_clippy composition-weakened-cfg-allow)
+{
+  printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$cfgattr_allow_src"
+  printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+  expect_items "$cfgattr_allow_src"
+  printf '\n/// A stream handle composition has no business taking.\npub fn leak() -> std::io::Stdout { std::io::stdout() }\n'
+} >"$cfgattr_allow_clippy/src/lib.rs"
+n=$((n + 1))
+if (cd "$cfgattr_allow_clippy" && CARGO_TARGET_DIR="$cfgattr_allow_clippy/target" CLIPPY_CONF_DIR="$cfgattr_allow_clippy" cargo clippy --lib --offline -- -D warnings) >"$work/out" 2>&1; then
+  : # weakened lib passes: the conditional allow reached the fixture, as required
+else
+  echo "check-gates: FAIL: conditional module-level allow did not weaken the composition lib fixture" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+cfgattr_allow_clean_clippy=$(adapter_clippy composition-weakened-cfg-allow-clean)
+{
+  printf '//! Composition adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+  printf 'use std::ffi::OsString;\nuse std::path::{Path, PathBuf};\n\n'
+  expect_items "$REPO_ROOT/crates/scribe-core/src/composition.rs"
+  printf '\n/// A stream handle composition has no business taking.\npub fn leak() -> std::io::Stdout { std::io::stdout() }\n'
+} >"$cfgattr_allow_clean_clippy/src/lib.rs"
+n=$((n + 1))
+if (cd "$cfgattr_allow_clean_clippy" && CARGO_TARGET_DIR="$cfgattr_allow_clean_clippy/target" CLIPPY_CONF_DIR="$cfgattr_allow_clean_clippy" cargo clippy --lib --offline -- -D warnings) >"$work/out" 2>&1; then
+  echo "check-gates: FAIL: a stream handle in the composition adapter passed the lib boundary" >&2
+  fail=1
+fi
 
 console_clippy=$(adapter_clippy console)
 {
