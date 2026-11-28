@@ -1782,8 +1782,9 @@ expect pass check-dependency-direction.sh "$lex_builtin_all" "unshadowed std/cor
 # report its evaluated call's line and socket. The sibling, parent and child
 # scopes a `use` does not reach, std/core imports of the builtin, and a `use`
 # under a test-only cfg (compiled only for tests) keep the builtin, so their
-# calls stay exempt. A `use` under a test-support feature cfg stays active
-# without test-support. Usage: use_case <name> <pass|fail>
+# calls stay exempt. A `use` under any other cfg stays active: a test-support
+# feature cfg without test-support, `not(test)`, or `any` with a non-test arm.
+# Usage: use_case <name> <pass|fail>
 # <line> <what> <<'EOF' (fixture config.rs) EOF.
 use_case() {
   local name="$1" verdict="$2" line="$3" what="$4" dir
@@ -1911,6 +1912,28 @@ mod local {
 #[cfg(feature = "test-support")]
 use local::stringify;
 pub fn f(a: u32, b: u32, c: u32) -> &'static str {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+use_case use-cfg-not-test fail 8 "not(test) use stays active" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom as stringify;
+}
+#[cfg(not(test))]
+use local::stringify;
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+use_case use-cfg-any-test fail 8 "any(test, unix) use stays active, since unix is not test-only" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom as stringify;
+}
+#[cfg(any(test, unix))]
+use local::stringify;
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
     stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
 }
 EOF
