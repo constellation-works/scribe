@@ -525,10 +525,12 @@ unrelated disallowed method and a direct exit to fail. The boundaries:
   `vars_os`, `current_dir`, `home_dir`, `temp_dir`) and the process snapshot
   `cw_app::env::Env::capture` (only `scribe-core/src/composition.rs`; the
   binary has no exemption for environment reads);
-- `std::io::{stdout,stderr}` and `std::io::IsTerminal::is_terminal` (only
+- `std::io::{stdout,stderr}` (only the three item-scoped helpers in
   `scribe/src/output/common/console.rs`, the CLI output and log-subscriber
-  boundary under STD-02 R15); public reexports of `stdout` and `stderr` are
-  separately restricted to `scribe/src/output/` by `scripts/check-terminal-guard.sh`;
+  boundary under STD-02 R15) and `std::io::IsTerminal::is_terminal` (no
+  exemption anywhere; the terminal is probed through `cw_cli::Probe::detect`);
+  public reexports of `stdout` and `stderr` are separately restricted to
+  `scribe/src/output/` by `scripts/check-terminal-guard.sh`;
 - `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`,
   statement-scoped on `supervise`'s `Command::spawn` call so other disallowed
   paths remain banned across `providers/cli.rs` and `providers/cli/codex.rs`);
