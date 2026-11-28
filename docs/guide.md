@@ -540,8 +540,9 @@ cases, stringify, comparison cases including a multi-argument turbofish
 discriminant, and a braced-variant declaration after a turbofish discriminant)
 are each compiled directly by
 `rustc --edition=2024 --emit=metadata`. The terminal-guard alias-scoping
-fixtures (the `self::` stream reexports, and the block-local, test-only and
-module-level `std::io` aliases) are compiled the same way. The bare
+fixtures (the `self::`, `super::` and `crate::` stream reexports, and the
+block-local, test-only and module-level `std::io` aliases) are compiled the same
+way. The bare
 function-pointer cases include three enum sibling fixtures: two with `fn()`
 variants and one with an `unsafe extern "C" fn` variant. The other two are
 standalone struct declarations, one with a function-pointer type default and one

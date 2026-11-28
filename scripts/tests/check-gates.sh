@@ -2581,6 +2581,77 @@ rustc_fixture "$self_alias_owner/crates/scribe/src/output/self_alias.rs" \
 expect pass check-terminal-guard.sh "$self_alias_owner" \
   "the output boundary may reexport stdout through a self::-prefixed alias"
 
+# super:: and crate:: name a module, and an alias resolves through that module
+# (ORB-29686). A super:: or crate:: path from a file's top level names a module
+# outside the file, so an alias of this file does not resolve it.
+super_alias_bad=$(guard_tree guard-stream-super-alias-bad)
+cat >>"$super_alias_bad/crates/scribe/src/commands/entry.rs" <<'EOF'
+mod a {
+    use std::io as h;
+    pub mod b { pub use super::h::stdout; }
+}
+EOF
+rustc_fixture "$super_alias_bad/crates/scribe/src/commands/entry.rs" \
+  guard-stream-super-alias-bad
+expect fail check-terminal-guard.sh "$super_alias_bad" \
+  "a super::-prefixed module-local stream alias reexport outside output"
+if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+  echo "check-gates: FAIL: super::-prefixed stream reexport lacks its diagnostic" >&2
+  fail=1
+fi
+
+super_alias_owner=$(guard_tree guard-stream-super-alias-owner)
+cat >"$super_alias_owner/crates/scribe/src/output/super_alias.rs" <<'EOF'
+mod a {
+    use std::io as h;
+    pub mod b { pub use super::h::stdout; }
+}
+EOF
+rustc_fixture "$super_alias_owner/crates/scribe/src/output/super_alias.rs" \
+  guard-stream-super-alias-owner
+expect pass check-terminal-guard.sh "$super_alias_owner" \
+  "the output boundary may reexport stdout through a super::-prefixed alias"
+
+crate_alias_bad=$(guard_tree guard-stream-crate-alias-bad)
+cat >>"$crate_alias_bad/crates/scribe/src/main.rs" <<'EOF'
+use std::io as h;
+pub use crate::h::stdout;
+EOF
+rustc_fixture "$crate_alias_bad/crates/scribe/src/main.rs" guard-stream-crate-alias-bad
+expect fail check-terminal-guard.sh "$crate_alias_bad" \
+  "a crate::-prefixed root alias reexport in a crate root outside output"
+if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+  echo "check-gates: FAIL: crate::-prefixed stream reexport lacks its diagnostic" >&2
+  fail=1
+fi
+
+crate_walk_bad=$(guard_tree guard-stream-crate-walk-bad)
+cat >>"$crate_walk_bad/crates/scribe/src/main.rs" <<'EOF'
+mod a {
+    pub(crate) use std::io as h;
+}
+pub use crate::a::h::stdout;
+EOF
+rustc_fixture "$crate_walk_bad/crates/scribe/src/main.rs" guard-stream-crate-walk-bad
+expect fail check-terminal-guard.sh "$crate_walk_bad" \
+  "a crate::-prefixed stream reexport through a child module's alias"
+
+# rustc compiles commands/mod.rs as the crate root, so it is entry's parent and
+# declares the h that super:: and crate:: reach. entry.rs has its own std::io h
+# that neither path may reach: entry is not a crate root, so its top level has
+# no parent or crate root of its own to match.
+outside_prefix=$(guard_tree guard-stream-outside-prefix)
+printf 'pub mod entry;\npub mod h { pub fn stdout() {} }\n' \
+  >"$outside_prefix/crates/scribe/src/commands/mod.rs"
+cat >>"$outside_prefix/crates/scribe/src/commands/entry.rs" <<'EOF'
+use std::io as h;
+pub use super::h::stdout;
+pub use crate::h::stdout as crate_stdout;
+EOF
+rustc_fixture "$outside_prefix/crates/scribe/src/commands/mod.rs" guard-stream-outside-prefix
+expect pass check-terminal-guard.sh "$outside_prefix" \
+  "a file's own alias does not resolve super:: or crate:: paths that name modules outside it"
+
 block_local_alias=$(guard_tree guard-stream-block-local-alias)
 cat >>"$block_local_alias/crates/scribe/src/commands/entry.rs" <<'EOF'
 pub mod host_io { pub fn stdout() {} }
