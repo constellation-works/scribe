@@ -71,10 +71,11 @@ fmt-check:
 # it (STD-04 R10). The Rust 2024 dependency-direction cases (the braced-enum
 # sibling, the standalone braced-variant declaration after a discriminant and
 # attribute, five bare function-pointer cases, three braced const generic
-# default cases, stringify, comparison cases including a multi-argument turbofish
-# discriminant, and a braced-variant declaration after a turbofish discriminant)
-# each compile one fixture file with `rustc` for Rust 2024 metadata only and
-# need no clippy. The terminal-guard alias-scoping cases (the `self::`, `super::`
+# default cases, stringify, src/bin crate-root stringify, comparison cases
+# including a multi-argument turbofish discriminant, and a braced-variant
+# declaration after a turbofish discriminant) compile their fixture files
+# with `rustc` for Rust 2024 metadata only and need no clippy. The
+# terminal-guard alias-scoping cases (the `self::`, `super::`
 # and `crate::` stream reexports, and block-local, test-only and module-level
 # `std::io` aliases) compile one fixture each the same way; a case outside a
 # crate root compiles the module root that declares it. Outside these compiled
@@ -171,7 +172,7 @@ standards-check:
 # Pre-handoff gate for agents: every parity check CI runs that needs no build
 # of scribe (STD-04 R12). It compiles the fixtures that structure runs, not
 # the Scribe crates: the Clippy cases need cargo clippy, so the gate needs it,
-# and the rustc cases compile one file directly. Goldens need the binary, so
+# and the rustc cases compile fixture files directly. Goldens need the binary, so
 # they are their own target.
 ci-fast: fmt-check structure readme-links feature-board-check standards-check
 

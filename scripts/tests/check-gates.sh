@@ -2246,6 +2246,110 @@ if ! grep -Fq 'lib.rs:3:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOS
   fail=1
 fi
 
+# Cargo binary roots are separate crates (ORB-29772). `src/bin/<name>.rs` and
+# `src/bin/<name>/main.rs` are crate roots, not submodules: a module-exported
+# evaluating macro is visible at that binary's root and nowhere else. A call
+# in a nested module of the binary, in the library, or in another binary still
+# sees the builtin. The binary-only tree is the case the filename heuristic
+# used to accept.
+bin_root_src=$(cat <<'EOF'
+#![allow(dead_code)]
+mod local {
+    #[macro_export]
+    macro_rules! stringify {
+        ($left:expr, $right:expr) => { ($left, $right) };
+    }
+}
+mod other {
+    pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+}
+fn probe(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+fn main() {
+    let _ = probe(1, 2, 3);
+}
+EOF
+)
+compile_2024() { # compile_2024 <crate-type> <src> <what>
+  if ! rustc --edition=2024 --crate-type "$1" --emit=metadata -o "$work/lex-bin-root.rmeta" \
+    "$2" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: $3 did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+}
+assert_bin_root_lines() { # assert_bin_root_lines <tree> <what>
+  local dir="$1" what="$2" src line text
+  for src in \
+    "$dir/crates/scribe-core/src/bin/tool.rs" \
+    "$dir/crates/scribe-core/src/bin/probe/main.rs"
+  do
+    line=$(grep -n 'Ipv4Addr::LOCALHOST.to_bits' "$src" | cut -d: -f1)
+    text=$(sed -n "${line}p" "$src")
+    if ! grep -Fq "${src#"$dir/crates/scribe-core/src/"}:${line}:${text}" "$work/out"; then
+      echo "check-gates: FAIL: $what lacks ${src#"$dir/"}:${line} or its text" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+    line=$(grep -n 'std::net::Item' "$src" | cut -d: -f1)
+    if grep -Fq "${src#"$dir/crates/scribe-core/src/"}:${line}:" "$work/out"; then
+      echo "check-gates: FAIL: $what flagged the builtin call in a nested module of ${src#"$dir/"}" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+  done
+}
+
+lex_bin_root=$(tree lex-stringify-bin-root)
+printf '//! core\n' >"$lex_bin_root/crates/scribe-core/src/lib.rs"
+mkdir -p "$lex_bin_root/crates/scribe-core/src/bin/probe"
+printf '%s\n' "$bin_root_src" >"$lex_bin_root/crates/scribe-core/src/bin/tool.rs"
+printf '%s\n' "$bin_root_src" >"$lex_bin_root/crates/scribe-core/src/bin/probe/main.rs"
+compile_2024 bin "$lex_bin_root/crates/scribe-core/src/bin/tool.rs" "src/bin/tool.rs crate root"
+compile_2024 bin "$lex_bin_root/crates/scribe-core/src/bin/probe/main.rs" "src/bin/probe/main.rs crate root"
+expect fail check-dependency-direction.sh "$lex_bin_root" "module-exported stringify evaluated at Cargo binary roots"
+if ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: binary crate roots lack the socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+assert_bin_root_lines "$lex_bin_root" "binary crate roots"
+
+# The same export must not make a builtin call in the library, or in another
+# binary target, look like a socket. The exporting binary's own root call
+# still reports.
+lex_bin_isolated=$(tree lex-stringify-bin-isolated)
+cat >"$lex_bin_isolated/crates/scribe-core/src/lib.rs" <<'EOF'
+//! core
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+mkdir -p "$lex_bin_isolated/crates/scribe-core/src/bin/probe"
+printf '%s\n' "$bin_root_src" >"$lex_bin_isolated/crates/scribe-core/src/bin/tool.rs"
+printf '%s\n' "$bin_root_src" >"$lex_bin_isolated/crates/scribe-core/src/bin/probe/main.rs"
+cat >"$lex_bin_isolated/crates/scribe-core/src/bin/other.rs" <<'EOF'
+#![allow(dead_code)]
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+fn main() {}
+EOF
+compile_2024 lib "$lex_bin_isolated/crates/scribe-core/src/lib.rs" "library beside a binary stringify export"
+compile_2024 bin "$lex_bin_isolated/crates/scribe-core/src/bin/tool.rs" "exporting src/bin/tool.rs beside the library"
+compile_2024 bin "$lex_bin_isolated/crates/scribe-core/src/bin/probe/main.rs" "exporting src/bin/probe/main.rs beside the library"
+compile_2024 bin "$lex_bin_isolated/crates/scribe-core/src/bin/other.rs" "independent binary beside an exported stringify"
+expect fail check-dependency-direction.sh "$lex_bin_isolated" "binary stringify export stays inside its own crate root"
+if ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: isolated binary roots lack the socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+assert_bin_root_lines "$lex_bin_isolated" "isolated binary crate roots"
+lib_line=$(grep -n 'std::net::Item' "$lex_bin_isolated/crates/scribe-core/src/lib.rs" | cut -d: -f1)
+if grep -Fq "lib.rs:${lib_line}:" "$work/out" || grep -Fq 'bin/other.rs:' "$work/out"; then
+  echo "check-gates: FAIL: a binary #[macro_export] changed a builtin call in the library or another binary" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # `#[cfg(test)]` definitions (whether in `#[cfg(test)] mod tests` or directly
 # on `macro_rules! stringify`) and unexpanded `macro_rules!` bodies do not
 # export `stringify` in production (ORB-29674).

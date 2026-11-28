@@ -385,22 +385,121 @@ def ban_crate(path, pattern, msg):
         err(msg)
 
 
+# Cargo metadata kinds that are their own crate, matching the architecture map.
+# A bin target's source (`src/main.rs`, `src/bin/<name>.rs`, `src/bin/<name>/main.rs`,
+# or an explicit path) is a crate root. It is not a submodule of the library.
+_CRATE_ROOT_KINDS = ("lib", "rlib", "cdylib", "staticlib", "dylib", "proc-macro", "bin")
+
+
+def _path_within(parent, child):
+    parent_real = os.path.realpath(parent)
+    child_real = os.path.realpath(child)
+    if os.path.isdir(parent_real):
+        return child_real == parent_real or child_real.startswith(parent_real + os.sep)
+    return child_real == parent_real
+
+
+def cargo_crate_roots(scan_path):
+    """Absolute lib/bin target paths from cargo metadata that lie in `scan_path`."""
+    if not scan_path or not os.path.exists(scan_path):
+        return []
+    members = set(meta.get("workspace_members") or [])
+    roots = []
+    seen = set()
+    for pkg in meta.get("packages") or []:
+        if members and pkg.get("id") not in members:
+            continue
+        for target in pkg.get("targets") or []:
+            kinds = target.get("kind") or []
+            if not any(kind in _CRATE_ROOT_KINDS for kind in kinds):
+                continue
+            src = target.get("src_path")
+            if not src or not _path_within(scan_path, src):
+                continue
+            src_real = os.path.realpath(src)
+            if src_real not in seen:
+                seen.add(src_real)
+                roots.append(src_real)
+    return roots
+
+
+def _mod_directory(current_file):
+    """Directory in which `mod name;` from `current_file` looks up `name.rs`."""
+    directory = os.path.dirname(current_file)
+    stem = os.path.splitext(os.path.basename(current_file))[0]
+    if stem in ("mod", "lib", "main"):
+        return directory
+    return os.path.join(directory, stem)
+
+
+def _resolve_mod_file(current_file, mod_name):
+    base = _mod_directory(current_file)
+    for cand in (
+        os.path.join(base, mod_name + ".rs"),
+        os.path.join(base, mod_name, "mod.rs"),
+    ):
+        if os.path.isfile(cand):
+            return os.path.realpath(cand)
+    return None
+
+
+def _files_in_target(root_file, other_roots, scan_path):
+    """Files of the crate rooted at `root_file`, via non-test `mod` declarations.
+
+    Another target's root is a different crate, even when it sits in the same
+    `src/` tree. `#[macro_export]` there is not visible at this crate's root.
+    """
+    seen = set()
+    ordered = []
+    stack = [os.path.realpath(root_file)]
+    while stack:
+        fp = stack.pop()
+        if fp in seen or not os.path.isfile(fp):
+            continue
+        seen.add(fp)
+        ordered.append(fp)
+        scanned = read_scanned(fp, (), test_support=False, crate_exports_stringify=False)
+        for fm in scanned.file_mods:
+            if fm.brace_depth != 0 or fm.is_test_only:
+                continue
+            child = _resolve_mod_file(fp, fm.name)
+            if child is None or child in seen or child in other_roots:
+                continue
+            if os.path.isdir(scan_path) and not _path_within(scan_path, child):
+                continue
+            stack.append(child)
+    return ordered
+
+
+def _target_exports_stringify(root_file, other_roots, scan_path):
+    return any(
+        lex.has_exported_stringify_macro(read_raw(fp), test_support=False)
+        for fp in _files_in_target(root_file, other_roots, scan_path)
+    )
+
+
 def ban_std(path, modules, msg):
     mod_set = set(modules)
     hits = []
     files = list(iter_rs_files(path))
     is_dir = os.path.isdir(path)
+    root_list = cargo_crate_roots(path)
+    root_set = set(root_list)
 
     def mod_parts_for(fp):
+        # Cargo's target path wins over the filename. `src/bin/tool.rs` is a
+        # crate root (module path []), not the submodule `bin::tool`.
+        if os.path.realpath(fp) in root_set:
+            return []
         if is_dir:
             return file_mod_parts(path, fp)
         base = os.path.basename(fp)
         return [] if base in ("lib.rs", "main.rs") else [base[:-3]]
 
     file_mods_by_path = {fp: mod_parts_for(fp) for fp in files}
-    # A root module declared solely under #[cfg(test)] in lib.rs/main.rs
+    # A root module declared solely under #[cfg(test)] in a crate root
     # (such as `#[cfg(test)] mod tests;` backed by `tests.rs`) is not compiled
-    # in production and cannot export macros to the crate root.
+    # in production and cannot export macros to that crate's root.
     root_decls = collections.defaultdict(list)
     for fp, parts in file_mods_by_path.items():
         if not parts:
@@ -417,10 +516,20 @@ def ban_std(path, modules, msg):
         for fp in files
         if not (file_mods_by_path[fp] and file_mods_by_path[fp][0] in test_only_root_mods)
     ]
-    crate_exports_stringify = any(
-        lex.has_exported_stringify_macro(read_raw(fp), test_support=False)
-        for fp in active_files
-    )
+    # One flag per Cargo target. A `#[macro_export]` in a binary is visible at
+    # that binary's root only, not in the library or in another binary.
+    export_by_root = {
+        root: _target_exports_stringify(root, root_set - {root}, path)
+        for root in root_list
+    }
+
+    def exports_for(fp, parts):
+        real = os.path.realpath(fp)
+        if real in export_by_root:
+            return export_by_root[real]
+        if not parts:
+            return _target_exports_stringify(fp, root_set, path)
+        return False
 
     for fp in active_files:
         # Cargo features can be enabled in production; only cfg(test) excludes sockets.
@@ -428,7 +537,7 @@ def ban_std(path, modules, msg):
             fp,
             base_mod=file_mods_by_path[fp],
             test_support=False,
-            crate_exports_stringify=crate_exports_stringify,
+            crate_exports_stringify=exports_for(fp, file_mods_by_path[fp]),
         )
         raw_lines = read_raw(fp).splitlines()
         seen_lines = set()

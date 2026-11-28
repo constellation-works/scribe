@@ -536,9 +536,9 @@ tool fails. `make standards-check` runs `docs/standards/check.sh`.
 need `clippy`, and the Rust 2024 dependency-direction fixtures (the braced-enum
 sibling, the standalone braced-variant declaration after a discriminant and
 attribute, five bare function-pointer cases, three braced const generic default
-cases, stringify, comparison cases including a multi-argument turbofish
-discriminant, and a braced-variant declaration after a turbofish discriminant)
-are each compiled directly by
+cases, stringify, src/bin crate-root stringify, comparison cases including a
+multi-argument turbofish discriminant, and a braced-variant declaration after
+a turbofish discriminant) are compiled directly by
 `rustc --edition=2024 --emit=metadata`. The terminal-guard alias-scoping
 fixtures (the `self::`, `super::` and `crate::` stream reexports, and the
 block-local, test-only and module-level `std::io` aliases) are compiled the same
