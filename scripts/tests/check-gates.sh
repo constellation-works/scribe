@@ -1961,6 +1961,41 @@ for reexport in \
   fi
 done
 
+# Exercise the Rust lexer and alias resolution, including independent statements
+# on one line and whitespace or comments between visibility and use.
+i=0
+for reexport in \
+  'pub use std::{io::stdout as handle};' \
+  'pub use std::{fmt::Debug, io::{Write, stderr as handle}};' \
+  'pub use std::io::*;' \
+  'pub use std::io::stdout as r#handle;' \
+  'pub use std::io::r#stdout as handle;' \
+  $'pub use std::fmt::Display; pub use std::io::{\n stdout as handle,\n};' \
+  $'pub\nuse std::io::stdout as handle;' \
+  'pub /* ok */ use std::io::stdout as handle;' \
+  'use std::io as host_io; pub use host_io::stdout as handle;' \
+  'use std as host; use host::io as host_io; pub use host_io::*;'; do
+  i=$((i + 1))
+  fixture=$(guard_tree "guard-stream-tree-$i")
+  printf '%s\n' "$reexport" >>"$fixture/crates/scribe/src/commands/entry.rs"
+  expect fail check-terminal-guard.sh "$fixture" "parsed public stream reexport: $reexport"
+  if ! grep -Fq 'terminal-guard: public standard stream reexports belong' "$work/out"; then
+    echo "check-gates: FAIL: parsed reexport lacks its diagnostic: $reexport" >&2
+    fail=1
+  fi
+done
+
+stream_literals=$(guard_tree guard-stream-literals)
+cat >>"$stream_literals/crates/scribe/src/commands/entry.rs" <<'EOF'
+pub const DOC: &str = "pub use std::io::stdout as handle;";
+/* pub use std::io::stdout as handle; */
+pub use std::io::Write;
+use std::io as host_io;
+mod other { pub use host_io::stdout as handle; }
+EOF
+expect pass check-terminal-guard.sh "$stream_literals" \
+  "strings, block comments, unrelated imports and another module's alias are not reexports"
+
 stream_reexport_multiline=$(guard_tree guard-stream-reexport-multiline)
 printf 'pub use std::io::{\n    stdout as multiline_handle,\n};\n' \
   >>"$stream_reexport_multiline/crates/scribe/src/commands/entry.rs"

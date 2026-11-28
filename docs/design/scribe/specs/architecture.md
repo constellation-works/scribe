@@ -527,7 +527,8 @@ unrelated disallowed method and a direct exit to fail. The boundaries:
   binary has no exemption for environment reads);
 - `std::io::{stdout,stderr}` and `std::io::IsTerminal::is_terminal` (only
   `scribe/src/output/common/console.rs`, the CLI output and log-subscriber
-  boundary under STD-02 R15);
+  boundary under STD-02 R15); public reexports of `stdout` and `stderr` are
+  separately restricted to `scribe/src/output/` by `scripts/check-terminal-guard.sh`;
 - `std::process::Command::{output,status,spawn}` (only `scribe-core/src/providers/cli.rs`,
   statement-scoped on `supervise`'s `Command::spawn` call so other disallowed
   paths remain banned across `providers/cli.rs` and `providers/cli/codex.rs`);

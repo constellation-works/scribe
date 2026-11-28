@@ -2,7 +2,7 @@
 # scripts/check-terminal-guard.sh [root] — STD-01 R12/R17 and STD-02 R15, R3.
 #
 # `root` defaults to the repository; scripts/tests/check-gates.sh points it at
-# fixture trees. Over the non-test Rust sources, two rules:
+# fixture trees. Over the non-test Rust sources, three rules:
 #
 #   1. Terminal state (`cw_cli::Terminal` / `cw_cli::Probe`) belongs to the
 #      CLI's output module only. Anything else that decides or probes the
@@ -11,6 +11,7 @@
 #      are declared and captured in composition only, and passed down as
 #      values. A module that names one reads the environment itself. Composition
 #      may capture them; it never decides the color, the width or the format.
+#   3. Public standard-stream reexports belong to the output module only.
 #
 # Environment reads (`std::env::var` and its kin), ordinary standard stream
 # calls (`std::io::stdout`, `std::io::stderr`,
@@ -19,7 +20,8 @@
 # Public reexports of `std::io::stdout` and `std::io::stderr` are checked here:
 # Clippy's method-path lint does not see an exported use declaration.
 set -euo pipefail
-root="${1:-$(dirname "$0")/..}"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+root="${1:-$script_dir/..}"
 if ! cd "$root"; then
   echo "terminal-guard: cannot scan: root '$root' is missing or not a directory" >&2
   exit 1
@@ -29,7 +31,6 @@ OUTPUT_DIR=crates/scribe/src/output
 COMPOSITION=crates/scribe-core/src/composition.rs
 TERMINAL='Terminal::(decide|detect)|Probe::detect'
 ENV_NAMES='"NO_COLOR"|"CLICOLOR_FORCE"|"TERM"|"COLUMNS"|SCRIBE_FORMAT|SCRIBE_LOG'
-STREAM_REEXPORT='pub[[:space:]]+use[[:space:]]+(::)?std::io::(stdout|stderr)([[:space:]]+as[[:space:]]+[[:alpha:]_][[:alnum:]_]*)?[[:space:]]*;|pub[[:space:]]+use[[:space:]]+(::)?std::io::[{]([[:space:]]*|[^}]*[[:space:],])(stdout|stderr)([[:space:]]+as[[:space:]]+[[:alpha:]_][[:alnum:]_]*)?([[:space:],}]|$)'
 
 # Matches outside tests, in code rather than a comment. A doc comment naming
 # the variable it documents is not a read.
@@ -81,41 +82,12 @@ scan() {
   return 0
 }
 
-# Rust use trees can span several lines. Keep the source check focused on
-# complete public use declarations so rustfmt's line wrapping cannot hide one.
+# Parse Rust use trees with the shared lexer; the helper reports file and line.
 scan_stream_reexports() {
-  local raw
-  if ! raw=$(find crates -type d -name tests -prune -o -type f -name '*.rs' \
-    -exec awk -v pattern="$STREAM_REEXPORT" '
-      function emit() {
-        if (pending && statement ~ pattern) {
-          printf "%s:%d:%s\n", statement_file, statement_line, statement
-        }
-        pending = 0
-        statement = ""
-      }
-      FNR == 1 && NR > 1 { emit() }
-      {
-        line = $0
-        sub(/[[:space:]]*\/\/.*/, "", line)
-        if (line ~ /^[[:space:]]*$/) next
-        if (!pending) {
-          if (line !~ /pub[[:space:]]+use[[:space:]]+/) next
-          pending = 1
-          statement = line
-          statement_file = FILENAME
-          statement_line = FNR
-        } else {
-          statement = statement " " line
-        }
-        if (statement ~ /;/) emit()
-      }
-      END { emit() }
-    ' {} +); then
+  if ! python3 "$script_dir/check-terminal-reexports.py"; then
     echo "terminal-guard: cannot scan the Rust sources under crates/" >&2
     return 2
   fi
-  printf '%s' "$raw"
 }
 
 # Filters allowlisted hits out of a scan result. grep exit 1 is ordinary
