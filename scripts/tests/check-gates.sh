@@ -1796,11 +1796,11 @@ if ! grep -Fq 'config.rs:5:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCAL
 fi
 
 # A `#[macro_export]` definition inside a module is visible by path at the crate
-# root, so a root call expands the local macro and evaluates its arguments. A call
-# inside another module still sees the builtin.
+# root (`lib.rs`), so a root call expands the local macro and evaluates its
+# arguments. A call inside another module still sees the builtin.
 lex_shadow_export=$(tree lex-shadow-stringify-export)
-cat >"$lex_shadow_export/crates/scribe-core/src/config.rs" <<'EOF'
-//! config
+cat >"$lex_shadow_export/crates/scribe-core/src/lib.rs" <<'EOF'
+//! core
 mod local {
     #[macro_export]
     macro_rules! stringify {
@@ -1812,13 +1812,13 @@ pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
 }
 EOF
 if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-export.rmeta" \
-  "$lex_shadow_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  "$lex_shadow_export/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
   echo "check-gates: FAIL: module-exported stringify fixture did not compile under Rust 2024" >&2
   sed 's/^/  | /' "$work/rustc.out" >&2
   fail=1
 fi
 expect fail check-dependency-direction.sh "$lex_shadow_export" "evaluated comparisons in module-exported stringify"
-if ! grep -Fq 'config.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+if ! grep -Fq 'lib.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
    ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
   echo "check-gates: FAIL: module-exported stringify lacks line 9 or socket diagnostic" >&2
   sed 's/^/  | /' "$work/out" >&2
@@ -1826,7 +1826,7 @@ if ! grep -Fq 'config.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCAL
 fi
 
 lex_export_nested=$(tree lex-stringify-export-nested)
-cat >"$lex_export_nested/crates/scribe-core/src/config.rs" <<'EOF'
+cat >"$lex_export_nested/crates/scribe-core/src/lib.rs" <<'EOF'
 mod local {
     #[macro_export]
     macro_rules! stringify {
@@ -1838,7 +1838,7 @@ mod other {
 }
 EOF
 if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-nested.rmeta" \
-  "$lex_export_nested/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  "$lex_export_nested/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
   echo "check-gates: FAIL: nested-module exported stringify fixture did not compile under Rust 2024" >&2
   sed 's/^/  | /' "$work/rustc.out" >&2
   fail=1
@@ -1855,8 +1855,8 @@ raw_export_attrs=(
 )
 for i in "${!raw_export_attrs[@]}"; do
   lex_raw_export=$(tree "lex-shadow-stringify-raw-export-$i")
-  cat >"$lex_raw_export/crates/scribe-core/src/config.rs" <<EOF
-//! config
+  cat >"$lex_raw_export/crates/scribe-core/src/lib.rs" <<EOF
+//! core
 mod local {
     ${raw_export_attrs[$i]}
     macro_rules! stringify {
@@ -1868,13 +1868,13 @@ pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
 }
 EOF
   if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-raw-export-$i.rmeta" \
-    "$lex_raw_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    "$lex_raw_export/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
     echo "check-gates: FAIL: raw-exported stringify fixture '${raw_export_attrs[$i]}' did not compile under Rust 2024" >&2
     sed 's/^/  | /' "$work/rustc.out" >&2
     fail=1
   fi
   expect fail check-dependency-direction.sh "$lex_raw_export" "evaluated comparisons in raw-exported stringify '${raw_export_attrs[$i]}'"
-  if ! grep -Fq 'config.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+  if ! grep -Fq 'lib.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
      ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
     echo "check-gates: FAIL: raw-exported stringify '${raw_export_attrs[$i]}' lacks line 9 or socket diagnostic" >&2
     sed 's/^/  | /' "$work/out" >&2
@@ -1893,7 +1893,7 @@ non_export_attrs=(
 )
 for i in "${!non_export_attrs[@]}"; do
   lex_non_export=$(tree "lex-stringify-non-export-$i")
-  cat >"$lex_non_export/crates/scribe-core/src/config.rs" <<EOF
+  cat >"$lex_non_export/crates/scribe-core/src/lib.rs" <<EOF
 mod local {
     ${non_export_attrs[$i]}
     macro_rules! stringify {
@@ -1903,13 +1903,143 @@ mod local {
 pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
 EOF
   if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-non-export-$i.rmeta" \
-    "$lex_non_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    "$lex_non_export/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
     echo "check-gates: FAIL: non-export stringify fixture '${non_export_attrs[$i]}' did not compile under Rust 2024" >&2
     sed 's/^/  | /' "$work/rustc.out" >&2
     fail=1
   fi
   expect pass check-dependency-direction.sh "$lex_non_export" "builtin stringify beside non-export '${non_export_attrs[$i]}'"
 done
+
+# In a multi-file crate compiled from `lib.rs`, `#[macro_export]` inside a
+# submodule (`config.rs`) exports `stringify` to the crate root (`lib.rs`), not
+# into `config.rs`'s own unqualified scope (ORB-29674).
+lex_export_submodule_builtin=$(tree lex-stringify-export-submodule-builtin)
+cat >"$lex_export_submodule_builtin/crates/scribe-core/src/lib.rs" <<'EOF'
+pub mod config;
+EOF
+cat >"$lex_export_submodule_builtin/crates/scribe-core/src/config.rs" <<'EOF'
+mod local {
+    #[macro_export]
+    macro_rules! stringify {
+        ($value:expr) => { $value };
+    }
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-submodule-builtin.rmeta" \
+  "$lex_export_submodule_builtin/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: submodule exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_export_submodule_builtin" "builtin stringify in non-root config.rs beside mod local #[macro_export]"
+
+# A top-level `#[macro_export] macro_rules! stringify` in a non-root file is not
+# visible before its textual definition in that file either (ORB-29674).
+lex_export_submodule_before=$(tree lex-stringify-export-submodule-before)
+cat >"$lex_export_submodule_before/crates/scribe-core/src/lib.rs" <<'EOF'
+pub mod config;
+EOF
+cat >"$lex_export_submodule_before/crates/scribe-core/src/config.rs" <<'EOF'
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+#[macro_export]
+macro_rules! stringify {
+    ($value:expr) => { $value };
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-submodule-before.rmeta" \
+  "$lex_export_submodule_before/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: submodule pre-definition exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_export_submodule_before" "builtin stringify before top-level #[macro_export] in non-root config.rs"
+
+# Cross-file `#[macro_export] macro_rules! stringify` defined in `config.rs` is
+# visible at the crate root (`lib.rs`), regardless of item order, while inline
+# modules in `lib.rs` still see the builtin (ORB-29674).
+lex_export_cross_file=$(tree lex-stringify-export-cross-file)
+cat >"$lex_export_cross_file/crates/scribe-core/src/lib.rs" <<'EOF'
+//! core
+pub fn before(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+mod config;
+mod other {
+    pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+}
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+cat >"$lex_export_cross_file/crates/scribe-core/src/config.rs" <<'EOF'
+#[macro_export]
+macro_rules! stringify {
+    ($left:expr, $right:expr) => { ($left, $right) };
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-cross-file.rmeta" \
+  "$lex_export_cross_file/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: cross-file exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_export_cross_file" "cross-file #[macro_export] stringify evaluated at lib.rs"
+if ! grep -Fq 'lib.rs:3:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+   ! grep -Fq 'lib.rs:10:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out" || grep -Fq 'lib.rs:7:' "$work/out"; then
+  echo "check-gates: FAIL: cross-file exported stringify did not isolate lib.rs root diagnostics from mod other" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+# `#[cfg(test)]` definitions (whether in `#[cfg(test)] mod tests` or directly
+# on `macro_rules! stringify`) and unexpanded `macro_rules!` bodies do not
+# export `stringify` in production (ORB-29674).
+lex_export_cfg_test=$(tree lex-stringify-export-cfg-test)
+cat >"$lex_export_cfg_test/crates/scribe-core/src/lib.rs" <<'EOF'
+#[cfg(test)]
+mod tests {
+    #[macro_export]
+    macro_rules! stringify {
+        ($value:expr) => { $value };
+    }
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-cfg-test.rmeta" \
+  "$lex_export_cfg_test/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: cfg(test) exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_export_cfg_test" "builtin stringify beside #[cfg(test)] mod tests #[macro_export]"
+
+lex_export_cfg_test_direct=$(tree lex-stringify-export-cfg-test-direct)
+cat >"$lex_export_cfg_test_direct/crates/scribe-core/src/lib.rs" <<'EOF'
+#[cfg(test)]
+#[macro_export]
+macro_rules! stringify {
+    ($value:expr) => { $value };
+}
+macro_rules! define_stringify {
+    () => {
+        #[macro_export]
+        macro_rules! stringify {
+            ($value:expr) => { $value };
+        }
+    };
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-cfg-test-direct.rmeta" \
+  "$lex_export_cfg_test_direct/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: direct cfg(test) and unexpanded macro_rules! stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_export_cfg_test_direct" "builtin stringify beside direct #[cfg(test)] and unexpanded macro_rules! #[macro_export]"
 
 # Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
 # `>>` comparisons/shifts must produce the socket guard diagnostic with their
