@@ -1845,6 +1845,72 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-
 fi
 expect pass check-dependency-direction.sh "$lex_export_nested" "builtin stringify in a sibling module of an exported stringify"
 
+# A raw `r#macro_export` spelling exports exactly like `#[macro_export]`
+# (ORB-29673): each fixture below must fail with the socket diagnostic on the
+# root call's line.
+raw_export_attrs=(
+  '#[r#macro_export]'
+  '#[r#macro_export(local_inner_macros)]'
+  '#[cfg_attr(all(), r#macro_export)]'
+)
+for i in "${!raw_export_attrs[@]}"; do
+  lex_raw_export=$(tree "lex-shadow-stringify-raw-export-$i")
+  cat >"$lex_raw_export/crates/scribe-core/src/config.rs" <<EOF
+//! config
+mod local {
+    ${raw_export_attrs[$i]}
+    macro_rules! stringify {
+        (\$left:expr, \$right:expr) => { (\$left, \$right) };
+    }
+}
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-raw-export-$i.rmeta" \
+    "$lex_raw_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: raw-exported stringify fixture '${raw_export_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_raw_export" "evaluated comparisons in raw-exported stringify '${raw_export_attrs[$i]}'"
+  if ! grep -Fq 'config.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+     ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: raw-exported stringify '${raw_export_attrs[$i]}' lacks line 9 or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+# Attributes that merely mention `macro_export` without exporting — a `cfg`
+# predicate or an inactive/test-only `cfg_attr` — leave the module-local macro
+# unexported, so the root builtin call stays exempt (ORB-29673).
+non_export_attrs=(
+  '#[cfg(not(macro_export))]'
+  '#[cfg(macro_export)]'
+  '#[cfg_attr(any(), macro_export)]'
+  '#[cfg_attr(test, macro_export)]'
+)
+for i in "${!non_export_attrs[@]}"; do
+  lex_non_export=$(tree "lex-stringify-non-export-$i")
+  cat >"$lex_non_export/crates/scribe-core/src/config.rs" <<EOF
+mod local {
+    ${non_export_attrs[$i]}
+    macro_rules! stringify {
+        (\$value:expr) => { \$value };
+    }
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-non-export-$i.rmeta" \
+    "$lex_non_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: non-export stringify fixture '${non_export_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect pass check-dependency-direction.sh "$lex_non_export" "builtin stringify beside non-export '${non_export_attrs[$i]}'"
+done
+
 # Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
 # `>>` comparisons/shifts must produce the socket guard diagnostic with their
 # source line, even when `<` comparisons or `<<` shifts appear nearby (ORB-29337).
