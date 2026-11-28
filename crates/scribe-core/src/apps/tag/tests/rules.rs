@@ -1,9 +1,9 @@
 //! The per-tag counts `tag list` shows (2_design.md §4.6).
 
-use super::{T0, entry};
 use crate::action::{self, Pickup};
 use crate::entry::{Entry, EntryStatus};
 use crate::record::{Author, AuthorName};
+use scribe_store::fixtures::{T0, entry};
 use time::Duration;
 
 fn agent(id: &str) -> Entry {
@@ -25,7 +25,7 @@ fn pickup(entry: &Entry, rejected: bool, at_minutes: i64) -> Pickup {
 
 #[test]
 fn tag_counts_count_retired_and_rejected_agent_entries_per_action_tag() {
-    let tags = crate::tests::tags_with_idea();
+    let tags = crate::tests::catchers::tags_with_idea();
     let mut retired = agent("standard-1");
     retired.status = EntryStatus::Retired;
     let mut forgotten = agent("standard-2");

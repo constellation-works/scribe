@@ -3,5 +3,3 @@
 
 mod rules;
 mod tags;
-
-pub(crate) use scribe_store::fixtures::{T0, entry};

@@ -1,10 +1,10 @@
 //! Unit tests for the handoff contract: headings, order, size limit,
 //! detection and session lookup.
 
-use super::{T0, entry};
 use crate::entry::EntryStatus;
 use crate::handoff::{self, HandoffError, HandoffSessionError, MAX_CHARS};
 use crate::record::{Author, Related};
+use scribe_store::fixtures::{T0, entry};
 use time::Duration;
 
 fn valid_body() -> String {

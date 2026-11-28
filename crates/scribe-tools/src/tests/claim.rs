@@ -1,5 +1,5 @@
-use super::T0;
 use crate::text::claim as pass;
+use scribe_store::fixtures::T0;
 use time::Duration;
 
 #[test]
@@ -160,22 +160,22 @@ fn covers_statement_is_directional_on_token_boundaries_and_polarity() {
 fn covering_entry_keeps_the_oldest_active_entry_of_the_same_tag_and_project() {
     use crate::entry::EntryStatus;
     let statement = "use rg in scripts today";
-    let mut oldest = super::entry("preferences-1", T0);
+    let mut oldest = scribe_store::fixtures::entry("preferences-1", T0);
     oldest.content = statement.to_owned();
-    let mut later = super::entry("preferences-2", T0 + Duration::hours(1));
+    let mut later = scribe_store::fixtures::entry("preferences-2", T0 + Duration::hours(1));
     later.content = format!("{statement} today");
-    let mut retired = super::entry("preferences-3", T0 - Duration::hours(1));
+    let mut retired = scribe_store::fixtures::entry("preferences-3", T0 - Duration::hours(1));
     retired.content = statement.to_owned();
     retired.status = EntryStatus::Retired;
-    let mut superseded = super::entry("preferences-4", T0 - Duration::hours(2));
+    let mut superseded = scribe_store::fixtures::entry("preferences-4", T0 - Duration::hours(2));
     superseded.content = statement.to_owned();
     superseded.status = EntryStatus::Superseded;
-    let mut forgotten = super::entry("preferences-5", T0 - Duration::hours(3));
+    let mut forgotten = scribe_store::fixtures::entry("preferences-5", T0 - Duration::hours(3));
     forgotten.status = EntryStatus::Forgotten;
     forgotten.content.clear();
-    let mut other_tag = super::entry("idea-1", T0 - Duration::hours(4));
+    let mut other_tag = scribe_store::fixtures::entry("idea-1", T0 - Duration::hours(4));
     other_tag.content = statement.to_owned();
-    let mut other_project = super::entry("preferences-6", T0 - Duration::hours(5));
+    let mut other_project = scribe_store::fixtures::entry("preferences-6", T0 - Duration::hours(5));
     other_project.content = statement.to_owned();
     other_project.project = "other".parse().unwrap();
     let tag: crate::entry::TagName = "preferences".parse().unwrap();
@@ -204,7 +204,7 @@ fn a_stated_entry_covers_a_line_matching_its_quote() {
     let quote = "always run the whole gate before a push";
     let tag: crate::entry::TagName = "preferences".parse().unwrap();
     let project: crate::record::Project = "scribe".parse().unwrap();
-    let mut stated = super::entry("preferences-1", T0 - Duration::hours(3));
+    let mut stated = scribe_store::fixtures::entry("preferences-1", T0 - Duration::hours(3));
     stated.content =
         "Daniel requires the complete check suite to pass ahead of every upload.".to_owned();
     stated.quote = Some(quote.to_owned());
@@ -216,7 +216,7 @@ fn a_stated_entry_covers_a_line_matching_its_quote() {
     );
     // A `quote` without `stated_by` (an agent's action entry) is not what
     // the entry says, so it covers nothing.
-    let mut unstated = super::entry("preferences-2", T0 - Duration::hours(3));
+    let mut unstated = scribe_store::fixtures::entry("preferences-2", T0 - Duration::hours(3));
     unstated.content = "something else entirely, in other words".to_owned();
     unstated.quote = Some(quote.to_owned());
     assert!(pass::covering_entry(&[unstated.clone()], quote, &tag, &project).is_none());

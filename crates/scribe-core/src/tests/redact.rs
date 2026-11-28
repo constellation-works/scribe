@@ -3,8 +3,8 @@
 
 use crate::config::Config;
 use crate::config::RedactorFromConfig;
-use crate::tests::{T0, entry};
 use crate::{MIN_SECRET_CHARS, Redactor};
+use scribe_store::fixtures::{T0, entry};
 use scribe_store::testing::redact::{
     SECRET, entry_fields, entry_records, outcome, proposal, proposal_fields, session_fields,
     session_with_term,

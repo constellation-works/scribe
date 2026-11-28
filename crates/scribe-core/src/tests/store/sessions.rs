@@ -18,9 +18,9 @@ use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{ExportFormat, PassWrite, Redactor, Store, codec, db};
 use crate::testing::StoreTestInternals;
 use crate::testing::ViewTestReads;
-use crate::tests::{T0, session};
 use crate::{EntryVerbs, ProposalVerbs};
 use crate::{PassVerbs, RebuildVerbs};
+use scribe_store::fixtures::{T0, session};
 use std::fs;
 use std::path::Path;
 use time::macros::date;
@@ -940,7 +940,7 @@ fn typed_metadata_update_changes_only_the_named_record_fields() {
 
 /// An active `open-item` entry whose answer was typed in `session`.
 fn answered_item(id: &str, session: &str, words: &str) -> crate::Entry {
-    let mut item = crate::tests::entry(id, T0);
+    let mut item = scribe_store::fixtures::entry(id, T0);
     item.content = String::from("Restart the dashboard");
     item.author = crate::Author::agent("0-chief".parse().unwrap());
     item.content_from = crate::ContentFrom::Agent;

@@ -11,7 +11,7 @@ use crate::entry::{Cite, Entry};
 use crate::session::SessionId;
 use crate::store::{Store, codec, db};
 use crate::testing::StoreTestInternals;
-use crate::tests::{T0, session};
+use scribe_store::fixtures::{T0, session};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -77,7 +77,7 @@ fn record(s: &str, words: &str) -> crate::SessionRecord {
 
 /// Daniel's entry `n`, typed in `session`.
 fn entry(n: u32, session: &str, words: &str) -> Entry {
-    let mut e = crate::tests::entry(&format!("preferences-{n}"), T0);
+    let mut e = scribe_store::fixtures::entry(&format!("preferences-{n}"), T0);
     e.content = words.to_owned();
     e.said = format!("#scribe preferences: {words}");
     e.cite = Some(cite(session));

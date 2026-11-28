@@ -1,7 +1,7 @@
-use super::entry;
 use crate::consistency::{self, Draft, Settle, SettleRefusal, Settled};
 use crate::entry::{Cite, Entry, EntryId, EntryStatus};
 use crate::proposal::{Proposal, ProposalId, ProposalKind, ProposalState, Quote};
+use scribe_store::fixtures::entry;
 use time::macros::{date, datetime};
 use time::{Duration, OffsetDateTime};
 

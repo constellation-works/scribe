@@ -10,11 +10,11 @@ use crate::entry::Speaker;
 use crate::error::Error;
 use crate::group::GroupCloser;
 use crate::message::NewMessage;
+use crate::store::db::{self, DB_FILE};
 use crate::store::{AuditEvent, AuditStatus, Redactor, Store};
 use crate::testing::StoreTestInternals;
 use crate::testing::ViewTestReads;
-use crate::tests::T0;
-use crate::tests::db::{self, DB_FILE};
+use scribe_store::fixtures::T0;
 use std::path::Path;
 use std::time::Duration;
 
@@ -2148,8 +2148,8 @@ fn schema_seventeen_replaces_trial_registrations_and_preserves_trial_rows() {
     let store = Store::open(root);
     let author = crate::Author::agent("opus".parse().unwrap());
     let mut entries = [
-        crate::tests::entry("decision-14", T0),
-        crate::tests::entry("open-item-4", T0),
+        scribe_store::fixtures::entry("decision-14", T0),
+        scribe_store::fixtures::entry("open-item-4", T0),
     ];
     for entry in &mut entries {
         entry.author = author.clone();

@@ -12,5 +12,3 @@ mod project;
 mod transcript;
 mod trigger;
 mod verbatim;
-
-pub(crate) use scribe_store::fixtures::{T0, entry};

@@ -1,7 +1,6 @@
 //! Which of a pass window's turns are kept in `scribe.db`, and the search
 //! hits made of them.
 
-use super::T0;
 use crate::claim::PassClaim;
 use crate::entry::{Cite, Speaker};
 use crate::message;
@@ -9,6 +8,7 @@ use crate::models::PassMessage;
 use crate::proposal::EntryCandidate;
 use crate::record::{Label, Project};
 use crate::transcript;
+use scribe_store::fixtures::T0;
 use time::Duration;
 
 fn said(uuid: &str, role: Speaker, text: &str) -> (PassMessage, transcript::Message) {

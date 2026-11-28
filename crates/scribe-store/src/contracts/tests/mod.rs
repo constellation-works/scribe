@@ -8,5 +8,3 @@ mod proposal;
 mod record;
 mod session;
 mod tag;
-
-pub(crate) use crate::fixtures::{T0, entry, session};

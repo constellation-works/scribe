@@ -15,7 +15,7 @@ use crate::session::{SessionId, SessionRecord};
 use crate::store::memory::CRASH_AFTER_COMMIT;
 use crate::store::{Redactor, Store, db};
 use crate::testing::StoreTestInternals;
-use crate::tests::{T0, session};
+use scribe_store::fixtures::{T0, session};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

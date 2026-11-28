@@ -2,5 +2,3 @@
 //! (STD-02 R19).
 
 mod rules;
-
-pub(crate) use scribe_store::fixtures::{T0, entry, session};

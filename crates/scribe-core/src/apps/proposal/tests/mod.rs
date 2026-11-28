@@ -5,5 +5,3 @@ mod candidates;
 mod proposals;
 mod retired;
 mod rules;
-
-pub(crate) use scribe_store::fixtures::entry;

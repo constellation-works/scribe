@@ -1,13 +1,13 @@
 //! `scribe search` over fixture records (2_design.md §6.8): the units,
 //! weights and filters, no model and no tasks.
 
-use super::{T0, entry, segment, session};
 use crate::entry::{Entry, EntryStatus};
 use crate::record::{Author, DateRange};
 use crate::search::{self, Corpus, RecordKind, SNIPPET_CHARS, SearchError, SearchQuery};
 use crate::session::{SegmentState, SessionRecord};
 use crate::tag::TagTable;
 use crate::text::tokens;
+use scribe_store::fixtures::{T0, entry, segment, session};
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use time::Duration;

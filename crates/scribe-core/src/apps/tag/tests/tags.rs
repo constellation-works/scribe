@@ -1,5 +1,5 @@
-use super::{T0, entry};
 use crate::tag::{TagTable, summarize};
+use scribe_store::fixtures::{T0, entry};
 
 #[test]
 fn a_summary_counts_entries_per_tag_and_keeps_unconfigured_ones() {

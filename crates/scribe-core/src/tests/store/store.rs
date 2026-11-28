@@ -431,8 +431,8 @@ fn a_corrupt_entry_is_skipped_in_a_list_and_refused_by_show() {
         dir.path(),
         &Seed {
             entries: vec![
-                crate::tests::entry("preferences-1", at),
-                crate::tests::entry("preferences-2", at),
+                scribe_store::fixtures::entry("preferences-1", at),
+                scribe_store::fixtures::entry("preferences-2", at),
             ],
             ..Seed::default()
         },
@@ -481,7 +481,7 @@ fn a_session_is_shown_with_its_switch() {
     seed(
         dir.path(),
         &Seed {
-            sessions: vec![crate::tests::session("s-1", at)],
+            sessions: vec![scribe_store::fixtures::session("s-1", at)],
             control,
             ..Seed::default()
         },
@@ -566,7 +566,7 @@ fn record_audit_never_waits_for_a_writer_and_the_next_write_drains_the_spool() {
         "the line waited {:?}",
         started.elapsed()
     );
-    let spool = dir.path().join(crate::tests::write::AUDIT_SPOOL_DIR);
+    let spool = dir.path().join(crate::store::write::AUDIT_SPOOL_DIR);
     assert_eq!(fs::read_dir(&spool).unwrap().count(), 1);
     let (events, _) = store.audit_events().unwrap();
     assert_eq!(
@@ -637,7 +637,7 @@ fn settle_pass_writes_the_record_and_clears_due_in_one_call() {
         .update_control(|state| control::switch(state, &s, &Switch::On, t0))
         .unwrap();
 
-    let mut record = crate::tests::session("s-1", t0);
+    let mut record = scribe_store::fixtures::session("s-1", t0);
     record.summary = String::from("the token is s3cr3t-value-123 here");
     let redactor =
         crate::store::Redactor::new([(String::from("TOKEN"), String::from("s3cr3t-value-123"))]);
@@ -674,7 +674,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
     store
         .settle_pass(
             &parent,
-            Some(crate::tests::session("p-1", t0)),
+            Some(scribe_store::fixtures::session("p-1", t0)),
             false,
             None,
             &redactor,
@@ -696,7 +696,7 @@ fn a_link_is_kept_on_the_switch_until_the_first_record_then_on_the_record() {
     let written = store
         .settle_pass(
             &child,
-            Some(crate::tests::session("c-1", t0)),
+            Some(scribe_store::fixtures::session("c-1", t0)),
             false,
             None,
             &redactor,
@@ -765,7 +765,7 @@ fn ordinary_writes_refuse_any_change_to_a_sealed_segment() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
-    let mut record = crate::tests::session("s-1", t0);
+    let mut record = scribe_store::fixtures::session("s-1", t0);
     record.log[0].state = SegmentState::Sealed;
     let id = record.id.clone();
     let redactor = Redactor::new([]);
@@ -832,7 +832,7 @@ fn set_active_writes_only_the_activity_fields_and_only_on_a_change() {
     store
         .settle_pass(
             &s,
-            Some(crate::tests::session("s-1", t0)),
+            Some(scribe_store::fixtures::session("s-1", t0)),
             false,
             None,
             &none,
@@ -890,7 +890,7 @@ fn set_active_many_isolates_a_corrupt_record_and_continues() {
         store
             .settle_pass(
                 &id,
-                Some(crate::tests::session(id.as_str(), now)),
+                Some(scribe_store::fixtures::session(id.as_str(), now)),
                 false,
                 None,
                 &redactor,
@@ -951,7 +951,7 @@ fn a_pass_write_refuses_when_the_record_changed_since_it_was_loaded() {
     let store = Store::open(dir.path());
     let t0 = time::macros::datetime!(2026-11-01 10:00 UTC);
     let redactor = Redactor::new([]);
-    let record = crate::tests::session("s-1", t0);
+    let record = scribe_store::fixtures::session("s-1", t0);
     let id = record.id.clone();
     store
         .update_control(|state| control::switch(state, &id, &Switch::On, t0))
@@ -1190,7 +1190,7 @@ fn corrupt_or_unreadable_config_and_tags_close_no_candidate() {
         let err = store.close_retired_candidates(t0).unwrap_err();
         assert_eq!(err.code(), *code, "{rel}: {err}");
         assert_eq!(store.proposals().unwrap()[0].state, ProposalState::Open);
-        let record = crate::tests::session("s-1", t0);
+        let record = scribe_store::fixtures::session("s-1", t0);
         let err = store
             .open_pass_candidates(&record, &[], &Redactor::new([]))
             .unwrap_err();
@@ -1221,7 +1221,7 @@ fn corrupt_or_unreadable_config_and_tags_close_no_candidate() {
             let path = dir.path().join(rel);
             fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
             let scan_err = store.close_retired_candidates(t0).unwrap_err();
-            let record = crate::tests::session("s-1", t0);
+            let record = scribe_store::fixtures::session("s-1", t0);
             let pass_err = store
                 .open_pass_candidates(&record, &[], &Redactor::new([]))
                 .unwrap_err();
@@ -1255,7 +1255,7 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
         quote: Some(String::from(secret_quote)),
     };
     // Daniel's typed approval of a pass claim, settled on an instruction.
-    let mut entry = crate::tests::entry("preferences-1", t0);
+    let mut entry = scribe_store::fixtures::entry("preferences-1", t0);
     entry.said = String::from("#scribe approve p-1");
     entry.content = String::from("I prefer secret phrase XYZ123");
     entry.content_from = crate::ContentFrom::Message {
@@ -1360,7 +1360,7 @@ fn typed_forget_clears_instruction_quotes_on_disk_and_keeps_metadata() {
 /// A trial `open-item` entry (no `item` object) as the 2026-11-23 trial
 /// wrote it, by an agent.
 fn trial_item(id: &str, retired: bool) -> crate::Entry {
-    let mut trial = crate::tests::entry(id, crate::tests::T0);
+    let mut trial = scribe_store::fixtures::entry(id, scribe_store::fixtures::T0);
     trial.content = String::from("Restart the dashboard");
     trial.author = crate::Author::agent("0-chief".parse().unwrap());
     trial.content_from = crate::ContentFrom::Agent;
@@ -1406,7 +1406,7 @@ fn trial_open_items_derive_their_state_and_take_answers_and_closes() {
     };
     assert_eq!(by_state(vec![ItemState::Closed]), ["open-item-2"]);
 
-    let now = crate::tests::T0 + time::Duration::hours(1);
+    let now = scribe_store::fixtures::T0 + time::Duration::hours(1);
     let redactor = Redactor::default();
     let answer = ItemAnswer {
         words: String::from("done"),
