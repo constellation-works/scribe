@@ -1770,6 +1770,116 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-builtin
 fi
 expect pass check-dependency-direction.sh "$lex_builtin_all" "unshadowed std/core stringify beside ordinary std/core imports"
 
+# A `use` item that binds `stringify` shadows the builtin in the scopes it
+# reaches, whatever its position in the module. Each shadowing form must
+# report its evaluated call's line and socket. The sibling, parent and child
+# scopes a `use` does not reach, and std/core imports of the builtin, keep the
+# builtin, so their calls stay exempt. Usage: use_case <name> <pass|fail>
+# <line> <what> <<'EOF' (fixture config.rs) EOF.
+use_case() {
+  local name="$1" verdict="$2" line="$3" what="$4" dir
+  dir=$(tree "lex-use-$name")
+  cat >"$dir/crates/scribe-core/src/config.rs"
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-use-$name.rmeta" \
+    "$dir/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: $what fixture did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect "$verdict" check-dependency-direction.sh "$dir" "$what"
+  if [[ "$verdict" == fail ]] && {
+    ! grep -Fq "config.rs:$line:" "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"
+  }; then
+    echo "check-gates: FAIL: $what lacks line $line or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+}
+use_case use-crate-same-module fail 8 "use crate::stringify before the call in its module" <<'EOF'
+mod local {
+    #[macro_export]
+    macro_rules! stringify { ($left:expr, $right:expr) => { ($left, $right) }; }
+}
+mod other {
+    use crate::stringify;
+    pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+        stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+    }
+}
+EOF
+use_case use-crate-after-call fail 7 "use crate::stringify after the call in its module" <<'EOF'
+mod local {
+    #[macro_export]
+    macro_rules! stringify { ($left:expr, $right:expr) => { ($left, $right) }; }
+}
+mod other {
+    pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+        stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+    }
+    use crate::stringify;
+}
+EOF
+use_case use-local-path fail 7 "root use local::stringify of a re-exported macro" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom as stringify;
+}
+use local::stringify;
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+use_case use-local-alias fail 7 "root use local::custom as stringify" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom;
+}
+use local::custom as stringify;
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+use_case use-sibling-scopes pass 0 "builtin calls in sibling and parent scopes of a module-local use" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom as stringify;
+}
+mod other {
+    pub fn f(a: u32, b: u32, c: u32) -> &'static str {
+        stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+    }
+}
+pub fn g(a: u32, b: u32, c: u32) -> &'static str {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+use_case use-root-child-scope pass 0 "builtin call in a child module beside a root use" <<'EOF'
+mod local {
+    macro_rules! custom { ($left:expr, $right:expr) => { ($left, $right) }; }
+    pub(crate) use custom as stringify;
+}
+use local::stringify;
+mod other {
+    pub fn f(a: u32, b: u32, c: u32) -> &'static str {
+        stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+    }
+}
+EOF
+use_case use-builtin-imports pass 0 "std and core imports of stringify keep the builtin" <<'EOF'
+mod a {
+    use std::stringify;
+    pub const A: &str = stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+}
+mod b {
+    use core::{fmt, stringify};
+    pub const B: &str = stringify!([Result<u8, u16>::std::net::Item]);
+}
+mod c {
+    use ::std::stringify as _;
+    pub const C: &str = ::std::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+}
+EOF
+
 # A local macro can shadow stringify and evaluate its arguments. Its
 # comparison must not be mistaken for a generic-qualified path.
 lex_shadow_stringify=$(tree lex-shadow-stringify)
