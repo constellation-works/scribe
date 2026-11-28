@@ -503,10 +503,24 @@ def _group_binds_self(code: Sequence[Token], open_idx: int) -> bool:
     if open_idx >= len(code) or code[open_idx].text != "{":
         return False
     close = _find_matching_delim(code, open_idx, "{", "}")
-    return any(
-        len(item) == 1 and item[0].kind == "IDENT" and item[0].text == "self"
-        for item in _split_top_level_commas(code[open_idx + 1 : close])
-    )
+
+    def has_bare_self(tokens: Sequence[Token]) -> bool:
+        for item in _split_top_level_commas(tokens):
+            if len(item) == 1 and item[0].kind == "IDENT" and item[0].text == "self":
+                return True
+            if (
+                len(item) >= 2
+                and item[0].kind == "PUNCT"
+                and item[0].text == "{"
+                and item[-1].kind == "PUNCT"
+                and item[-1].text == "}"
+                and _find_matching_delim(item, 0, "{", "}") == len(item) - 1
+                and has_bare_self(item[1:-1])
+            ):
+                return True
+        return False
+
+    return has_bare_self(code[open_idx + 1 : close])
 
 
 def _use_binds_name(code: Sequence[Token], name: str) -> bool:
