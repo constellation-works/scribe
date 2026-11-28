@@ -99,6 +99,11 @@ PATH_PREFIX_KEYWORDS = frozenset(
         "struct", "trait", "type", "unsafe", "use", "where", "while", "yield",
     )
 )
+# Leading segment kept for an absolute `::` path when `keep_absolute` is set.
+# Rust 2024 resolves that path from the extern prelude, never from a
+# same-named local module. Callers that leave the flag unset still see
+# identifiers only, so `::std` stays `std`.
+ABSOLUTE_PATH_SEGMENT = "::"
 # Keywords that cannot appear at depth 0 inside `<...>` generic arguments or
 # qualified paths (`as`, `for`, `fn`, `unsafe`, `extern`, `const`, `mut`,
 # `dyn`, `impl`, `async`, `crate`, `self`, `super`, `Self` can).
@@ -1751,8 +1756,15 @@ def flatten_use_tokens(
     toks: Sequence[Token],
     prefix: Tuple[str, ...] = (),
     keep_self: bool = False,
+    keep_absolute: bool = False,
 ) -> List[Tuple[Tuple[str, ...], Optional[str]]]:
-    """Flatten a Rust `use` tree token sequence into `(canonical_segments, alias)` pairs."""
+    """Flatten a Rust `use` tree token sequence into `(canonical_segments, alias)` pairs.
+
+    `keep_absolute` retains a leading `::` as `ABSOLUTE_PATH_SEGMENT`. The
+    default drops it: crate-relative gates still see `::std::io` as `std::io`.
+    The terminal guard sets the flag, because a dropped `::` makes an
+    extern-prelude path look like a same-named local module.
+    """
     out: List[Tuple[Tuple[str, ...], Optional[str]]] = []
     for item in _split_top_level_commas(toks):
         if not item:
@@ -1772,12 +1784,15 @@ def flatten_use_tokens(
                             brace_open = j
                             break
             if brace_open is not None:
-                head_segs = _extract_path_segments(item[:brace_open])
+                head_segs = _extract_path_segments(
+                    item[:brace_open], keep_absolute=keep_absolute
+                )
                 out.extend(
                     flatten_use_tokens(
                         item[brace_open + 1 : -1],
                         prefix + head_segs,
                         keep_self=keep_self,
+                        keep_absolute=keep_absolute,
                     )
                 )
                 continue
@@ -1795,7 +1810,7 @@ def flatten_use_tokens(
             alias = None if cand == "_" else cand
             path_part = item[:-2]
 
-        segs = _extract_path_segments(path_part)
+        segs = _extract_path_segments(path_part, keep_absolute=keep_absolute)
         if not segs:
             continue
         if segs == ("self",) and prefix and not keep_self:
@@ -1805,14 +1820,30 @@ def flatten_use_tokens(
     return out
 
 
-def _extract_path_segments(toks: Sequence[Token]) -> Tuple[str, ...]:
-    """Extract canonical path segments (and `*`) from a `::`-separated token slice."""
+def _extract_path_segments(
+    toks: Sequence[Token], keep_absolute: bool = False
+) -> Tuple[str, ...]:
+    """Extract canonical path segments (and `*`) from a `::`-separated token slice.
+
+    With `keep_absolute`, a leading `::` (after trivia) is kept as
+    `ABSOLUTE_PATH_SEGMENT` even when the slice has no identifier, as in
+    `::{elsewhere::item}`. Otherwise only identifiers and `*` are returned.
+    """
     segs: List[str] = []
+    absolute = False
+    if keep_absolute:
+        for tok in toks:
+            if tok.kind in ("WS", "COMMENT"):
+                continue
+            absolute = tok.kind == "PUNCT" and tok.text == "::"
+            break
     for tok in toks:
         if tok.kind in ("IDENT", "RAW_IDENT"):
             segs.append(canonical_ident(tok.text))
         elif tok.kind == "PUNCT" and tok.text == "*":
             segs.append("*")
+    if absolute:
+        return (ABSOLUTE_PATH_SEGMENT,) + tuple(segs)
     return tuple(segs)
 
 

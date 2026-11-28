@@ -77,9 +77,11 @@ fmt-check:
 # discriminant) compile their fixture files
 # with `rustc` for Rust 2024 metadata only and need no clippy. The
 # terminal-guard alias-scoping cases (the `self::`, `super::`
-# and `crate::` stream reexports, and block-local, test-only and module-level
-# `std::io` aliases) compile one fixture each the same way; a case outside a
-# crate root compiles the module root that declares it. Outside these compiled
+# and `crate::` stream reexports, block-local, test-only and module-level
+# `std::io` aliases, and an absolute `::` extern path beside a same-named
+# local module) compile one fixture each the same way; the extern path also
+# passes `--extern`. A case outside a crate root compiles the module root
+# that declares it. Outside these compiled
 # cases, the checks read manifests (cargo metadata, no compile) and source files.
 structure:
 	./scripts/check-architecture-map.sh
