@@ -2021,6 +2021,90 @@ EOF
   expect pass check-dependency-direction.sh "$lex_non_export" "builtin stringify beside non-export '${non_export_attrs[$i]}'"
 done
 
+# A raw `r#macro_use` spelling, plain or inside `cfg_attr`, imports the module's
+# stringify into the parent exactly like `#[macro_use]` (ORB-29678). Each fixture
+# below must fail with the socket diagnostic on the root call's line.
+raw_use_attrs=(
+  '#[r#macro_use]'
+  '#[cfg_attr(all(), r#macro_use)]'
+)
+for i in "${!raw_use_attrs[@]}"; do
+  lex_raw_use=$(tree "lex-stringify-raw-macro-use-$i")
+  cat >"$lex_raw_use/crates/scribe-core/src/lib.rs" <<EOF
+//! core
+${raw_use_attrs[$i]}
+mod local {
+    macro_rules! stringify { (\$(\$x:tt)*) => { \$(\$x)* }; }
+}
+pub fn f(a: usize, b: usize) -> bool {
+    stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-raw-macro-use-$i.rmeta" \
+    "$lex_raw_use/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: raw macro_use fixture '${raw_use_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_raw_use" "evaluated comparisons in raw macro_use '${raw_use_attrs[$i]}'"
+  if ! grep -Fq 'lib.rs:7:    stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)' "$work/out" || \
+     ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: raw macro_use '${raw_use_attrs[$i]}' lacks line 7 or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+# An attribute that merely names `macro_use` — a `cfg` predicate (plain or raw)
+# or an inactive or test-only `cfg_attr` — imports nothing, so the root builtin
+# call stays exempt (ORB-29678).
+mention_attrs=(
+  '#[cfg(not(macro_use))]'
+  '#[cfg(not(r#macro_use))]'
+  '#[cfg_attr(any(), macro_use)]'
+  '#[cfg_attr(test, r#macro_use)]'
+)
+for i in "${!mention_attrs[@]}"; do
+  lex_mention=$(tree "lex-stringify-macro-use-mention-$i")
+  cat >"$lex_mention/crates/scribe-core/src/lib.rs" <<EOF
+${mention_attrs[$i]}
+pub fn helper() {}
+mod local {
+    macro_rules! stringify {
+        (\$value:expr) => { \$value };
+    }
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-macro-use-mention-$i.rmeta" \
+    "$lex_mention/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: macro_use mention fixture '${mention_attrs[$i]}' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect pass check-dependency-direction.sh "$lex_mention" "builtin stringify beside non-macro_use '${mention_attrs[$i]}'"
+done
+
+# The same mention as an inner `#![cfg(not(macro_use))]` on the module itself
+# takes the inner-attribute path of the scanner and still imports nothing.
+lex_inner_mention=$(tree lex-stringify-inner-macro-use-mention)
+cat >"$lex_inner_mention/crates/scribe-core/src/lib.rs" <<'EOF'
+mod local {
+    #![cfg(not(macro_use))]
+    macro_rules! stringify {
+        ($value:expr) => { $value };
+    }
+}
+pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-inner-macro-use-mention.rmeta" \
+  "$lex_inner_mention/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: inner macro_use mention fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_inner_mention" "builtin stringify beside inner '#![cfg(not(macro_use))]'"
+
 # In a multi-file crate compiled from `lib.rs`, `#[macro_export]` inside a
 # submodule (`config.rs`) exports `stringify` to the crate root (`lib.rs`), not
 # into `config.rs`'s own unqualified scope (ORB-29674).
