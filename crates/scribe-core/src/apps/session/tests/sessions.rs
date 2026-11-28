@@ -1,8 +1,8 @@
 mod links {
-    use crate::apps::session::tests::{T0, session};
     use crate::session::{
         LinkError, LinkType, SessionId, SessionLink, check_link, children, tree_order,
     };
+    use scribe_store::fixtures::{T0, session};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn id(s: &str) -> SessionId {
@@ -109,8 +109,8 @@ mod links {
     }
 }
 
-use super::T0;
 use crate::session::{Cadence, SessionControl};
+use scribe_store::fixtures::T0;
 use std::num::NonZeroU32;
 use time::Duration;
 

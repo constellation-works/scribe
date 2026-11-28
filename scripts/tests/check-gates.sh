@@ -140,6 +140,39 @@ expect fail check-test-modules.sh "$nested" "store/tests/ with no \`mod tests;\`
 printf '#[cfg(test)]\nmod tests;\n' >>"$nested/crates/scribe-core/src/store/mod.rs"
 expect pass check-test-modules.sh "$nested" "store/tests/ declared in store/mod.rs"
 
+# tests/mod.rs is wiring only: tests, helpers and re-exports are refused, while
+# comments, blank lines, `mod` lines and a module-level `#![expect(...)]` pass.
+wiring=$(tree modules-wiring)
+mkdir -p "$wiring/crates/scribe-core/src/tests"
+printf '#[cfg(test)]\nmod tests;\n' >>"$wiring/crates/scribe-core/src/lib.rs"
+printf '#[test]\nfn t() {}\n' >"$wiring/crates/scribe-core/src/tests/entry.rs"
+printf '//! Unit tests.\n\n#![expect(\n    clippy::disallowed_methods,\n    reason = "stages files"\n)]\n\n// wiring\nmod entry;\n' \
+  >"$wiring/crates/scribe-core/src/tests/mod.rs"
+expect pass check-test-modules.sh "$wiring" "a tests/mod.rs of comments, an expectation and mod lines"
+printf 'pub(crate) mod entry;\n' >"$wiring/crates/scribe-core/src/tests/mod.rs"
+expect pass check-test-modules.sh "$wiring" "a tests/mod.rs declaring a pub(crate) mod"
+
+for body in \
+  $'mod entry;\n#[test]\nfn t() {}' \
+  $'mod entry;\nfn helper() {}' \
+  $'mod entry;\nconst T: u8 = 1;' \
+  $'mod entry;\npub(crate) use scribe_store::fixtures::T0;' \
+  $'mod entry;\nuse crate::store::db;' \
+  $'mod entry {\n    fn t() {}\n}' \
+  $'#![allow(clippy::disallowed_methods)]\nmod entry;'; do
+  bad=$(tree "modules-items-$n")
+  mkdir -p "$bad/crates/scribe-core/src/tests"
+  printf '#[cfg(test)]\nmod tests;\n' >>"$bad/crates/scribe-core/src/lib.rs"
+  printf '#[test]\nfn t() {}\n' >"$bad/crates/scribe-core/src/tests/entry.rs"
+  printf '%s\n' "$body" >"$bad/crates/scribe-core/src/tests/mod.rs"
+  expect fail check-test-modules.sh "$bad" "a tests/mod.rs holding $(echo "$body" | tail -n +2 | tr -s '\n ' ' ')"
+  if ! grep -Fq "holds more than \`mod\` declarations" "$work/out" ||
+    ! grep -Fq "tests/mod.rs" "$work/out"; then
+    echo "check-gates: FAIL: test-modules fixture $bad lacks its wiring-only diagnostic" >&2
+    fail=1
+  fi
+done
+
 # --- check-dependency-direction.sh: std::net reached by a grouped import -----
 deps=$(tree deps-clean)
 expect pass check-dependency-direction.sh "$deps" "a core module with use std::fmt"

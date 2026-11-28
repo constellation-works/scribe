@@ -73,7 +73,7 @@ fn close_retired_tag_candidates_closes_only_open_candidates_outside_the_tag_tabl
         candidate(4, "task", ProposalState::Approved),
         stale,
     ];
-    let tags = crate::tests::tags_with_idea();
+    let tags = crate::tests::catchers::tags_with_idea();
     let closed = close_retired_tag_candidates(&mut proposals, &tags, t1);
     assert_eq!(closed.len(), 1);
     assert_eq!(closed[0].id.to_string(), "p-1");

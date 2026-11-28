@@ -1,5 +1,5 @@
-use super::{T0, entry};
 use crate::entry::{EntryError, EntryFilter, EntryId, EntryStatus, TagName};
+use crate::fixtures::{T0, entry};
 use std::num::NonZeroUsize;
 use time::Duration;
 

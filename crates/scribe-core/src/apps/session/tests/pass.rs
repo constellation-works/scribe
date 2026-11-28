@@ -1,4 +1,3 @@
-use super::{T0, session};
 use crate::entry::Speaker;
 use crate::models::{
     NewSegmentAnswer, PassMessage, SegmentAnswer, SessionAnswer, SessionRequest, TermAnswer,
@@ -6,6 +5,7 @@ use crate::models::{
 use crate::pass::{self, Invalid, PassMeta, WINDOW_CHARS};
 use crate::session::{SegmentOrigin, SegmentState, SessionStatus};
 use crate::transcript::Message;
+use scribe_store::fixtures::{T0, session};
 use time::Duration;
 
 const ASSISTANT: &str = "A graduated crew is one that has passed three reviews without a repair.";

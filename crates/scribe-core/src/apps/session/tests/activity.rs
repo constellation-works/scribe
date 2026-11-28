@@ -1,12 +1,12 @@
 //! `activity`: the `manual`, `age` and `removed` routes of a session's
 //! `active` flag (2_design.md §5.7, S10).
 
-use super::{T0, segment, session};
 use crate::activity::{
     ActiveOutcome, ActiveRoute, SetActive, age_change, last_message, past_age, set_active,
 };
 use crate::record::Author;
 use crate::session::SegmentState;
+use scribe_store::fixtures::{T0, segment, session};
 use std::num::NonZeroU32;
 use time::Duration;
 

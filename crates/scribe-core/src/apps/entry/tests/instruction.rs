@@ -1,4 +1,3 @@
-use super::T0;
 use crate::entry::Speaker;
 use crate::error::Error;
 use crate::instruction::{
@@ -7,6 +6,7 @@ use crate::instruction::{
 };
 use crate::session::SessionId;
 use crate::transcript::Message;
+use scribe_store::fixtures::T0;
 use serde_json::json;
 
 fn session() -> SessionId {

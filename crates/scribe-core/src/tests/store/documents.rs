@@ -77,7 +77,7 @@ fn put(root: &Path, rel: &str, bytes: &[u8]) {
 }
 
 fn entry(id: &str, days: i64, content: &str) -> Entry {
-    let mut e = crate::tests::entry(id, T0 + time::Duration::days(days));
+    let mut e = scribe_store::fixtures::entry(id, T0 + time::Duration::days(days));
     e.content = content.to_owned();
     e.said = format!("#scribe {}: {content}", e.tag);
     e
@@ -143,7 +143,7 @@ fn seeded(root: &Path) -> Store {
     seed(
         root,
         &Seed {
-            sessions: vec![crate::tests::session("s-1", T0)],
+            sessions: vec![scribe_store::fixtures::session("s-1", T0)],
             entries: vec![older, newer],
             claims: vec![supersedes()],
             tags: vec![tag],
@@ -686,7 +686,7 @@ fn put_entry_refuses_unreadable_spoken_entry_without_writing() {
     let dir = private_tempdir();
     let root = dir.path().join("store");
     let store = seed(&root, &Seed::default());
-    let mut invalid = crate::tests::entry("preferences-1", T0);
+    let mut invalid = scribe_store::fixtures::entry("preferences-1", T0);
     invalid.author = Author::agent("opus".parse().unwrap());
     invalid.content_from = ContentFrom::Agent;
     invalid.cite = None;

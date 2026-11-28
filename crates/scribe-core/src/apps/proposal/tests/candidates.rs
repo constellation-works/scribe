@@ -13,7 +13,7 @@ fn said(uuid: &str, role: Speaker, text: &str) -> PassMessage {
 
 #[test]
 fn only_daniels_own_lines_that_fire_a_trigger_are_named() {
-    let tags = crate::tests::tags_with_idea();
+    let tags = crate::tests::catchers::tags_with_idea();
     let messages = vec![
         said("m-1", Speaker::User, "Let's look at the build."),
         said("m-2", Speaker::Assistant, "I always run the tests first."),

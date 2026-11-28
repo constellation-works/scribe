@@ -5,5 +5,3 @@ mod handoff;
 mod instruction;
 mod message;
 mod rules;
-
-pub(crate) use scribe_store::fixtures::{T0, entry};

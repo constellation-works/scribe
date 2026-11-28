@@ -1,10 +1,10 @@
 //! The search hits made of stored messages.
 
-use super::{T0, session};
 use crate::entry::Speaker;
 use crate::message::{MessageMatch, MessageSearch};
 use crate::record::{DateRange, Project};
 use crate::search::{self, SearchQuery};
+use scribe_store::fixtures::{T0, session};
 use std::num::NonZeroUsize;
 
 fn query(terms: &str) -> SearchQuery {

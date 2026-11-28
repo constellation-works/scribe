@@ -2,11 +2,11 @@
 //! per-tag counts and the quote check
 //! (2_design.md §4.6).
 
-use super::{T0, entry};
 use crate::action::{self, CANCEL_WINDOW, Pickup, STUCK_AFTER};
 use crate::entry::{Entry, EntryStatus, Speaker};
 use crate::record::{Author, AuthorName};
 use crate::transcript::Message;
+use scribe_store::fixtures::{T0, entry};
 use time::Duration;
 
 fn agent(id: &str) -> Entry {
@@ -59,7 +59,7 @@ fn state_reports_its_own_pickups_oldest_first_and_any_rejection() {
 
 #[test]
 fn stuck_counts_active_unpicked_action_entries_past_the_age_per_tag() {
-    let tags = crate::tests::tags_with_idea();
+    let tags = crate::tests::catchers::tags_with_idea();
     let mut retired = entry("idea-3", T0);
     retired.status = EntryStatus::Retired;
     let picked = entry("idea-4", T0);

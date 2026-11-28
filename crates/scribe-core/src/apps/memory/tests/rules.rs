@@ -1,4 +1,3 @@
-use super::T0;
 use crate::entry::Speaker;
 use crate::memory::{
     self, Checked, Draft, ElementKind, Milestone, NowItem, NowKind, PassChange, Pending,
@@ -6,6 +5,7 @@ use crate::memory::{
 };
 use crate::models::{MemoryAnswer, PassMessage};
 use crate::session::SessionId;
+use scribe_store::fixtures::T0;
 use std::collections::BTreeSet;
 use time::Date;
 use time::macros::date;

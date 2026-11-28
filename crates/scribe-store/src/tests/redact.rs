@@ -1,7 +1,7 @@
+use crate::fixtures::{T0, entry, session};
 use crate::redact::{REDACTED_FIELDS, Redactor};
 use crate::redact::{entry_fields, group_fields, proposal_fields, session_fields, tag_fields};
 use crate::testing::redact::{SECRET, entry_records, outcome, proposal, session_with_term};
-use crate::tests::{T0, entry, session};
 
 #[test]
 fn the_redacted_field_inventory_is_exactly_the_fields_masked() {

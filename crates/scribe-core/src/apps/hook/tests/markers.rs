@@ -3,7 +3,7 @@ use crate::annotation;
 #[test]
 fn a_line_start_capture_form_is_a_marker_with_its_tag_as_the_hint() {
     // Forms 1-3 folded into the marker (2_design.md §14.6).
-    let tags = crate::tests::tags_with_idea();
+    let tags = crate::tests::catchers::tags_with_idea();
     let hint = |text: &str| {
         let marks = annotation::marks(text);
         assert_eq!(marks.len(), 1, "{text}: {marks:?}");

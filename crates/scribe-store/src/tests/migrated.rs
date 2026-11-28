@@ -1,7 +1,7 @@
 //! Compatibility with a store migrated by the phase 6–7 implementation.
 
-use super::private_tempdir;
 use crate::store::{ExportFormat, Store};
+use crate::testing::private_tempdir;
 use std::path::Path;
 
 fn compare_tree(expected: &Path, actual: &Path) {

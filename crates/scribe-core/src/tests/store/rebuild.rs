@@ -13,7 +13,7 @@ fn rebuild_checkpoints_are_hidden_and_replacement_compares_the_visible_revision(
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let redactor = Redactor::new([]);
-    let original = crate::tests::session("s-1", datetime!(2026-11-01 10:00 UTC));
+    let original = scribe_store::fixtures::session("s-1", datetime!(2026-11-01 10:00 UTC));
     let id = original.id.clone();
     store
         .settle_pass(&id, Some(original.clone()), false, None, &redactor)
@@ -85,7 +85,7 @@ fn a_forgotten_session_takes_no_checkpoint_and_no_finish() {
     let dir = private_tempdir();
     let store = Store::open(dir.path());
     let redactor = Redactor::new([]);
-    let original = crate::tests::session("s-1", datetime!(2026-11-01 10:00 UTC));
+    let original = scribe_store::fixtures::session("s-1", datetime!(2026-11-01 10:00 UTC));
     let id = original.id.clone();
     store
         .settle_pass(&id, Some(original.clone()), false, None, &redactor)

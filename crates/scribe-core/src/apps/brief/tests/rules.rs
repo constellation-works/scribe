@@ -1,10 +1,10 @@
 //! The session brief: which sessions and claims it picks, and its text.
 
-use super::{T0, entry, session};
 use crate::brief::{self, Brief};
 use crate::entry::{Cite, Entry, EntryStatus, Speaker};
 use crate::proposal::{EntryCandidate, Proposal, ProposalKind, ProposalState, Quote};
 use crate::record::{Author, Label, Project};
+use scribe_store::fixtures::{T0, entry, session};
 use time::Duration;
 
 fn candidate(n: u64, tag: &str, state: ProposalState, statement: Option<&str>) -> Proposal {

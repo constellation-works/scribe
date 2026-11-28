@@ -1,7 +1,7 @@
-use super::entry;
 use crate::consistency;
 use crate::entry::Entry;
 use crate::proposal::ProposalKind;
+use scribe_store::fixtures::entry;
 use time::macros::{date, datetime};
 use time::{Duration, OffsetDateTime};
 

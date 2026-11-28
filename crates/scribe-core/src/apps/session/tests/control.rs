@@ -1,6 +1,6 @@
-use super::T0;
 use crate::control::{self, Change, Since, Switch};
 use crate::session::{Cadence, ControlState, SessionControl, SessionId};
+use scribe_store::fixtures::T0;
 use std::num::NonZeroU32;
 use time::Duration;
 

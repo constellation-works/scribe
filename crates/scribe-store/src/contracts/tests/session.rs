@@ -1,4 +1,4 @@
-use super::{T0, session};
+use crate::fixtures::{T0, session};
 use crate::session::{SessionFilter, SessionId, SessionOrder, SessionStatus};
 use std::num::NonZeroUsize;
 use time::Duration;
