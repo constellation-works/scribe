@@ -1687,6 +1687,56 @@ if ! grep -Fq 'config.rs:5:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCAL
   fail=1
 fi
 
+# A `#[macro_export]` definition inside a module is visible by path at the crate
+# root, so a root call expands the local macro and evaluates its arguments. A call
+# inside another module still sees the builtin.
+lex_shadow_export=$(tree lex-shadow-stringify-export)
+cat >"$lex_shadow_export/crates/scribe-core/src/config.rs" <<'EOF'
+//! config
+mod local {
+    #[macro_export]
+    macro_rules! stringify {
+        ($left:expr, $right:expr) => { ($left, $right) };
+    }
+}
+pub fn f(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-shadow-export.rmeta" \
+  "$lex_shadow_export/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: module-exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_shadow_export" "evaluated comparisons in module-exported stringify"
+if ! grep -Fq 'config.rs:9:    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: module-exported stringify lacks line 9 or socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+lex_export_nested=$(tree lex-stringify-export-nested)
+cat >"$lex_export_nested/crates/scribe-core/src/config.rs" <<'EOF'
+mod local {
+    #[macro_export]
+    macro_rules! stringify {
+        ($value:expr) => { $value };
+    }
+}
+mod other {
+    pub const EXAMPLE: &str = stringify!((Result<u8, u16>::std::net::Item, u8));
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-export-nested.rmeta" \
+  "$lex_export_nested/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: nested-module exported stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_export_nested" "builtin stringify in a sibling module of an exported stringify"
+
 # Compiled Rust 2024 fixtures using `::std::net` on the right side of `>` or
 # `>>` comparisons/shifts must produce the socket guard diagnostic with their
 # source line, even when `<` comparisons or `<<` shifts appear nearby (ORB-29337).
