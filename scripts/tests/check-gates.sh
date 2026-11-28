@@ -1862,6 +1862,7 @@ lex_cmp_forms=(
   $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }.flags[1] as u8,\n}|comparison in enum discriminant struct literal after fn pointer variant'
   $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = (Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }).flags[1] as u8,\n}|comparison in parenthesized enum discriminant struct literal after fn pointer variant'
   $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = { Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] } }.flags[1] as u8,\n}|comparison in braced enum discriminant struct literal after fn pointer variant'
+  $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags<const N: usize, const M: usize> { flags: [bool; N] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = Flags::<2, 0> {\n        flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()],\n    }.flags[1] as u8,\n}|multi-argument turbofish struct literal in enum discriminant after fn pointer variant'
 )
 for form in "${lex_cmp_forms[@]}"; do
   lex_cmp=$(tree "lex-cmp-$n")
@@ -1904,6 +1905,28 @@ if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-discrim
   fail=1
 fi
 expect pass check-dependency-direction.sh "$lex_discriminant_decl" "type context in a braced variant after a discriminant and attribute"
+
+# A braced variant after a turbofish discriminant (`Flags::<2, 0>`) stays a
+# declaration: the backward scan crosses the turbofish and its comma, and the
+# `=` before the separator belongs to the previous variant (ORB-29653).
+lex_turbofish_decl=$(tree lex-turbofish-decl)
+cat >"$lex_turbofish_decl/crates/scribe-core/src/config.rs" <<'EOF'
+macro_rules! accept { ($item:item) => {}; }
+accept! {
+    #[repr(u8)]
+    enum Example {
+        Callback(fn()) = Flags::<2, 0>::BITS,
+        Variant { x: [Result::<u8, u16>::std::net::Item; 2] },
+    }
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-turbofish-decl.rmeta" \
+  "$lex_turbofish_decl/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: turbofish discriminant declaration fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_turbofish_decl" "type context in a braced variant after a turbofish discriminant"
 
 # A keyword or `std` spelled after `$` is a macro metavariable (ORB-29336),
 # so `$for::std::net` qualifies a local module and must pass. A real `for`

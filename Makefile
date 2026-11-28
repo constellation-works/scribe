@@ -71,7 +71,8 @@ fmt-check:
 # it (STD-04 R10). The Rust 2024 dependency-direction cases (the braced-enum
 # sibling, the standalone braced-variant declaration after a discriminant and
 # attribute, five bare function-pointer cases, three braced const generic
-# default cases, stringify, and comparison cases)
+# default cases, stringify, comparison cases including a multi-argument turbofish
+# discriminant, and a braced-variant declaration after a turbofish discriminant)
 # each compile one fixture file with `rustc` for Rust 2024 metadata only and
 # need no clippy. The other checks read manifests (cargo metadata, no compile)
 # and source files.

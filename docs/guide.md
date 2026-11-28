@@ -536,7 +536,9 @@ tool fails. `make standards-check` runs `docs/standards/check.sh`.
 need `clippy`, and the Rust 2024 dependency-direction fixtures (the braced-enum
 sibling, the standalone braced-variant declaration after a discriminant and
 attribute, five bare function-pointer cases, three braced const generic default
-cases, stringify, and comparison cases) are each compiled directly by
+cases, stringify, comparison cases including a multi-argument turbofish
+discriminant, and a braced-variant declaration after a turbofish discriminant)
+are each compiled directly by
 `rustc --edition=2024 --emit=metadata`. The bare function-pointer cases include
 three enum sibling fixtures: two with `fn()` variants and one with an
 `unsafe extern "C" fn` variant. The other two are standalone struct
