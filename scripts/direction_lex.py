@@ -541,29 +541,80 @@ def _has_shadowing_binding(code: Sequence[Token], name: str, absolute: bool) -> 
     return not absolute and (_has_local_module(code, name) or _use_binds_name(code, name))
 
 
+def _is_stringify_macro_def(code: Sequence[Token], k: int, end: int) -> bool:
+    """Return True when `code[k]` starts `macro_rules! stringify` ending before `end`."""
+    return (
+        code[k].kind == "IDENT"
+        and code[k].text == "macro_rules"
+        and k + 2 < end
+        and code[k + 1].text == "!"
+        and code[k + 2].kind in ("IDENT", "RAW_IDENT")
+        and canonical_ident(code[k + 2].text) == "stringify"
+    )
+
+
+def _has_macro_export_attr(code: Sequence[Token], k: int) -> bool:
+    """Return True when an attribute group before `code[k]` names `macro_export`."""
+    j = k - 1
+    while j >= 1 and code[j].kind == "PUNCT" and code[j].text == "]":
+        depth = 0
+        names_export = False
+        while j >= 0:
+            tok = code[j]
+            if tok.kind == "PUNCT" and tok.text == "]":
+                depth += 1
+            elif tok.kind == "PUNCT" and tok.text == "[":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif tok.kind == "IDENT" and tok.text == "macro_export":
+                names_export = True
+            j -= 1
+        if j < 1 or code[j - 1].text != "#":
+            return False
+        if names_export:
+            return True
+        j -= 2
+    return False
+
+
 def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
-    """Find preceding textual definitions in the invocation's enclosing scopes."""
+    """Find definitions of `stringify!` that can shadow the builtin at `end`.
+
+    Textual definitions are visible after their definition, until the end of
+    the enclosing block or module. A `#[macro_export]` definition is also
+    visible by path at the crate root, wherever in the file it appears.
+    """
     scopes = [False]
+    # Parallel to `scopes`: whether each open block is a `mod name { ... }` body.
+    in_mod = [False]
     # macro_use can import a child module's macros into its parent. Keep the
     # earlier conservative treatment when such an import may be present.
     macro_use = any(tok.kind == "IDENT" and tok.text == "macro_use" for tok in code[:end])
     seen = False
     for k, tok in enumerate(code[:end]):
-        if (
-            tok.kind == "IDENT"
-            and tok.text == "macro_rules"
-            and k + 2 < end
-            and code[k + 1].text == "!"
-            and code[k + 2].kind in ("IDENT", "RAW_IDENT")
-            and canonical_ident(code[k + 2].text) == "stringify"
-        ):
+        if _is_stringify_macro_def(code, k, end):
             scopes[-1] = True
             seen = True
         elif tok.kind == "PUNCT" and tok.text == "{":
             scopes.append(False)
+            in_mod.append(
+                k >= 2
+                and code[k - 1].kind in ("IDENT", "RAW_IDENT")
+                and code[k - 2].kind == "IDENT"
+                and code[k - 2].text == "mod"
+            )
         elif tok.kind == "PUNCT" and tok.text == "}" and len(scopes) > 1:
             scopes.pop()
-    return any(scopes) or (macro_use and seen)
+            in_mod.pop()
+    if any(scopes) or (macro_use and seen):
+        return True
+    # A `#[macro_export]` macro lives in the crate root's path scope, so a call
+    # outside every `mod` body sees it even before the definition.
+    return not any(in_mod) and any(
+        _is_stringify_macro_def(code, k, len(code)) and _has_macro_export_attr(code, k)
+        for k in range(len(code))
+    )
 
 
 def _in_stringify_tokens(code: Sequence[Token], idx: int) -> bool:
