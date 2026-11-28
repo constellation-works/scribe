@@ -737,23 +737,36 @@ def _scan_stringify_macros(
     """Scan `code[:end]` for active `macro_rules! stringify` visibility and exports.
 
     Returns `(textual_visible, at_mod_root, macro_use_seen, found_export)`.
+
+    A textual `macro_rules! stringify` is visible from its definition until its
+    enclosing block ends. `#[macro_use]` or `#![macro_use]` (plain or raw,
+    including a `cfg_attr` that can hold outside tests) imports that module's
+    `stringify` into the parent module only. The import is visible from the
+    marked module's end until the parent scope ends, including later items and
+    child modules of the parent, and it ends with the parent. A `stringify`
+    defined in some other module does not become visible because of it.
     """
     limit = min(end, len(code))
+    # Parallel stacks. `scopes` records a textual definition in that block.
+    # `macro_imported` records a `stringify` brought into that block by a child
+    # module whose `#[macro_use]` / `#![macro_use]` body has already closed.
+    # `opened_with_macro_use` marks the block that exports to its parent.
     scopes = [False]
-    # Parallel to `scopes`: whether each open block is a `mod name { ... }` or `#[cfg(test)]` body.
+    macro_imported = [False]
     in_mod = [False]
     in_test = [False]
+    opened_with_macro_use = [False]
     pending_test_cfg = False
+    pending_macro_use = False
     paren_depth = 0
     bracket_depth = 0
     at_item_start = True
-    macro_use = False
-    seen_textual = False
     found_export = False
     k = 0
     while k < limit:
         tok = code[k]
-        # Inner attribute `#![...]` (does not attach to the following item)
+        # Inner attribute `#![...]` (does not attach to the following item).
+        # `#![macro_use]` on a module exports that module's macros to its parent.
         if (
             paren_depth == 0
             and bracket_depth == 0
@@ -766,12 +779,17 @@ def _scan_stringify_macros(
             and code[k + 2].text == "["
         ):
             close = _find_matching_delim(code, k + 2, "[", "]")
-            if not in_test[-1] and _attr_body_is_macro_attr(code[k + 3 : close], "macro_use"):
-                macro_use = True
+            if (
+                not in_test[-1]
+                and in_mod[-1]
+                and _attr_body_is_macro_attr(code[k + 3 : close], "macro_use")
+            ):
+                opened_with_macro_use[-1] = True
             k = close + 1
             continue
 
-        # Outer attributes `#[...]` at item/statement start
+        # Outer attributes `#[...]` at item/statement start.
+        # `#[macro_use]` applies to the following module, not to the whole file.
         if (
             at_item_start
             and paren_depth == 0
@@ -788,7 +806,7 @@ def _scan_stringify_macros(
             if not (in_test[-1] or pending_test_cfg) and any(
                 _attr_body_is_macro_attr(attr, "macro_use") for attr in attrs
             ):
-                macro_use = True
+                pending_macro_use = True
             k = next_k
             continue
 
@@ -797,15 +815,16 @@ def _scan_stringify_macros(
             is_test = in_test[-1] or pending_test_cfg
             if not is_test and canonical_ident(code[k + 2].text) == "stringify":
                 scopes[-1] = True
-                seen_textual = True
                 if _has_macro_export_attr(code, k):
                     found_export = True
                     if stop_on_export:
-                        return (any(scopes), not any(in_mod), macro_use and seen_textual, True)
+                        return (any(scopes), not any(in_mod), any(macro_imported), True)
             if body_end >= limit:
                 break
             k = body_end + 1
             pending_test_cfg = False
+            # The attribute belonged to this macro, not to a following module.
+            pending_macro_use = False
             at_item_start = True
             continue
 
@@ -823,26 +842,43 @@ def _scan_stringify_macros(
                 bracket_depth = max(0, bracket_depth - 1)
                 at_item_start = False
             elif tok.text == "{":
-                scopes.append(False)
-                in_mod.append(
+                is_mod_body = (
                     k >= 2
                     and code[k - 1].kind in ("IDENT", "RAW_IDENT")
                     and code[k - 2].kind == "IDENT"
                     and code[k - 2].text == "mod"
                     and not _is_metavar(code, k - 2)
                 )
+                scopes.append(False)
+                macro_imported.append(False)
+                in_mod.append(is_mod_body)
                 in_test.append(in_test[-1] or pending_test_cfg)
+                # Only the module the attribute marks exports. A later brace
+                # belongs to another item, so the pending flag is consumed here.
+                opened_with_macro_use.append(
+                    is_mod_body and pending_macro_use and not in_test[-1]
+                )
+                pending_macro_use = False
                 pending_test_cfg = False
                 at_item_start = True
             elif tok.text == "}":
                 if len(scopes) > 1:
+                    exports_stringify = opened_with_macro_use[-1] and (
+                        scopes[-1] or macro_imported[-1]
+                    )
                     scopes.pop()
+                    macro_imported.pop()
                     in_mod.pop()
                     in_test.pop()
+                    opened_with_macro_use.pop()
+                    if exports_stringify and not in_test[-1]:
+                        macro_imported[-1] = True
                 pending_test_cfg = False
+                pending_macro_use = False
                 at_item_start = paren_depth == 0 and bracket_depth == 0
             elif tok.text == ";" and paren_depth == 0 and bracket_depth == 0:
                 pending_test_cfg = False
+                pending_macro_use = False
                 at_item_start = True
             else:
                 at_item_start = False
@@ -850,7 +886,7 @@ def _scan_stringify_macros(
             at_item_start = False
         k += 1
 
-    return (any(scopes), not any(in_mod), macro_use and seen_textual, found_export)
+    return (any(scopes), not any(in_mod), any(macro_imported), found_export)
 
 
 def has_exported_stringify_macro(
@@ -999,7 +1035,9 @@ def _has_visible_stringify_macro(
     """Find definitions of `stringify!` that can shadow the builtin at `end`.
 
     Textual definitions are visible after their definition, until the end of
-    the enclosing block or module. A non-test `#[macro_export]` definition is
+    the enclosing block or module. A `#[macro_use]` or `#![macro_use]` import
+    is visible only in the parent of the marked module, from that module's end
+    until the parent scope ends. A non-test `#[macro_export]` definition is
     also visible by path at the crate root, wherever in the crate it appears.
     A `use` item that binds the name (`use crate::stringify;`) shadows the
     builtin in the scopes it reaches, whether it appears before or after `end`,
