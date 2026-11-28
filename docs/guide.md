@@ -539,11 +539,14 @@ attribute, five bare function-pointer cases, three braced const generic default
 cases, stringify, comparison cases including a multi-argument turbofish
 discriminant, and a braced-variant declaration after a turbofish discriminant)
 are each compiled directly by
-`rustc --edition=2024 --emit=metadata`. The bare function-pointer cases include
-three enum sibling fixtures: two with `fn()` variants and one with an
-`unsafe extern "C" fn` variant. The other two are standalone struct
-declarations, one with a function-pointer type default and one with a where
-clause. Neither the Clippy nor the `rustc` fixtures build a Scribe crate.
+`rustc --edition=2024 --emit=metadata`. The terminal-guard alias-scoping
+fixtures (the `self::` stream reexports, and the block-local, test-only and
+module-level `std::io` aliases) are compiled the same way. The bare
+function-pointer cases include three enum sibling fixtures: two with `fn()`
+variants and one with an `unsafe extern "C" fn` variant. The other two are
+standalone struct declarations, one with a function-pointer type default and one
+with a where clause. Neither the Clippy nor the `rustc` fixtures build a Scribe
+crate.
 `make ci-lint` runs `clippy`. A missing component fails the gate rather than
 skipping it (STD-04 R10); add it with `rustup component add clippy`. The Clippy
 fixtures first fetch the locked kit dependencies, so a cold cargo cache needs
