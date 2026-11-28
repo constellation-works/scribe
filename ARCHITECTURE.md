@@ -447,7 +447,7 @@ express. "Module" includes any file added later.
   a banned path, so `std::sync::mpsc::channel` and other disallowed methods
   remain banned throughout `providers/cli.rs` and `providers/cli/codex.rs`),
   and `scribe/src/output/common/console.rs` (item-scoped on the helpers that
-  take the locked or raw `std::io::{stdout,stderr}` handles, STD-02 R15; `main`
+  return the locked or raw `std::io::{stdout,stderr}` handles, STD-02 R15; `main`
   and the rest of the binary have no exemption and receive captured values).
   `scripts/tests/check-gates.sh` compiles each adapter with its real
   expectations and requires an appended standard-stream access, an unrelated
@@ -503,10 +503,17 @@ express. "Module" includes any file added later.
   `Store::write`, reads the clock or draws randomness.
 - **The binary:** names no `scribe_store`, `scribe_tools` or
   `scribe_core::runtime` path; `output/` imports no `app`, `cli` or
-  `commands`; `clippy.toml` and `Cargo.toml` keep `std::io::{stdout,stderr}`,
-  `IsTerminal::is_terminal`, `print!`/`eprint!` and `dbg!` out of everything
-  except `output/common/console.rs`, while `scripts/check-terminal-guard.sh`
-  keeps `Terminal::(decide|detect)` and `Probe::detect` in `output/` and the
+  `commands`. The print and `dbg!` bans have no exemption anywhere in the
+  binary, `output/common/console.rs` included: `Cargo.toml` warns on
+  `print_stdout` and `print_stderr` and denies `dbg_macro`, `main.rs` denies
+  the two print lints at the crate root, and `make ci-lint` runs Clippy with
+  `-D warnings`, so `print!`, `println!`, `eprint!`, `eprintln!` and `dbg!`
+  fail in every module. `clippy.toml` keeps `std::io::{stdout,stderr}` out of
+  the binary except in the three `#[expect(clippy::disallowed_methods)]`
+  helpers in `output/common/console.rs` (`stdout_lock`, `stderr_lock` and
+  `stderr_handle`), and `IsTerminal::is_terminal` has no exemption at all.
+  `scripts/check-terminal-guard.sh` keeps `Terminal::(decide|detect)` and
+  `Probe::detect` in `output/` and the
   color, width, format and log environment names in `composition.rs` (where
   the terminal variables come through the full process snapshot and
   `SCRIBE_LOG` is read separately and passed to logging).
