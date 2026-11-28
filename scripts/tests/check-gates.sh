@@ -1671,6 +1671,86 @@ if ! grep -Fq 'config.rs:5:' "$work/out" || ! grep -Fq 'scribe-core opens no soc
   fail=1
 fi
 
+# A `{self}` item in a use group imports the enclosing module under its own
+# name, as `use crate::std;` does, even when the path is followed by `::`. Each
+# spelling shadows the builtin macro, so the evaluated call on line 3 must
+# report its socket.
+self_group_lib=$(cat <<'EOF'
+pub mod std {
+    pub const X: u8 = 1;
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+pub mod core {
+    macro_rules! custom { ($($x:tt)*) => { $($x)* } }
+    pub(crate) use custom as stringify;
+}
+pub mod config;
+EOF
+)
+self_group_forms=(
+  'use crate::std::{self};|std'
+  'use crate::std::{self, X};|std'
+  'use crate::{std::{self}};|std'
+  'use crate::core::{self};|core'
+)
+for i in "${!self_group_forms[@]}"; do
+  use_line="${self_group_forms[$i]%|*}"
+  shadow="${self_group_forms[$i]#*|}"
+  lex_self_group=$(tree "lex-self-group-$i")
+  printf '%s\n' "$self_group_lib" >"$lex_self_group/crates/scribe-core/src/lib.rs"
+  printf '%s\n' "$use_line" >"$lex_self_group/crates/scribe-core/src/config.rs"
+  cat <<'EOF' | sed "s/@CRATE@/$shadow/g" >>"$lex_self_group/crates/scribe-core/src/config.rs"
+pub fn f(a: usize, b: usize) -> bool {
+    @CRATE@::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+}
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-self-group-$i.rmeta" \
+    "$lex_self_group/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: self-grouped shadow fixture '$use_line' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect fail check-dependency-direction.sh "$lex_self_group" "self-grouped shadow '$use_line'"
+  if ! grep -Fq 'config.rs:3:' "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+    echo "check-gates: FAIL: self-grouped shadow '$use_line' lacks line 3 or socket diagnostic" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+done
+
+# The same `{self}` spellings that bind nothing under `std` or `core` keep the
+# builtin macro, so its evaluated and generic-token calls stay exempt:
+# `use std::{self};` and `use std::{fmt, self};` re-bind the builtin crate
+# itself, and a `self as _` or `self as other` item binds no name. The calls
+# are `&str` consts because the builtin macro yields a string.
+builtin_self_forms=(
+  'use std::{self};|std'
+  'use std::{fmt, self};|std'
+  'use crate::std::{self as _};|std'
+  'use crate::std::{self as other};|std'
+  'use core::{self};|core'
+  'use crate::core::{self as _};|core'
+)
+for i in "${!builtin_self_forms[@]}"; do
+  use_line="${builtin_self_forms[$i]%|*}"
+  builtin="${builtin_self_forms[$i]#*|}"
+  lex_builtin_self=$(tree "lex-builtin-self-$i")
+  printf '%s\n' "$self_group_lib" >"$lex_builtin_self/crates/scribe-core/src/lib.rs"
+  printf '%s\n' "$use_line" >"$lex_builtin_self/crates/scribe-core/src/config.rs"
+  cat <<'EOF' | sed "s/@CRATE@/$builtin/g" >>"$lex_builtin_self/crates/scribe-core/src/config.rs"
+pub const T: &str = @CRATE@::stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+pub const G: &str = @CRATE@::stringify!([Result<u8, u16>::std::net::Item]);
+EOF
+  if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-builtin-self-$i.rmeta" \
+    "$lex_builtin_self/crates/scribe-core/src/lib.rs" >"$work/rustc.out" 2>&1; then
+    echo "check-gates: FAIL: builtin fixture beside '$use_line' did not compile under Rust 2024" >&2
+    sed 's/^/  | /' "$work/rustc.out" >&2
+    fail=1
+  fi
+  expect pass check-dependency-direction.sh "$lex_builtin_self" "builtin $builtin::stringify beside '$use_line'"
+done
+
 # Unshadowed builtin stringify calls, with ordinary `use std`/`core` imports in
 # the file, keep their generic tokens exempt in all four spellings.
 lex_builtin_all=$(tree lex-builtin-stringify-all)
