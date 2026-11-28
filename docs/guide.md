@@ -534,12 +534,13 @@ tool fails. `make standards-check` runs `docs/standards/check.sh`.
 `clippy` is required, not optional. `make ci-fast` compiles the fixtures that
 `structure` runs (`scripts/tests/check-gates.sh`): the Clippy boundary fixtures
 need `clippy`, and the Rust 2024 dependency-direction fixtures (the braced-enum
-sibling, five bare function-pointer cases, stringify, and comparison cases) are
-each compiled directly by `rustc --edition=2024 --emit=metadata`. The bare
-function-pointer cases include three enum sibling fixtures: two with `fn()`
-variants and one with an `unsafe extern "C" fn` variant. The other two are
-standalone struct declarations, one with a function-pointer type default and
-one with a where clause. Neither kind builds a Scribe crate.
+sibling, five bare function-pointer cases, three braced const generic default
+cases, stringify, and comparison cases) are each compiled directly by
+`rustc --edition=2024 --emit=metadata`. The bare function-pointer cases include
+three enum sibling fixtures: two with `fn()` variants and one with an
+`unsafe extern "C" fn` variant. The other two are standalone struct
+declarations, one with a function-pointer type default and one with a where
+clause. Neither the Clippy nor the `rustc` fixtures build a Scribe crate.
 `make ci-lint` runs `clippy`. A missing component fails the gate rather than
 skipping it (STD-04 R10); add it with `rustup component add clippy`. The Clippy
 fixtures first fetch the locked kit dependencies, so a cold cargo cache needs

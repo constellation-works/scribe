@@ -69,7 +69,8 @@ fmt-check:
 # neither builds a Scribe crate. The Clippy cases build small fixture crates
 # with cargo clippy, so structure needs the clippy component and fails without
 # it (STD-04 R10). The Rust 2024 dependency-direction cases (the braced-enum
-# sibling, five bare function-pointer cases, stringify, and comparison cases)
+# sibling, five bare function-pointer cases, three braced const generic default
+# cases, stringify, and comparison cases)
 # each compile one fixture file with `rustc` for Rust 2024 metadata only and
 # need no clippy. The other checks read manifests (cargo metadata, no compile)
 # and source files.
