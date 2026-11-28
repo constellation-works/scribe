@@ -534,7 +534,8 @@ tool fails. `make standards-check` runs `docs/standards/check.sh`.
 `clippy` is required, not optional. `make ci-fast` compiles the fixtures that
 `structure` runs (`scripts/tests/check-gates.sh`): the Clippy boundary fixtures
 need `clippy`, and the Rust 2024 dependency-direction fixtures (the braced-enum
-sibling, five bare function-pointer cases, three braced const generic default
+sibling, the standalone braced-variant declaration after a discriminant and
+attribute, five bare function-pointer cases, three braced const generic default
 cases, stringify, and comparison cases) are each compiled directly by
 `rustc --edition=2024 --emit=metadata`. The bare function-pointer cases include
 three enum sibling fixtures: two with `fn()` variants and one with an
