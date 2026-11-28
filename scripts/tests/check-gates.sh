@@ -2148,10 +2148,17 @@ case "\${FAIL_FILTER_KIND:-}" in
     done
     ;;
   stream-allow)
+    # check-terminal-guard.sh runs the terminal allowlist filter before the
+    # stream one, both with this prefix. Call 1 passes so the run reaches
+    # stream_hits; only call 2 fails.
     for arg in "\$@"; do
       if [[ "\$arg" == "^crates/scribe/src/output/" ]]; then
-        echo "grep: simulated stream allowlist filter failure" >&2
-        exit 2
+        calls=\$(( \$(cat "$grep_wrap_dir/allow-calls" 2>/dev/null || echo 0) + 1 ))
+        echo "\$calls" >"$grep_wrap_dir/allow-calls"
+        if [[ "\$calls" -eq 2 ]]; then
+          echo "grep: simulated stream allowlist filter failure" >&2
+          exit 2
+        fi
       fi
     done
     ;;
@@ -2174,14 +2181,20 @@ printf 'pub(crate) fn f() -> &'\''static str {\n    "SCRIBE_FORMAT"\n}\n' \
 guard_stream_violation=$(guard_tree guard-stream-violation-filter)
 printf 'pub use std::io::stderr as handle;\n' \
   >>"$guard_stream_violation/crates/scribe/src/commands/entry.rs"
+guard_stream_allowed=$(guard_tree guard-stream-allowed-filter)
+printf 'pub use std::io::stderr as handle;\n' \
+  >>"$guard_stream_allowed/crates/scribe/src/output/mod.rs"
 
 for kind in comment terminal-allow stream-allow env-allow; do
+  # guard_clean has an empty stream_raw, so the stream filter never runs on it;
+  # stream-allow uses the two trees that reach stream_hits instead.
   case "$kind" in
-    comment|terminal-allow) bad_tree="$guard_violation" ;;
-    stream-allow) bad_tree="$guard_stream_violation" ;;
-    env-allow) bad_tree="$guard_env_violation" ;;
+    comment|terminal-allow) targets=("$guard_violation" "$guard_clean") ;;
+    stream-allow) targets=("$guard_stream_violation" "$guard_stream_allowed") ;;
+    env-allow) targets=("$guard_env_violation" "$guard_clean") ;;
   esac
-  for target_tree in "$bad_tree" "$guard_clean"; do
+  for target_tree in "${targets[@]}"; do
+    printf '0\n' >"$grep_wrap_dir/allow-calls"
     FAIL_FILTER_KIND="$kind" PATH="$grep_wrap_dir:$PATH" \
       expect fail check-terminal-guard.sh "$target_tree" \
       "filter failure ($kind) on $target_tree must exit nonzero"
@@ -2192,6 +2205,11 @@ for kind in comment terminal-allow stream-allow env-allow; do
     fi
     if ! grep -Fq "terminal-guard: scan failed" "$work/out"; then
       echo "check-gates: FAIL: filter failure ($kind) missing scan-failed diagnostic" >&2
+      sed 's/^/  | /' "$work/out" >&2
+      fail=1
+    fi
+    if [[ "$kind" == stream-allow ]] && ! grep -Fq "simulated stream allowlist filter failure" "$work/out"; then
+      echo "check-gates: FAIL: stream-allow failure on $target_tree did not come from the stream filter" >&2
       sed 's/^/  | /' "$work/out" >&2
       fail=1
     fi
