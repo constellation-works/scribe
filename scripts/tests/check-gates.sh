@@ -2963,6 +2963,25 @@ expect_clippy() {
   fi
 }
 
+expect_lib_clippy() {
+  local want="$1" root="$2" lint="$3" what="$4" got=pass
+  n=$((n + 1))
+  (
+    cd "$root" &&
+      CARGO_TARGET_DIR="$root/target" CLIPPY_CONF_DIR="$root" \
+        cargo clippy --lib --offline -- -D warnings
+  ) >"$work/out" 2>&1 || got=fail
+  if [[ "$got" != "$want" ]]; then
+    echo "check-gates: FAIL: clippy.toml on $what: expected $want, got $got" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  elif [[ -n "$lint" ]] && ! grep -Fq "$lint" "$work/out"; then
+    echo "check-gates: FAIL: clippy.toml on $what: missing diagnostic $lint" >&2
+    sed 's/^/  | /' "$work/out" >&2
+    fail=1
+  fi
+}
+
 clippy_clean=$(clippy_tree clippy-clean <<'EOF'
 //! Clean core config fixture.
 
@@ -3377,11 +3396,8 @@ cfgattr_allow_clean_clippy=$(adapter_clippy composition-weakened-cfg-allow-clean
   expect_items "$REPO_ROOT/crates/scribe-core/src/composition.rs"
   printf '\n/// A stream handle composition has no business taking.\npub fn leak() -> std::io::Stdout { std::io::stdout() }\n'
 } >"$cfgattr_allow_clean_clippy/src/lib.rs"
-n=$((n + 1))
-if (cd "$cfgattr_allow_clean_clippy" && CARGO_TARGET_DIR="$cfgattr_allow_clean_clippy/target" CLIPPY_CONF_DIR="$cfgattr_allow_clean_clippy" cargo clippy --lib --offline -- -D warnings) >"$work/out" 2>&1; then
-  echo "check-gates: FAIL: a stream handle in the composition adapter passed the lib boundary" >&2
-  fail=1
-fi
+expect_lib_clippy fail "$cfgattr_allow_clean_clippy" "clippy::disallowed-methods" \
+  "a stream handle in the composition adapter at the lib boundary"
 
 console_clippy=$(adapter_clippy console)
 {
@@ -3396,6 +3412,31 @@ if ! grep -Fq 'io::stdout()' "$console_clippy/src/lib.rs"; then
 fi
 expect_clippy pass "$console_clippy" "" "the production console adapter's scoped expectations"
 console_good=$(cat "$console_clippy/src/lib.rs")
+
+# Exercise the production-only lib target as well as --all-targets: its test
+# target can otherwise report a disallowed call that a not(test) allow has
+# silenced for production. The weakened twin must pass with a leak, while the
+# clean adapter plus the same leak must fail with the specific lint diagnostic.
+console_cfgattr_allow_src="$work/console-weakened-cfg-allow.rs"
+{
+  printf '#![cfg_attr(not(test), allow(clippy::disallowed_methods))]\n'
+  cat "$REPO_ROOT/crates/scribe/src/output/common/console.rs"
+} >"$console_cfgattr_allow_src"
+if ! expect_inner "$console_cfgattr_allow_src" | grep -Fq 'cfg_attr(not(test), allow(clippy::disallowed_methods))'; then
+  echo "check-gates: FAIL: the console fixture drops conditional module-level allow" >&2
+  fail=1
+fi
+console_weakened_lib=$(adapter_clippy console-weakened-cfg-allow)
+{
+  printf '//! Console adapter fixture.\n#![allow(dead_code)]\n'
+  expect_inner "$console_cfgattr_allow_src"
+  printf 'use std::io;\n\n'
+  expect_items "$console_cfgattr_allow_src"
+  printf '\n/// An unbounded channel.\npub fn queue() { let _ = std::sync::mpsc::channel::<u8>(); }\n'
+} >"$console_weakened_lib/src/lib.rs"
+expect_lib_clippy pass "$console_weakened_lib" "" \
+  "an unbounded channel under the console adapter's conditional lib allow"
+
 printf '%s\n' "$console_good" >"$console_clippy/src/lib.rs"
 cat >>"$console_clippy/src/lib.rs" <<'EOF'
 
@@ -3403,6 +3444,8 @@ cat >>"$console_clippy/src/lib.rs" <<'EOF'
 pub fn queue() { let _ = std::sync::mpsc::channel::<u8>(); }
 EOF
 expect_clippy fail "$console_clippy" "clippy::disallowed-methods" "an unbounded channel in the console module"
+expect_lib_clippy fail "$console_clippy" "clippy::disallowed-methods" \
+  "an unbounded channel at the console adapter lib boundary"
 printf '%s\n' "$console_good" >"$console_clippy/src/lib.rs"
 cat >>"$console_clippy/src/lib.rs" <<'EOF'
 
