@@ -904,20 +904,35 @@ def _opens_mod_body(code: Sequence[Token], brace: int) -> bool:
     )
 
 
-def _stringify_use_owners(code: Sequence[Token]) -> List[int]:
+def _stringify_use_owners(code: Sequence[Token], test_support: bool = True) -> List[int]:
     """Return the enclosing `{` (or -1 at the root) of each `use` item binding `stringify`.
 
     A `use` item is not textual, so its position in the file does not matter;
-    only the block that declares it does. Macro bodies are not expanded here.
+    only the block that declares it does. A `use` item under a test-only cfg
+    (per `has_test_cfg`) is compiled only for tests, so it shadows nothing in
+    production code and is skipped. Macro bodies are not expanded here.
     """
     owners: List[int] = []
+    # Whether the outer attributes seen since the last item boundary include a test-only cfg.
+    test_only = False
     k = 0
     while k < len(code):
         body_end = _macro_rules_body_end(code, k)
         if body_end is not None:
             k = body_end + 1
+            test_only = False
             continue
         tok = code[k]
+        if (
+            tok.kind == "PUNCT"
+            and tok.text == "#"
+            and k + 1 < len(code)
+            and code[k + 1].kind == "PUNCT"
+            and code[k + 1].text == "["
+        ):
+            attrs, k = _parse_outer_attrs(code, k)
+            test_only = test_only or has_test_cfg(attrs, test_support)
+            continue
         if (
             tok.kind == "IDENT"
             and tok.text == "use"
@@ -926,10 +941,13 @@ def _stringify_use_owners(code: Sequence[Token]) -> List[int]:
             end = k + 1
             while end < len(code) and code[end].text != ";":
                 end += 1
-            if _use_item_imports_stringify(code[k : end + 1]):
+            if not test_only and _use_item_imports_stringify(code[k : end + 1]):
                 owners.append(_enclosing_brace(code, k))
+            test_only = False
             k = end + 1
             continue
+        if tok.kind == "PUNCT" and tok.text in (";", "{", "}"):
+            test_only = False
         k += 1
     return owners
 
@@ -960,9 +978,11 @@ def _use_scopes_at(code: Sequence[Token], idx: int) -> Set[int]:
     return scopes
 
 
-def _has_visible_stringify_use(code: Sequence[Token], idx: int) -> bool:
+def _has_visible_stringify_use(
+    code: Sequence[Token], idx: int, test_support: bool = True
+) -> bool:
     """Return True when a `use` item binds `stringify` in a scope that reaches `idx`."""
-    owners = _stringify_use_owners(code)
+    owners = _stringify_use_owners(code, test_support)
     if not owners:
         return False
     scopes = _use_scopes_at(code, idx)
@@ -982,9 +1002,10 @@ def _has_visible_stringify_macro(
     the enclosing block or module. A non-test `#[macro_export]` definition is
     also visible by path at the crate root, wherever in the crate it appears.
     A `use` item that binds the name (`use crate::stringify;`) shadows the
-    builtin in the scopes it reaches, whether it appears before or after `end`.
+    builtin in the scopes it reaches, whether it appears before or after `end`,
+    unless a test-only cfg gates it (see `_stringify_use_owners`).
     """
-    if _has_visible_stringify_use(code, end):
+    if _has_visible_stringify_use(code, end, test_support):
         return True
     textual_visible, at_mod_root, macro_use_seen, found_export = _scan_stringify_macros(
         code, end, test_support=test_support, stop_on_export=False
