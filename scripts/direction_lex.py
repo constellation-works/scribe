@@ -882,6 +882,111 @@ def has_exported_stringify_macro(
     return found_export
 
 
+def _use_item_imports_stringify(item: Sequence[Token]) -> bool:
+    """Return True when one `use ...;` item binds `stringify` to a non-builtin item.
+
+    A path rooted at `std` or `core` only re-imports the builtin macro, so it
+    shadows nothing and is skipped. That holds for `use std::stringify;`,
+    `use ::core::{stringify, fmt};` and a bare `use std as stringify;` alike.
+    """
+    k = 2 if len(item) > 1 and item[1].text == "::" else 1
+    if k < len(item) and _is_stringify_crate(item[k]):
+        return False
+    return _use_binds_name(item, "stringify")
+
+
+def _enclosing_brace(code: Sequence[Token], idx: int) -> int:
+    """Return the index of the innermost `{` open before `idx`, or -1 at the file root."""
+    depth = 0
+    for j in range(idx - 1, -1, -1):
+        tok = code[j]
+        if tok.kind != "PUNCT":
+            continue
+        if tok.text == "}":
+            depth += 1
+        elif tok.text == "{":
+            if depth == 0:
+                return j
+            depth -= 1
+    return -1
+
+
+def _opens_mod_body(code: Sequence[Token], brace: int) -> bool:
+    """Return True when the `{` at `brace` opens a `mod name { ... }` body."""
+    return (
+        brace >= 2
+        and code[brace - 1].kind in ("IDENT", "RAW_IDENT")
+        and code[brace - 2].kind == "IDENT"
+        and code[brace - 2].text == "mod"
+        and not _is_metavar(code, brace - 2)
+    )
+
+
+def _stringify_use_owners(code: Sequence[Token]) -> List[int]:
+    """Return the enclosing `{` (or -1 at the root) of each `use` item binding `stringify`.
+
+    A `use` item is not textual, so its position in the file does not matter;
+    only the block that declares it does. Macro bodies are not expanded here.
+    """
+    owners: List[int] = []
+    k = 0
+    while k < len(code):
+        body_end = _macro_rules_body_end(code, k)
+        if body_end is not None:
+            k = body_end + 1
+            continue
+        tok = code[k]
+        if (
+            tok.kind == "IDENT"
+            and tok.text == "use"
+            and not (k + 1 < len(code) and code[k + 1].text == "<")
+        ):
+            end = k + 1
+            while end < len(code) and code[end].text != ";":
+                end += 1
+            if _use_item_imports_stringify(code[k : end + 1]):
+                owners.append(_enclosing_brace(code, k))
+            k = end + 1
+            continue
+        k += 1
+    return owners
+
+
+def _use_scopes_at(code: Sequence[Token], idx: int) -> Set[int]:
+    """Return the scopes whose `use` items reach `idx`.
+
+    These are the blocks enclosing `idx`, up to and including the innermost
+    `mod` body (a child module does not inherit its parent's imports), or the
+    file root (-1) when no `mod` body encloses `idx`.
+    """
+    scopes: Set[int] = set()
+    depth = 0
+    for j in range(idx - 1, -1, -1):
+        tok = code[j]
+        if tok.kind != "PUNCT":
+            continue
+        if tok.text == "}":
+            depth += 1
+        elif tok.text == "{":
+            if depth:
+                depth -= 1
+                continue
+            scopes.add(j)
+            if _opens_mod_body(code, j):
+                return scopes
+    scopes.add(-1)
+    return scopes
+
+
+def _has_visible_stringify_use(code: Sequence[Token], idx: int) -> bool:
+    """Return True when a `use` item binds `stringify` in a scope that reaches `idx`."""
+    owners = _stringify_use_owners(code)
+    if not owners:
+        return False
+    scopes = _use_scopes_at(code, idx)
+    return any(owner in scopes for owner in owners)
+
+
 def _has_visible_stringify_macro(
     code: Sequence[Token],
     end: int,
@@ -894,7 +999,11 @@ def _has_visible_stringify_macro(
     Textual definitions are visible after their definition, until the end of
     the enclosing block or module. A non-test `#[macro_export]` definition is
     also visible by path at the crate root, wherever in the crate it appears.
+    A `use` item that binds the name (`use crate::stringify;`) shadows the
+    builtin in the scopes it reaches, whether it appears before or after `end`.
     """
+    if _has_visible_stringify_use(code, end):
+        return True
     textual_visible, at_mod_root, macro_use_seen, found_export = _scan_stringify_macros(
         code, end, test_support=test_support, stop_on_export=False
     )
