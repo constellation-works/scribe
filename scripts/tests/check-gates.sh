@@ -1701,6 +1701,9 @@ lex_cmp_forms=(
   $'pub struct Flags { pub flags: [bool; 2] }\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { flags: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in struct field'
   $'pub struct Flags { pub flags: [bool; 2] }\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { #[allow(unused)] flags: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in attributed struct field'
   $'pub struct Flags(pub [bool; 2]);\npub fn f(a: u32, b: u32, c: u32) -> Flags {\n    Flags { 0: [a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }\n}|comma-separated comparison in numeric struct field'
+  $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }.flags[1] as u8,\n}|comparison in enum discriminant struct literal after fn pointer variant'
+  $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = (Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] }).flags[1] as u8,\n}|comparison in parenthesized enum discriminant struct literal after fn pointer variant'
+  $'#![allow(dead_code)]\nconst A: u32 = 0;\nconst B: u32 = 1;\nconst C: u32 = u32::MAX;\nstruct Flags { flags: [bool; 2] }\n#[repr(u8)]\nenum Example {\n    Callback(fn()),\n    Discriminant = { Flags { flags: [A < B, C > ::std::net::Ipv4Addr::LOCALHOST.to_bits()] } }.flags[1] as u8,\n}|comparison in braced enum discriminant struct literal after fn pointer variant'
 )
 for form in "${lex_cmp_forms[@]}"; do
   lex_cmp=$(tree "lex-cmp-$n")
@@ -1721,6 +1724,28 @@ for form in "${lex_cmp_forms[@]}"; do
     fail=1
   fi
 done
+
+# An earlier variant's discriminant or attribute does not leak expression
+# context into a later braced enum variant's declaration fields.
+lex_discriminant_decl=$(tree lex-discriminant-decl)
+cat >"$lex_discriminant_decl/crates/scribe-core/src/config.rs" <<'EOF'
+macro_rules! accept { ($item:item) => {}; }
+accept! {
+    #[repr(u8)]
+    enum Example {
+        Callback(fn()) = 1,
+        #[doc = "x"]
+        Variant { x: [Result<u8, u16>::std::net::Item; 2] },
+    }
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-discriminant-decl.rmeta" \
+  "$lex_discriminant_decl/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: discriminant sibling declaration fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_discriminant_decl" "type context in a braced variant after a discriminant and attribute"
 
 # A keyword or `std` spelled after `$` is a macro metavariable (ORB-29336),
 # so `$for::std::net` qualifies a local module and must pass. A real `for`
