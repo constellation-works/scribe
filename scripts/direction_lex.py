@@ -578,6 +578,36 @@ def _has_macro_export_attr(code: Sequence[Token], k: int) -> bool:
     return False
 
 
+def _is_macro_use_attr(code: Sequence[Token], k: int) -> bool:
+    """Return True when `code[k]` is a `macro_use` name inside a `#[...]` or `#![...]` attribute.
+
+    An ordinary identifier spelled `macro_use` (a function or variable name) is not.
+    """
+    if not (code[k].kind == "IDENT" and code[k].text == "macro_use"):
+        return False
+    depth = 0
+    j = k - 1
+    while j >= 0:
+        tok = code[j]
+        if tok.kind == "PUNCT":
+            if tok.text in (")", "]"):
+                depth += 1
+            elif tok.text in ("(", "["):
+                if depth == 0:
+                    if tok.text == "(":
+                        j -= 1
+                        continue
+                    before = j - 1
+                    if before >= 0 and code[before].text == "!":
+                        before -= 1
+                    return before >= 0 and code[before].text == "#"
+                depth -= 1
+            elif tok.text in (";", "{", "}") and depth == 0:
+                return False
+        j -= 1
+    return False
+
+
 def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
     """Find definitions of `stringify!` that can shadow the builtin at `end`.
 
@@ -590,7 +620,7 @@ def _has_visible_stringify_macro(code: Sequence[Token], end: int) -> bool:
     in_mod = [False]
     # macro_use can import a child module's macros into its parent. Keep the
     # earlier conservative treatment when such an import may be present.
-    macro_use = any(tok.kind == "IDENT" and tok.text == "macro_use" for tok in code[:end])
+    macro_use = any(_is_macro_use_attr(code, k) for k in range(min(end, len(code))))
     seen = False
     for k, tok in enumerate(code[:end]):
         if _is_stringify_macro_def(code, k, end):
