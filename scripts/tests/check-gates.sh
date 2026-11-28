@@ -2350,6 +2350,78 @@ if grep -Fq "lib.rs:${lib_line}:" "$work/out" || grep -Fq 'bin/other.rs:' "$work
   fail=1
 fi
 
+# A library `#[macro_export]` stringify declared in a file under an inline
+# `mod` block is still exported at the library root (ORB-29772 review).
+lex_inline_export=$(tree lex-stringify-inline-export)
+cat >"$lex_inline_export/crates/scribe-core/src/lib.rs" <<'EOF'
+#![allow(dead_code)]
+mod wrap {
+    mod exp;
+}
+fn probe(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+pub fn run() -> (bool, bool) {
+    probe(1, 2, 3)
+}
+EOF
+mkdir -p "$lex_inline_export/crates/scribe-core/src/wrap"
+printf '%s\n' '#[macro_export]' 'macro_rules! stringify {' \
+  '    ($left:expr, $right:expr) => { ($left, $right) };' '}' \
+  >"$lex_inline_export/crates/scribe-core/src/wrap/exp.rs"
+compile_2024 lib "$lex_inline_export/crates/scribe-core/src/lib.rs" "library root with a stringify export under an inline module"
+expect fail check-dependency-direction.sh "$lex_inline_export" "stringify exported under an inline module reaches the library root"
+if ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: inline-module export lacks the socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+inline_line=$(grep -n 'Ipv4Addr::LOCALHOST.to_bits' "$lex_inline_export/crates/scribe-core/src/lib.rs" | cut -d: -f1)
+if ! grep -Fq "lib.rs:${inline_line}:" "$work/out"; then
+  echo "check-gates: FAIL: inline-module export lacks lib.rs:${inline_line}" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+# A submodule file named `lib.rs` is the module `x::lib` and owns `x/lib/`, not
+# the crate root's `x/`: a `#[macro_export]` in `x/lib/y.rs` reaches the root.
+lex_nested_lib=$(tree lex-stringify-nested-lib-module)
+cat >"$lex_nested_lib/crates/scribe-core/src/lib.rs" <<'EOF'
+#![allow(dead_code)]
+mod x;
+fn probe(a: u32, b: u32, c: u32) -> (bool, bool) {
+    stringify!(a < b, c > ::std::net::Ipv4Addr::LOCALHOST.to_bits())
+}
+pub fn run() -> (bool, bool) {
+    probe(1, 2, 3)
+}
+EOF
+printf 'mod lib;\n' >"$lex_nested_lib/crates/scribe-core/src/x.rs"
+mkdir -p "$lex_nested_lib/crates/scribe-core/src/x/lib"
+printf 'mod y;\n' >"$lex_nested_lib/crates/scribe-core/src/x/lib.rs"
+printf '%s\n' '#[macro_export]' 'macro_rules! stringify {' \
+  '    ($left:expr, $right:expr) => { ($left, $right) };' '}' \
+  >"$lex_nested_lib/crates/scribe-core/src/x/lib/y.rs"
+compile_2024 lib "$lex_nested_lib/crates/scribe-core/src/lib.rs" "library root with a stringify export in a submodule named lib"
+expect fail check-dependency-direction.sh "$lex_nested_lib" "stringify exported from a submodule named lib reaches the library root"
+nested_line=$(grep -n 'Ipv4Addr::LOCALHOST.to_bits' "$lex_nested_lib/crates/scribe-core/src/lib.rs" | cut -d: -f1)
+if ! grep -Fq "lib.rs:${nested_line}:" "$work/out" || ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: submodule named lib lacks lib.rs:${nested_line} or the socket diagnostic" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
+# A library `#[cfg(test)] mod shared;` stays test-only when a binary declares
+# its own production `mod shared;` (a different file under src/bin/tool/).
+lex_test_collision=$(tree lex-test-module-collision)
+printf '//! core\n#[cfg(test)]\nmod shared;\n' >"$lex_test_collision/crates/scribe-core/src/lib.rs"
+printf '#![allow(dead_code)]\nuse std::net::TcpListener;\nfn _x() -> Option<TcpListener> { None }\n' \
+  >"$lex_test_collision/crates/scribe-core/src/shared.rs"
+mkdir -p "$lex_test_collision/crates/scribe-core/src/bin/tool"
+printf '#![allow(dead_code)]\nmod shared;\nfn main() {}\n' >"$lex_test_collision/crates/scribe-core/src/bin/tool.rs"
+printf '//! bin shared\n' >"$lex_test_collision/crates/scribe-core/src/bin/tool/shared.rs"
+expect pass check-dependency-direction.sh "$lex_test_collision" "a binary's production module beside a library's test-only module of the same name"
+
 # `#[cfg(test)]` definitions (whether in `#[cfg(test)] mod tests` or directly
 # on `macro_rules! stringify`) and unexpanded `macro_rules!` bodies do not
 # export `stringify` in production (ORB-29674).

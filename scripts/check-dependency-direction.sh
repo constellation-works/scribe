@@ -423,17 +423,23 @@ def cargo_crate_roots(scan_path):
     return roots
 
 
-def _mod_directory(current_file):
-    """Directory in which `mod name;` from `current_file` looks up `name.rs`."""
+def _mod_directory(current_file, is_root=False):
+    """Directory in which `mod name;` from `current_file` looks up `name.rs`.
+
+    `lib.rs` and `main.rs` own their directory only as crate roots; as a
+    submodule `x/lib.rs` is the module `x::lib` and owns `x/lib/`.
+    """
     directory = os.path.dirname(current_file)
     stem = os.path.splitext(os.path.basename(current_file))[0]
-    if stem in ("mod", "lib", "main"):
+    if stem == "mod" or (is_root and stem in ("lib", "main")):
         return directory
     return os.path.join(directory, stem)
 
 
-def _resolve_mod_file(current_file, mod_name):
-    base = _mod_directory(current_file)
+def _resolve_mod_file(current_file, mod_name, inline_mods=(), is_root=False):
+    # `inline_mods` are the `mod name { ... }` blocks around the declaration;
+    # each one is a directory under the file's module directory.
+    base = os.path.join(_mod_directory(current_file, is_root), *inline_mods)
     for cand in (
         os.path.join(base, mod_name + ".rs"),
         os.path.join(base, mod_name, "mod.rs"),
@@ -451,7 +457,8 @@ def _files_in_target(root_file, other_roots, scan_path):
     """
     seen = set()
     ordered = []
-    stack = [os.path.realpath(root_file)]
+    root_real = os.path.realpath(root_file)
+    stack = [root_real]
     while stack:
         fp = stack.pop()
         if fp in seen or not os.path.isfile(fp):
@@ -460,9 +467,11 @@ def _files_in_target(root_file, other_roots, scan_path):
         ordered.append(fp)
         scanned = read_scanned(fp, (), test_support=False, crate_exports_stringify=False)
         for fm in scanned.file_mods:
-            if fm.brace_depth != 0 or fm.is_test_only:
+            if fm.is_test_only:
                 continue
-            child = _resolve_mod_file(fp, fm.name)
+            # A file behind an inline `mod outer { mod name; }` is still this
+            # crate's module; `fm.path[:-1]` names the inline blocks around it.
+            child = _resolve_mod_file(fp, fm.name, fm.path[:-1], is_root=fp == root_real)
             if child is None or child in seen or child in other_roots:
                 continue
             if os.path.isdir(scan_path) and not _path_within(scan_path, child):
@@ -500,21 +509,44 @@ def ban_std(path, modules, msg):
     # A root module declared solely under #[cfg(test)] in a crate root
     # (such as `#[cfg(test)] mod tests;` backed by `tests.rs`) is not compiled
     # in production and cannot export macros to that crate's root.
+    # A root's top-level `mod name;` declares `name` in that root's module
+    # directory, so the test-only check is keyed by that directory. A binary's
+    # production `mod name;` must not make a library's `#[cfg(test)] mod name;`
+    # production (and the reverse).
+    root_dirs = sorted(
+        {
+            os.path.realpath(_mod_directory(fp, is_root=True))
+            for fp, parts in file_mods_by_path.items()
+            if not parts
+        },
+        key=len,
+        reverse=True,
+    )
+
+    def top_module_of(fp):
+        real = os.path.realpath(fp)
+        for directory in root_dirs:
+            if real.startswith(directory + os.sep):
+                head = os.path.relpath(real, directory).split(os.sep)[0]
+                return (directory, head[:-3] if head.endswith(".rs") else head)
+        return None
+
     root_decls = collections.defaultdict(list)
     for fp, parts in file_mods_by_path.items():
         if not parts:
             root_scanned = read_scanned(fp, (), test_support=False)
             for fm in root_scanned.file_mods:
                 if fm.brace_depth == 0:
-                    root_decls[fm.name].append(fm.is_test_only)
+                    key = (os.path.realpath(_mod_directory(fp, is_root=True)), fm.name)
+                    root_decls[key].append(fm.is_test_only)
     test_only_root_mods = {
-        name for name, flags in root_decls.items() if flags and all(flags)
+        key for key, flags in root_decls.items() if flags and all(flags)
     }
 
     active_files = [
         fp
         for fp in files
-        if not (file_mods_by_path[fp] and file_mods_by_path[fp][0] in test_only_root_mods)
+        if not (file_mods_by_path[fp] and top_module_of(fp) in test_only_root_mods)
     ]
     # One flag per Cargo target. A `#[macro_export]` in a binary is visible at
     # that binary's root only, not in the library or in another binary.

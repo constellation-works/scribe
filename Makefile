@@ -71,9 +71,10 @@ fmt-check:
 # it (STD-04 R10). The Rust 2024 dependency-direction cases (the braced-enum
 # sibling, the standalone braced-variant declaration after a discriminant and
 # attribute, five bare function-pointer cases, three braced const generic
-# default cases, stringify, src/bin crate-root stringify, comparison cases
-# including a multi-argument turbofish discriminant, and a braced-variant
-# declaration after a turbofish discriminant) compile their fixture files
+# default cases, stringify, src/bin crate-root stringify, an inline-module
+# stringify export, comparison cases including a multi-argument turbofish
+# discriminant, and a braced-variant declaration after a turbofish
+# discriminant) compile their fixture files
 # with `rustc` for Rust 2024 metadata only and need no clippy. The
 # terminal-guard alias-scoping cases (the `self::`, `super::`
 # and `crate::` stream reexports, and block-local, test-only and module-level
