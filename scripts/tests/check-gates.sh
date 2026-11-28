@@ -2113,6 +2113,56 @@ EOF
   fi
 done
 
+# A nested `#[r#macro_use]` import is visible in the module that contains the
+# marked child, and nowhere after that parent closes (ORB-29919). `local`
+# returns `i32`, so the import is live inside `outer`. The root `const` is
+# `&str`, so that later call is builtin `stringify` and must stay exempt.
+lex_nested_macro_use=$(tree lex-stringify-nested-macro-use)
+cat >"$lex_nested_macro_use/crates/scribe-core/src/config.rs" <<'EOF'
+mod outer {
+    #[r#macro_use]
+    mod inner {
+        macro_rules! stringify { ($v:expr) => { $v }; }
+    }
+    fn local() -> i32 { stringify!(42) }
+}
+const EXAMPLE: &str = stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1);
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-nested-macro-use.rmeta" \
+  "$lex_nested_macro_use/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: nested macro_use stringify fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect pass check-dependency-direction.sh "$lex_nested_macro_use" "builtin stringify outside a nested r#macro_use parent"
+
+# The same nested import still evaluates a call that stays inside the parent.
+lex_nested_macro_use_parent=$(tree lex-stringify-nested-macro-use-parent)
+cat >"$lex_nested_macro_use_parent/crates/scribe-core/src/config.rs" <<'EOF'
+mod outer {
+    #[r#macro_use]
+    mod inner {
+        macro_rules! stringify { ($v:expr) => { $v }; }
+    }
+    fn local(a: usize, b: usize) -> bool {
+        stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)
+    }
+}
+EOF
+if ! rustc --edition=2024 --crate-type lib --emit=metadata -o "$work/lex-stringify-nested-macro-use-parent.rmeta" \
+  "$lex_nested_macro_use_parent/crates/scribe-core/src/config.rs" >"$work/rustc.out" 2>&1; then
+  echo "check-gates: FAIL: nested macro_use parent fixture did not compile under Rust 2024" >&2
+  sed 's/^/  | /' "$work/rustc.out" >&2
+  fail=1
+fi
+expect fail check-dependency-direction.sh "$lex_nested_macro_use_parent" "evaluated comparisons in stringify imported into a nested r#macro_use parent"
+if ! grep -Fq 'config.rs:7:        stringify!((a < b, a > ::std::net::Ipv4Addr::LOCALHOST.octets()[0] as usize).1)' "$work/out" || \
+   ! grep -Fq 'scribe-core opens no socket' "$work/out"; then
+  echo "check-gates: FAIL: nested macro_use parent did not report the socket diagnostic on the call line" >&2
+  sed 's/^/  | /' "$work/out" >&2
+  fail=1
+fi
+
 # An attribute that merely names `macro_use` — a `cfg` predicate (plain or raw)
 # or an inactive or test-only `cfg_attr` — imports nothing, so the root builtin
 # call stays exempt (ORB-29678).
