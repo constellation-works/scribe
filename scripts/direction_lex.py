@@ -485,12 +485,30 @@ def _has_extern_crate_alias(code: Sequence[Token], name: str) -> bool:
     return False
 
 
+def _group_binds_self(code: Sequence[Token], open_idx: int) -> bool:
+    """Return True when the `{` at `open_idx` opens a use group holding a bare `self` item.
+
+    In `use crate::std::{self};` the `self` imports `crate::std` under its own
+    name, so it binds the path before the group. `self as _` and `self as x`
+    are not bare and bind nothing under `std`; a rename to `std` is caught by
+    its own `as` token.
+    """
+    if open_idx >= len(code) or code[open_idx].text != "{":
+        return False
+    close = _find_matching_delim(code, open_idx, "{", "}")
+    return any(
+        len(item) == 1 and item[0].kind == "IDENT" and item[0].text == "self"
+        for item in _split_top_level_commas(code[open_idx + 1 : close])
+    )
+
+
 def _use_binds_name(code: Sequence[Token], name: str) -> bool:
     """Return True when a `use` item binds `name` to something other than the builtin crate.
 
     A bare `use std;` / `use ::std;` re-binds the builtin crate itself. A rename
-    (`use helper as std;`) or a path ending in the name (`use crate::std;`,
-    `use crate::{std, x}`) can bind a local module or macro-exporting alias.
+    (`use helper as std;`), a path ending in the name (`use crate::std;`,
+    `use crate::{std, x}`), or a `{self}` item in a group under the name
+    (`use crate::std::{self};`) can bind a local module or macro-exporting alias.
     """
     n = len(code)
     for i, tok in enumerate(code):
@@ -515,17 +533,21 @@ def _use_binds_name(code: Sequence[Token], name: str) -> bool:
                 nxt = code[j + 1] if j + 1 < n else None
                 if prev.text == "as":
                     return True
-                if nxt is not None and nxt.text in ("::", "as"):
+                first = prev.text == "use" or (
+                    prev.text == "::" and j >= 2 and code[j - 2].text == "use"
+                )
+                in_open_group = (
+                    prev.text in ("{", ",") and bool(groups) and not groups[-1]
+                )
+                rooted = first or in_open_group
+                if nxt is not None and nxt.text == "as":
                     pass
-                else:
-                    first = prev.text == "use" or (
-                        prev.text == "::" and j >= 2 and code[j - 2].text == "use"
-                    )
-                    in_open_group = (
-                        prev.text in ("{", ",") and bool(groups) and not groups[-1]
-                    )
-                    if not (first or in_open_group):
+                elif nxt is not None and nxt.text == "::":
+                    # A path prefix binds nothing unless its `{self}` group names it.
+                    if not rooted and _group_binds_self(code, j + 2):
                         return True
+                elif not rooted:
+                    return True
             j += 1
     return False
 
